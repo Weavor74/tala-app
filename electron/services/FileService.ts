@@ -62,7 +62,7 @@ export class FileService {
      */
     constructor(initialRoot?: string) {
         // Default to current directory if in dev, otherwise documents
-        const defaultPath = initialRoot || (process.env.VITE_DEV_SERVER_URL
+        const defaultPath = initialRoot || ((process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
             ? process.cwd()
             : path.join(app.getPath('documents'), 'TalaWorkspace'));
 

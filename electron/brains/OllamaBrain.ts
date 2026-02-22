@@ -1,3 +1,4 @@
+import { fetch, Agent } from 'undici';
 import type { IBrain, ChatMessage, BrainResponse, BrainOptions } from './IBrain';
 
 /**
@@ -11,6 +12,17 @@ export class OllamaBrain implements IBrain {
     id = 'ollama-local';
     private baseUrl: string;
     private model: string;
+
+    /**
+     * Custom undici dispatcher to handle long-running local inference.
+     * Prevents UND_ERR_BODY_TIMEOUT by extending body/headers timeout to 5 minutes.
+     */
+    private dispatcher = new Agent({
+        bodyTimeout: 1800000,
+        headersTimeout: 1800000,
+        keepAliveTimeout: 10000,
+        connections: 10
+    });
 
     constructor(baseUrl = 'http://localhost:11434', model = 'llama3') {
         this.baseUrl = baseUrl;
@@ -94,16 +106,29 @@ export class OllamaBrain implements IBrain {
         }
 
         const controller = new AbortController();
-        const timeout = options?.timeout || 60000;
+        const timeout = options?.timeout || 300000; // 5 minute default
         const id = setTimeout(() => controller.abort(), timeout);
+
+        const ollamaOptions: any = {};
+        if (options) {
+            if (options.num_ctx) ollamaOptions.num_ctx = options.num_ctx;
+            if (options.temperature !== undefined) ollamaOptions.temperature = options.temperature;
+            if (options.num_predict !== undefined) ollamaOptions.num_predict = options.num_predict;
+            if (options.top_k !== undefined) ollamaOptions.top_k = options.top_k;
+            if (options.top_p !== undefined) ollamaOptions.top_p = options.top_p;
+            if (options.repeat_penalty !== undefined) ollamaOptions.repeat_penalty = options.repeat_penalty;
+            if (options.stop) ollamaOptions.stop = options.stop;
+        }
 
         try {
             console.log(`[OllamaBrain] POST ${this.baseUrl}/api/chat (model: ${this.model})`);
             const response = await fetch(`${this.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: options?.signal || controller.signal
+                body: JSON.stringify({ ...body, options: ollamaOptions }),
+                signal: options?.signal || controller.signal,
+                // @ts-ignore - undici dispatcher support
+                dispatcher: this.dispatcher
             });
             clearTimeout(id);
 
@@ -113,7 +138,7 @@ export class OllamaBrain implements IBrain {
                 throw new Error(`Ollama Error (${response.status}): ${errorText}`);
             }
 
-            const data = await response.json();
+            const data = await response.json() as any;
 
             const result: BrainResponse = {
                 content: data.message?.content || '',
@@ -162,16 +187,29 @@ export class OllamaBrain implements IBrain {
             }
 
             const internalController = new AbortController();
-            const timeoutId = setTimeout(() => internalController.abort(), options?.timeout || 30000);
+            const timeoutId = setTimeout(() => internalController.abort(), options?.timeout || 1800000); // 30 minute default
 
             if (signal) signal.addEventListener('abort', () => internalController.abort());
             if (options?.signal) options.signal.addEventListener('abort', () => internalController.abort());
 
+            const ollamaOptions: any = {};
+            if (options) {
+                if (options.num_ctx) ollamaOptions.num_ctx = options.num_ctx;
+                if (options.temperature !== undefined) ollamaOptions.temperature = options.temperature;
+                if (options.num_predict !== undefined) ollamaOptions.num_predict = options.num_predict;
+                if (options.top_k !== undefined) ollamaOptions.top_k = options.top_k;
+                if (options.top_p !== undefined) ollamaOptions.top_p = options.top_p;
+                if (options.repeat_penalty !== undefined) ollamaOptions.repeat_penalty = options.repeat_penalty;
+                if (options.stop) ollamaOptions.stop = options.stop;
+            }
+
             const response = await fetch(`${this.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: internalController.signal
+                body: JSON.stringify({ ...body, options: ollamaOptions }),
+                signal: internalController.signal,
+                // @ts-ignore - undici dispatcher support
+                dispatcher: this.dispatcher
             });
             clearTimeout(timeoutId);
 
@@ -271,7 +309,7 @@ export class OllamaBrain implements IBrain {
             const res = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
             clearTimeout(id);
             if (!res.ok) return [];
-            const data = await res.json();
+            const data = await res.json() as any;
             return data.models?.map((m: any) => m.name) || [];
         } catch (e) {
             clearTimeout(id);

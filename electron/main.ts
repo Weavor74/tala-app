@@ -84,7 +84,9 @@ if (fs.existsSync(SETTINGS_PATH)) {
 }
 
 const USER_DATA_PATH = path.join(USER_DATA_DIR, 'user_profile.json');
-const EFFECTIVE_WORKSPACE_ROOT = deploymentMode === 'usb' ? path.join(EXE_DIR, 'workspace') : undefined;
+const EFFECTIVE_WORKSPACE_ROOT = deploymentMode === 'usb'
+  ? path.join(EXE_DIR, 'workspace')
+  : (app.isPackaged ? undefined : process.cwd());
 
 const terminalService = new TerminalService();
 const mcpService = new McpService();

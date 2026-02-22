@@ -486,6 +486,7 @@ export class AgentService {
      */
     public setWorkspaceRoot(root: string) {
         this.ingestion.setWorkspaceRoot(root);
+        this.tools.setRoot(root);
         // Also update system info if needed
         if (this.systemInfo) this.systemInfo.workspaceRoot = root;
     }
@@ -1209,17 +1210,21 @@ If your model does not support native tool-calling API, output a JSON block in y
         systemPrompt += fallbackInstructions;
 
         // 3. Inference Config — read context length for truncation
-        let activeInstance: any = { engine: 'ollama', endpoint: 'http://127.0.0.1:11434', model: 'llama3', ctxLen: 8192 };
+        let activeInstance: any = { engine: 'ollama', endpoint: 'http://127.0.0.1:11434', model: 'llama3', ctxLen: 32768 };
         if (settings.inference?.instances?.length > 0) {
             const candidate = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId) || settings.inference.instances[0];
             activeInstance = candidate;
         }
+
         // 4. Loop
-        const maxTokens = activeInstance.ctxLen || activeInstance.params?.ctxLen || 8192;
-        // Reserve ~30% of context for system prompt + response generation
-        const historyBudget = Math.floor(maxTokens * 0.7);
+        // Use candidate's ctxLen, or default to 32k for Ollama, 8k for others.
+        const defaultCtx = activeInstance.engine === 'ollama' ? 32768 : 8192;
+        const maxTokens = activeInstance.ctxLen || activeInstance.params?.ctxLen || defaultCtx;
+
+        // Reserve context: System Prompt + 20% for generation buffer
         const systemTokens = this.estimateTokens(systemPrompt);
-        const messageBudget = Math.max(historyBudget - systemTokens, 1024);
+        const generationBuffer = Math.floor(maxTokens * 0.2);
+        const messageBudget = Math.max(maxTokens - systemTokens - generationBuffer, 2048);
 
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
@@ -1243,7 +1248,7 @@ If your model does not support native tool-calling API, output a JSON block in y
         // Prepare Native Tools
         const tools = this.tools.getToolDefinitions();
 
-        while (turn < 10) {
+        while (turn < 50) {
             if (signal.aborted) break;
             turn++;
             let assistantText = "";
@@ -1267,7 +1272,7 @@ If your model does not support native tool-calling API, output a JSON block in y
                 const response = await this.brain.streamResponse(truncatedMessages, systemPrompt, (token) => {
                     assistantText += token;
                     onToken(token);
-                }, signal, tools);
+                }, signal, tools, { timeout: 1800000, num_ctx: 32768 });
 
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens || 0;
