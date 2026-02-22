@@ -1,0 +1,18 @@
+{
+  "tala": {
+    "agent_id": "tala",
+    "name": "Tala",
+    "birth_date": "2024-01-01T12:00:00",
+    "birth_place": "San Francisco",
+    "created_at": "2026-02-13T07:55:12.064695",
+    "updated_at": "2026-02-13T07:55:12.064703"
+  },
+  "default-tala": {
+    "agent_id": "default-tala",
+    "name": "Tala (Default)",
+    "birth_date": "1977-07-20T12:00:00",
+    "birth_place": "San Francisco",
+    "created_at": "2026-02-13T09:17:31.171148",
+    "updated_at": "2026-02-21T22:36:06.688600"
+  }
+}

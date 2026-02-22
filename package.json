@@ -1,0 +1,126 @@
+{
+  "name": "tala-app",
+  "private": true,
+  "version": "0.0.0",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\" \"npm run dev:inference\"",
+    "dev:vite": "vite",
+    "dev:electron": "tsc -p electron && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "dev:inference": "launch-inference.bat",
+    "build": "tsc -b && tsc -p electron && vite build",
+    "dist": "npm run build && electron-builder",
+    "dist:universal": "scripts\\make_universal.bat",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "postinstall": "patch-package"
+  },
+  "build": {
+    "appId": "com.antigravity.tala",
+    "productName": "Tala",
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "bin/python-win",
+        "to": "bin/python-win",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "bin/python",
+        "to": "bin/python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      "models",
+      "memory",
+      {
+        "from": "mcp-servers",
+        "to": "mcp-servers",
+        "filter": [
+          "**/*",
+          "!**/venv/**",
+          "!**/__pycache__/**",
+          "!**/.git/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "local-inference",
+        "to": "local-inference",
+        "filter": [
+          "**/*",
+          "!**/venv/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      "start_local_inference.bat",
+      "launch-inference.bat",
+      "PORTABLE_BUILD_README.txt"
+    ],
+    "win": {
+      "target": [
+        "dir"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ]
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ]
+    },
+    "asar": false
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.988.0",
+    "@aws-sdk/lib-storage": "^3.988.0",
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "@modelcontextprotocol/server-filesystem": "^2026.1.14",
+    "@types/archiver": "^7.0.0",
+    "archiver": "^7.0.1",
+    "chokidar": "^5.0.0",
+    "discord.js": "^14.25.1",
+    "electron-squirrel-startup": "^1.0.1",
+    "imapflow": "^1.2.9",
+    "node-pty": "^1.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "reactflow": "^11.11.4",
+    "screenshot-desktop": "^1.15.3",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-web-links": "^0.9.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^26.4.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "patch-package": "^8.0.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
+  }
+}

@@ -1,0 +1,166 @@
+import path from 'path';
+import fs from 'fs';
+import { app } from 'electron';
+
+/**
+ * SettingsManager
+ * 
+ * Centralized, safe settings loader and writer for `app_settings.json`.
+ * Prevents crashes from corrupt JSON by:
+ * - Wrapping all reads in try/catch with automatic backup of corrupt files.
+ * - Returning sensible defaults when the file is missing or invalid.
+ * - Writing atomically (temp file + rename) to avoid partial writes.
+ * - Validating required top-level keys before returning.
+ * 
+ * @example
+ * ```typescript
+ * const settings = SettingsManager.loadSettings('/path/to/app_settings.json');
+ * settings.inference.mode = 'local-only';
+ * SettingsManager.saveSettings('/path/to/app_settings.json', settings);
+ * ```
+ */
+
+/** Minimal default settings — enough to boot without errors. */
+export const DEFAULT_SETTINGS: Record<string, any> = {
+    deploymentMode: 'local',
+    inference: {
+        mode: 'hybrid',
+        activeLocalId: '',
+        activeCloudId: '',
+        instances: []
+    },
+    storage: {
+        activeProviderId: 'local-chroma',
+        providers: [],
+        mode: 'local'
+    },
+    backup: {
+        enabled: false,
+        intervalHours: 24,
+        localPath: ''
+    },
+    auth: {
+        localMethod: 'none',
+        keys: {}
+    },
+    server: {
+        localRuntime: 'node'
+    },
+    agent: {
+        activeProfileId: 'tala',
+        profiles: [{
+            id: 'tala',
+            name: 'Tala',
+            systemPrompt: 'You are Tala, an advanced autonomous agent.',
+            temperature: 0.7,
+            astroBirthDate: '2024-01-01T12:00:00',
+            astroBirthPlace: 'San Francisco',
+            rules: { global: '', workspace: '' },
+            memory: { globalPath: '', workspacePath: '' },
+            mcp: { global: [], workspace: [] }
+        }]
+    },
+    sourceControl: {
+        providers: []
+    },
+    system: {
+        env: {}
+    },
+    mcpServers: [],
+    guardrails: [],
+    workflows: {}
+};
+
+/** Deep merges two objects. */
+function deepMerge(target: any, source: any): any {
+    const output = { ...target };
+    if (typeof target === 'object' && target !== null && typeof source === 'object' && source !== null) {
+        Object.keys(source).forEach(key => {
+            if (typeof source[key] === 'object' && source[key] !== null && !Array.isArray(source[key])) {
+                if (!(key in target)) {
+                    output[key] = source[key];
+                } else {
+                    output[key] = deepMerge(target[key], source[key]);
+                }
+            } else {
+                output[key] = source[key];
+            }
+        });
+    }
+    return output;
+}
+
+/**
+ * Loads settings from disk with full safety:
+ * 1. If file doesn't exist → returns a deep copy of DEFAULT_SETTINGS.
+ * 2. If JSON parse fails → backs up corrupt file as `.bak`, returns defaults.
+ * 3. If parsed object is missing required keys → merges with defaults.
+ * 
+ * @param settingsPath - Absolute path to `app_settings.json`.
+ * @returns A valid settings object, guaranteed to have all top-level keys.
+ */
+export function loadSettings(settingsPath: string): Record<string, any> {
+    const defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+
+    if (!fs.existsSync(settingsPath)) {
+        console.log('[SettingsManager] No settings file found, using defaults.');
+        return defaults;
+    }
+
+    try {
+        const raw = fs.readFileSync(settingsPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            throw new Error('Settings file is not a JSON object');
+        }
+
+        // Deep merge with defaults to fill missing keys at any level
+        return deepMerge(defaults, parsed);
+
+    } catch (e: any) {
+        console.error(`[SettingsManager] Failed to parse settings: ${e.message}`);
+
+        // Backup the corrupt file
+        try {
+            const backupPath = settingsPath + '.bak';
+            fs.copyFileSync(settingsPath, backupPath);
+            console.log(`[SettingsManager] Corrupt file backed up to ${backupPath}`);
+        } catch (backupErr) {
+            console.error('[SettingsManager] Could not backup corrupt file.');
+        }
+
+        return defaults;
+    }
+}
+
+/**
+ * Writes settings to disk atomically.
+ * 
+ * Writes to a `.tmp` file first, then renames to the target path.
+ * This prevents partial writes from corrupting the settings file if
+ * the process is killed mid-write.
+ * 
+ * @param settingsPath - Absolute path to `app_settings.json`.
+ * @param data - The settings object to persist.
+ * @returns `true` on success, `false` on failure.
+ */
+export function saveSettings(settingsPath: string, data: Record<string, any>): boolean {
+    try {
+        const tmpPath = settingsPath + '.tmp';
+        const json = JSON.stringify(data, null, 2);
+        fs.writeFileSync(tmpPath, json, 'utf-8');
+        fs.renameSync(tmpPath, settingsPath);
+        return true;
+    } catch (e: any) {
+        console.error(`[SettingsManager] Failed to save settings: ${e.message}`);
+        // Fallback: try direct write if rename fails (e.g., cross-device)
+        try {
+            fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2), 'utf-8');
+            return true;
+        } catch (e2) {
+            console.error('[SettingsManager] Direct write also failed.');
+            return false;
+        }
+    }
+}

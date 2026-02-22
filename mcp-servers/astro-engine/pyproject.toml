@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro_emotion_engine"
+version = "0.1.0"
+dependencies = [
+    "pydantic>=2.0",
+    "python-dateutil",
+    "pytz",
+    "pyswisseph",
+    "mcp"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["astro_emotion_engine*"]

@@ -1,0 +1,22 @@
+# Core MCP SDK & CLI
+mcp[cli]
+
+# Server / API
+fastapi
+uvicorn
+
+# Data Verification & Utils
+pydantic>=2.0
+numpy
+python-dateutil
+pytz
+
+# Astrology / Emotion Engine
+pyswisseph
+swisseph
+
+# Memory / Storage
+mem0ai
+
+# Local Inference (CPU)
+llama-cpp-python[server]

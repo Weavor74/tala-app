@@ -1,0 +1,106 @@
+{
+  "id": "wf-1770781296488",
+  "name": "Summarize URL",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "input",
+      "position": {
+        "x": 50,
+        "y": 100
+      },
+      "data": {
+        "label": "TRIGGER: Manual",
+        "triggerType": "manual"
+      },
+      "style": {
+        "border": "1px solid #777",
+        "padding": 10,
+        "borderRadius": 5,
+        "background": "#d3869b",
+        "color": "#fff",
+        "minWidth": 150
+      }
+    },
+    {
+      "id": "http-1",
+      "type": "default",
+      "position": {
+        "x": 250,
+        "y": 100
+      },
+      "data": {
+        "label": "HTTP: Fetch Content",
+        "method": "GET",
+        "url": "https://example.com"
+      },
+      "style": {
+        "border": "1px solid #777",
+        "padding": 10,
+        "borderRadius": 5,
+        "background": "#1e1e1e",
+        "color": "#fff",
+        "minWidth": 150
+      }
+    },
+    {
+      "id": "agent-1",
+      "type": "default",
+      "position": {
+        "x": 450,
+        "y": 100
+      },
+      "data": {
+        "label": "AGENT: Summarize",
+        "prompt": "Please summarize the following web content in 3 bullet points:\n\n{{input.body}}"
+      },
+      "style": {
+        "border": "1px solid #777",
+        "padding": 10,
+        "borderRadius": 5,
+        "background": "#252526",
+        "color": "#fff",
+        "minWidth": 150
+      }
+    },
+    {
+      "id": "tool-1",
+      "type": "default",
+      "position": {
+        "x": 650,
+        "y": 100
+      },
+      "data": {
+        "label": "TOOL: Save to File",
+        "toolName": "write_file",
+        "args": "{\n  \"path\": \"summary.txt\",\n  \"content\": \"{{input.content}}\"\n}"
+      },
+      "style": {
+        "border": "1px solid #777",
+        "padding": 10,
+        "borderRadius": 5,
+        "background": "#1e1e1e",
+        "color": "#fff",
+        "minWidth": 150
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1-2",
+      "source": "trigger-1",
+      "target": "http-1"
+    },
+    {
+      "id": "e2-3",
+      "source": "http-1",
+      "target": "agent-1"
+    },
+    {
+      "id": "e3-4",
+      "source": "agent-1",
+      "target": "tool-1"
+    }
+  ],
+  "active": true
+}

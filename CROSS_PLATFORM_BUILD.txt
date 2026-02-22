@@ -1,0 +1,92 @@
+TALA APP - UNIVERSAL BUILD SYSTEM
+===================================
+
+One USB drive. Any platform. Zero installation.
+
+============================================================
+QUICK START (From your Windows dev machine)
+============================================================
+
+1. Run:  scripts\make_universal.bat
+
+   This ONE command will:
+   - Download Python 3.13 for Windows, Mac, and Linux
+   - Install ALL dependencies for each platform
+   - Build the Electron app for Windows
+   - Attempt cross-build for Linux
+   - Assemble everything into universal-build\
+
+2. Copy the universal-build\ folder to your USB drive
+
+3. On the target machine:
+   - Windows:   Double-click launch.bat + launch-inference.bat
+   - Mac/Linux: ./launch.sh + ./launch-inference.sh
+
+============================================================
+DIRECTORY STRUCTURE
+============================================================
+
+universal-build\
+|-- launch.bat               Windows app launcher
+|-- launch.sh                Mac/Linux app launcher
+|-- launch-inference.bat     Windows AI brain launcher
+|-- launch-inference.sh      Mac/Linux AI brain launcher
+|
+|-- platforms\
+|   |-- win\                 Windows Electron app (Tala.exe)
+|   |-- linux\               Linux Electron app (if cross-build worked)
+|   +-- mac\                 Mac app (needs Mac to build)
+|
+|-- bin\
+|   |-- python-win\          Python 3.13 + deps (Windows)
+|   |-- python-mac\          Python 3.13 + deps (macOS)
+|   +-- python-linux\        Python 3.13 + deps (Linux)
+|
+|-- models\                  AI model (shared, ~5GB)
+|-- memory\                  RAG database (shared)
++-- mcp-servers\             Intelligence modules (shared)
+
+============================================================
+PLATFORM SUPPORT MATRIX
+============================================================
+
+Feature              Windows     Linux       Mac
+--------------------------------------------------
+Electron App         FULL        Cross-built Need Mac
+Python Runtime       FULL        FULL        FULL
+Local Inference      FULL        FULL        FULL
+RAG Memory           FULL        FULL        FULL
+Astro Engine         FULL        FULL        FULL
+Terminal (node-pty)  YES         NO*         NO*
+Screenshots          YES         NO*         NO*
+
+* Cross-compiled builds lack native modules.
+  Build natively on those platforms for full features.
+
+============================================================
+BUILDING ON MAC/LINUX (For full features)
+============================================================
+
+If you have access to a Mac or Linux machine:
+
+1. Copy the project source (not universal-build) to that machine
+2. Run: npm install
+3. Run: npm run dist
+4. Copy the resulting dist/ into the universal-build/platforms/ folder
+
+This gives you native binaries with full node-pty support.
+
+============================================================
+SIZE ESTIMATE
+============================================================
+
+Component               Size
+-------------------------------
+Python (3 platforms)    ~600 MB
+AI Model (GGUF)         ~5 GB
+Electron (Windows)      ~200 MB
+MCP Servers + Memory    ~100 MB
+-------------------------------
+Total                   ~6 GB
+
+Fits on a 16GB+ USB drive.
