@@ -94,7 +94,13 @@ export class AnnotationParser {
 
         if (!fs.existsSync(filePath)) return result;
 
-        // Skip binary files
+        // Skip binary files and large files (> 500KB)
+        const stats = fs.statSync(filePath);
+        if (stats.size > 512 * 1024) {
+            console.debug(`[AnnotationParser] Skipping large file: ${filePath} (${Math.round(stats.size / 1024)}KB)`);
+            return result;
+        }
+
         const ext = path.extname(filePath).toLowerCase();
         const binaryExts = ['.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.mp3', '.mp4', '.zip', '.tar', '.gz', '.exe', '.dll', '.so', '.dylib'];
         if (binaryExts.includes(ext)) return result;
@@ -226,9 +232,9 @@ export class AnnotationParser {
      * Scans an entire directory tree for files with @tala annotations.
      * Useful for building a project-wide annotation summary.
      */
-    static scanDirectory(dirPath: string, maxDepth: number = 3): AnnotationResult[] {
+    static scanDirectory(dirPath: string, maxDepth: number = 2): AnnotationResult[] {
         const results: AnnotationResult[] = [];
-        const skipDirs = new Set(['node_modules', '.git', 'dist', 'dist-electron', '__pycache__', '.next', 'coverage']);
+        const skipDirs = new Set(['node_modules', '.git', 'dist', 'dist-electron', '__pycache__', '.next', 'coverage', 'data', 'bin', '.gemini', 'tmp', 'venv', 'env', 'build']);
 
         const walk = (dir: string, depth: number) => {
             if (depth > maxDepth) return;
@@ -236,7 +242,9 @@ export class AnnotationParser {
             try {
                 const entries = fs.readdirSync(dir, { withFileTypes: true });
                 for (const entry of entries) {
-                    if (skipDirs.has(entry.name)) continue;
+                    const lowName = entry.name.toLowerCase();
+                    if (skipDirs.has(lowName)) continue;
+                    if (entry.name.startsWith('.')) continue; // Skip hidden dirs (except .tala if we add it)
 
                     const fullPath = path.join(dir, entry.name);
                     if (entry.isDirectory()) {

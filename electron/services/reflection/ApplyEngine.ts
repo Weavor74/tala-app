@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { ChangeProposal, OutcomeRecord } from './types';
@@ -21,8 +22,8 @@ export class ApplyEngine {
 
     constructor(store: ArtifactStore, workspaceRoot?: string) {
         this.store = store;
-        // Default to the tala-app root if not specified
-        this.workspaceRoot = workspaceRoot || path.resolve(__dirname, '..', '..', '..');
+        // Use appPath as fallback (standard workspace)
+        this.workspaceRoot = workspaceRoot || app.getAppPath();
     }
 
     /**

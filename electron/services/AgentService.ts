@@ -14,6 +14,9 @@ import { TerminalService } from './TerminalService';
 import { FunctionService } from './FunctionService';
 import { OrchestratorService } from './OrchestratorService';
 import { loadSettings } from './SettingsManager';
+
+// @tala:priority Always verify brain settings before proceeding with multi-turn loops.
+// @tala:warn Never remove the exponential backoff from streamWithRetry.
 import { InferenceService } from './InferenceService';
 import { IngestionService } from './IngestionService';
 import { ReflectionEngine } from './reflection/ReflectionEngine';

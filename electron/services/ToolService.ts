@@ -305,6 +305,11 @@ export class ToolService {
                         return "Error: File not found or access denied.";
                     }
 
+                    const stats = fs.statSync(targetPath);
+                    if (stats.size > 1024 * 1024) {
+                        return `Error: File is too large to read directly (${Math.round(stats.size / 1024)}KB). Use a search tool or list directories instead.`;
+                    }
+
                     const content = fs.readFileSync(targetPath, 'utf-8');
                     const lines = content.split('\n');
 

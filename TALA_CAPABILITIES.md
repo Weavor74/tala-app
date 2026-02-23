@@ -1,4 +1,5 @@
 # Tala System Capability Report
+<!-- @tala:context This is the authoritative source for system capabilities. Keep it updated after every major feature merge. -->
 **Updated**: 2026-02-22
 
 ## Identity & Core
