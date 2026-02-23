@@ -307,8 +307,25 @@ contextBridge.exposeInMainWorld('tala', {
 
 
     // ─── Guardrails ───────────────────────────────────────────────
-    /** Saves the user's content guardrail rules. */
+    /** Saves the user's content guardrail rules (legacy). */
     saveGuardrails: (guardrails: any[]) => ipcRenderer.invoke('save-guardrails', guardrails),
+
+    // ─── Guard Builder (GuardrailsAI-compatible) ──────────────────
+    /** Lists all Guard definitions. */
+    listGuards: () => ipcRenderer.invoke('guardrail:list'),
+    /** Gets a Guard by ID. */
+    getGuard: (id: string) => ipcRenderer.invoke('guardrail:get', id),
+    /** Creates or updates a Guard definition. */
+    saveGuard: (definition: any) => ipcRenderer.invoke('guardrail:save', definition),
+    /** Deletes a Guard by ID. */
+    deleteGuard: (id: string) => ipcRenderer.invoke('guardrail:delete', id),
+    /** Validates text against a Guard's validator stack. */
+    validateWithGuard: (guardId: string, value: string, target: 'input' | 'output') =>
+        ipcRenderer.invoke('guardrail:validate', { guardId, value, target }),
+    /** Returns the full validator registry (types, labels, args schemas). */
+    getValidatorRegistry: () => ipcRenderer.invoke('guardrail:get-validators'),
+    /** Exports a Guard to a standalone Python script via save dialog. */
+    exportGuardToPython: (guardId: string) => ipcRenderer.invoke('guardrail:export-to-python', guardId),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */

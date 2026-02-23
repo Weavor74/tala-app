@@ -3412,142 +3412,1148 @@ Tone: Minimalist, calm, practical.
                     )
                 }
 
-                {/* GUARDRAILS TAB */}
-                {
-                    activeTab === 'guardrails' && (
-                        <div style={sectionStyle}>
-                            <h2 style={{ color: '#dcdcaa', marginBottom: 5 }}>GUARDRAILS</h2>
-                            <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 20 }}>Define safety rules that can be applied globally, per agent, or per session.</p>
+                {/* GUARDRAILS TAB — GuardrailsAI-compatible Guard Builder + Validator Builder */}
+                {activeTab === 'guardrails' && <GuardrailsTab settings={settings} api={api} />}
 
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 15 }}>
-                                <button
-                                    onClick={() => {
-                                        const newGuardrail = {
-                                            id: `guardrail-${Date.now()}`,
-                                            name: 'New Guardrail',
-                                            rules: 'Content must be safe and appropriate.',
-                                            enabled: true,
-                                            scope: 'global' as const
-                                        };
-                                        const updated = [...(settings.guardrails || []), newGuardrail];
-                                        setSettings({ ...settings, guardrails: updated });
-                                    }}
-                                    style={{ background: '#2da042', color: '#fff', border: 'none', padding: '8px 16px', cursor: 'pointer', fontSize: 12 }}
-                                >
-                                    + ADD GUARDRAIL
-                                </button>
+            </div>
+            {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}
+        </div>
+    );
+};
+
+
+// ═══════════════════════════════════════════════════════════════
+
+// GuardBuilderPanel — GuardrailsAI-compatible Guard Builder UI
+// ═══════════════════════════════════════════════════════════════
+const CATEGORY_COLORS: Record<string, string> = {
+    'Etiquette': '#d79921',
+    'Brand Risk': '#d65d0e',
+    'Data Leakage': '#cc241d',
+    'Jailbreaking': '#b16286',
+    'Factuality': '#689d6a',
+    'Formatting': '#458588',
+    'Custom': '#928374',
+};
+
+const ON_FAIL_OPTIONS = [
+    { value: 'noop', label: 'Noop — log, pass through' },
+    { value: 'fix', label: 'Fix — auto-correct' },
+    { value: 'filter', label: 'Filter — remove segment' },
+    { value: 'refrain', label: 'Refrain — return empty' },
+    { value: 'exception', label: 'Exception — block pipeline' },
+];
+
+const TARGET_OPTIONS = [
+    { value: 'input', label: 'Input (User ➜ LLM)' },
+    { value: 'output', label: 'Output (LLM ➜ User)' },
+    { value: 'both', label: 'Both' },
+];
+
+function GuardBuilderPanel({ api }: { settings: any; api: any }) {
+    const [guards, setGuards] = useState<any[]>([]);
+    const [selectedGuardId, setSelectedGuardId] = useState<string | null>(null);
+    const [validatorRegistry, setValidatorRegistry] = useState<any[]>([]);
+    const [gbStatus, setGbStatus] = useState('');
+    const [testText, setTestText] = useState('');
+    const [testTarget, setTestTarget] = useState<'input' | 'output'>('output');
+    const [testResult, setTestResult] = useState<any | null>(null);
+    const [testRunning, setTestRunning] = useState(false);
+    const [agentProfiles, setAgentProfiles] = useState<any[]>([]);
+    const [wfList, setWfList] = useState<any[]>([]);
+    const [showAddValidator, setShowAddValidator] = useState(false);
+    const [validatorFilter, setValidatorFilter] = useState('');
+
+    const selectedGuard = guards.find((g: any) => g.id === selectedGuardId) || null;
+
+    const flash = (msg: string) => {
+        setGbStatus(msg);
+        setTimeout(() => setGbStatus(''), 3500);
+    };
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                if (api?.listGuards) {
+                    const gs = await api.listGuards();
+                    setGuards(gs || []);
+                }
+                if (api?.getValidatorRegistry) {
+                    const reg = await api.getValidatorRegistry();
+                    setValidatorRegistry(reg || []);
+                }
+                if (api?.getSettings) {
+                    const s = await api.getSettings();
+                    const sd = s?.global || s;
+                    setAgentProfiles(sd?.agentProfiles || []);
+                }
+                if (api?.getWorkflows) {
+                    const wfs = await api.getWorkflows();
+                    setWfList(wfs || []);
+                }
+            } catch (e: any) { flash(`Load error: ${e.message}`); }
+        };
+        load();
+    }, []);
+
+    const refreshGuards = async () => {
+        if (api?.listGuards) { const gs = await api.listGuards(); setGuards(gs || []); }
+    };
+
+    const handleNewGuard = async () => {
+        if (!api?.saveGuard) return;
+        const g = await api.saveGuard({ name: 'New Guard', description: '', validators: [], appliedToAgents: [], appliedToWorkflows: [] });
+        await refreshGuards();
+        setSelectedGuardId(g.id);
+    };
+
+    const handleDeleteGuard = async () => {
+        if (!selectedGuardId || !api?.deleteGuard) return;
+        if (!confirm(`Delete guard "${selectedGuard?.name}"?`)) return;
+        await api.deleteGuard(selectedGuardId);
+        setSelectedGuardId(null);
+        await refreshGuards();
+        flash('Guard deleted.');
+    };
+
+    const handleSaveGuard = async (patch: any) => {
+        if (!selectedGuard || !api?.saveGuard) return;
+        await api.saveGuard({ ...selectedGuard, ...patch });
+        await refreshGuards();
+        flash('Saved ✓');
+    };
+
+    const updateGuardLocal = (field: string, value: any) => {
+        setGuards((prev: any[]) => prev.map((g: any) => g.id === selectedGuardId ? { ...g, [field]: value } : g));
+    };
+
+    const addValidator = async (type: string) => {
+        if (!selectedGuard) return;
+        const meta = validatorRegistry.find((m: any) => m.type === type);
+        const defaultArgs: Record<string, any> = {};
+        if (meta?.argsSchema) Object.entries(meta.argsSchema).forEach(([k, s]: [string, any]) => { defaultArgs[k] = s.default; });
+        const nv = { id: `v-${Date.now()}`, type, target: 'both', on_fail: 'noop', args: defaultArgs, enabled: true };
+        await handleSaveGuard({ validators: [...(selectedGuard.validators || []), nv] });
+        setShowAddValidator(false);
+    };
+
+    const removeValidator = async (vid: string) => {
+        if (!selectedGuard) return;
+        await handleSaveGuard({ validators: (selectedGuard.validators || []).filter((v: any) => v.id !== vid) });
+    };
+
+    const updateValidator = async (vid: string, patch: any) => {
+        if (!selectedGuard) return;
+        await handleSaveGuard({ validators: (selectedGuard.validators || []).map((v: any) => v.id === vid ? { ...v, ...patch } : v) });
+    };
+
+    const handleRunTest = async () => {
+        if (!selectedGuardId || !testText || !api?.validateWithGuard) return;
+        setTestRunning(true); setTestResult(null);
+        try { setTestResult(await api.validateWithGuard(selectedGuardId, testText, testTarget)); }
+        catch (e: any) { setTestResult({ error: e.message }); }
+        finally { setTestRunning(false); }
+    };
+
+    const handleExport = async () => {
+        if (!selectedGuardId || !api?.exportGuardToPython) return;
+        const r = await api.exportGuardToPython(selectedGuardId);
+        if (r?.success) flash(`Exported → ${r.path}`);
+        else if (r?.error) flash(`Export failed: ${r.error}`);
+    };
+
+    const panelBase: React.CSSProperties = { background: 'rgba(30,30,30,0.7)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: 20, backdropFilter: 'blur(10px)', marginBottom: 16 };
+    const btnP: React.CSSProperties = { background: 'linear-gradient(135deg,#007acc,#005f9e)', color: '#fff', border: 'none', padding: '7px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 700, fontSize: 11, letterSpacing: 0.8, transition: '0.2s' };
+    const btnD: React.CSSProperties = { background: 'rgba(197,48,48,0.8)', color: '#fff', border: 'none', padding: '7px 13px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 };
+    const btnG: React.CSSProperties = { background: 'rgba(255,255,255,0.05)', color: '#ccc', border: '1px solid rgba(255,255,255,0.1)', padding: '7px 13px', borderRadius: 4, cursor: 'pointer', fontSize: 11 };
+    const inp: React.CSSProperties = { background: '#111', border: '1px solid #333', color: '#eee', padding: '9px 12px', fontSize: 12, borderRadius: 4, width: '100%', outline: 'none' };
+    const sel: React.CSSProperties = { ...inp, cursor: 'pointer' };
+    const lbl9: React.CSSProperties = { display: 'block', fontSize: 9, fontWeight: 800, color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 };
+
+    const catBadge = (cat: string): React.CSSProperties => ({ display: 'inline-block', padding: '2px 7px', borderRadius: 10, fontSize: 9, fontWeight: 700, letterSpacing: 1, background: `${CATEGORY_COLORS[cat] || '#555'}22`, color: CATEGORY_COLORS[cat] || '#aaa', border: `1px solid ${CATEGORY_COLORS[cat] || '#555'}44`, marginLeft: 6 });
+
+    const byCategory = validatorRegistry
+        .filter((m: any) => !validatorFilter || m.label.toLowerCase().includes(validatorFilter.toLowerCase()) || m.category.toLowerCase().includes(validatorFilter.toLowerCase()))
+        .reduce((acc: any, m: any) => { if (!acc[m.category]) acc[m.category] = []; acc[m.category].push(m); return acc; }, {});
+
+    return (
+        <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div>
+                    <h2 style={{ margin: 0, color: '#dcdcaa', fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>🛡 GUARD BUILDER</h2>
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: '#666' }}>GuardrailsAI-compatible validator stacks — validate LLM inputs &amp; outputs</p>
+                </div>
+                <button onClick={handleNewGuard} style={btnP}>+ NEW GUARD</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: guards.length > 0 ? '200px 1fr' : '1fr', gap: 14 }}>
+                {/* Guard List */}
+                {guards.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {guards.map((g: any) => (
+                            <div key={g.id} onClick={() => setSelectedGuardId(g.id)} style={{ padding: '11px 13px', borderRadius: 6, cursor: 'pointer', background: selectedGuardId === g.id ? 'rgba(0,122,204,0.2)' : 'rgba(255,255,255,0.03)', border: selectedGuardId === g.id ? '1px solid rgba(0,122,204,0.4)' : '1px solid rgba(255,255,255,0.05)', transition: '0.15s' }}>
+                                <div style={{ fontWeight: 700, fontSize: 12, color: '#eee', marginBottom: 2 }}>{g.name}</div>
+                                <div style={{ fontSize: 10, color: '#555' }}>{(g.validators || []).length} validator{(g.validators || []).length !== 1 ? 's' : ''}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Editor */}
+                <div>
+                    {!selectedGuard ? (
+                        <div style={{ ...panelBase, textAlign: 'center', padding: 60 }}>
+                            <div style={{ fontSize: 38, marginBottom: 10, opacity: 0.2 }}>🛡</div>
+                            <div style={{ color: '#444', fontSize: 13 }}>{guards.length === 0 ? 'No guards yet. Click "+ NEW GUARD".' : 'Select a guard to edit.'}</div>
+                        </div>
+                    ) : (<>
+                        {/* Meta */}
+                        <div style={panelBase}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                                <div style={{ flex: 1, marginRight: 14 }}>
+                                    <label style={lbl9}>Guard Name</label>
+                                    <input style={inp} value={selectedGuard.name} onChange={e => updateGuardLocal('name', e.target.value)} onBlur={() => handleSaveGuard({ name: selectedGuard.name })} />
+                                </div>
+                                <div style={{ display: 'flex', gap: 7, marginTop: 20 }}>
+                                    <button onClick={handleExport} style={btnG} title="Export as guardrails-ai Python">↑ PY</button>
+                                    <button onClick={handleDeleteGuard} style={btnD}>DELETE</button>
+                                </div>
+                            </div>
+                            <label style={lbl9}>Description</label>
+                            <input style={inp} value={selectedGuard.description || ''} placeholder="Optional description..." onChange={e => updateGuardLocal('description', e.target.value)} onBlur={() => handleSaveGuard({ description: selectedGuard.description })} />
+                        </div>
+
+                        {/* Validator Stack */}
+                        <div style={panelBase}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <h3 style={{ margin: 0, fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>Validator Stack</h3>
+                                <button onClick={() => setShowAddValidator(!showAddValidator)} style={btnP}>{showAddValidator ? '✕ Cancel' : '+ ADD VALIDATOR'}</button>
                             </div>
 
-                            {/* GUARDRAIL LIST */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-                                {(settings.guardrails || []).map((g: any, idx: number) => (
-                                    <div
-                                        key={g.id}
-                                        style={{
-                                            background: '#252526',
-                                            border: '1px solid #3e3e42',
-                                            padding: 15
-                                        }}
-                                    >
-                                        {/* HEADER ROW */}
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                                            <input
-                                                value={g.name}
-                                                onChange={(e) => {
-                                                    const updated = [...(settings.guardrails || [])];
-                                                    updated[idx] = { ...updated[idx], name: e.target.value };
-                                                    setSettings({ ...settings, guardrails: updated });
-                                                }}
-                                                style={{ background: 'transparent', border: 'none', color: '#dcdcaa', fontSize: 14, fontWeight: 'bold', flex: 1 }}
-                                            />
-                                            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                                                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#888' }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={g.enabled}
-                                                        onChange={(e) => {
-                                                            const updated = [...(settings.guardrails || [])];
-                                                            updated[idx] = { ...updated[idx], enabled: e.target.checked };
-                                                            setSettings({ ...settings, guardrails: updated });
-                                                        }}
-                                                    />
-                                                    Enabled
+                            {/* Picker */}
+                            {showAddValidator && (
+                                <div style={{ background: '#111', border: '1px solid #333', borderRadius: 6, padding: 14, marginBottom: 14 }}>
+                                    <input style={{ ...inp, marginBottom: 10 }} placeholder="🔍 Filter validators..." value={validatorFilter} onChange={e => setValidatorFilter(e.target.value)} autoFocus />
+                                    <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                        {Object.entries(byCategory).map(([cat, items]: [string, any]) => (
+                                            <div key={cat}>
+                                                <div style={{ fontSize: 8, fontWeight: 900, color: CATEGORY_COLORS[cat] || '#888', letterSpacing: 2, textTransform: 'uppercase', padding: '7px 3px 3px', borderBottom: `1px solid ${CATEGORY_COLORS[cat] || '#333'}33` }}>{cat}</div>
+                                                {items.map((m: any) => (
+                                                    <div key={m.type} onClick={() => addValidator(m.type)} style={{ padding: '8px 9px', cursor: 'pointer', borderRadius: 3, background: 'transparent', marginTop: 2, transition: '0.1s' }} onMouseOver={e => (e.currentTarget.style.background = 'rgba(0,122,204,0.15)')} onMouseOut={e => (e.currentTarget.style.background = 'transparent')}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                            <span style={{ fontWeight: 700, fontSize: 12, color: '#ddd' }}>{m.label}</span>
+                                                            <span style={{ fontSize: 9, color: m.impl === 'llm' ? '#b16286' : '#689d6a', fontWeight: 700 }}>{m.impl === 'llm' ? '🤖 LLM' : '📐 RULE'}</span>
+                                                        </div>
+                                                        <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>{m.description}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {(selectedGuard.validators || []).length === 0 && !showAddValidator && (
+                                <div style={{ textAlign: 'center', padding: '20px 0', color: '#444', fontSize: 12 }}>No validators. Click "+ ADD VALIDATOR".</div>
+                            )}
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                                {(selectedGuard.validators || []).map((v: any, idx: number) => {
+                                    const meta = validatorRegistry.find((m: any) => m.type === v.type);
+                                    return (
+                                        <div key={v.id} style={{ background: v.enabled ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.2)', border: `1px solid ${v.enabled ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.02)'}`, borderRadius: 6, padding: 13, opacity: v.enabled ? 1 : 0.5 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                                    <span style={{ color: '#555', fontSize: 10 }}>#{idx + 1}</span>
+                                                    <span style={{ fontWeight: 800, fontSize: 13, color: '#dcdcaa' }}>{meta?.label || v.type}</span>
+                                                    {meta?.category && <span style={catBadge(meta.category)}>{meta.category}</span>}
+                                                    {meta?.impl && <span style={{ fontSize: 9, color: meta.impl === 'llm' ? '#b16286' : '#689d6a', fontWeight: 700, marginLeft: 4 }}>{meta.impl === 'llm' ? '🤖 LLM' : '📐 RULE'}</span>}
+                                                </div>
+                                                <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                                                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#888', cursor: 'pointer' }}>
+                                                        <input type="checkbox" checked={v.enabled} onChange={e => updateValidator(v.id, { enabled: e.target.checked })} /> ON
+                                                    </label>
+                                                    <button onClick={() => removeValidator(v.id)} style={{ background: 'rgba(197,48,48,0.6)', color: '#fff', border: 'none', padding: '2px 7px', borderRadius: 3, cursor: 'pointer', fontSize: 10 }}>✕</button>
+                                                </div>
+                                            </div>
+                                            {meta?.description && <div style={{ fontSize: 10, color: '#555', marginBottom: 9 }}>{meta.description}</div>}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, marginBottom: v.args && Object.keys(v.args).length > 0 ? 9 : 0 }}>
+                                                <div>
+                                                    <label style={lbl9}>Validates</label>
+                                                    <select value={v.target} onChange={e => updateValidator(v.id, { target: e.target.value })} style={sel}>
+                                                        {TARGET_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label style={lbl9}>On Fail</label>
+                                                    <select value={v.on_fail} onChange={e => updateValidator(v.id, { on_fail: e.target.value })} style={{ ...sel, borderColor: v.on_fail === 'exception' ? '#cc241d88' : undefined }}>
+                                                        {ON_FAIL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            {meta?.argsSchema && Object.keys(meta.argsSchema).length > 0 && (
+                                                <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 4, padding: '9px 11px' }}>
+                                                    <div style={{ fontSize: 8, fontWeight: 900, color: '#555', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 7 }}>PARAMETERS</div>
+                                                    {Object.entries(meta.argsSchema).map(([key, schema]: [string, any]) => (
+                                                        <div key={key} style={{ marginBottom: 7 }}>
+                                                            <label style={{ fontSize: 9, color: '#666', display: 'block', marginBottom: 3 }}>{key} — <span style={{ color: '#444' }}>{schema.description}</span></label>
+                                                            {schema.type === 'array' ? (
+                                                                <input style={inp} value={Array.isArray(v.args[key]) ? v.args[key].join(', ') : (v.args[key] || '')} placeholder="Comma-separated..." onChange={e => updateValidator(v.id, { args: { ...v.args, [key]: e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean) } })} />
+                                                            ) : schema.type === 'number' ? (
+                                                                <input type="number" style={inp} value={v.args[key] ?? schema.default} onChange={e => updateValidator(v.id, { args: { ...v.args, [key]: parseFloat(e.target.value) } })} />
+                                                            ) : (
+                                                                <input style={inp} value={v.args[key] ?? schema.default} onChange={e => updateValidator(v.id, { args: { ...v.args, [key]: e.target.value } })} />
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Apply To */}
+                        <div style={panelBase}>
+                            <h3 style={{ margin: '0 0 13px', fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>Apply To</h3>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                <div>
+                                    <label style={lbl9}>Agent Profiles</label>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 130, overflowY: 'auto' }}>
+                                        {agentProfiles.length === 0
+                                            ? <div style={{ color: '#444', fontSize: 11 }}>No agent profiles.</div>
+                                            : agentProfiles.map((p: any) => (
+                                                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#ccc', cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={(selectedGuard.appliedToAgents || []).includes(p.id)} onChange={e => {
+                                                        const cur = selectedGuard.appliedToAgents || [];
+                                                        handleSaveGuard({ appliedToAgents: e.target.checked ? [...cur, p.id] : cur.filter((id: string) => id !== p.id) });
+                                                    }} /> {p.name || p.id}
                                                 </label>
-                                                <button
-                                                    onClick={() => {
-                                                        const updated = (settings.guardrails || []).filter((_: any, i: number) => i !== idx);
-                                                        setSettings({ ...settings, guardrails: updated });
-                                                    }}
-                                                    style={{ background: '#c53030', color: '#fff', border: 'none', padding: '4px 8px', cursor: 'pointer', fontSize: 11 }}
-                                                >
-                                                    DELETE
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {/* SCOPE ROW */}
-                                        <div style={{ display: 'flex', gap: 15, marginBottom: 10, alignItems: 'center' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                                <label style={{ fontSize: 11, color: '#888' }}>Scope:</label>
-                                                <select
-                                                    value={g.scope || 'global'}
-                                                    onChange={(e) => {
-                                                        const updated = [...(settings.guardrails || [])];
-                                                        const newScope = e.target.value as 'global' | 'agent' | 'session';
-                                                        updated[idx] = { ...updated[idx], scope: newScope };
-                                                        setSettings({ ...settings, guardrails: updated });
-                                                    }}
-                                                    style={{ background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: '4px 8px', fontSize: 11 }}
-                                                >
-                                                    <option value="global">Global (All Agents)</option>
-                                                    <option value="agent">Per Agent</option>
-                                                    <option value="session">Per Session (Temporary)</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        {/* RULES TEXTAREA */}
-                                        <textarea
-                                            value={g.rules}
-                                            onChange={(e) => {
-                                                const updated = [...(settings.guardrails || [])];
-                                                updated[idx] = { ...updated[idx], rules: e.target.value };
-                                                setSettings({ ...settings, guardrails: updated });
-                                            }}
-                                            rows={4}
-                                            placeholder="Enter safety rules..."
-                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 10, fontSize: 12, resize: 'vertical' }}
-                                        />
-
-                                        {/* SCOPE INDICATOR */}
-                                        <div style={{ marginTop: 8, fontSize: 10, color: '#569cd6' }}>
-                                            {g.scope === 'global' && '🌐 Applies to all agents and sessions'}
-                                            {g.scope === 'agent' && '👤 Assign to agents in the "agent Providers" tab'}
-                                            {g.scope === 'session' && '⏱️ Temporary - cleared when app restarts'}
-                                        </div>
+                                            ))}
                                     </div>
-                                ))}
-                                {(settings.guardrails || []).length === 0 && (
-                                    <div style={{ color: '#555', fontStyle: 'italic', padding: 20, textAlign: 'center' }}>
-                                        No guardrails defined. Click "+ ADD GUARDRAIL" to create safety rules.
+                                </div>
+                                <div>
+                                    <label style={lbl9}>Workflows</label>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 130, overflowY: 'auto' }}>
+                                        {wfList.length === 0
+                                            ? <div style={{ color: '#444', fontSize: 11 }}>No workflows.</div>
+                                            : wfList.map((w: any) => (
+                                                <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#ccc', cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={(selectedGuard.appliedToWorkflows || []).includes(w.id)} onChange={e => {
+                                                        const cur = selectedGuard.appliedToWorkflows || [];
+                                                        handleSaveGuard({ appliedToWorkflows: e.target.checked ? [...cur, w.id] : cur.filter((id: string) => id !== w.id) });
+                                                    }} /> {w.name || w.id}
+                                                </label>
+                                            ))}
                                     </div>
-                                )}
-                            </div>
-
-                            <div style={{ marginTop: 20, padding: 15, background: '#1e1e1e', border: '1px solid #3e3e42' }}>
-                                <div style={{ fontSize: 11, color: '#888', marginBottom: 10 }}>Note: Changes are saved when you click "APPLY CHANGES" at the top.</div>
-                                <div style={{ fontSize: 11, color: '#569cd6' }}>
-                                    <strong>Scope Guide:</strong><br />
-                                    • <strong>Global:</strong> Applies to all agents and sessions<br />
-                                    • <strong>Per Agent:</strong> Assign in "agent Providers" tab on each agent profile<br />
-                                    • <strong>Per Session:</strong> Not persisted, cleared when app restarts
                                 </div>
                             </div>
                         </div>
-                    )
-                }
-            </div >
-            {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}
-        </div >
+
+                        {/* Test Runner */}
+                        <div style={panelBase}>
+                            <h3 style={{ margin: '0 0 13px', fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>🧪 Test Guard</h3>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, marginBottom: 10 }}>
+                                <textarea rows={3} style={{ ...inp, resize: 'vertical', fontFamily: 'monospace' }} placeholder="Enter sample text to validate..." value={testText} onChange={e => setTestText(e.target.value)} />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <select value={testTarget} onChange={e => setTestTarget(e.target.value as any)} style={{ ...sel, width: 110 }}>
+                                        <option value="input">Input</option>
+                                        <option value="output">Output</option>
+                                    </select>
+                                    <button onClick={handleRunTest} disabled={testRunning || !testText} style={{ ...btnP, opacity: testRunning || !testText ? 0.5 : 1, cursor: testRunning || !testText ? 'not-allowed' : 'pointer' }}>
+                                        {testRunning ? '⟳ ...' : '▶ RUN'}
+                                    </button>
+                                </div>
+                            </div>
+                            {testResult && (
+                                <div style={{ background: testResult.passed ? 'rgba(45,160,66,0.1)' : 'rgba(197,48,48,0.1)', border: `1px solid ${testResult.passed ? '#2da04233' : '#cc241d33'}`, borderRadius: 6, padding: 13 }}>
+                                    <div style={{ fontWeight: 800, fontSize: 13, color: testResult.passed ? '#2da042' : '#cc241d', marginBottom: 8 }}>
+                                        {testResult.error ? `❌ ERROR: ${testResult.error}` : testResult.passed ? '✅ PASSED — All validators cleared' : `⚠️ FAILED — ${(testResult.violations || []).length} violation(s)`}
+                                    </div>
+                                    {(testResult.violations || []).map((v: any, i: number) => (
+                                        <div key={i} style={{ background: 'rgba(197,48,48,0.1)', borderRadius: 4, padding: '8px 10px', marginBottom: 6 }}>
+                                            <span style={{ fontWeight: 700, fontSize: 11, color: '#dcdcaa' }}>{v.validatorType}</span>
+                                            <span style={{ fontSize: 10, color: '#888', marginLeft: 8 }}>on_fail: {v.on_fail}</span>
+                                            <div style={{ fontSize: 11, color: '#cc241d', marginTop: 3 }}>{v.message}</div>
+                                            {v.fixedValue !== undefined && <div style={{ fontSize: 10, color: '#569cd6', marginTop: 3 }}>Fixed: {v.fixedValue || '(empty)'}</div>}
+                                        </div>
+                                    ))}
+                                    {testResult.output !== undefined && testResult.output !== testText && (
+                                        <div style={{ marginTop: 9, padding: '8px 10px', background: 'rgba(86,156,214,0.1)', borderRadius: 4 }}>
+                                            <div style={{ fontSize: 9, fontWeight: 800, color: '#569cd6', letterSpacing: 1, marginBottom: 3 }}>SANITIZED OUTPUT</div>
+                                            <div style={{ fontSize: 11, color: '#ccc', fontFamily: 'monospace' }}>{testResult.output || '(empty — refrained)'}</div>
+                                        </div>
+                                    )}
+                                    {(testResult.logs || []).length > 0 && (
+                                        <details style={{ marginTop: 9 }}>
+                                            <summary style={{ fontSize: 10, color: '#555', cursor: 'pointer' }}>Execution Log ({testResult.logs.length})</summary>
+                                            <div style={{ marginTop: 5, padding: 8, background: '#0a0a0a', borderRadius: 4, fontFamily: 'monospace', fontSize: 10, color: '#666' }}>
+                                                {(testResult.logs || []).map((l: string, i: number) => <div key={i}>{l}</div>)}
+                                            </div>
+                                        </details>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Python Export info box */}
+                        <div style={{ ...panelBase, borderColor: 'rgba(0,122,204,0.2)', background: 'rgba(0,122,204,0.05)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <div style={{ fontWeight: 700, fontSize: 12, color: '#569cd6', marginBottom: 4 }}>↑ Export as Python</div>
+                                    <div style={{ fontSize: 11, color: '#555' }}>
+                                        Generates a <code style={{ color: '#ce9178' }}>guard_{(selectedGuard.name || 'guard').replace(/\s+/g, '_').toLowerCase()}.py</code> using the real <code style={{ color: '#ce9178' }}>guardrails-ai</code> SDK.
+                                        Install with <code style={{ color: '#ce9178' }}>pip install guardrails-ai</code>.
+                                    </div>
+                                </div>
+                                <button onClick={handleExport} style={btnP}>EXPORT PY</button>
+                            </div>
+                        </div>
+                    </>)}
+                </div>
+            </div>
+
+            {gbStatus && (
+                <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(78,201,176,0.1)', border: '1px solid rgba(78,201,176,0.3)', borderRadius: 4, color: '#4ec9b0', fontSize: 12 }}>
+                    {gbStatus}
+                </div>
+            )}
+        </div>
     );
 };
+
+
+// ═══════════════════════════════════════════════════════════════
+// GuardrailsTab — sub-tab wrapper (Guard Builder | Validator Builder)
+// ═══════════════════════════════════════════════════════════════
+function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
+    const [subTab, setSubTab] = useState<'guards' | 'validators'>('guards');
+
+    const pill = (id: 'guards' | 'validators', emoji: string, label: string) => (
+        <button
+            key={id}
+            onClick={() => setSubTab(id)}
+            style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                padding: '10px 20px',
+                background: subTab === id
+                    ? 'linear-gradient(135deg,rgba(0,122,204,0.35) 0%,rgba(0,95,158,0.25) 100%)'
+                    : 'rgba(255,255,255,0.03)',
+                color: subTab === id ? '#fff' : '#777',
+                border: subTab === id
+                    ? '1px solid rgba(0,122,204,0.55)'
+                    : '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: 0.6,
+                transition: '0.15s all',
+            }}
+        >
+            <span style={{ fontSize: 15 }}>{emoji}</span>{label}
+        </button>
+    );
+
+    return (
+        <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+            {/* Sub-tab switcher */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
+                {pill('guards', '🛡', 'Guard Builder')}
+                {pill('validators', '🔧', 'Validator Builder')}
+            </div>
+            {subTab === 'guards'
+                ? <GuardBuilderPanel settings={settings} api={api} />
+                : <ValidatorBuilderPanel api={api} />
+            }
+        </div>
+    );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// ValidatorBuilderPanel — custom validator authoring UI
+// ═══════════════════════════════════════════════════════════════
+
+/** The schema for a single argument the validator accepts */
+interface ArgDef {
+    key: string;
+    type: 'string' | 'number' | 'boolean' | 'array';
+    description: string;
+    default: string;    // stored as string; cast on use
+    required: boolean;
+}
+
+/** A full custom validator definition */
+interface CustomValidator {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    impl: 'regex' | 'keyword' | 'length' | 'llm' | 'schema' | 'script';
+    // impl-specific config
+    regexPattern: string;
+    regexFlags: string;
+    keywordList: string;         // comma-separated
+    keywordMode: 'any' | 'all' | 'none';
+    minLength: number;
+    maxLength: number;
+    llmPrompt: string;          // uses {{value}} placeholder
+    llmPassPhrase: string;       // what the LLM should respond if passing
+    jsonSchema: string;          // JSON string
+    scriptCode: string;          // JS snippet, receives `value`, returns bool
+    // args schema (for parameterized validators)
+    argsSchema: ArgDef[];
+    // test
+    testInput: string;
+    // meta
+    enabled: boolean;
+    createdAt: string;
+}
+
+const IMPL_OPTIONS = [
+    { value: 'regex', label: '📐 Regex Pattern', desc: 'Matches text against a regular expression' },
+    { value: 'keyword', label: '🔤 Keyword Filter', desc: 'Allow or block based on keyword presence' },
+    { value: 'length', label: '📏 Length Check', desc: 'Enforce min/max character or token length' },
+    { value: 'llm', label: '🤖 LLM Judge', desc: 'Use a model to evaluate the value via a prompt' },
+    { value: 'schema', label: '📋 JSON Schema', desc: 'Validate structured output against a JSON schema' },
+    { value: 'script', label: '⚙️ Custom Script', desc: 'Write a small JS function that returns true/false' },
+];
+
+const CATEGORY_OPTIONS = ['Etiquette', 'Brand Risk', 'Data Leakage', 'Jailbreaking', 'Factuality', 'Formatting', 'Custom'];
+
+const ARG_TYPES = ['string', 'number', 'boolean', 'array'] as const;
+
+const VALIDATOR_STORAGE_KEY = 'tala_custom_validators';
+
+function loadCustomValidators(): CustomValidator[] {
+    try {
+        const raw = localStorage.getItem(VALIDATOR_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+}
+
+function saveCustomValidatorsToStorage(validators: CustomValidator[]) {
+    localStorage.setItem(VALIDATOR_STORAGE_KEY, JSON.stringify(validators));
+}
+
+function makeNewValidator(): CustomValidator {
+    return {
+        id: `cv-${Date.now()}`,
+        name: 'My Validator',
+        description: '',
+        category: 'Custom',
+        impl: 'regex',
+        regexPattern: '',
+        regexFlags: 'i',
+        keywordList: '',
+        keywordMode: 'any',
+        minLength: 0,
+        maxLength: 10000,
+        llmPrompt: 'Does the following text violate safety guidelines? Answer YES or NO only.\n\nText: {{value}}',
+        llmPassPhrase: 'NO',
+        jsonSchema: '{\n  "type": "object",\n  "properties": {}\n}',
+        scriptCode: '// value is the text being validated.\n// Return true to PASS, false to FAIL.\nreturn value.length > 0;',
+        argsSchema: [],
+        testInput: '',
+        enabled: true,
+        createdAt: new Date().toISOString(),
+    };
+}
+
+function ValidatorBuilderPanel({ api }: { api: any }) {
+    const [validators, setValidators] = useState<CustomValidator[]>(loadCustomValidators);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [vbStatus, setVbStatus] = useState('');
+    const [testResult, setTestResult] = useState<{ passed: boolean; message: string } | null>(null);
+    const [testRunning, setTestRunning] = useState(false);
+    const [activeSection, setActiveSection] = useState<'config' | 'args' | 'test' | 'export'>('config');
+
+    const selected = validators.find(v => v.id === selectedId) || null;
+
+    const flash = (msg: string) => { setVbStatus(msg); setTimeout(() => setVbStatus(''), 3500); };
+
+    const persist = (list: CustomValidator[]) => {
+        setValidators(list);
+        saveCustomValidatorsToStorage(list);
+    };
+
+    const handleNew = () => {
+        const nv = makeNewValidator();
+        const updated = [...validators, nv];
+        persist(updated);
+        setSelectedId(nv.id);
+        setActiveSection('config');
+        setTestResult(null);
+    };
+
+    const handleDelete = () => {
+        if (!selected) return;
+        if (!confirm(`Delete validator "${selected.name}"?`)) return;
+        const updated = validators.filter(v => v.id !== selectedId);
+        persist(updated);
+        setSelectedId(null);
+    };
+
+    const patch = (changes: Partial<CustomValidator>) => {
+        if (!selected) return;
+        const updated = validators.map(v => v.id === selectedId ? { ...v, ...changes } : v);
+        persist(updated);
+    };
+
+    const patchArg = (idx: number, changes: Partial<ArgDef>) => {
+        if (!selected) return;
+        const args = [...selected.argsSchema];
+        args[idx] = { ...args[idx], ...changes };
+        patch({ argsSchema: args });
+    };
+
+    const addArg = () => {
+        if (!selected) return;
+        patch({ argsSchema: [...selected.argsSchema, { key: 'param', type: 'string', description: '', default: '', required: false }] });
+    };
+
+    const removeArg = (idx: number) => {
+        if (!selected) return;
+        patch({ argsSchema: selected.argsSchema.filter((_, i) => i !== idx) });
+    };
+
+    // ── Test runner ────────────────────────────────────────────────────
+    const runTest = async () => {
+        if (!selected || !selected.testInput) return;
+        setTestRunning(true);
+        setTestResult(null);
+        try {
+            const val = selected.testInput;
+            let passed = false;
+            let message = '';
+
+            switch (selected.impl) {
+                case 'regex': {
+                    if (!selected.regexPattern) { message = 'No pattern defined.'; break; }
+                    const re = new RegExp(selected.regexPattern, selected.regexFlags);
+                    passed = re.test(val);
+                    message = passed ? `✓ Matched pattern /${selected.regexPattern}/${selected.regexFlags}` : `✗ Did not match pattern /${selected.regexPattern}/${selected.regexFlags}`;
+                    break;
+                }
+                case 'keyword': {
+                    const keywords = selected.keywordList.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+                    const lower = val.toLowerCase();
+                    if (selected.keywordMode === 'any') {
+                        passed = keywords.some(k => lower.includes(k));
+                        message = passed ? `✓ Found keyword(s): ${keywords.filter(k => lower.includes(k)).join(', ')}` : '✗ No matching keywords found';
+                    } else if (selected.keywordMode === 'all') {
+                        const found = keywords.filter(k => lower.includes(k));
+                        passed = found.length === keywords.length;
+                        message = passed ? '✓ All keywords present' : `✗ Missing: ${keywords.filter(k => !lower.includes(k)).join(', ')}`;
+                    } else { // none
+                        const found = keywords.filter(k => lower.includes(k));
+                        passed = found.length === 0;
+                        message = passed ? '✓ No blocked keywords found' : `✗ Found blocked keyword(s): ${found.join(', ')}`;
+                    }
+                    break;
+                }
+                case 'length': {
+                    const len = val.length;
+                    passed = len >= selected.minLength && len <= selected.maxLength;
+                    message = passed
+                        ? `✓ Length ${len} is within [${selected.minLength}, ${selected.maxLength}]`
+                        : `✗ Length ${len} is outside [${selected.minLength}, ${selected.maxLength}]`;
+                    break;
+                }
+                case 'schema': {
+                    try {
+                        const schema = JSON.parse(selected.jsonSchema);
+                        const parsed = JSON.parse(val);
+                        // Minimal type check (full AJV not available here)
+                        if (schema.type === 'object' && typeof parsed !== 'object') throw new Error('Not an object');
+                        if (schema.type === 'array' && !Array.isArray(parsed)) throw new Error('Not an array');
+                        if (schema.required) {
+                            for (const req of schema.required) {
+                                if (!(req in parsed)) throw new Error(`Missing required field: ${req}`);
+                            }
+                        }
+                        passed = true;
+                        message = '✓ Value matches JSON schema';
+                    } catch (e: any) {
+                        message = `✗ Schema validation failed: ${e.message}`;
+                    }
+                    break;
+                }
+                case 'script': {
+                    try {
+                        // eslint-disable-next-line no-new-func
+                        const fn = new Function('value', selected.scriptCode);
+                        passed = !!fn(val);
+                        message = passed ? '✓ Script returned truthy' : '✗ Script returned falsy';
+                    } catch (e: any) {
+                        message = `✗ Script error: ${e.message}`;
+                    }
+                    break;
+                }
+                case 'llm': {
+                    if (!api?.chat) { message = '✗ LLM API not available in test context. Use via a Guard at runtime.'; break; }
+                    const prompt = selected.llmPrompt.replace('{{value}}', val);
+                    const response = await api.chat(prompt);
+                    passed = response?.trim().toUpperCase().startsWith(selected.llmPassPhrase.trim().toUpperCase());
+                    message = passed ? `✓ LLM responded: "${response?.trim()}"` : `✗ LLM responded: "${response?.trim()}"`;
+                    break;
+                }
+                default:
+                    message = 'Unknown impl type';
+            }
+            setTestResult({ passed, message });
+        } catch (e: any) {
+            setTestResult({ passed: false, message: `Error: ${e.message}` });
+        } finally {
+            setTestRunning(false);
+        }
+    };
+
+    // ── Export this validator as Python ────────────────────────────────
+    const exportPython = () => {
+        if (!selected) return;
+        const sanitizedName = selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '');
+        let implBody = '';
+        switch (selected.impl) {
+            case 'regex':
+                implBody = `        import re\n        pattern = re.compile(r"${selected.regexPattern}", re.${selected.regexFlags.toUpperCase() || 'IGNORECASE'})\n        if not pattern.search(value):\n            return FailResult(error_message="Value did not match required pattern.")\n        return PassResult()`;
+                break;
+            case 'keyword':
+                implBody = `        keywords = [${selected.keywordList.split(',').map(k => `"${k.trim()}"`).join(', ')}]\n        lower = value.lower()\n        found = [k for k in keywords if k in lower]\n        # mode: ${selected.keywordMode}\n        if not found:\n            return FailResult(error_message="No matching keywords found.")\n        return PassResult()`;
+                break;
+            case 'length':
+                implBody = `        if len(value) < ${selected.minLength} or len(value) > ${selected.maxLength}:\n            return FailResult(error_message=f"Length {{len(value)}} outside range [${selected.minLength}, ${selected.maxLength}].")\n        return PassResult()`;
+                break;
+            case 'llm':
+                implBody = `        # LLM-based validator — integrate with your preferred LLM\n        # prompt = f"""${selected.llmPrompt.replace('{{value}}', '{value}')}"""\n        # response = your_llm(prompt)\n        # if not response.strip().upper().startswith("${selected.llmPassPhrase.trim().toUpperCase()}"):\n        #     return FailResult(error_message="LLM judged the value as failing.")\n        return PassResult()  # implement LLM call above`;
+                break;
+            case 'schema':
+                implBody = `        import json\n        schema = ${selected.jsonSchema}\n        import jsonschema\n        try:\n            jsonschema.validate(json.loads(value), schema)\n        except Exception as e:\n            return FailResult(error_message=str(e))\n        return PassResult()`;
+                break;
+            default:
+                implBody = `        # Custom implementation\n        return PassResult()`;
+        }
+        const argsInit = selected.argsSchema.map(a => `        self.${a.key} = ${a.key} if ${a.key} is not None else ${JSON.stringify(a.default)}`).join('\n');
+        const argsParams = selected.argsSchema.map(a => `${a.key}=${JSON.stringify(a.default)}`).join(', ');
+        const python = `from guardrails import Validator, register_validator
+from guardrails.validators import PassResult, FailResult
+from typing import Any, Callable, Dict, Optional, Union
+
+@register_validator(name="${sanitizedName}", data_type="string")
+class ${sanitizedName}(Validator):
+    """${selected.description || selected.name}
+    
+    Category: ${selected.category}
+    Implementation: ${selected.impl}
+    Created by Tala Guard Builder
+    """
+
+    def __init__(self, ${argsParams ? argsParams + ', ' : ''}on_fail: Optional[Callable] = None):
+        super().__init__(on_fail=on_fail)
+${argsInit}
+
+    def validate(self, value: Any, metadata: Dict) -> Union[PassResult, FailResult]:
+${implBody}
+`;
+        const blob = new Blob([python], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `validator_${sanitizedName.toLowerCase()}.py`;
+        a.click();
+        URL.revokeObjectURL(url);
+        flash(`Exported validator_${sanitizedName.toLowerCase()}.py`);
+    };
+
+    // ── Styles ──────────────────────────────────────────────────────────
+    const panelBase: React.CSSProperties = { background: 'rgba(30,30,30,0.7)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: 20, backdropFilter: 'blur(8px)', marginBottom: 14 };
+    const inp: React.CSSProperties = { background: '#111', border: '1px solid #333', color: '#eee', padding: '9px 12px', fontSize: 12, borderRadius: 4, width: '100%', outline: 'none', boxSizing: 'border-box' };
+    const sel: React.CSSProperties = { ...inp, cursor: 'pointer' };
+    const mono: React.CSSProperties = { ...inp, fontFamily: 'monospace', fontSize: 11, resize: 'vertical' };
+    const lbl9: React.CSSProperties = { display: 'block', fontSize: 9, fontWeight: 800, color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 };
+    const btnP: React.CSSProperties = { background: 'linear-gradient(135deg,#007acc,#005f9e)', color: '#fff', border: 'none', padding: '7px 15px', borderRadius: 4, cursor: 'pointer', fontWeight: 700, fontSize: 11, letterSpacing: 0.8 };
+    const btnD: React.CSSProperties = { background: 'rgba(197,48,48,0.8)', color: '#fff', border: 'none', padding: '7px 13px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 };
+    const btnG: React.CSSProperties = { background: 'rgba(255,255,255,0.05)', color: '#ccc', border: '1px solid rgba(255,255,255,0.1)', padding: '7px 13px', borderRadius: 4, cursor: 'pointer', fontSize: 11 };
+
+    const sectionPill = (id: 'config' | 'args' | 'test' | 'export', emoji: string, label: string) => (
+        <button
+            key={id}
+            onClick={() => setActiveSection(id)}
+            style={{
+                padding: '6px 13px',
+                background: activeSection === id ? 'rgba(0,122,204,0.25)' : 'transparent',
+                color: activeSection === id ? '#7ab8e8' : '#555',
+                border: activeSection === id ? '1px solid rgba(0,122,204,0.4)' : '1px solid transparent',
+                borderRadius: 5,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 700,
+                transition: '0.1s',
+            }}
+        >{emoji} {label}</button>
+    );
+
+    return (
+        <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div>
+                    <h2 style={{ margin: 0, color: '#dcdcaa', fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>🔧 VALIDATOR BUILDER</h2>
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: '#666' }}>Build custom validators — regex, keywords, length, LLM-judge, JSON schema, or JS script</p>
+                </div>
+                <button onClick={handleNew} style={btnP}>+ NEW VALIDATOR</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: validators.length > 0 ? '210px 1fr' : '1fr', gap: 14 }}>
+                {/* Left: validator list */}
+                {validators.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {validators.map(v => {
+                            const implMeta = IMPL_OPTIONS.find(o => o.value === v.impl);
+                            return (
+                                <div
+                                    key={v.id}
+                                    onClick={() => { setSelectedId(v.id); setTestResult(null); setActiveSection('config'); }}
+                                    style={{
+                                        padding: '11px 13px',
+                                        borderRadius: 6,
+                                        cursor: 'pointer',
+                                        background: selectedId === v.id ? 'rgba(0,122,204,0.2)' : 'rgba(255,255,255,0.03)',
+                                        border: selectedId === v.id ? '1px solid rgba(0,122,204,0.4)' : '1px solid rgba(255,255,255,0.05)',
+                                        transition: '0.12s',
+                                        opacity: v.enabled ? 1 : 0.5,
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 700, fontSize: 12, color: '#eee', marginBottom: 2 }}>{v.name}</div>
+                                    <div style={{ fontSize: 10, color: '#666' }}>{implMeta?.label.split(' ').slice(1).join(' ') || v.impl} · {v.category}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Right: editor */}
+                <div>
+                    {!selected ? (
+                        <div style={{ ...panelBase, textAlign: 'center', padding: 60 }}>
+                            <div style={{ fontSize: 40, marginBottom: 12, opacity: 0.2 }}>🔧</div>
+                            <div style={{ color: '#444', fontSize: 13 }}>
+                                {validators.length === 0
+                                    ? 'No custom validators yet. Click "+ NEW VALIDATOR" to create one.'
+                                    : 'Select a validator from the left to edit it.'}
+                            </div>
+                        </div>
+                    ) : (<>
+                        {/* Section nav */}
+                        <div style={{ display: 'flex', gap: 4, marginBottom: 14, background: 'rgba(255,255,255,0.03)', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.05)' }}>
+                            {sectionPill('config', '⚙️', 'Configuration')}
+                            {sectionPill('args', '🧩', 'Args Schema')}
+                            {sectionPill('test', '🧪', 'Test')}
+                            {sectionPill('export', '↑', 'Export')}
+                            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                                <button onClick={exportPython} style={btnG} title="Download as Python validator">↑ PY</button>
+                                <button onClick={handleDelete} style={btnD}>DELETE</button>
+                            </div>
+                        </div>
+
+                        {/* ── CONFIGURATION ─────────────────────────────── */}
+                        {activeSection === 'config' && (
+                            <div style={panelBase}>
+                                {/* Name / Category / Enabled */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 12, marginBottom: 14 }}>
+                                    <div>
+                                        <label style={lbl9}>Validator Name</label>
+                                        <input style={inp} value={selected.name} onChange={e => patch({ name: e.target.value })} />
+                                    </div>
+                                    <div>
+                                        <label style={lbl9}>Category</label>
+                                        <select style={sel} value={selected.category} onChange={e => patch({ category: e.target.value })}>
+                                            {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: 2 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                            <input type="checkbox" checked={selected.enabled} onChange={e => patch({ enabled: e.target.checked })} />
+                                            Enabled
+                                        </label>
+                                    </div>
+                                </div>
+
+                                {/* Description */}
+                                <div style={{ marginBottom: 16 }}>
+                                    <label style={lbl9}>Description</label>
+                                    <input style={inp} value={selected.description} placeholder="What does this validator check?" onChange={e => patch({ description: e.target.value })} />
+                                </div>
+
+                                {/* Implementation type */}
+                                <div style={{ marginBottom: 18 }}>
+                                    <label style={lbl9}>Implementation Type</label>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                                        {IMPL_OPTIONS.map(opt => (
+                                            <div
+                                                key={opt.value}
+                                                onClick={() => patch({ impl: opt.value as CustomValidator['impl'] })}
+                                                style={{
+                                                    padding: '10px 12px',
+                                                    borderRadius: 6,
+                                                    cursor: 'pointer',
+                                                    background: selected.impl === opt.value ? 'rgba(0,122,204,0.18)' : 'rgba(255,255,255,0.02)',
+                                                    border: selected.impl === opt.value ? '1px solid rgba(0,122,204,0.5)' : '1px solid rgba(255,255,255,0.05)',
+                                                    transition: '0.1s',
+                                                }}
+                                            >
+                                                <div style={{ fontWeight: 700, fontSize: 11, color: selected.impl === opt.value ? '#7ab8e8' : '#bbb', marginBottom: 3 }}>
+                                                    {opt.label}
+                                                </div>
+                                                <div style={{ fontSize: 10, color: '#555' }}>{opt.desc}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Impl-specific config */}
+                                <div style={{ background: 'rgba(0,0,0,0.25)', borderRadius: 6, padding: 16 }}>
+                                    <div style={{ fontSize: 9, fontWeight: 800, color: '#666', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>
+                                        {IMPL_OPTIONS.find(o => o.value === selected.impl)?.label} — Settings
+                                    </div>
+
+                                    {selected.impl === 'regex' && (<>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 10 }}>
+                                            <div>
+                                                <label style={lbl9}>Regex Pattern</label>
+                                                <input style={{ ...inp, fontFamily: 'monospace' }} value={selected.regexPattern} placeholder="e.g. \b(word)\b" onChange={e => patch({ regexPattern: e.target.value })} />
+                                            </div>
+                                            <div>
+                                                <label style={lbl9}>Flags</label>
+                                                <input style={{ ...inp, fontFamily: 'monospace' }} value={selected.regexFlags} placeholder="i, g, m..." onChange={e => patch({ regexFlags: e.target.value })} />
+                                            </div>
+                                        </div>
+                                        <div style={{ marginTop: 8, fontSize: 10, color: '#556' }}>Pattern test will return PASS if the regex matches the input.</div>
+                                    </>)}
+
+                                    {selected.impl === 'keyword' && (<>
+                                        <div style={{ marginBottom: 10 }}>
+                                            <label style={lbl9}>Keywords (comma-separated)</label>
+                                            <input style={inp} value={selected.keywordList} placeholder="badword1, restricted_term, blocklist" onChange={e => patch({ keywordList: e.target.value })} />
+                                        </div>
+                                        <div>
+                                            <label style={lbl9}>Match Mode</label>
+                                            <select style={sel} value={selected.keywordMode} onChange={e => patch({ keywordMode: e.target.value as any })}>
+                                                <option value="any">ANY — PASS if any keyword found</option>
+                                                <option value="all">ALL — PASS only if all keywords found</option>
+                                                <option value="none">NONE — PASS only if NO keywords found (blocklist)</option>
+                                            </select>
+                                        </div>
+                                    </>)}
+
+                                    {selected.impl === 'length' && (<>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                            <div>
+                                                <label style={lbl9}>Min Length (chars)</label>
+                                                <input type="number" style={inp} value={selected.minLength} onChange={e => patch({ minLength: parseInt(e.target.value) || 0 })} />
+                                            </div>
+                                            <div>
+                                                <label style={lbl9}>Max Length (chars)</label>
+                                                <input type="number" style={inp} value={selected.maxLength} onChange={e => patch({ maxLength: parseInt(e.target.value) || 10000 })} />
+                                            </div>
+                                        </div>
+                                    </>)}
+
+                                    {selected.impl === 'llm' && (<>
+                                        <div style={{ marginBottom: 10 }}>
+                                            <label style={lbl9}>Judge Prompt <span style={{ color: '#456', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— use {'{{value}}'} as placeholder</span></label>
+                                            <textarea rows={5} style={mono} value={selected.llmPrompt} onChange={e => patch({ llmPrompt: e.target.value })} />
+                                        </div>
+                                        <div>
+                                            <label style={lbl9}>Pass Phrase <span style={{ color: '#456', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— LLM response must START with this to pass</span></label>
+                                            <input style={inp} value={selected.llmPassPhrase} placeholder="NO, PASS, SAFE..." onChange={e => patch({ llmPassPhrase: e.target.value })} />
+                                        </div>
+                                    </>)}
+
+                                    {selected.impl === 'schema' && (<>
+                                        <label style={lbl9}>JSON Schema</label>
+                                        <textarea rows={8} style={mono} value={selected.jsonSchema} onChange={e => patch({ jsonSchema: e.target.value })} />
+                                    </>)}
+
+                                    {selected.impl === 'script' && (<>
+                                        <label style={lbl9}>
+                                            JavaScript Body <span style={{ color: '#456', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— receives <code style={{ color: '#ce9178' }}>value</code>, must return <code style={{ color: '#4ec9b0' }}>true</code> (PASS) or <code style={{ color: '#f44747' }}>false</code> (FAIL)</span>
+                                        </label>
+                                        <textarea rows={10} style={mono} value={selected.scriptCode} onChange={e => patch({ scriptCode: e.target.value })} />
+                                        <div style={{ marginTop: 6, fontSize: 10, color: '#555' }}>⚠️ Script runs in an isolated <code style={{ color: '#ce9178' }}>Function</code> context — no DOM or module access.</div>
+                                    </>)}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── ARGS SCHEMA ────────────────────────────────── */}
+                        {activeSection === 'args' && (
+                            <div style={panelBase}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#ccc', letterSpacing: 1, textTransform: 'uppercase' }}>Args Schema</h3>
+                                        <p style={{ margin: '4px 0 0', fontSize: 11, color: '#555' }}>
+                                            Define parameters users can configure when adding this validator to a Guard.
+                                        </p>
+                                    </div>
+                                    <button onClick={addArg} style={btnP}>+ ADD PARAM</button>
+                                </div>
+
+                                {selected.argsSchema.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '30px 0', color: '#444', fontSize: 12 }}>
+                                        No parameters defined. Click "+ ADD PARAM" to make this validator configurable.
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        {selected.argsSchema.map((arg, idx) => (
+                                            <div key={idx} style={{ background: 'rgba(0,0,0,0.25)', borderRadius: 6, padding: 14 }}>
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px auto', gap: 10, alignItems: 'end' }}>
+                                                    <div>
+                                                        <label style={lbl9}>Key Name</label>
+                                                        <input style={{ ...inp, fontFamily: 'monospace' }} value={arg.key} onChange={e => patchArg(idx, { key: e.target.value })} placeholder="param_name" />
+                                                    </div>
+                                                    <div>
+                                                        <label style={lbl9}>Type</label>
+                                                        <select style={sel} value={arg.type} onChange={e => patchArg(idx, { type: e.target.value as any })}>
+                                                            {ARG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label style={lbl9}>Default Value</label>
+                                                        <input style={inp} value={arg.default} onChange={e => patchArg(idx, { default: e.target.value })} placeholder="Default..." />
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', paddingBottom: 2 }}>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#888', cursor: 'pointer' }}>
+                                                            <input type="checkbox" checked={arg.required} onChange={e => patchArg(idx, { required: e.target.checked })} />
+                                                            Required
+                                                        </label>
+                                                    </div>
+                                                    <button onClick={() => removeArg(idx)} style={{ ...btnD, padding: '7px 10px' }}>✕</button>
+                                                </div>
+                                                <div style={{ marginTop: 8 }}>
+                                                    <label style={lbl9}>Description</label>
+                                                    <input style={inp} value={arg.description} placeholder="What does this parameter control?" onChange={e => patchArg(idx, { description: e.target.value })} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {selected.argsSchema.length > 0 && (
+                                    <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(86,156,214,0.07)', border: '1px solid rgba(86,156,214,0.2)', borderRadius: 5 }}>
+                                        <div style={{ fontSize: 9, fontWeight: 800, color: '#569cd6', letterSpacing: 1, marginBottom: 6 }}>PREVIEW — argsSchema in JSON</div>
+                                        <pre style={{ margin: 0, fontSize: 10, color: '#ce9178', fontFamily: 'monospace', overflowX: 'auto' }}>
+                                            {JSON.stringify(
+                                                selected.argsSchema.reduce((acc: any, a) => { acc[a.key] = { type: a.type, description: a.description, default: a.default, required: a.required }; return acc; }, {}),
+                                                null, 2
+                                            )}
+                                        </pre>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── TEST ──────────────────────────────────────── */}
+                        {activeSection === 'test' && (
+                            <div style={panelBase}>
+                                <h3 style={{ margin: '0 0 14px', fontSize: 12, fontWeight: 800, color: '#ccc', letterSpacing: 1, textTransform: 'uppercase' }}>🧪 Test Validator</h3>
+
+                                <div style={{ marginBottom: 12 }}>
+                                    <label style={lbl9}>Sample Input</label>
+                                    <textarea
+                                        rows={4}
+                                        style={{ ...mono, resize: 'vertical' }}
+                                        placeholder="Enter text to run through this validator..."
+                                        value={selected.testInput}
+                                        onChange={e => patch({ testInput: e.target.value })}
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={runTest}
+                                    disabled={testRunning || !selected.testInput}
+                                    style={{ ...btnP, opacity: testRunning || !selected.testInput ? 0.5 : 1, cursor: testRunning || !selected.testInput ? 'not-allowed' : 'pointer', marginBottom: 14 }}
+                                >
+                                    {testRunning ? '⟳ Running...' : '▶ RUN TEST'}
+                                </button>
+
+                                {testResult && (
+                                    <div style={{
+                                        padding: 16,
+                                        borderRadius: 6,
+                                        background: testResult.passed ? 'rgba(45,160,66,0.1)' : 'rgba(197,48,48,0.1)',
+                                        border: `1px solid ${testResult.passed ? '#2da04233' : '#cc241d33'}`,
+                                    }}>
+                                        <div style={{ fontSize: 14, fontWeight: 800, color: testResult.passed ? '#2da042' : '#cc241d', marginBottom: 6 }}>
+                                            {testResult.passed ? '✅ PASSED' : '❌ FAILED'}
+                                        </div>
+                                        <div style={{ fontSize: 12, color: testResult.passed ? '#7ec88e' : '#e06c75', fontFamily: 'monospace' }}>
+                                            {testResult.message}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {selected.impl === 'llm' && (
+                                    <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(177,98,134,0.1)', border: '1px solid rgba(177,98,134,0.2)', borderRadius: 5, fontSize: 10, color: '#b16286' }}>
+                                        🤖 LLM validators call the Tala runtime — test result depends on which inference provider is active.
+                                        If no API is available the test will indicate as such.
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── EXPORT ────────────────────────────────────── */}
+                        {activeSection === 'export' && (
+                            <div style={panelBase}>
+                                <h3 style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 800, color: '#ccc', letterSpacing: 1, textTransform: 'uppercase' }}>↑ Export as Python</h3>
+                                <p style={{ margin: '0 0 16px', fontSize: 11, color: '#555' }}>
+                                    Generates a <code style={{ color: '#ce9178' }}>guardrails-ai</code>-compatible Python validator class that you can register with <code style={{ color: '#ce9178' }}>@register_validator</code> and publish to the Hub.
+                                </p>
+
+                                {/* Python preview */}
+                                <div style={{ background: '#0d0d0d', borderRadius: 6, padding: 14, border: '1px solid #222', marginBottom: 14, overflowX: 'auto' }}>
+                                    <pre style={{ margin: 0, fontSize: 10, color: '#d4d4d4', fontFamily: 'monospace', lineHeight: 1.55 }}>
+                                        {`from guardrails import Validator, register_validator
+from guardrails.validators import PassResult, FailResult
+
+@register_validator(name="${selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '')}", data_type="string")
+class ${selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '')}(Validator):
+    """${selected.description || selected.name}"""
+    # impl: ${selected.impl} | category: ${selected.category}
+    
+    def validate(self, value, metadata):
+        # ... ${selected.impl} implementation
+        return PassResult()`}
+                                    </pre>
+                                </div>
+
+                                <button onClick={exportPython} style={{ ...btnP, padding: '10px 22px', fontSize: 12 }}>
+                                    ↓ DOWNLOAD validator_{selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.py
+                                </button>
+
+                                <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(0,122,204,0.07)', border: '1px solid rgba(0,122,204,0.2)', borderRadius: 5, fontSize: 11, color: '#569cd6' }}>
+                                    <strong>To use with guardrails-ai:</strong><br />
+                                    1. <code style={{ color: '#ce9178' }}>pip install guardrails-ai</code><br />
+                                    2. Place the .py file in your project<br />
+                                    3. Import and use: <code style={{ color: '#ce9178' }}>from validator_{selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()} import {selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '')}</code>
+                                </div>
+                            </div>
+                        )}
+                    </>)}
+                </div>
+            </div>
+
+            {vbStatus && (
+                <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(78,201,176,0.1)', border: '1px solid rgba(78,201,176,0.3)', borderRadius: 4, color: '#4ec9b0', fontSize: 12 }}>
+                    {vbStatus}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+

@@ -36,6 +36,7 @@ import { McpService } from './services/McpService';
 import { FunctionService } from './services/FunctionService';
 import { WorkflowService } from './services/WorkflowService';
 import { WorkflowEngine } from './services/WorkflowEngine';
+import { GuardrailService } from './services/GuardrailService';
 import { GitService } from './services/GitService';
 import { BackupService } from './services/BackupService';
 import { InferenceService } from './services/InferenceService';
@@ -103,6 +104,7 @@ const agent = new AgentService(terminalService, functionService, mcpService, inf
 const reflectionService = new ReflectionService(USER_DATA_DIR, SETTINGS_PATH);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent); // Instantiate Engine
+const guardrailService = new GuardrailService();
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
 
@@ -127,6 +129,8 @@ ipcMain.handle('voice:status', async () => {
 // Outstanding setup identified in previous session
 agent.setMcpService(mcpService);
 agent.setGitService(gitService);
+// Wire inference function into GuardrailService for LLM-based validators
+guardrailService.setInferenceFn((prompt: string) => agent.headlessInference(prompt));
 
 // Initialize Workflow Scheduler
 workflowService.initScheduler(async (workflowId) => {
@@ -578,6 +582,67 @@ ipcMain.handle('workflow:export-to-python', async (_e, workflowId: string) => {
     return { error: e.message };
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// IPC HANDLERS — GUARDRAILS
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Lists all saved guard definitions. */
+ipcMain.handle('guardrail:list', async () => {
+  return guardrailService.listGuards();
+});
+
+/** Gets a single guard definition by ID. */
+ipcMain.handle('guardrail:get', async (_e, id: string) => {
+  return guardrailService.getGuard(id);
+});
+
+/** Creates or updates a guard definition. */
+ipcMain.handle('guardrail:save', async (_e, definition: any) => {
+  return guardrailService.saveGuard(definition);
+});
+
+/** Deletes a guard by ID. */
+ipcMain.handle('guardrail:delete', async (_e, id: string) => {
+  return guardrailService.deleteGuard(id);
+});
+
+/** Runs a guard's validator stack against a text value. */
+ipcMain.handle('guardrail:validate', async (_e, { guardId, value, target }: { guardId: string, value: string, target: 'input' | 'output' }) => {
+  try {
+    return await guardrailService.validate(guardId, value, target);
+  } catch (e: any) {
+    return { passed: false, output: value, violations: [{ validatorType: 'unknown', message: e.message }], logs: [e.message] };
+  }
+});
+
+/** Returns the VALIDATOR_REGISTRY (all known validator types + metadata). */
+ipcMain.handle('guardrail:get-validators', async () => {
+  const { VALIDATOR_REGISTRY } = await import('./services/GuardrailService');
+  return VALIDATOR_REGISTRY;
+});
+
+/** Exports a guard as a standalone guardrails-ai Python script and saves to a user-selected directory. */
+ipcMain.handle('guardrail:export-to-python', async (_e, guardId: string) => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Select Export Directory for Guard',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+
+    const outputDir = result.filePaths[0];
+    const code = guardrailService.exportToPython(guardId);
+    const guard = guardrailService.getGuard(guardId);
+    const safeName = (guard?.name || guardId).replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    const outFile = path.join(outputDir, `guard_${safeName}.py`);
+    fs.writeFileSync(outFile, code, 'utf-8');
+    return { success: true, path: outFile };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // IPC HANDLERS — ASTRO
