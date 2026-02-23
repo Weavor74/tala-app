@@ -23,6 +23,11 @@
  * **File editing:**
  * Open files are tracked in `openFiles` state; each tab shows a
  * `<textarea>` editor with save functionality via `tala.createFile()`.
+ *
+ * @capability [CAPABILITY 2.1] UI Rendering & Orchestration
+ * @capability [CAPABILITY 2.2] Browser View Integration
+ * @capability [CAPABILITY 2.3] File Explorer Handlers
+ * @capability [CAPABILITY 2.4] Terminal Execution Bridge
  */
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
@@ -44,6 +49,7 @@ import { MemoryViewer } from './renderer/components/MemoryViewer';
 import { FirstRunWizard } from './renderer/components/FirstRunWizard';
 import { ConflictEditor } from './renderer/components/ConflictEditor';
 import { StartupSplash } from './renderer/components/StartupSplash';
+import ReflectionPanel from './renderer/components/ReflectionPanel';
 
 
 /** A single chat message in the conversation history. */
@@ -764,6 +770,28 @@ function App() {
       handleSaveFile();
     }
 
+    // Clear chat (Ctrl+L)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+      e.preventDefault();
+      setMessages([]);
+      chatInputRef.current?.focus();
+    }
+
+    // Export session (Ctrl+Shift+E)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
+      e.preventDefault();
+      (window as any).tala?.exportSessionFile?.('markdown')
+        .then((result: any) => {
+          if (result?.success) {
+            setMessages(prev => [...prev, {
+              role: 'assistant' as const,
+              content: `📄 Conversation exported to: ${result.path}`
+            }]);
+          }
+        })
+        .catch(() => { });
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -833,6 +861,15 @@ function App() {
             <IconLibrary />
           </div>
 
+          {/* Reflection */}
+          <div
+            className={`activity-item ${activeView === 'reflection' && isLeftPanelOpen ? 'active' : ''}`}
+            onClick={() => toggleSidebar('reflection')}
+            title="Reflection Dashboard"
+          >
+            <IconBrain />
+          </div>
+
           {/* Source Control */}
           <div
             className={`activity-item ${activeView === 'source_control' && isLeftPanelOpen ? 'active' : ''}`}
@@ -891,6 +928,7 @@ function App() {
               {activeView === 'browser' && 'BROWSER'}
               {activeView === 'sessions' && 'CHAT HISTORY'}
               {activeView === 'memory' && 'MEMORY BANK'}
+              {activeView === 'reflection' && 'REFLECTION'}
             </div>
             <div className="sidebar-content">
               {activeView === 'explorer' && (
@@ -927,6 +965,9 @@ function App() {
               )}
               {activeView === 'memory' && (
                 <MemoryViewer />
+              )}
+              {activeView === 'reflection' && (
+                <ReflectionPanel />
               )}
             </div>
           </div>
@@ -1270,6 +1311,7 @@ function App() {
         {modelStatus?.isLowFidelity && (
           <div className="status-item" style={{ color: '#ffaa00', display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }} title={modelStatus.warning || "Performance may be degraded"}>
             <span>⚠️</span> <span>Low Fidelity</span>
+            {activeView === 'reflection' && <ReflectionPanel />}
           </div>
         )}
 

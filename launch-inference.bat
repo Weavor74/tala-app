@@ -14,7 +14,7 @@ if %ERRORLEVEL% equ 0 (
     echo [INFO] Skipping local llama_cpp instance to avoid conflicts.
     echo.
     :: Small delay so the user can see the message in the concurrent window
-    timeout /t 5 >nul
+    ping 127.0.0.1 -n 6 >nul
     exit /b 0
 )
 

@@ -1,0 +1,88 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ChangeProposal",
+    "type": "object",
+    "required": [
+        "id",
+        "reflectionId",
+        "category",
+        "title",
+        "description",
+        "risk"
+    ],
+    "properties": {
+        "id": {
+            "type": "string"
+        },
+        "reflectionId": {
+            "type": "string"
+        },
+        "category": {
+            "enum": [
+                "prompt",
+                "workflow",
+                "bugfix",
+                "docs",
+                "test"
+            ]
+        },
+        "title": {
+            "type": "string"
+        },
+        "description": {
+            "type": "string"
+        },
+        "risk": {
+            "type": "object",
+            "required": [
+                "score",
+                "reasoning"
+            ],
+            "properties": {
+                "score": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                },
+                "reasoning": {
+                    "type": "string"
+                }
+            }
+        },
+        "changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "type",
+                    "path"
+                ],
+                "properties": {
+                    "type": {
+                        "enum": [
+                            "modify",
+                            "create",
+                            "delete",
+                            "patch"
+                        ]
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "search": {
+                        "type": "string"
+                    },
+                    "replace": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "rollbackPlan": {
+            "type": "string"
+        }
+    }
+}

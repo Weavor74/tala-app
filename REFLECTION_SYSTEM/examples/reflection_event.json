@@ -1,0 +1,28 @@
+{
+    "id": "ref-001",
+    "timestamp": "2026-02-22T12:00:00Z",
+    "summary": "Frequent timeout errors detected during large file reads in terminal.",
+    "evidence": {
+        "turns": [],
+        "errors": [
+            "TimeoutError: Execution exceeded 30s threshold"
+        ],
+        "failedToolCalls": [
+            {
+                "tool": "terminal_run",
+                "args": {
+                    "command": "ls -R /"
+                },
+                "error": "Timeout"
+            }
+        ]
+    },
+    "observations": [
+        "Large directory scans exceed default terminal timeout.",
+        "User expressed frustration after 3 failed attempts."
+    ],
+    "metrics": {
+        "averageLatencyMs": 35000,
+        "errorRate": 0.15
+    }
+}

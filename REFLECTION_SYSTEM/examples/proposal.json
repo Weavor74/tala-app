@@ -1,0 +1,20 @@
+{
+    "id": "prop-001",
+    "reflectionId": "ref-001",
+    "category": "bugfix",
+    "title": "Extend Terminal Timeout for System Scans",
+    "description": "Increases the default timeout for the terminal_run tool to 120s when detecting large recursive scan commands.",
+    "risk": {
+        "score": 5,
+        "reasoning": "Modifies core tool execution logic. Requires build verification."
+    },
+    "changes": [
+        {
+            "type": "patch",
+            "path": "src/agent/tools/TerminalTool.ts",
+            "search": "const DEFAULT_TIMEOUT = 30000;",
+            "replace": "const DEFAULT_TIMEOUT = 120000;"
+        }
+    ],
+    "rollbackPlan": "Revert patch to TerminalTool.ts using git checkout."
+}

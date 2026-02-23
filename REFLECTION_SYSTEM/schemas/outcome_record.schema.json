@@ -1,0 +1,45 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "OutcomeRecord",
+    "type": "object",
+    "required": [
+        "proposalId",
+        "timestamp",
+        "success"
+    ],
+    "properties": {
+        "proposalId": {
+            "type": "string"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "success": {
+            "type": "boolean"
+        },
+        "testResults": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "testName": {
+                        "type": "string"
+                    },
+                    "passed": {
+                        "type": "boolean"
+                    },
+                    "output": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "rollbackPerformed": {
+            "type": "boolean"
+        },
+        "error": {
+            "type": "string"
+        }
+    }
+}

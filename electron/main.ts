@@ -88,6 +88,9 @@ const EFFECTIVE_WORKSPACE_ROOT = deploymentMode === 'usb'
   ? path.join(EXE_DIR, 'workspace')
   : (app.isPackaged ? undefined : process.cwd());
 
+import { ReflectionService } from './services/reflection/ReflectionService';
+import { VoiceService } from './services/VoiceService';
+
 const terminalService = new TerminalService();
 const mcpService = new McpService();
 const systemService = new SystemService();
@@ -97,9 +100,29 @@ const functionService = new FunctionService(systemService, fileService.getRoot()
 const inferenceService = new InferenceService();
 const workflowService = new WorkflowService(fileService.getRoot());
 const agent = new AgentService(terminalService, functionService, mcpService, inferenceService);
+const reflectionService = new ReflectionService(USER_DATA_DIR, SETTINGS_PATH);
+const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent); // Instantiate Engine
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
+
+// Register Reflection IPC Handlers
+reflectionService.registerIpcHandlers();
+reflectionService.start();
+
+// Register Voice IPC Handlers
+ipcMain.handle('voice:transcribe', async (_e, audioPath: string) => {
+  return await voiceService.transcribe(audioPath);
+});
+ipcMain.handle('voice:synthesize', async (_e, text: string) => {
+  return await voiceService.synthesize(text);
+});
+ipcMain.handle('voice:transcribe-buffer', async (_e, audioBuffer: Buffer, format: string) => {
+  return await voiceService.transcribeBuffer(audioBuffer, format);
+});
+ipcMain.handle('voice:status', async () => {
+  return voiceService.getStatus();
+});
 
 // Outstanding setup identified in previous session
 agent.setMcpService(mcpService);
@@ -473,6 +496,41 @@ ipcMain.handle('get-session', async () => {
     console.error('[Main] Failed to load session:', e);
   }
   return null;
+});
+
+// Session Export (Markdown/JSON)
+ipcMain.handle('session:export', async (_e, format: 'markdown' | 'json', sessionId?: string) => {
+  try {
+    return agent.exportSession(format, sessionId);
+  } catch (e: any) {
+    console.error('[Main] Session export failed:', e);
+    return { error: e.message };
+  }
+});
+
+// Session Export to File (with save dialog)
+ipcMain.handle('session:export-file', async (_e, format: 'markdown' | 'json', sessionId?: string) => {
+  try {
+    const content = agent.exportSession(format, sessionId);
+    const ext = format === 'markdown' ? 'md' : 'json';
+    const result = await dialog.showSaveDialog({
+      title: 'Export Conversation',
+      defaultPath: `conversation.${ext}`,
+      filters: [
+        { name: format === 'markdown' ? 'Markdown' : 'JSON', extensions: [ext] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (!result.canceled && result.filePath) {
+      fs.writeFileSync(result.filePath, content, 'utf-8');
+      return { success: true, path: result.filePath };
+    }
+    return { success: false, canceled: true };
+  } catch (e: any) {
+    console.error('[Main] Session export to file failed:', e);
+    return { error: e.message };
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════

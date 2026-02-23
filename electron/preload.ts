@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "a2ui-update", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "a2ui-update", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -334,5 +334,39 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {string} type - Data type (`'dom'`, `'screenshot'`, or `'debug'`).
      * @param {any} data - The payload (DOM string or base64 screenshot).
      */
-    provideBrowserData: (type: string, data: any) => ipcRenderer.send('browser-data-reply', { type, data })
+    provideBrowserData: (type: string, data: any) => ipcRenderer.send('browser-data-reply', { type, data }),
+
+    // ─── Reflection System ───────────────────────────────────────
+    /** Gets reflection system metrics (counts, success rate). */
+    getReflectionMetrics: () => ipcRenderer.invoke('reflection:get-metrics'),
+    /** Lists pending proposals awaiting approval. */
+    getReflectionProposals: () => ipcRenderer.invoke('reflection:get-proposals'),
+    /** Approves a proposal by ID. */
+    approveProposal: (id: string) => ipcRenderer.invoke('reflection:approve-proposal', id),
+    /** Rejects a proposal by ID. */
+    rejectProposal: (id: string) => ipcRenderer.invoke('reflection:reject-proposal', id),
+    /** Forces a heartbeat tick (debug). */
+    forceHeartbeat: () => ipcRenderer.invoke('reflection:force-tick'),
+    /** Subscribes to new proposal notifications. Returns cleanup function. */
+    onProposalCreated: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('reflection:proposal-created', listener);
+        return () => ipcRenderer.removeListener('reflection:proposal-created', listener);
+    },
+
+    // ─── Session Export ───────────────────────────────────────────
+    /** Exports the current session as Markdown or JSON string. */
+    exportSessionContent: (format: 'markdown' | 'json', sessionId?: string) => ipcRenderer.invoke('session:export', format, sessionId),
+    /** Exports the current session to a file via save dialog. */
+    exportSessionFile: (format: 'markdown' | 'json', sessionId?: string) => ipcRenderer.invoke('session:export-file', format, sessionId),
+
+    // ─── Voice ────────────────────────────────────────────────────
+    /** Transcribes an audio file using Whisper. */
+    voiceTranscribe: (audioPath: string) => ipcRenderer.invoke('voice:transcribe', audioPath),
+    /** Synthesizes text to speech using ElevenLabs. */
+    voiceSynthesize: (text: string) => ipcRenderer.invoke('voice:synthesize', text),
+    /** Transcribes an audio buffer (from microphone). */
+    voiceTranscribeBuffer: (audioBuffer: Buffer, format: string) => ipcRenderer.invoke('voice:transcribe-buffer', audioBuffer, format),
+    /** Gets voice service status (STT/TTS availability). */
+    voiceStatus: () => ipcRenderer.invoke('voice:status'),
 });

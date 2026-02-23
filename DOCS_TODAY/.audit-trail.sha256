@@ -1,0 +1,12 @@
+# SHA-256 Audit Trail  
+**Generated**: 2026-02-22  
+**Purpose**: Immutable file integrity for legal-grade documentation  
+
+| File | SHA-256 Hash |
+|---|---|
+| `00_OVERVIEW.md` | *TBD* |
+| `01_CAPABILITIES.md` | *TBD* |
+| `02_ARCHITECTURE.md` | *TBD* |
+| `03_REVISION_LOG.md` | *TBD* |
+
+> **Note**: Hashes will be populated after Revision 3 review completes.

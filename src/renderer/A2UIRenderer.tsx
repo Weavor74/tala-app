@@ -13,6 +13,8 @@
  *
  * **Supported component types:** button, card, input, text, container, html.
  * Unknown types render a red error placeholder.
+ *
+ * @capability [CAPABILITY 2.1] Render JSON → React UI
  */
 import React from 'react';
 import type { A2UIComponent } from './types';

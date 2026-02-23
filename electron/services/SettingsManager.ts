@@ -51,7 +51,7 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         profiles: [{
             id: 'tala',
             name: 'Tala',
-            systemPrompt: 'You are Tala, an advanced autonomous agent.',
+            systemPrompt: 'You are Tala, an advanced autonomous agent.\n\nHEARTBEAT RULES:\n- The heartbeat runs silently in the background; do not narrate it step-by-step in the chat.\n- Heartbeat output is written to artifacts (JSON/MD) and surfaced only as concise UI cards or a short summary when the user opens ReflectionPanel.\n- Any external access (browser/search) must be an explicit tool call; no “I clicked…” narration.\n- If tools are not configured, record “tool unavailable” and proceed with local evidence only.\n- Never interrupt the user mid-task; heartbeat should defer to quiet hours or “user active” state.',
             temperature: 0.7,
             astroBirthDate: '2024-01-01T12:00:00',
             astroBirthPlace: 'San Francisco',
@@ -68,7 +68,15 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
     },
     mcpServers: [],
     guardrails: [],
-    workflows: {}
+    workflows: {},
+    reflection: {
+        enabled: true,
+        heartbeatMinutes: 60,
+        quietHours: { start: '00:00', end: '06:00' },
+        autoApplyRiskLevel: 3, // Low (1-3)
+        retentionDays: 30,
+        maxProposalsPerDay: 5
+    }
 };
 
 /** Deep merges two objects. */

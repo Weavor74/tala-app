@@ -1,0 +1,148 @@
+import fs from 'fs';
+import path from 'path';
+import { ReflectionEvent, ChangeProposal, OutcomeRecord } from './types';
+
+/**
+ * Handles persistent storage of reflection artifacts in the local filesystem.
+ * Adheres to local-first and auditability policies.
+ */
+export class ArtifactStore {
+    private baseDir: string;
+
+    constructor(userDataDir: string) {
+        this.baseDir = path.join(userDataDir, 'memory');
+        this.ensureDirectories();
+    }
+
+    private ensureDirectories() {
+        const dirs = [
+            'reflections',
+            'proposals',
+            'outcomes',
+            'backups/reflection_changes'
+        ];
+        dirs.forEach(d => {
+            const fullPath = path.join(this.baseDir, d);
+            if (!fs.existsSync(fullPath)) {
+                fs.mkdirSync(fullPath, { recursive: true });
+            }
+        });
+    }
+
+    async saveReflection(event: ReflectionEvent): Promise<void> {
+        const filePath = path.join(this.baseDir, 'reflections', `${event.id}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(event, null, 2));
+        this.updateIndex('reflections', event.id, event.timestamp);
+    }
+
+    async saveProposal(proposal: ChangeProposal): Promise<void> {
+        const filePath = path.join(this.baseDir, 'proposals', `${proposal.id}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(proposal, null, 2));
+        this.updateIndex('proposals', proposal.id, new Date().toISOString());
+    }
+
+    async saveOutcome(outcome: OutcomeRecord): Promise<void> {
+        const filePath = path.join(this.baseDir, 'outcomes', `${outcome.proposalId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(outcome, null, 2));
+    }
+
+    async getProposals(status?: string): Promise<ChangeProposal[]> {
+        const dir = path.join(this.baseDir, 'proposals');
+        const files = fs.readdirSync(dir);
+        return files.map(f => {
+            const content = fs.readFileSync(path.join(dir, f), 'utf-8');
+            return JSON.parse(content) as ChangeProposal;
+        }).filter(p => !status || p.status === status);
+    }
+
+    private updateIndex(type: string, id: string, timestamp: string) {
+        const indexPath = path.join(this.baseDir, 'reflection_index.json');
+        let index: any = { reflections: [], proposals: [] };
+        if (fs.existsSync(indexPath)) {
+            index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+        }
+        index[type].push({ id, timestamp });
+        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    }
+
+    /**
+     * Purges records older than the retention limit.
+     */
+    async purgeOldRecords(retentionDays: number): Promise<void> {
+        const limit = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+        console.log(`[ArtifactStore] Purging records older than ${retentionDays} days...`);
+
+        const dirs = ['reflections', 'proposals', 'outcomes'];
+        let totalPurged = 0;
+
+        for (const subDir of dirs) {
+            const dir = path.join(this.baseDir, subDir);
+            if (!fs.existsSync(dir)) continue;
+
+            const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                try {
+                    const stat = fs.statSync(filePath);
+                    if (stat.mtimeMs < limit) {
+                        fs.unlinkSync(filePath);
+                        totalPurged++;
+                    }
+                } catch (e) {
+                    console.error(`[ArtifactStore] Failed to purge ${filePath}:`, e);
+                }
+            }
+        }
+
+        // Rebuild index after purge
+        if (totalPurged > 0) {
+            this.rebuildIndex();
+        }
+
+        console.log(`[ArtifactStore] Purged ${totalPurged} records.`);
+    }
+
+    /** Rebuilds the reflection index from disk files. */
+    private rebuildIndex() {
+        const indexPath = path.join(this.baseDir, 'reflection_index.json');
+        const index: any = { reflections: [], proposals: [] };
+
+        for (const type of ['reflections', 'proposals'] as const) {
+            const dir = path.join(this.baseDir, type);
+            if (!fs.existsSync(dir)) continue;
+            const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+            for (const file of files) {
+                try {
+                    const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
+                    index[type].push({ id: data.id, timestamp: data.timestamp || new Date().toISOString() });
+                } catch { }
+            }
+        }
+
+        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    }
+
+    /** Returns count of reflection event files on disk. */
+    getReflectionCount(): number {
+        try {
+            return fs.readdirSync(path.join(this.baseDir, 'reflections')).filter(f => f.endsWith('.json')).length;
+        } catch { return 0; }
+    }
+
+    /** Returns count of proposal files on disk. */
+    getProposalCount(): number {
+        try {
+            return fs.readdirSync(path.join(this.baseDir, 'proposals')).filter(f => f.endsWith('.json')).length;
+        } catch { return 0; }
+    }
+
+    /** Returns all outcome records from disk. */
+    getOutcomes(): OutcomeRecord[] {
+        try {
+            const dir = path.join(this.baseDir, 'outcomes');
+            return fs.readdirSync(dir)
+                .filter(f => f.endsWith('.json'))
+                .map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as OutcomeRecord);
+        } catch { return []; }
+    }
+}

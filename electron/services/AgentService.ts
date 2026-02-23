@@ -314,6 +314,59 @@ export class AgentService {
         }
     }
 
+    /**
+     * Exports the current (or specified) session as Markdown or JSON.
+     * @param format - 'markdown' or 'json'
+     * @param sessionId - Optional session ID (defaults to active)
+     * @returns Formatted string
+     */
+    public exportSession(format: 'markdown' | 'json' = 'markdown', sessionId?: string): string {
+        const id = sessionId || this.activeSessionId;
+        const filePath = path.join(this.sessionsDir, `${id}.json`);
+
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Session not found: ${id}`);
+        }
+
+        const session = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const messages: ChatMessage[] = session.messages || [];
+
+        if (format === 'json') {
+            return JSON.stringify(session, null, 2);
+        }
+
+        // Markdown format
+        const lines: string[] = [];
+        lines.push(`# ${session.title || 'Conversation'}`);
+        lines.push(`*Exported: ${new Date().toISOString()}*`);
+        lines.push(`*Session: ${id}*`);
+        lines.push('');
+        lines.push('---');
+        lines.push('');
+
+        for (const msg of messages) {
+            switch (msg.role) {
+                case 'user':
+                    lines.push(`## 🧑 User`);
+                    lines.push(msg.content);
+                    break;
+                case 'assistant':
+                    lines.push(`## 🤖 Tala`);
+                    lines.push(msg.content);
+                    break;
+                case 'tool':
+                    lines.push(`> **Tool** (\`${msg.name || 'unknown'}\`): ${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
+                    break;
+                case 'system':
+                    // Skip system messages in export
+                    break;
+            }
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    }
+
     /** Persists the active session to disk. */
     private saveSession() {
         try {
@@ -465,6 +518,24 @@ export class AgentService {
             await this.syncAstroProfiles();
         }
     }
+
+    /** 
+     * Default timeout for terminal command execution results (ms).
+     * Reflected by automated system checks.
+     */
+    private static readonly TERMINAL_EXECUTION_TIMEOUT = 30000;
+
+    /**
+     * Maximum iterations the agentic tool loop can run before forcing a stop.
+     * Prevents runaway loops and excessive API usage.
+     */
+    private static readonly MAX_AGENT_ITERATIONS = 25;
+
+    /** Maximum retries for a failed inference call before giving up. */
+    private static readonly MAX_INFERENCE_RETRIES = 3;
+
+    /** Token usage ledger path (daily tracking). */
+    private tokenLedgerPath: string = '';
 
     /**
      * Injects system environment info into the AgentService and its ToolService.
@@ -1248,7 +1319,7 @@ If your model does not support native tool-calling API, output a JSON block in y
         // Prepare Native Tools
         const tools = this.tools.getToolDefinitions();
 
-        while (turn < 50) {
+        while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
             turn++;
             let assistantText = "";
@@ -1269,10 +1340,10 @@ If your model does not support native tool-calling API, output a JSON block in y
             });
 
             try {
-                const response = await this.brain.streamResponse(truncatedMessages, systemPrompt, (token) => {
+                const response = await this.streamWithRetry(truncatedMessages, systemPrompt, (token) => {
                     assistantText += token;
                     onToken(token);
-                }, signal, tools, { timeout: 1800000, num_ctx: 32768 });
+                }, signal, tools, { timeout: 1800000, num_ctx: 32768 }, onToken);
 
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens || 0;
@@ -1433,9 +1504,19 @@ If your model does not support native tool-calling API, output a JSON block in y
                         } else if (resStr.startsWith('TERMINAL_RUN:')) {
                             const cmd = resStr.replace('TERMINAL_RUN:', '').trim();
                             onEvent?.('terminal-run', { command: cmd });
-                            await new Promise(r => setTimeout(r, 2000));
+
+                            // Wait for output or timeout
+                            const timeout = AgentService.TERMINAL_EXECUTION_TIMEOUT;
+                            await new Promise(r => setTimeout(r, Math.min(timeout, 5000))); // Minimum 5s for short commands
+
+                            // For longer commands, we would ideally poll, but for now we increase the static wait
+                            // to match what the reflection system suggests (30s+).
+                            if (cmd.includes('/s') || cmd.includes('grep') || cmd.includes('find')) {
+                                await new Promise(r => setTimeout(r, timeout - 5000));
+                            }
+
                             const output = this.terminal ? this.terminal.getRecentOutput() : "";
-                            toolMsg.content = `[TERMINAL OUTPUT]:\n${output || "(Command executed)"}`;
+                            toolMsg.content = `[TERMINAL OUTPUT]:\n${output || "(Command executed, no immediate output)"}`;
                         } else if (resStr.startsWith('BROWSER_SCREENSHOT:')) {
                             const screenshotPromise = this.waitForBrowserData('screenshot');
                             onEvent?.('browser-screenshot', {});
@@ -1502,8 +1583,9 @@ If your model does not support native tool-calling API, output a JSON block in y
                     }
                 }
 
-            } catch (e) {
+            } catch (e: any) {
                 console.error("Chat Loop Error", e);
+                onToken(`\n\n⚠️ *Inference error after retries: ${e.message || e}*\n`);
                 break;
             }
         }
@@ -1523,11 +1605,80 @@ If your model does not support native tool-calling API, output a JSON block in y
                     break;
                 }
             }
+
+            // Persist daily token usage
+            this.recordTokenUsage(cumulativeUsage.total_tokens);
             this.chatHistory.push(...transientMessages);
             this.saveSession();
         }
 
 
+    }
+
+    /**
+     * Wraps brain.streamResponse with retry + exponential backoff.
+     * Retries on transient errors (timeout, connection refused, 400/500).
+     * Resets the streamed text between retries.
+     */
+    private async streamWithRetry(
+        messages: any[],
+        systemPrompt: string,
+        onChunk: (token: string) => void,
+        signal: AbortSignal | undefined,
+        tools: any[],
+        options: any,
+        onToken?: (msg: string) => void
+    ) {
+        let lastError: any;
+        for (let attempt = 1; attempt <= AgentService.MAX_INFERENCE_RETRIES; attempt++) {
+            try {
+                return await this.brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
+            } catch (e: any) {
+                lastError = e;
+                const msg = e?.message || String(e);
+                const isTransient = /timeout|ECONNREFUSED|ECONNRESET|EPIPE|fetch failed|400|500|502|503|529|socket hang up|UND_ERR/i.test(msg);
+
+                if (!isTransient || attempt === AgentService.MAX_INFERENCE_RETRIES) {
+                    throw e;
+                }
+
+                const delay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+                console.warn(`[AgentService] Inference attempt ${attempt}/${AgentService.MAX_INFERENCE_RETRIES} failed: ${msg}. Retrying in ${delay}ms...`);
+                onToken?.(`\n> ⚠️ *Inference attempt ${attempt} failed. Retrying in ${delay / 1000}s...*\n`);
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+        throw lastError;
+    }
+
+    /**
+     * Records token usage in a daily ledger file (memory/token_ledger.json).
+     * Used for cost monitoring and awareness.
+     */
+    private recordTokenUsage(tokens: number) {
+        if (!tokens || tokens <= 0) return;
+        try {
+            const ledgerPath = this.tokenLedgerPath || path.join(app.getPath('userData'), 'memory', 'token_ledger.json');
+            this.tokenLedgerPath = ledgerPath;
+
+            const dir = path.dirname(ledgerPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+            let ledger: Record<string, { tokens: number; sessions: number }> = {};
+            if (fs.existsSync(ledgerPath)) {
+                ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+            }
+
+            const today = new Date().toISOString().slice(0, 10);
+            if (!ledger[today]) ledger[today] = { tokens: 0, sessions: 0 };
+            ledger[today].tokens += tokens;
+            ledger[today].sessions += 1;
+
+            fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+            console.log(`[AgentService] Token usage recorded: +${tokens} tokens (today: ${ledger[today].tokens} total, ${ledger[today].sessions} sessions)`);
+        } catch (e) {
+            console.error('[AgentService] Failed to record token usage:', e);
+        }
     }
 
     /** Map of pending browser data resolvers, keyed by data type (e.g., `'dom'`, `'screenshot'`). */
