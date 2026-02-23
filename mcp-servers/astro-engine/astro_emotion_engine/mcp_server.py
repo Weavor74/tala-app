@@ -133,6 +133,55 @@ def get_emotional_state(
         return f"Error calculating state: {str(e)}"
 
 @mcp.tool()
+def get_raw_emotional_state(
+    agent_id: str = "",
+    birth_date: str = "",
+    birth_place: str = ""
+) -> str:
+    """
+    Returns the raw emotional JSON data for programmatic use.
+    
+    Args:
+        agent_id: Agent profile ID
+        birth_date: ISO 8601 string
+        birth_place: City name
+        
+    Returns:
+        JSON string of the full emotion state response.
+    """
+    try:
+        if agent_id:
+            profile = profile_manager.get_profile(agent_id)
+            if not profile:
+                return json.dumps({"error": f"Profile {agent_id} not found"})
+            birth_date = profile.birth_date
+            birth_place = profile.birth_place
+            subject_id = agent_id
+        elif birth_date and birth_place:
+            subject_id = "direct_calculation"
+        else:
+            return json.dumps({"error": "Missing agent_id or birth data"})
+
+        natal_profile = chart_factory.create_chart(birth_date, birth_place)
+        req = EmotionRequest(
+            subject_id=subject_id,
+            timestamp=datetime.now().astimezone(),
+            natal_profile=natal_profile,
+            context_hints={}
+        )
+        resp = engine.compute_emotion_state(req)
+        
+        # Return serializable dict
+        return json.dumps({
+            "subject_id": resp.subject_id,
+            "emotional_vector": resp.emotion_vector,
+            "mood_label": resp.mood_label,
+            "influences": [{"desc": i.description, "strength": i.strength} for i in resp.influences]
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
 def create_agent_profile(
     agent_id: str,
     name: str,

@@ -533,6 +533,52 @@ ipcMain.handle('session:export-file', async (_e, format: 'markdown' | 'json', se
   }
 });
 
+/** Exports an agent profile as a standalone Python codeset. */
+ipcMain.handle('agent:export-to-python', async (_e, profileId: string) => {
+  try {
+    console.log(`[Main] Exporting agent ${profileId} to Python...`);
+    const result = await dialog.showOpenDialog({
+      title: 'Select Export Directory',
+      properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const outputDir = result.filePaths[0];
+      console.log(`[Main] User selected output directory: ${outputDir}`);
+      await agent.exportAgentToPython(profileId, outputDir);
+      return { success: true, path: outputDir };
+    }
+    console.log('[Main] Agent export canceled.');
+    return { success: false, canceled: true };
+  } catch (e: any) {
+    console.error('[Main] Agent export failed:', e);
+    return { error: e.message };
+  }
+});
+
+/** Exports a workflow as a standalone Python codeset. */
+ipcMain.handle('workflow:export-to-python', async (_e, workflowId: string) => {
+  try {
+    console.log(`[Main] Exporting workflow ${workflowId} to Python...`);
+    const result = await dialog.showOpenDialog({
+      title: 'Select Export Directory',
+      properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const outputDir = result.filePaths[0];
+      console.log(`[Main] User selected output directory: ${outputDir}`);
+      await workflowService.exportWorkflowToPython(workflowId, outputDir);
+      return { success: true, path: outputDir };
+    }
+    console.log('[Main] Workflow export canceled.');
+    return { success: false, canceled: true };
+  } catch (e: any) {
+    console.error('[Main] Workflow export failed:', e);
+    return { error: e.message };
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // IPC HANDLERS — ASTRO
 // ═══════════════════════════════════════════════════════════════════════

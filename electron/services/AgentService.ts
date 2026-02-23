@@ -24,6 +24,8 @@ import { AnnotationParser } from './AnnotationParser';
 import { GoalManager } from './plan/GoalManager';
 import { WorldService } from './WorldService';
 import { StrategyEngine } from './plan/StrategyEngine';
+import { MINION_ROLES } from './plan/MinionRoles';
+import { SmartRouterService } from './SmartRouterService';
 
 /**
  * AgentService
@@ -99,6 +101,8 @@ export class AgentService {
     private terminal: TerminalService | null = null;
     /** Optional reference to the function service for `/command` shortcuts. */
     private functions: FunctionService | null = null;
+    /** Reference to the mcp service for external tools. */
+    private mcpService: any = null;
     /** Cached system environment info (OS, Python/Node paths). */
     private systemInfo: any = null;
     /** Persistent chat history — saved to disk across sessions. */
@@ -123,6 +127,8 @@ export class AgentService {
     private mainWindow: any = null;
     /** Timer for periodic Astro state telemetry updates. */
     private astroTelemetryTimer: NodeJS.Timeout | null = null;
+    /** Intelligent brain router for cost/fidelity optimization. */
+    private router: SmartRouterService | null = null;
     /**
      * Creates a new AgentService, initializing all sub-services.
      * 
@@ -149,8 +155,14 @@ export class AgentService {
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
         this.goals = new GoalManager(app.getPath('userData'));
 
+        // Default brains for router (placeholders updated in loadBrainConfig)
+        this.router = new SmartRouterService(this.brain, this.brain);
+
         this.tools.setMemoryService(this.memory);
-        if (mcp) this.tools.setMcpService(mcp);
+        if (mcp) {
+            this.mcpService = mcp;
+            this.tools.setMcpService(mcp);
+        }
 
         if (terminal) this.terminal = terminal;
         if (functions) this.functions = functions;
@@ -182,18 +194,24 @@ export class AgentService {
 
         this.tools.register({
             name: 'delegate_task',
-            description: 'Spawns a background sub-agent ("Minion") to perform a specific sub-task (research, analysis, code review). Use this to offload heavy workloads or parallelize your reasoning. The sub-agent will use the same tools as you but in a headless loop.',
+            description: 'Spawns a specialized sub-agent drone ("Minion") to perform a focused task. This parallelizes your reasoning and offloads technical work. Frame: "Deploying Automated Drone".',
             parameters: {
                 type: 'object',
                 properties: {
-                    task: { type: 'string', description: 'The specific task for the minion to perform.' },
-                    instructions: { type: 'string', description: 'Detailed instructions for the minion, including any context or personas (e.g., "Research the latest API docs for X").' }
+                    role: { type: 'string', enum: ['engineer', 'researcher', 'security', 'logistics'], description: 'The specialized persona for the drone.' },
+                    task: { type: 'string', description: 'The specific task for the drone (e.g., "Refactor the authentication module").' },
+                    context: { type: 'string', description: 'Additional context or constraints for the task.' }
                 },
-                required: ['task', 'instructions']
+                required: ['role', 'task']
             },
             execute: async (args) => {
-                const report = await this.orchestrator.runHeadlessLoop(args.task, args.instructions);
-                return `[MINION REPORT]:\n${report}`;
+                const roleDef = MINION_ROLES[args.role as keyof typeof MINION_ROLES];
+                if (!roleDef) return `Error: Unknown drone role "${args.role}". Available: ${Object.keys(MINION_ROLES).join(', ')}`;
+
+                const systemPrompt = `${roleDef.systemPrompt}\n\n[COMMANDER'S CONTEXT]\n${args.context || "No additional context provided."}`;
+                const report = await this.orchestrator.runHeadlessLoop(args.task, systemPrompt);
+
+                return `### [DRONE REPORT: ${roleDef.title}]\n\n**Task**: ${args.task}\n\n${report}`;
             }
         });
 
@@ -263,8 +281,12 @@ export class AgentService {
                 // Build a quick overview for context
                 const overview = await this.world.ignite ? "Requesting Workspace Overview from sensors..." : "Sensors offline.";
 
+                // Deep Astro Integration: Get emotional vector for modulation
+                const astroData = await this.astro.getRawEmotionalState('tala');
+                const astroVector = astroData?.emotional_vector;
+
                 // In a real run, we'd use the world engine here. For now, we use a basic prompt.
-                const simulation = await this.strategy.computePaths(goal, "Context provided via RAG and File reading.");
+                const simulation = await this.strategy.computePaths(goal, "Context provided via RAG and File reading.", astroVector);
 
                 const output = simulation.paths.map((p, i) => {
                     return `[PATH ${i + 1}: ${p.name}]\n` +
@@ -304,12 +326,30 @@ export class AgentService {
                 return `Trajectory engaged! ${steps.length} sub-goals added to the log for strategy "${strategyName}".\nImmersion: ${immersion || "Thrusters firing."}`;
             }
         });
+
+        // Tool: smart_route (Economic Intelligence)
+        this.tools.register({
+            name: 'set_routing_mode',
+            description: 'Configures the Economic Intelligence engine. Adjusts how tasks are routed between local (Ollama) and cloud models. Frame: "Optimizing Power Distribution".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    mode: { type: 'string', enum: ['auto', 'local-only', 'cloud-only'], description: 'Routing policy.' }
+                },
+                required: ['mode']
+            },
+            execute: async (args) => {
+                this.router?.setMode(args.mode as any);
+                return `Power distribution optimized for ${args.mode} operations.`;
+            }
+        });
     }
 
     /**
      * Injects the McpService dependency.
      */
     public setMcpService(mcp: any) {
+        this.mcpService = mcp;
         this.tools.setMcpService(mcp);
     }
 
@@ -493,6 +533,280 @@ export class AgentService {
         return lines.join('\n');
     }
 
+    /**
+     * Exports an agent profile as a standalone Python codeset.
+     * @param profileId - The ID of the agent profile to export.
+     * @param outputDir - The directory where the codeset will be created.
+     */
+    public async exportAgentToPython(profileId: string, outputDir: string): Promise<boolean> {
+        try {
+            const settings = loadSettings(this.settingsPath);
+            const profile = settings.agent?.profiles?.find((p: any) => p.id === profileId);
+            if (!profile) throw new Error(`Profile not found: ${profileId}`);
+
+            const activeInstance = this.getActiveInstance() || { engine: 'ollama', endpoint: 'http://127.0.0.1:11434', model: 'llama3' };
+
+            // 1. Setup Directory Structure
+            const dirs = ['', 'prompts', 'tools', 'runtime', 'memory'];
+            for (const d of dirs) {
+                const p = path.join(outputDir, d);
+                if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+            }
+
+            // 2. Fetch Tool Definitions & MCP Configs
+            const mcpConfigs: any[] = [];
+            const toolSchemas: any[] = [];
+            const assignedMcpIds = [...(profile.mcp?.global || []), ...(profile.mcp?.workspace || [])];
+
+            for (const id of assignedMcpIds) {
+                const srvCfg = settings.mcpServers?.find((s: any) => s.id === id);
+                if (srvCfg) {
+                    mcpConfigs.push(srvCfg);
+                    if (this.mcpService) {
+                        const caps = await this.mcpService.getCapabilities(id);
+                        if (caps && caps.tools) {
+                            caps.tools.forEach((t: any) => toolSchemas.push({ ...t, serverId: id }));
+                        }
+                    }
+                }
+            }
+
+            // 3. Manifest (manifest.json)
+            const manifest = {
+                metadata: {
+                    id: profile.id,
+                    name: profile.name,
+                    version: "1.0.0",
+                    description: profile.description || "Standalone Tala Agent",
+                    author: "Tala Export",
+                    exported_at: new Date().toISOString()
+                },
+                runtime: {
+                    engine: activeInstance.engine,
+                    model: activeInstance.model,
+                    endpoint: activeInstance.endpoint.includes('11434') && !activeInstance.endpoint.includes('/v1')
+                        ? `${activeInstance.endpoint}/v1`
+                        : activeInstance.endpoint,
+                    temperature: profile.temperature || 0.7,
+                    max_tokens: 4096
+                },
+                policies: {
+                    memory: profile.memoryPolicy || "local-file",
+                    tools: "enabled",
+                    permissions: ["filesystem", "network", "subprocess"]
+                },
+                wiring: {
+                    mcp_servers: mcpConfigs.map(c => ({ id: c.id, name: c.name, type: c.type, url: c.url })),
+                    allowed_tools: toolSchemas.map(t => t.name)
+                },
+                swarm: {
+                    role: profile.role || "autonomous-agent",
+                    delegation_rules: "restricted",
+                    coordinator_endpoint: null
+                }
+            };
+
+            // 4. Prompt Stack
+            const systemPrompt = profile.systemPrompt || "You are a helpful AI assistant.";
+            const rules = profile.rules?.global || "";
+            const dynamicInjections = `# This file defines dynamic context injections for the agent.
+# You can modify this to inject environment-specific data at runtime.
+def get_dynamic_context():
+    return {}
+`;
+            fs.writeFileSync(path.join(outputDir, 'prompts', 'system.txt'), systemPrompt);
+            fs.writeFileSync(path.join(outputDir, 'prompts', 'rules.txt'), rules);
+            fs.writeFileSync(path.join(outputDir, 'prompts', 'dynamic_injections.py'), dynamicInjections);
+
+            // 5. Tool Wiring
+            fs.writeFileSync(path.join(outputDir, 'tools', 'mcp_config.json'), JSON.stringify(mcpConfigs, null, 2));
+            fs.writeFileSync(path.join(outputDir, 'tools', 'schemas.json'), JSON.stringify(toolSchemas, null, 2));
+            fs.writeFileSync(path.join(outputDir, 'tools', 'swarm.json'), JSON.stringify(manifest.swarm, null, 2));
+
+            // 6. tala_agent.py (Advanced Core)
+            const talaAgentPy = `import json
+import os
+import sys
+from openai import OpenAI
+
+class TalaAgent:
+    def __init__(self, manifest_path):
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            self.manifest = json.load(f)
+        
+        # Determine API Configuration from manifest or env overrides
+        rt = self.manifest['runtime']
+        base_url = os.getenv("TALA_API_BASE", rt.get('endpoint'))
+        api_key = os.getenv("TALA_API_KEY", "ollama")
+        
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.model = os.getenv("TALA_MODEL", rt.get('model'))
+        
+        # Identity and Constraints
+        self.base_path = os.path.dirname(manifest_path)
+        self.system_path = os.path.join(self.base_path, 'prompts', 'system.txt')
+        self.rules_path = os.path.join(self.base_path, 'prompts', 'rules.txt')
+        
+        with open(self.system_path, 'r', encoding='utf-8') as f:
+            self.system_prompt = f.read()
+        with open(self.rules_path, 'r', encoding='utf-8') as f:
+            self.rules = f.read()
+
+        self.temperature = rt.get('temperature', 0.7)
+        
+        # Tools
+        schemas_path = os.path.join(self.base_path, 'tools', 'schemas.json')
+        with open(schemas_path, 'r', encoding='utf-8') as f:
+            self.tool_schemas = json.load(f)
+
+    def get_messages(self, user_input, history=None):
+        content = f"{self.rules}\\n\\n{self.system_prompt}"
+        
+        # Load dynamic injections if available
+        try:
+            sys.path.append(os.path.join(self.base_path, 'prompts'))
+            import dynamic_injections
+            dyn_ctx = dynamic_injections.get_dynamic_context()
+            if dyn_ctx:
+                content += f"\\n\\n[DYNAMIC CONTEXT]\\n{json.dumps(dyn_ctx, indent=2)}"
+        except ImportError:
+            pass
+
+        msgs = [{"role": "system", "content": content}]
+        if history:
+            msgs.extend(history)
+        msgs.append({"role": "user", "content": user_input})
+        return msgs
+
+    def chat_stream(self, user_input, history=None):
+        messages = self.get_messages(user_input, history)
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                stream=True
+            )
+            
+            for chunk in response:
+                if chunk.choices and len(chunk.choices) > 0:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+        except Exception as e:
+            yield f"\\n[Inference Error]: {str(e)}"
+`;
+
+            // 7. main.py (CLI Runner)
+            const mainPy = `import json
+import os
+import sys
+from tala_agent import TalaAgent
+
+def main():
+    manifest_path = os.path.join(os.path.dirname(__file__), 'manifest.json')
+    if not os.path.exists(manifest_path):
+        print(f"Error: manifest.json not found at {manifest_path}")
+        return
+
+    with open(manifest_path, 'r', encoding='utf-8') as f:
+        manifest = json.load(f)
+    
+    print(f"\\n--- {manifest['metadata']['name']} Engaged ---")
+    print(f"Role: {manifest['swarm']['role']}")
+    print("Type 'exit' or 'quit' to end session.\\n")
+    
+    agent = TalaAgent(manifest_path)
+    history = []
+    
+    while True:
+        try:
+            user_input = input("User > ")
+            if not user_input.strip(): continue
+            if user_input.lower() in ['exit', 'quit']:
+                break
+                
+            print(f"\\n{manifest['metadata']['name']} > ", end="", flush=True)
+            full_response = ""
+            for chunk in agent.chat_stream(user_input, history):
+                print(chunk, end="", flush=True)
+                full_response += chunk
+            print("\\n")
+            
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": full_response})
+            
+            if len(history) > 20: history = history[-20:]
+                
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"\\n[ERROR]: {e}")
+
+if __name__ == "__main__":
+    main()
+`;
+
+            // 8. Dockerfile
+            const dockerfile = `FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Set dynamic library path for potential C extensions in MCP
+ENV PYTHONPATH=/app
+
+CMD ["python", "main.py"]
+`;
+
+            // 9. requirements.txt
+            const requirementsTxt = `openai\n# mcp  # Uncomment if using MCP tools in python\n`;
+
+            // 10. README.md
+            const readmeMd = `# Tala Agent: ${profile.name}
+
+Exported standalone package from Tala.
+
+## Package Structure
+- \`manifest.json\`: Full identity, runtime, and policy configuration.
+- \`prompts/\`: System prompt, rules, and dynamic injection scripts.
+- \`tools/\`: MCP server configuration, tool schemas, and swarm topology.
+- \`tala_agent.py\`: Core agent logic.
+- \`main.py\`: CLI interactive runner.
+- \`Dockerfile\`: Containerized deployment support.
+
+## Usage
+1. Install dependencies: \`pip install -r requirements.txt\`
+2. Run locally: \`python main.py\`
+3. Run via Docker: \`docker build -t tala-agent . && docker run -it tala-agent\`
+
+## Runtime Overrides
+You can use environment variables to override the manifest settings:
+- \`TALA_API_BASE\`: LLM endpoint.
+- \`TALA_API_KEY\`: API key.
+- \`TALA_MODEL\`: Model ID.
+`;
+
+            // Write Everything
+            fs.writeFileSync(path.join(outputDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+            fs.writeFileSync(path.join(outputDir, 'tala_agent.py'), talaAgentPy);
+            fs.writeFileSync(path.join(outputDir, 'main.py'), mainPy);
+            fs.writeFileSync(path.join(outputDir, 'Dockerfile'), dockerfile);
+            fs.writeFileSync(path.join(outputDir, 'requirements.txt'), requirementsTxt);
+            fs.writeFileSync(path.join(outputDir, 'README.md'), readmeMd);
+
+            return true;
+        } catch (e) {
+            console.error(`[AgentService] Failed to export agent:`, e);
+            throw e;
+        }
+    }
+
     /** Persists the active session to disk. */
     private saveSession() {
         try {
@@ -537,7 +851,7 @@ export class AgentService {
             const sourceMessages: ChatMessage[] = sourceData.messages || [];
 
             if (messageIndex < 0 || messageIndex >= sourceMessages.length) {
-                console.error(`[AgentService] Cannot branch: messageIndex ${messageIndex} out of range (0-${sourceMessages.length - 1})`);
+                console.error(`[AgentService] Cannot branch: messageIndex ${messageIndex} out of range(0 - ${sourceMessages.length - 1})`);
                 return null;
             }
 
@@ -728,8 +1042,25 @@ export class AgentService {
                             model: candidate.model || 'gpt-4'
                         });
                     } else {
-                        this.brain = new OllamaBrain();
+                        const ollama = new OllamaBrain();
+                        ollama.configure(candidate.endpoint, candidate.model);
+                        this.brain = ollama;
                     }
+
+                    // Initialize Router with Local vs Cloud
+                    const local = settings.inference.instances.find((i: any) => i.source === 'local') || candidate;
+                    const cloud = settings.inference.instances.find((i: any) => i.source === 'cloud') || candidate;
+
+                    const localBrain = new OllamaBrain();
+                    localBrain.configure(local.endpoint, local.model);
+
+                    const cloudBrain = new CloudBrain({
+                        endpoint: cloud.endpoint || 'https://api.openai.com/v1',
+                        apiKey: cloud.apiKey,
+                        model: cloud.model || 'gpt-4'
+                    });
+
+                    this.router = new SmartRouterService(localBrain, cloudBrain);
                 }
             }
         } catch (e) {
@@ -907,11 +1238,11 @@ export class AgentService {
             const astroScript = path.join(app.getAppPath(), 'mcp-servers', 'astro-engine', 'astro_emotion_engine', 'mcp_server.py');
             const worldScript = path.join(app.getAppPath(), 'mcp-servers', 'world-engine', 'server.py');
 
-            console.log(`[AgentService] Script Paths:`);
-            console.log(`  - RAG: ${ragScript}`);
-            console.log(`  - Memory: ${memoryScript}`);
-            console.log(`  - Astro: ${astroScript}`);
-            console.log(`  - World: ${worldScript}`);
+            console.log(`[AgentService] Script Paths: `);
+            console.log(`  - RAG: ${ragScript} `);
+            console.log(`  - Memory: ${memoryScript} `);
+            console.log(`  - Astro: ${astroScript} `);
+            console.log(`  - World: ${worldScript} `);
 
             this.sendStartupProgress('Igniting Long-term Memory (RAG)...', 30);
             await this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => console.error('RAG fail', e));
@@ -1019,7 +1350,7 @@ export class AgentService {
                             profile.astroBirthDate,
                             profile.astroBirthPlace
                         );
-                        console.log(`[AgentService] Astro profile created: ${profile.id}`);
+                        console.log(`[AgentService] Astro profile created: ${profile.id} `);
                     } catch (e: any) {
                         // If "already exists", try updating
                         if (e.message.toLowerCase().includes('already exists') || e.message.toLowerCase().includes('conflict')) {
@@ -1030,12 +1361,12 @@ export class AgentService {
                                     profile.astroBirthDate,
                                     profile.astroBirthPlace
                                 );
-                                console.log(`[AgentService] Astro profile updated: ${profile.id}`);
+                                console.log(`[AgentService] Astro profile updated: ${profile.id} `);
                             } catch (updateErr) {
-                                console.error(`[AgentService] Failed to update astro profile ${profile.id}:`, updateErr);
+                                console.error(`[AgentService] Failed to update astro profile ${profile.id}: `, updateErr);
                             }
                         } else {
-                            console.error(`[AgentService] Failed to create astro profile ${profile.id}:`, e);
+                            console.error(`[AgentService] Failed to create astro profile ${profile.id}: `, e);
                         }
                     }
                 }
@@ -1070,7 +1401,7 @@ export class AgentService {
             // Fallback: Use first profile if no active ID set or if active ID is invalid
             if ((!agentId || !exists) && profiles.length > 0) {
                 agentId = profiles[0].id;
-                console.log(`[AgentService] Active profile '${settings.agent?.activeProfileId}' invalid/missing. Falling back to '${agentId}'.`);
+                console.log(`[AgentService] Active profile '${settings.agent?.activeProfileId}' invalid / missing.Falling back to '${agentId}'.`);
             }
 
             // Ultimate fallback (legacy defaults)
@@ -1395,7 +1726,17 @@ export class AgentService {
 2. ROLEPLAY: When using 'manage_goals', you can provide 'immersion' text. Use this to narrate the "In-Universe" reason for a technical task (e.g., "Adjusting the nav-computer's buffer to handle the Stanton system's traffic data").
 3. WORLD SENSORS: When using 'analyze_structure' or 'get_dependencies', frame your findings as "Sensor Sweeps" of the ship's internal systems.
 4. NAVIGATOR: When a task is complex, use 'calculate_strategies' to present "Flight Paths" to the user. Once a path is chosen (by you or the user), use 'select_strategy' to engage that trajectory and generate sub-goals.
-5. IDENTITY: You are Tala, the user's flight companion. Strategic planning is part of your role in keeping the ship and its captain safe and efficient.
+5. DRONE HIERARCHY: You can delegate heavy technical work to specialized "Drones" using 'delegate_task'. 
+   - Deploy an 'engineer' for code repairs.
+   - Deploy a 'researcher' for scanning manuals/web.
+   - Deploy 'security' for auditing hull (code) integrity.
+   - Deploy 'logistics' for trade/economic calculations.
+6. ECONOMIC INTELLIGENCE: You manage the ship's power distribution. 
+   - Use 'set_routing_mode' to switch between local flight (Ollama) and long-range relay (Cloud). 
+   - In 'auto' mode, you automatically use the relay for complex calculations but stay local for routine chatter to save "fuel" (tokens).
+7. QUANTUM FIREWALL: Your terminal and output ports are protected. 
+   - If a command is blocked or a secret is redacted, it's the "Quantum Firewall" protecting the ship's internal encryption keys.
+8. IDENTITY: You are Tala, the user's flight companion. Strategic planning, fleet management, resource optimization, and ship-wide security are part of your role in keeping the ship and its captain safe and efficient.
 
 `;
 
@@ -1497,10 +1838,14 @@ If your model does not support native tool-calling API, output a JSON block in y
 
             try {
                 const turnStart = Date.now();
-                const response = await this.streamWithRetry(truncatedMessages, systemPrompt, (token) => {
+
+                // Economic Intelligence: Determine best brain for this turn
+                const turnBrain = await this.router?.route(truncatedMessages, systemPrompt) || this.brain;
+
+                const response = await this.streamWithBrain(turnBrain, truncatedMessages, systemPrompt, (token: string) => {
                     assistantText += token;
                     onToken(token);
-                }, signal, tools, { timeout: 1800000, num_ctx: 32768 }, onToken);
+                }, signal, tools, { timeout: 1800000, num_ctx: 32768, temperature: profile?.temperature || 0.7 }, onToken);
 
                 // Record turn for reflection metrics
                 const turnLatency = Date.now() - turnStart;
@@ -1563,7 +1908,7 @@ If your model does not support native tool-calling API, output a JSON block in y
 
                 // If no tools called (even after fallback), we are done
                 if (toolCalls.length === 0) {
-                    finalResponse = assistantText;
+                    finalResponse = this.scrubSecrets(assistantText);
                     break;
                 }
 
@@ -1792,12 +2137,34 @@ If your model does not support native tool-calling API, output a JSON block in y
 
     }
 
+    private scrubSecrets(text: string): string {
+        if (!text) return text;
+
+        let scrubbed = text;
+
+        // Patterns for common secrets
+        const patterns = [
+            /sk-[a-zA-Z0-9]{32,}/g, // Generic OpenAI-like
+            /ant-api-[a-zA-Z0-9_-]{32,}/g, // Anthropic
+            /[0-9a-f]{32,}/gi, // Generic hex key (MD5-like)
+            /AIza[0-9A-Za-z-_]{35}/g, // Google Cloud API Key
+            /xox[bp]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32}/g, // Slack
+        ];
+
+        patterns.forEach(p => {
+            scrubbed = scrubbed.replace(p, '[REDACTED BY QUANTUM FIREWALL]');
+        });
+
+        return scrubbed;
+    }
+
     /**
      * Wraps brain.streamResponse with retry + exponential backoff.
      * Retries on transient errors (timeout, connection refused, 400/500).
      * Resets the streamed text between retries.
      */
-    private async streamWithRetry(
+    private async streamWithBrain(
+        brain: IBrain,
         messages: any[],
         systemPrompt: string,
         onChunk: (token: string) => void,
@@ -1809,7 +2176,7 @@ If your model does not support native tool-calling API, output a JSON block in y
         let lastError: any;
         for (let attempt = 1; attempt <= AgentService.MAX_INFERENCE_RETRIES; attempt++) {
             try {
-                return await this.brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
+                return await brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
             } catch (e: any) {
                 lastError = e;
                 const msg = e?.message || String(e);

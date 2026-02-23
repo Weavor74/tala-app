@@ -191,6 +191,30 @@ export class AstroService {
     }
 
     /**
+     * Retrieves the raw emotional vector and mood label.
+     */
+    async getRawEmotionalState(agentId: string = 'tala'): Promise<any> {
+        if (!this.isReady || !this.client) return null;
+
+        try {
+            const result = await this.client.callTool({
+                name: 'get_raw_emotional_state',
+                arguments: { agent_id: agentId }
+            });
+
+            if (result.content && Array.isArray(result.content) && result.content.length > 0) {
+                const content = result.content[0] as any;
+                if (content && typeof content.text === 'string') {
+                    return JSON.parse(content.text);
+                }
+            }
+        } catch (e) {
+            console.error('[AstroService] getRawEmotionalState fail', e);
+        }
+        return null;
+    }
+
+    /**
      * Creates a new agent profile in the Astro Engine's persistent profile store.
      */
     async createProfile(agentId: string, name: string, birthDate: string, birthPlace: string): Promise<string> {

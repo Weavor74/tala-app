@@ -96,6 +96,7 @@
     "electron-squirrel-startup": "^1.0.1",
     "imapflow": "^1.2.9",
     "node-pty": "^1.1.0",
+    "nodemailer": "^8.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "reactflow": "^11.11.4",

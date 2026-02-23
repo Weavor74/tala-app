@@ -359,6 +359,10 @@ contextBridge.exposeInMainWorld('tala', {
     exportSessionContent: (format: 'markdown' | 'json', sessionId?: string) => ipcRenderer.invoke('session:export', format, sessionId),
     /** Exports the current session to a file via save dialog. */
     exportSessionFile: (format: 'markdown' | 'json', sessionId?: string) => ipcRenderer.invoke('session:export-file', format, sessionId),
+    /** Exports an agent profile as a standalone Python codeset. */
+    exportAgentToPython: (profileId: string) => ipcRenderer.invoke('agent:export-to-python', profileId),
+    /** Exports a workflow as a standalone Python codeset. */
+    exportWorkflowToPython: (workflowId: string) => ipcRenderer.invoke('workflow:export-to-python', workflowId),
 
     // ─── Voice ────────────────────────────────────────────────────
     /** Transcribes an audio file using Whisper. */

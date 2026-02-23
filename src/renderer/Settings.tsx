@@ -36,25 +36,29 @@ import { WORKFLOW_TEMPLATES } from './catalog/WorkflowTemplates';
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
 const headerStyle = { borderBottom: '1px solid #333', paddingBottom: 15, marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
-const tabContainerStyle = { display: 'flex', borderBottom: '1px solid #333', marginBottom: 20 };
+const tabContainerStyle = { display: 'flex', borderBottom: '1px solid #333', marginBottom: 20, flexWrap: 'wrap' as const, gap: '4px' };
 const tabStyle = (active: boolean) => ({
-    padding: '10px 20px',
+    padding: '8px 12px',
     cursor: 'pointer',
     color: active ? '#fff' : '#888',
+    background: active ? 'rgba(0, 122, 204, 0.1)' : 'transparent',
     borderBottom: active ? '2px solid #007acc' : '2px solid transparent',
-    fontWeight: active ? 'bold' : 'normal' as const,
-    fontSize: '12px',
+    fontWeight: active ? '700' : '500',
+    fontSize: '10px',
     textTransform: 'uppercase' as const,
-    letterSpacing: 1
+    letterSpacing: '1px',
+    transition: '0.2s all',
+    whiteSpace: 'nowrap' as const,
+    borderRadius: '4px 4px 0 0'
 });
 
-const sectionStyle = { marginBottom: 30, animation: 'fadeIn 0.2s' };
-const labelStyle = { display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#569cd6', marginBottom: '8px' };
-const inputStyle = { width: '100%', background: '#252526', border: '1px solid #3e3e42', padding: '10px', color: 'white', fontSize: '13px', outline: 'none', marginBottom: 15 };
+const sectionStyle = { marginBottom: 30, animation: 'fadeIn 0.2s', background: 'rgba(30, 30, 30, 0.4)', padding: '20px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(10px)' };
+const labelStyle = { display: 'block', fontSize: '10px', fontWeight: '800', color: '#888', marginBottom: '8px', textTransform: 'uppercase' as const, letterSpacing: '1.5px' };
+const inputStyle = { width: '100%', background: '#121212', border: '1px solid #333', padding: '12px', color: '#eee', fontSize: '13px', outline: 'none', marginBottom: 15, borderRadius: '4px', transition: 'border-color 0.2s' };
 const selectStyle = { ...inputStyle, cursor: 'pointer' };
 
 const Field = ({ label, value, onChange, placeholder, type = "text" }: any) => (
-    <div>
+    <div style={{ marginBottom: 15 }}>
         <label style={labelStyle}>{label}</label>
         <input
             type={type}
@@ -62,6 +66,8 @@ const Field = ({ label, value, onChange, placeholder, type = "text" }: any) => (
             value={value || ''}
             onChange={onChange}
             placeholder={placeholder}
+            onFocus={(e) => e.target.style.borderColor = '#007acc'}
+            onBlur={(e) => e.target.style.borderColor = '#333'}
         />
     </div>
 );
@@ -450,13 +456,24 @@ export const Settings = () => {
 
             {/* TABS */}
             <div style={tabContainerStyle}>
-                {['inference', 'agent', 'workflows', 'guardrails', 'system', 'sourceControl', 'storage', 'backup', 'server', 'auth'].map(tab => (
+                {[
+                    { id: 'inference', label: 'Inference' },
+                    { id: 'agent', label: 'Agent' },
+                    { id: 'workflows', label: 'Workflows' },
+                    { id: 'guardrails', label: 'Guardrails' },
+                    { id: 'system', label: 'System' },
+                    { id: 'sourceControl', label: 'Git' },
+                    { id: 'storage', label: 'Storage' },
+                    { id: 'backup', label: 'Backup' },
+                    { id: 'server', label: 'Runtime' },
+                    { id: 'auth', label: 'Auth' }
+                ].map(tab => (
                     <div
-                        key={tab}
-                        style={tabStyle(activeTab === tab)}
-                        onClick={() => setActiveTab(tab as any)}
+                        key={tab.id}
+                        style={tabStyle(activeTab === tab.id)}
+                        onClick={() => setActiveTab(tab.id as any)}
                     >
-                        {tab === 'sourceControl' ? 'SOURCE CONTROL' : tab === 'system' ? 'SYSTEM' : tab === 'guardrails' ? 'GUARDRAILS' : tab + (tab === 'auth' ? '' : ' Providers')}
+                        {tab.label}
                     </div>
                 ))}
             </div>
@@ -557,24 +574,53 @@ export const Settings = () => {
                                             />
                                             <div style={{ fontSize: 10, color: '#666' }}>ID: {p.id}</div>
                                         </div>
-                                        <button
-                                            onClick={() => {
-                                                if (settings.agent.profiles.length <= 1) {
-                                                    alert("Cannot delete the last profile.");
-                                                    return;
-                                                }
-                                                const list = settings.agent.profiles.filter(x => x.id !== p.id);
-                                                update('agent', 'profiles', list);
-                                                // If we deleted the active one, switch to first available
-                                                if (p.id === settings.agent.activeProfileId) {
-                                                    update('agent', 'activeProfileId', list[0].id);
-                                                }
-                                            }}
-                                            style={{ height: 'fit-content', color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18 }}
-                                            title="Delete Profile"
-                                        >
-                                            ×
-                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                                            <button
+                                                onClick={async () => {
+                                                    console.log("[Settings] Exporting agent:", p.id);
+                                                    if (!api || !api.exportAgentToPython) {
+                                                        alert("Error: Export function not found in API bridge. Please restart the application.");
+                                                        return;
+                                                    }
+                                                    try {
+                                                        const result = await api.exportAgentToPython(p.id);
+                                                        console.log("[Settings] Export result:", result);
+                                                        if (result && result.success) {
+                                                            alert(`Agent "${p.name}" exported successfully to:\n${result.path}`);
+                                                        } else if (result && result.error) {
+                                                            alert(`Export failed: ${result.error}`);
+                                                        } else if (result && result.canceled) {
+                                                            console.log("[Settings] Export canceled by user.");
+                                                        }
+                                                    } catch (err: any) {
+                                                        console.error("[Settings] Export error:", err);
+                                                        alert(`Critical Export Error: ${err.message}`);
+                                                    }
+                                                }}
+                                                style={{ height: 'fit-content', color: '#007acc', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 10, marginRight: 15, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}
+                                                title="Export to standalone Python project"
+                                            >
+                                                <span style={{ fontSize: 12 }}>📤</span> EXPORT
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    if (settings.agent.profiles.length <= 1) {
+                                                        alert("Cannot delete the last profile.");
+                                                        return;
+                                                    }
+                                                    const list = settings.agent.profiles.filter(x => x.id !== p.id);
+                                                    update('agent', 'profiles', list);
+                                                    // If we deleted the active one, switch to first available
+                                                    if (p.id === settings.agent.activeProfileId) {
+                                                        update('agent', 'activeProfileId', list[0].id);
+                                                    }
+                                                }}
+                                                style={{ height: 'fit-content', color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18 }}
+                                                title="Delete Profile"
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {/* DETAILS */}
@@ -606,6 +652,27 @@ export const Settings = () => {
                                                     update('agent', 'profiles', list);
                                                 }}
                                                 placeholder="The core instructions for the LLM..."
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={labelStyle}>TEMPERATURE</label>
+                                                <span style={{ fontSize: 11, color: '#007acc', fontWeight: 'bold' }}>{p.temperature || 0.7}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.1"
+                                                style={{ width: '100%', cursor: 'pointer', margin: '5px 0 15px 0' }}
+                                                value={p.temperature || 0.7}
+                                                onChange={e => {
+                                                    const list = [...settings.agent.profiles];
+                                                    const pg = list.find(x => x.id === p.id);
+                                                    if (pg) pg.temperature = parseFloat(e.target.value);
+                                                    update('agent', 'profiles', list);
+                                                }}
                                             />
                                         </div>
 
@@ -660,6 +727,76 @@ export const Settings = () => {
                                             </div>
                                         </div>
 
+                                        {/* WORKFLOWS & MCP ASSIGNMENT */}
+                                        <div style={{ marginTop: 15, background: '#1e1e1e', padding: '12px', borderRadius: 4 }}>
+                                            <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10, fontWeight: 'bold' }}>CAPABILITIES & TOOLSETS</div>
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 15 }}>
+                                                <div>
+                                                    <label style={{ ...labelStyle, fontSize: 9 }}>GLOBAL WORKFLOW PATH</label>
+                                                    <input
+                                                        style={{ ...inputStyle, padding: '8px', fontSize: 11, marginBottom: 0 }}
+                                                        value={p.workflows?.globalPath || ''}
+                                                        onChange={e => {
+                                                            const list = [...settings.agent.profiles];
+                                                            const pg = list.find(x => x.id === p.id);
+                                                            if (pg) {
+                                                                if (!pg.workflows) pg.workflows = { globalPath: '', workspacePath: '' };
+                                                                pg.workflows.globalPath = e.target.value;
+                                                            }
+                                                            update('agent', 'profiles', list);
+                                                        }}
+                                                        placeholder="./workflows"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label style={{ ...labelStyle, fontSize: 9 }}>WORKSPACE PATH</label>
+                                                    <input
+                                                        style={{ ...inputStyle, padding: '8px', fontSize: 11, marginBottom: 0 }}
+                                                        value={p.workflows?.workspacePath || ''}
+                                                        onChange={e => {
+                                                            const list = [...settings.agent.profiles];
+                                                            const pg = list.find(x => x.id === p.id);
+                                                            if (pg) {
+                                                                if (!pg.workflows) pg.workflows = { globalPath: '', workspacePath: '' };
+                                                                pg.workflows.workspacePath = e.target.value;
+                                                            }
+                                                            update('agent', 'profiles', list);
+                                                        }}
+                                                        placeholder=".tala/workflows"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <label style={{ ...labelStyle, fontSize: 9 }}>ASSIGNED MCP SERVERS</label>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 5 }}>
+                                                {settings.mcpServers?.length > 0 ? (
+                                                    settings.mcpServers.map((srv: any) => (
+                                                        <label key={srv.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#ccc', background: '#2d2d2d', padding: '5px 10px', borderRadius: 4, cursor: 'pointer' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={(p.mcp?.global || []).includes(srv.id)}
+                                                                onChange={e => {
+                                                                    const list = [...settings.agent.profiles];
+                                                                    const pg = list.find(x => x.id === p.id);
+                                                                    if (pg) {
+                                                                        if (!pg.mcp) pg.mcp = { global: [], workspace: [] };
+                                                                        const current = pg.mcp.global || [];
+                                                                        if (e.target.checked) pg.mcp.global = [...current, srv.id];
+                                                                        else pg.mcp.global = current.filter((id: string) => id !== srv.id);
+                                                                    }
+                                                                    update('agent', 'profiles', list);
+                                                                }}
+                                                            />
+                                                            {srv.name}
+                                                        </label>
+                                                    ))
+                                                ) : (
+                                                    <div style={{ fontSize: 10, color: '#555', fontStyle: 'italic' }}>No MCP servers defined. Add them in WORKFLOWS tab.</div>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         {/* GUARDRAILS ASSIGNMENT */}
                                         {(settings.guardrails || []).filter((g: any) => g.scope === 'agent' && g.enabled).length > 0 && (
                                             <div style={{ marginTop: 15, background: '#1e1e1e', padding: 10, borderRadius: 4 }}>
@@ -668,7 +805,7 @@ export const Settings = () => {
                                                     {(settings.guardrails || [])
                                                         .filter((g: any) => g.scope === 'agent' && g.enabled)
                                                         .map((g: any) => (
-                                                            <label key={g.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#ccc', background: '#2d2d2d', padding: '4px 8px', borderRadius: 3 }}>
+                                                            <label key={g.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#ccc', background: '#2d2d2d', padding: '4px 8px', borderRadius: 3, cursor: 'pointer' }}>
                                                                 <input
                                                                     type="checkbox"
                                                                     checked={(p.guardrailIds || []).includes(g.id)}
@@ -689,9 +826,6 @@ export const Settings = () => {
                                                                 {g.name}
                                                             </label>
                                                         ))}
-                                                </div>
-                                                <div style={{ fontSize: 10, color: '#666', marginTop: 8 }}>
-                                                    Only "Per Agent" scoped guardrails appear here. Manage guardrails in the GUARDRAILS tab.
                                                 </div>
                                             </div>
                                         )}
@@ -2825,6 +2959,30 @@ Tone: Minimalist, calm, practical.
                                                         />
                                                         <span style={{ fontSize: 13, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{wf.name}</span>
                                                     </div>
+                                                    <button
+                                                        onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            const api = (window as any).tala;
+                                                            if (!api?.exportWorkflowToPython) {
+                                                                alert('Export not available. Please restart the application.');
+                                                                return;
+                                                            }
+                                                            try {
+                                                                const result = await api.exportWorkflowToPython(wf.id);
+                                                                if (result?.success) {
+                                                                    alert(`Workflow "${wf.name}" exported to:\n${result.path}`);
+                                                                } else if (result?.error) {
+                                                                    alert(`Export failed: ${result.error}`);
+                                                                }
+                                                            } catch (err: any) {
+                                                                alert(`Export error: ${err.message}`);
+                                                            }
+                                                        }}
+                                                        title="Export workflow to Python"
+                                                        style={{ color: '#569cd6', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 'bold', padding: '0 4px' }}
+                                                    >
+                                                        ↑ PY
+                                                    </button>
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();

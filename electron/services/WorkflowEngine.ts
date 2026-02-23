@@ -865,6 +865,164 @@ Do not output markdown.
                 }
 
 
+            case 'browser': {
+                // Browser automation: navigate, get DOM, screenshot, interact
+                const bAction = node.data.action || 'navigate';
+                const bUrl = node.data.url || '';
+                const bSelector = node.data.selector || '';
+                const bValue = node.data.value || '';
+
+                log(`Browser [${bAction}]: ${bUrl || bSelector}`);
+
+                if (bAction === 'navigate') {
+                    if (!bUrl) throw new Error('browser node: no URL specified');
+                    await this.agentService.executeTool('browser_navigate', { url: bUrl });
+                    // After nav, get the DOM as output
+                    const domResult = await this.agentService.executeTool('browser_get_dom', {});
+                    const dom = domResult?.result ?? domResult;
+                    return { output: { url: bUrl, dom } };
+
+                } else if (bAction === 'get_dom') {
+                    const domResult = await this.agentService.executeTool('browser_get_dom', {});
+                    return { output: domResult?.result ?? domResult };
+
+                } else if (bAction === 'screenshot') {
+                    const ssResult = await this.agentService.executeTool('browser_screenshot', {});
+                    return { output: ssResult?.result ?? ssResult };
+
+                } else if (bAction === 'click') {
+                    if (!bSelector) throw new Error('browser click: no selector specified');
+                    await this.agentService.executeTool('browser_click', { selector: bSelector });
+                    return { output: input };
+
+                } else if (bAction === 'type') {
+                    if (!bSelector) throw new Error('browser type: no selector specified');
+                    await this.agentService.executeTool('browser_type', { selector: bSelector, text: bValue });
+                    return { output: input };
+
+                } else if (bAction === 'extract') {
+                    // Use agent to extract structured data from current DOM
+                    const domResult = await this.agentService.executeTool('browser_get_dom', {});
+                    const dom = domResult?.result ?? String(domResult);
+                    const extractPrompt = node.data.extractPrompt || 'Extract all useful data from this HTML as JSON.';
+                    const extracted = await this.agentService.headlessInference(
+                        `${extractPrompt}\n\nHTML:\n${dom.substring(0, 4000)}`
+                    );
+                    return { output: extracted };
+                }
+
+                log(`Unknown browser action: ${bAction}`);
+                return { output: input };
+            }
+
+            case 'email_send': {
+                // Send email via SMTP — credential must be JSON: { host, port, secure, user, pass }
+                const sendCredKey = node.data.credentialKey;
+                let smtpConfig: any = {
+                    host: node.data.smtpHost || 'smtp.gmail.com',
+                    port: parseInt(node.data.smtpPort || '465'),
+                    secure: node.data.secure !== false,
+                    auth: { user: node.data.user, pass: node.data.pass }
+                };
+
+                if (sendCredKey) {
+                    const cred = this.getCredential(sendCredKey);
+                    if (!cred) throw new Error(`Credential '${sendCredKey}' not found.`);
+                    const parsed = typeof cred === 'string' ? JSON.parse(cred) : cred;
+                    smtpConfig = { ...smtpConfig, ...parsed, auth: parsed.auth || { user: parsed.user, pass: parsed.pass } };
+                }
+
+                const toRaw = node.data.to || (typeof input === 'string' ? input : input?.to || '');
+                const subject = node.data.subject || 'Tala Workflow Message';
+                const bodyText = node.data.body || (typeof input === 'string' ? input : JSON.stringify(input, null, 2));
+
+                // Support comma-separated or array of recipients
+                const recipients: string[] = Array.isArray(toRaw)
+                    ? toRaw
+                    : String(toRaw).split(',').map((s: string) => s.trim()).filter(Boolean);
+
+                if (recipients.length === 0) throw new Error('email_send: no recipients specified');
+
+                log(`Email Send: ${recipients.length} recipient(s) — "${subject}"`);
+
+                // Use nodemailer dynamically (bundled in electron context)
+                const nodemailer = require('nodemailer');
+                const transporter = nodemailer.createTransport(smtpConfig);
+
+                const sent: any[] = [];
+                for (const to of recipients) {
+                    const info = await transporter.sendMail({
+                        from: smtpConfig.auth.user,
+                        to,
+                        subject,
+                        text: bodyText
+                    });
+                    log(`Sent to ${to}: messageId=${info.messageId}`);
+                    sent.push({ to, messageId: info.messageId });
+                }
+
+                return { output: { sent, count: sent.length } };
+            }
+
+            case 'swarm': {
+                // Parallel fan-out: run the same prompt against multiple agent profiles
+                // node.data.profiles: array of profile IDs, or 'all'
+                // node.data.prompt: override prompt (else uses input as prompt)
+                const swarmPrompt: string = node.data.prompt ||
+                    (typeof input === 'string' ? input : JSON.stringify(input));
+
+                const profileIds: string[] = node.data.profiles || [];
+                const parallel: boolean = node.data.parallel !== false; // default true
+                const settingsPath = path.join(app.getPath('userData'), 'app_settings.json');
+                let allProfiles: any[] = [];
+
+                try {
+                    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+                    allProfiles = settings.agent?.profiles || [];
+                } catch (_e) { /* no profiles */ }
+
+                const targetProfiles = profileIds.length > 0 && profileIds[0] !== 'all'
+                    ? allProfiles.filter((p: any) => profileIds.includes(p.id))
+                    : allProfiles;
+
+                if (targetProfiles.length === 0) {
+                    log('Swarm: No profiles selected — running with default agent.');
+                    const result = await this.agentService.headlessInference(swarmPrompt);
+                    return { output: [{ profile: 'default', response: result }] };
+                }
+
+                log(`Swarm: Dispatching to ${targetProfiles.length} agent(s) (parallel=${parallel})...`);
+
+                const runProfile = async (profile: any) => {
+                    log(`Swarm: Running ${profile.name || profile.id}...`);
+                    try {
+                        // Build profile-aware prompt including system prompt + rules
+                        const sysPrompt = [profile.systemPrompt, profile.rules]
+                            .filter(Boolean).join('\n\n');
+                        const fullPrompt = sysPrompt
+                            ? `[System]\n${sysPrompt}\n\n[Task]\n${swarmPrompt}`
+                            : swarmPrompt;
+                        const response = await this.agentService.headlessInference(fullPrompt);
+                        return { profile: profile.name || profile.id, profileId: profile.id, response };
+                    } catch (e: any) {
+                        return { profile: profile.name || profile.id, profileId: profile.id, error: e.message };
+                    }
+                };
+
+                let results: any[];
+                if (parallel) {
+                    results = await Promise.all(targetProfiles.map(runProfile));
+                } else {
+                    results = [];
+                    for (const p of targetProfiles) {
+                        results.push(await runProfile(p));
+                    }
+                }
+
+                log(`Swarm: Completed. ${results.filter(r => !r.error).length}/${results.length} succeeded.`);
+                return { output: results };
+            }
+
             default:
                 log(`Unknown node type: ${node.type}, passing input through.`);
                 return input;

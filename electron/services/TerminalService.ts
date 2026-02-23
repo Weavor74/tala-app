@@ -37,6 +37,11 @@ export class TerminalService {
     private outputBuffer: string = "";
     /** Custom environment variables merged into the shell's environment. */
     private customEnv: Record<string, string> = {};
+    /** Quantum Firewall: Allowed base commands. */
+    private allowedCommands: string[] = [
+        'ls', 'dir', 'cd', 'mkdir', 'cat', 'grep', 'find', 'git', 'npm', 'npx',
+        'node', 'python', 'type', 'echo', 'rm', 'cp', 'mv', 'tsc', 'vite'
+    ];
 
     /**
      * Creates a new TerminalService instance.
@@ -127,10 +132,37 @@ export class TerminalService {
     public write(id: string, data: string) {
         const shell = this.shells.get(id);
         if (shell) {
+            // Quantum Firewall: Basic command filtering for AI turns
+            if (this.isAITerminal(id) && !this.isAllowed(data)) {
+                const msg = `\r\n[QUANTUM FIREWALL]: Execution blocked. Command not in safety whitelist.\r\n`;
+                this.outputBuffer += msg;
+                if (this.window) this.window.webContents.send('terminal-data', { id, data: msg });
+                return;
+            }
             shell.write(data);
         } else {
             console.warn(`[TerminalService] Write failed: Terminal ${id} not found.`);
         }
+    }
+
+    private isAITerminal(id: string): boolean {
+        // In this implementation, we assume any terminal used by AgentService is marked or we check the context
+        // For MVP, we apply a blanket whitelist to all writes containing commands.
+        return true;
+    }
+
+    private isAllowed(data: string): boolean {
+        const trimmed = data.trim().toLowerCase();
+        if (!trimmed) return true;
+
+        // Extract base command (e.g. "git" from "git status")
+        const base = trimmed.split(/\s+/)[0];
+
+        // Block dangerous patterns
+        if (trimmed.includes('rm -rf /')) return false;
+        if (trimmed.includes('> /etc/') || trimmed.includes('> c:\\windows')) return false;
+
+        return this.allowedCommands.includes(base) || base.startsWith('.') || base.startsWith('/');
     }
 
     /**

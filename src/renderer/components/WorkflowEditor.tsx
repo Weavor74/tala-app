@@ -70,23 +70,32 @@ const nodeTypes = {
 };
 
 const PALETTE_ITEMS = [
-    { type: 'manual', label: 'Trigger', color: '#d3869b' },
-    { type: 'agent', label: 'Agent Inference', color: '#83a598' },
-    { type: 'tool', label: 'Execute Tool', color: '#fabd2f' },
-    { type: 'function', label: 'Function Script', color: '#b8bb26' },
-    { type: 'credential', label: 'Credential Source', color: '#cc241d' },
-    { type: 'http', label: 'HTTP Request', color: '#458588' },
-    { type: 'if', label: 'Logic: If', color: '#d65d0e' },
-    { type: 'wait', label: 'Logic: Wait', color: '#689d6a' },
-    { type: 'edit_fields', label: 'Edit Fields (Set)', color: '#83a598' },
-    { type: 'merge', label: 'Merge', color: '#b16286' },
-    { type: 'email_read', label: 'Email Read (IMAP)', color: '#b8bb26' },
-    { type: 'ai_model', label: 'AI Model Config', color: '#458588' },
-    { type: 'split', label: 'Loop / Split', color: '#b16286' },
-    { type: 'memory_read', label: 'Read Memories', color: '#458588' },
-    { type: 'memory_write', label: 'Write Memory', color: '#98971a' },
-    { type: 'guardrail', label: 'Safety Guardrail', color: '#cc241d' },
-    { type: 'subworkflow', label: 'Sub-workflow', color: '#d79921' },
+    // ── Triggers ──
+    { type: 'manual', label: '⚡ Trigger', color: '#d3869b' },
+    // ── AI ──
+    { type: 'agent', label: '🤖 Agent Inference', color: '#83a598' },
+    { type: 'swarm', label: '🐝 Agent Swarm', color: '#8f3f71' },
+    { type: 'ai_model', label: '⚙️ AI Model Config', color: '#458588' },
+    { type: 'guardrail', label: '🛡 Safety Guardrail', color: '#cc241d' },
+    // ── Data / Web ──
+    { type: 'http', label: '🌐 HTTP Request', color: '#458588' },
+    { type: 'browser', label: '🔭 Browser Automation', color: '#076678' },
+    { type: 'tool', label: '🔧 Execute Tool (MCP)', color: '#fabd2f' },
+    { type: 'function', label: '📜 Function Script', color: '#b8bb26' },
+    // ── Auth / Storage ──
+    { type: 'credential', label: '🔑 Credential Source', color: '#cc241d' },
+    { type: 'memory_read', label: '🧠 Read Memories', color: '#458588' },
+    { type: 'memory_write', label: '🧠 Write Memory', color: '#98971a' },
+    // ── Email ──
+    { type: 'email_read', label: '📬 Email Read (IMAP)', color: '#b8bb26' },
+    { type: 'email_send', label: '📤 Email Send (SMTP)', color: '#d79921' },
+    // ── Control Flow ──
+    { type: 'if', label: '❓ Logic: If…', color: '#d65d0e' },
+    { type: 'split', label: '🔀 Loop / Split', color: '#b16286' },
+    { type: 'merge', label: '🔁 Merge', color: '#b16286' },
+    { type: 'wait', label: '⏸ Wait', color: '#689d6a' },
+    { type: 'edit_fields', label: '✏️ Edit Fields', color: '#83a598' },
+    { type: 'subworkflow', label: '📦 Sub-workflow', color: '#d79921' },
 ];
 const SidebarItem = ({ type, label, color }: { type: string, label: string, color: string }) => {
     const onDragStart = (event: React.DragEvent, nodeType: string) => {
@@ -134,30 +143,34 @@ const EditorContent = ({ workflow, onSave }: { workflow: any, onSave: (wf: any) 
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
     const [availableKeys, setAvailableKeys] = useState<string[]>([]);
+    const [availableProfiles, setAvailableProfiles] = useState<any[]>([]);
+    const [availableFunctions, setAvailableFunctions] = useState<string[]>([]);
     const [paletteSearch, setPaletteSearch] = useState('');
 
-    // Fetch settings to get available keys & tools
+    // Fetch settings to get available keys, tools, profiles, functions
     useEffect(() => {
-        // @ts-ignore
-        if (window.tala && window.tala.getSettings) {
-            // @ts-ignore
-            window.tala.getSettings().then((s: any) => {
+        const tala = (window as any).tala;
+        if (!tala) return;
+
+        // Auth keys
+        if (tala.getSettings) {
+            tala.getSettings().then((s: any) => {
                 const keys: string[] = [];
-                if (s.auth && s.auth.keys) {
-                    Object.keys(s.auth.keys).forEach(k => {
-                        if (s.auth.keys[k]) keys.push(k);
-                    });
-                }
+                if (s.auth?.keys) Object.keys(s.auth.keys).forEach(k => { if (s.auth.keys[k]) keys.push(k); });
                 if (s.auth?.cloudToken) keys.push('cloudToken');
                 setAvailableKeys(keys);
+                // Agent profiles
+                const profiles = s.agent?.profiles || [];
+                setAvailableProfiles(profiles);
             });
         }
-        // @ts-ignore
-        if (window.tala && window.tala.getAllTools) {
-            // @ts-ignore
-            window.tala.getAllTools().then((tools: any[]) => {
-                setAvailableTools(tools);
-            });
+        // MCP / built-in tools
+        if (tala.getAllTools) {
+            tala.getAllTools().then((tools: any[]) => setAvailableTools(tools));
+        }
+        // Function library (list names)
+        if (tala.getFunctions) {
+            tala.getFunctions().then((fns: any[]) => setAvailableFunctions(fns.map((f: any) => f.name || String(f)))).catch(() => { });
         }
     }, []);
 
@@ -362,6 +375,15 @@ const EditorContent = ({ workflow, onSave }: { workflow: any, onSave: (wf: any) 
             } else if (type === 'guardrail') {
                 // @ts-ignore
                 newNode.data = { label: 'Guardrail', rules: 'Content must be safe.', content: 'input.text' };
+            } else if (type === 'browser') {
+                // @ts-ignore
+                newNode.data = { label: 'Browser', action: 'navigate', url: 'https://example.com', selector: '', value: '', extractPrompt: 'Extract useful data as JSON.' };
+            } else if (type === 'email_send') {
+                // @ts-ignore
+                newNode.data = { label: 'Email Send', credentialKey: '', to: '', subject: 'Workflow Notification', body: '', smtpHost: 'smtp.gmail.com', smtpPort: '465', secure: true };
+            } else if (type === 'swarm') {
+                // @ts-ignore
+                newNode.data = { label: 'Agent Swarm', prompt: '', profiles: [], parallel: true };
             }
 
             setNodes((nds) => nds.concat(newNode));
@@ -820,13 +842,26 @@ const EditorContent = ({ workflow, onSave }: { workflow: any, onSave: (wf: any) 
                         {/* FUNCTION SPECIFIC */}
                         {selectedNode.id.startsWith('function') && (
                             <div style={{ marginBottom: 15 }}>
-                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Function Utility Name</label>
-                                <input
-                                    value={selectedNode.data.functionName || ''}
-                                    onChange={e => updateNodeData('functionName', e.target.value)}
-                                    placeholder="e.g. scrape_url"
-                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12 }}
-                                />
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Function Script</label>
+                                {availableFunctions.length > 0 ? (
+                                    <select
+                                        value={selectedNode.data.functionName || ''}
+                                        onChange={e => updateNodeData('functionName', e.target.value)}
+                                        style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, cursor: 'pointer' }}
+                                    >
+                                        <option value="">-- Select Function --</option>
+                                        {availableFunctions.map(fn => (
+                                            <option key={fn} value={fn}>{fn}</option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <input
+                                        value={selectedNode.data.functionName || ''}
+                                        onChange={e => updateNodeData('functionName', e.target.value)}
+                                        placeholder="e.g. scrape_url"
+                                        style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12 }}
+                                    />
+                                )}
                                 <div style={{ fontSize: 10, color: '#666', marginTop: 5 }}>Must match a file in your Functions library.</div>
                             </div>
                         )}
@@ -960,6 +995,185 @@ const EditorContent = ({ workflow, onSave }: { workflow: any, onSave: (wf: any) 
                                     placeholder="input.text"
                                     style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, resize: 'vertical' }}
                                 />
+                            </div>
+                        )}
+
+                        {/* BROWSER SPECIFIC */}
+                        {selectedNode.id.startsWith('browser') && (
+                            <div style={{ marginBottom: 15 }}>
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Action</label>
+                                <select
+                                    value={selectedNode.data.action || 'navigate'}
+                                    onChange={e => updateNodeData('action', e.target.value)}
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 10 }}
+                                >
+                                    <option value="navigate">Navigate → Get DOM</option>
+                                    <option value="get_dom">Get DOM (current page)</option>
+                                    <option value="screenshot">Screenshot</option>
+                                    <option value="click">Click Element</option>
+                                    <option value="type">Type into Element</option>
+                                    <option value="extract">AI Extract from DOM</option>
+                                </select>
+
+                                {(selectedNode.data.action === 'navigate' || selectedNode.data.action === 'screenshot' || !selectedNode.data.action) && (
+                                    <>
+                                        <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>URL</label>
+                                        <input
+                                            value={selectedNode.data.url || ''}
+                                            onChange={e => updateNodeData('url', e.target.value)}
+                                            placeholder="https://example.com"
+                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 10 }}
+                                        />
+                                    </>
+                                )}
+
+                                {(selectedNode.data.action === 'click' || selectedNode.data.action === 'type') && (
+                                    <>
+                                        <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>CSS Selector</label>
+                                        <input
+                                            value={selectedNode.data.selector || ''}
+                                            onChange={e => updateNodeData('selector', e.target.value)}
+                                            placeholder="#login-btn"
+                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, fontFamily: 'monospace', marginBottom: 10 }}
+                                        />
+                                    </>
+                                )}
+
+                                {selectedNode.data.action === 'type' && (
+                                    <>
+                                        <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Text to Type</label>
+                                        <input
+                                            value={selectedNode.data.value || ''}
+                                            onChange={e => updateNodeData('value', e.target.value)}
+                                            placeholder="Hello world"
+                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 10 }}
+                                        />
+                                    </>
+                                )}
+
+                                {selectedNode.data.action === 'extract' && (
+                                    <>
+                                        <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Extraction Prompt</label>
+                                        <textarea
+                                            value={selectedNode.data.extractPrompt || ''}
+                                            onChange={e => updateNodeData('extractPrompt', e.target.value)}
+                                            rows={4}
+                                            placeholder="Extract all product names and prices as JSON array."
+                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, resize: 'vertical' }}
+                                        />
+                                    </>
+                                )}
+                                <div style={{ fontSize: 10, color: '#666', marginTop: 5 }}>Uses the built-in Tala browser tool.</div>
+                            </div>
+                        )}
+
+                        {/* EMAIL SEND SPECIFIC */}
+                        {selectedNode.id.startsWith('email_send') && (
+                            <div style={{ marginBottom: 15 }}>
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>SMTP Credential</label>
+                                <select
+                                    value={selectedNode.data.credentialKey || ''}
+                                    onChange={e => updateNodeData('credentialKey', e.target.value)}
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 5 }}
+                                >
+                                    <option value="">-- Manual Config Below --</option>
+                                    {availableKeys.map(k => (
+                                        <option key={k} value={k}>{k}</option>
+                                    ))}
+                                </select>
+                                <div style={{ fontSize: 10, color: '#666', marginBottom: 10 }}>Credential JSON: <code>{`{"host":"smtp.gmail.com","port":465,"user":"x","pass":"y"}`}</code></div>
+
+                                {!selectedNode.data.credentialKey && (
+                                    <div style={{ paddingLeft: 10, borderLeft: '2px solid #d79921', marginBottom: 10 }}>
+                                        <label style={{ display: 'block', fontSize: 10, color: '#aaa', marginBottom: 3 }}>SMTP Host</label>
+                                        <input value={selectedNode.data.smtpHost || 'smtp.gmail.com'} onChange={e => updateNodeData('smtpHost', e.target.value)}
+                                            style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 4, fontSize: 11, marginBottom: 5 }} />
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <div style={{ flex: 1 }}>
+                                                <label style={{ display: 'block', fontSize: 10, color: '#aaa', marginBottom: 3 }}>Port</label>
+                                                <input value={selectedNode.data.smtpPort || '465'} onChange={e => updateNodeData('smtpPort', e.target.value)}
+                                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 4, fontSize: 11 }} />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <label style={{ display: 'block', fontSize: 10, color: '#aaa', marginBottom: 3 }}>User</label>
+                                                <input value={selectedNode.data.user || ''} onChange={e => updateNodeData('user', e.target.value)}
+                                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 4, fontSize: 11 }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>To (comma-separated)</label>
+                                <input
+                                    value={selectedNode.data.to || ''}
+                                    onChange={e => updateNodeData('to', e.target.value)}
+                                    placeholder="agent1@example.com, agent2@example.com"
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 10 }}
+                                />
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Subject</label>
+                                <input
+                                    value={selectedNode.data.subject || ''}
+                                    onChange={e => updateNodeData('subject', e.target.value)}
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, marginBottom: 10 }}
+                                />
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Body (leave blank to use input)</label>
+                                <textarea
+                                    value={selectedNode.data.body || ''}
+                                    onChange={e => updateNodeData('body', e.target.value)}
+                                    rows={4}
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, resize: 'vertical' }}
+                                />
+                            </div>
+                        )}
+
+                        {/* SWARM SPECIFIC */}
+                        {selectedNode.id.startsWith('swarm') && (
+                            <div style={{ marginBottom: 15 }}>
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Agent Profiles</label>
+                                <div style={{ maxHeight: 160, overflowY: 'auto', background: '#1e1e1e', border: '1px solid #3e3e42', borderRadius: 4, padding: 5, marginBottom: 10 }}>
+                                    {availableProfiles.length === 0 && (
+                                        <div style={{ fontSize: 10, color: '#666', padding: 5 }}>No profiles found. Create profiles in Settings → Profiles.</div>
+                                    )}
+                                    {availableProfiles.map((p: any) => {
+                                        const selected: string[] = selectedNode.data.profiles || [];
+                                        const checked = selected.includes(p.id);
+                                        return (
+                                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={e => {
+                                                        const next = e.target.checked
+                                                            ? [...selected, p.id]
+                                                            : selected.filter((id: string) => id !== p.id);
+                                                        updateNodeData('profiles', next);
+                                                    }}
+                                                />
+                                                <span style={{ fontSize: 11, color: '#ccc' }}>{p.name || p.id}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                                <div style={{ fontSize: 10, color: '#666', marginBottom: 10 }}>Leave all unchecked to use ALL profiles.</div>
+
+                                <label style={{ display: 'block', fontSize: 11, color: '#888', marginBottom: 5 }}>Override Prompt (optional)</label>
+                                <textarea
+                                    value={selectedNode.data.prompt || ''}
+                                    onChange={e => updateNodeData('prompt', e.target.value)}
+                                    rows={4}
+                                    placeholder="Leave blank to use the incoming data as the prompt."
+                                    style={{ width: '100%', background: '#1e1e1e', border: '1px solid #3e3e42', color: '#fff', padding: 5, fontSize: 12, resize: 'vertical', marginBottom: 10 }}
+                                />
+
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#888', cursor: 'pointer' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedNode.data.parallel !== false}
+                                        onChange={e => updateNodeData('parallel', e.target.checked)}
+                                    />
+                                    Run in Parallel
+                                </label>
+                                <div style={{ fontSize: 10, color: '#666', marginTop: 5 }}>Output is an array of {`{ profile, response }`} from each agent.</div>
                             </div>
                         )}
 

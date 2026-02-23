@@ -24,8 +24,10 @@ export class StrategyEngine {
     /**
      * Generates a set of competing strategies for a given goal.
      */
-    public async computePaths(goal: GoalNode, workspaceOverview: string): Promise<StrategicSimulation> {
+    public async computePaths(goal: GoalNode, workspaceOverview: string, astroVector?: Record<string, number>): Promise<StrategicSimulation> {
         console.log(`[StrategyEngine] Computing paths for goal: ${goal.title}`);
+
+        const modulation = this.calculateModulation(astroVector);
 
         const prompt = `
 [MISSION OBJECTIVE]
@@ -34,6 +36,9 @@ Description: ${goal.description}
 
 [WORKSPACE CONTEXT]
 ${workspaceOverview}
+
+[ASTRO-MODULATION]
+${modulation.text}
 
 [TASK]
 You are the Navigation Computer for an advanced starship. You must calculate 3 DISTINCT "Flight Paths" (strategies) to achieve the MISSION OBJECTIVE.
@@ -98,6 +103,35 @@ FORMAT: Return ONLY a valid JSON array of Strategy objects.
             riskScore: 3,
             estimatedCost: 3,
             tokenEstimate: 1000
+        };
+    }
+
+    private calculateModulation(vector?: Record<string, number>): { text: string; multipliers: { risk: number; cost: number } } {
+        if (!vector) return { text: "Sensors nominal. No planetary modulation applied.", multipliers: { risk: 1.0, cost: 1.0 } };
+
+        const stability = vector['stability'] ?? 0.5;
+        const clarity = vector['clarity'] ?? 0.5;
+        const intensity = vector['intensity'] ?? 0.5;
+
+        let riskMult = 1.0;
+        let costMult = 1.0;
+        let advice = "Planetary alignment suggests ";
+
+        if (stability < 0.4) {
+            riskMult = 1.5;
+            advice += "high volatility (inflate risk scores). ";
+        }
+        if (clarity < 0.4) {
+            costMult = 1.3;
+            advice += "unclear trajectories (inflate fuel/token estimates). ";
+        }
+        if (intensity > 0.7) {
+            advice += "high solar intensity (prefer experimental/direct paths). ";
+        }
+
+        return {
+            text: advice,
+            multipliers: { risk: riskMult, cost: costMult }
         };
     }
 }
