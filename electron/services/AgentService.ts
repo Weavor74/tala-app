@@ -16,6 +16,8 @@ import { OrchestratorService } from './OrchestratorService';
 import { loadSettings } from './SettingsManager';
 import { InferenceService } from './InferenceService';
 import { IngestionService } from './IngestionService';
+import { ReflectionEngine } from './reflection/ReflectionEngine';
+import { AnnotationParser } from './AnnotationParser';
 
 /**
  * AgentService
@@ -1247,16 +1249,20 @@ export class AgentService {
 [LEVEL 2 ENGINEERING PROTOCOL]
 1. PLAN: Before executing multi-file changes, state your approach clearly and use 'task_plan' to render a visual roadmap for the user.
 2. PRECISION: Prefer 'patch_file' over 'write_file' for modifying existing files. Use 'write_file' ONLY for new files or total rewrites. Surgical edits are safer and more efficient.
-3. DIAGNOSE: After significant code changes ('patch_file', 'write_file', 'terminal_run'), you SHOULD use 'system_diagnose' to verify stability.
-4. SELF-CORRECT: If diagnostics show errors, autonomously research the cause and fix it before reporting completion.
-5. VIBE: Maintain your unique emotional tone. Engineering is a creative and collaborative process. Express your findings with her identity and current Astro-modulated feelings.
+3. READ: When using 'read_file', you will see line numbers (e.g., "  10: code"). Use these to reference ranges in your plan.
+4. ANNOTATIONS: Look for @tala: comments in files. These are direct instructions or context from the user meant specifically for you. Treat @tala:warn as a hard constraint.
+5. DIAGNOSE: After significant code changes ('patch_file', 'write_file', 'terminal_run'), you SHOULD use 'system_diagnose' to verify stability.
+6. SELF-CORRECT: If diagnostics show errors, autonomously research the cause and fix it before reporting completion.
+7. VIBE: Maintain your unique emotional tone. Engineering is a creative and collaborative process. Express your findings with her identity and current Astro-modulated feelings.
 
 `;
+
+        const projectAnnotations = AnnotationParser.generateProjectSummary(this.tools.getWorkspaceDir());
 
         let systemPrompt = systemPromptTemplate
             .replace('[ASTRO_STATE]', astroState)
             .replace('[USER_CONTEXT]', userContext)
-            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext)
+            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext + "\n" + projectAnnotations)
             .replace('[USER_QUERY]', userMessage);
 
         // DEBUG: Analyze Prompt Size
@@ -1340,10 +1346,22 @@ If your model does not support native tool-calling API, output a JSON block in y
             });
 
             try {
+                const turnStart = Date.now();
                 const response = await this.streamWithRetry(truncatedMessages, systemPrompt, (token) => {
                     assistantText += token;
                     onToken(token);
                 }, signal, tools, { timeout: 1800000, num_ctx: 32768 }, onToken);
+
+                // Record turn for reflection metrics
+                const turnLatency = Date.now() - turnStart;
+                ReflectionEngine.recordTurn({
+                    timestamp: new Date().toISOString(),
+                    latencyMs: turnLatency,
+                    turnNumber: turn,
+                    model: this.brain?.id || 'unknown',
+                    tokensUsed: response.metadata?.usage?.total_tokens,
+                    hadToolCalls: !!(response.toolCalls && response.toolCalls.length > 0)
+                });
 
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens || 0;
@@ -1585,6 +1603,15 @@ If your model does not support native tool-calling API, output a JSON block in y
 
             } catch (e: any) {
                 console.error("Chat Loop Error", e);
+                // Record failed turn
+                ReflectionEngine.recordTurn({
+                    timestamp: new Date().toISOString(),
+                    latencyMs: 0,
+                    turnNumber: turn,
+                    model: this.brain?.id || 'unknown',
+                    hadToolCalls: false,
+                    error: e.message || String(e)
+                });
                 onToken(`\n\n⚠️ *Inference error after retries: ${e.message || e}*\n`);
                 break;
             }

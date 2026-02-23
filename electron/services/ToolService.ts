@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { AnnotationParser } from './AnnotationParser';
 
 /**
  * Defines the shape of a tool that can be registered with the ToolService.
@@ -49,7 +50,7 @@ export interface ToolDefinition {
  * 
  * @example
  * ```typescript
- * const tools = new ToolService();
+    * const tools = new ToolService();
  * tools.setRoot('/workspace');
  * const schemas = tools.getToolSchemas();
  * const result = await tools.executeTool('write_file', { path: 'hello.txt', content: 'Hello!' });
@@ -87,6 +88,13 @@ export class ToolService {
      */
     public setSystemInfo(info: any) {
         this.systemInfo = info;
+    }
+
+    /**
+     * Returns the current workspace root directory.
+     */
+    public getWorkspaceDir(): string {
+        return this.workspaceDir;
     }
 
     /**
@@ -134,9 +142,9 @@ export class ToolService {
                     if (!results || results.length === 0) return "No relevant memories found.";
                     return "Memory Results:\n" + results.map((m: any) => {
                         const date = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown Date';
-                        return `- [${date}] [Score: ${m.score?.toFixed(2) || '?'}] ${m.text}`;
+                        return `- [${date}][Score: ${m.score?.toFixed(2) || '?'}] ${m.text} `;
                     }).join('\n');
-                } catch (e: any) { return `Error searching memory: ${e.message}`; }
+                } catch (e: any) { return `Error searching memory: ${e.message} `; }
             }
         });
 
@@ -154,7 +162,7 @@ export class ToolService {
                 try {
                     await memory.add(args.text);
                     return "Memory stored successfully.";
-                } catch (e: any) { return `Error storing memory: ${e.message}`; }
+                } catch (e: any) { return `Error storing memory: ${e.message} `; }
             }
         });
 
@@ -175,9 +183,9 @@ export class ToolService {
                     if (!results || results.length === 0) return "No memories found.";
                     return "Recent Memories (Chronological):\n" + results.map((m: any) => {
                         const date = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown Date';
-                        return `- [${date}] ${m.text}`;
+                        return `- [${date}] ${m.text} `;
                     }).join('\n');
-                } catch (e: any) { return `Error getting recent memory: ${e.message}`; }
+                } catch (e: any) { return `Error getting recent memory: ${e.message} `; }
             }
         });
 
@@ -193,7 +201,7 @@ export class ToolService {
                         result: "Screenshot captured.",
                         images: [imgBuffer.toString('base64')]
                     };
-                } catch (e: any) { return `Error capturing screenshot: ${e.message}`; }
+                } catch (e: any) { return `Error capturing screenshot: ${e.message} `; }
             }
         });
 
@@ -298,7 +306,20 @@ export class ToolService {
                     }
 
                     const content = fs.readFileSync(targetPath, 'utf-8');
-                    return content;
+                    const lines = content.split('\n');
+
+                    // Add 1-indexed line numbers
+                    const numberedContent = lines.map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`).join('\n');
+
+                    // Parse annotations
+                    const annotationResult = AnnotationParser.parseFile(targetPath);
+                    const annotationBlock = AnnotationParser.formatForContext(annotationResult);
+
+                    if (annotationBlock) {
+                        return `${annotationBlock}\n\n[FILE CONTENT]\n${numberedContent}`;
+                    }
+
+                    return numberedContent;
                 } catch (e: any) {
                     return `Error reading file: ${e.message}`;
                 }

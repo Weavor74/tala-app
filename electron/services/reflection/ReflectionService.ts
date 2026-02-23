@@ -33,7 +33,7 @@ export class ReflectionService {
     constructor(userDataDir: string, settingsPath: string) {
         this.store = new ArtifactStore(userDataDir);
         this.reflection = new ReflectionEngine(this.store);
-        this.proposals = new ProposalEngine();
+        this.proposals = new ProposalEngine(settingsPath);
         this.apply = new ApplyEngine(this.store);
         this.rollback = new RollbackEngine(userDataDir);
         this.settingsPath = settingsPath;

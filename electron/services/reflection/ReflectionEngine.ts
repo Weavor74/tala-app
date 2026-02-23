@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
  * Evidence sources (real):
  * - Rolling console log buffer (captured from stdout/stderr intercept)
  * - Previous reflection/outcome artifacts from disk
+ * - Turn tracking data from AgentService (latency + turn counts)
  * 
  * @capability [CAPABILITY 5.3] Real Evidence Collection & Analysis
  */
@@ -21,10 +22,62 @@ export class ReflectionEngine {
     private static failedToolBuffer: Array<{ tool: string; error: string }> = [];
     private static readonly MAX_BUFFER_SIZE = 200;
 
+    /** ── Turn Tracking ────────────────────────────────────── */
+    /** Records of individual agent turns (latency + metadata). */
+    private static turnRecords: TurnRecord[] = [];
+    private static readonly MAX_TURN_RECORDS = 500;
+
     constructor(store: ArtifactStore) {
         this.store = store;
         ReflectionEngine.installLogInterceptor();
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  Turn Tracking — Public API for AgentService instrumentation
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Records a completed agent turn with timing and metadata.
+     * Called by AgentService after each inference call.
+     */
+    static recordTurn(record: TurnRecord) {
+        ReflectionEngine.turnRecords.push(record);
+        if (ReflectionEngine.turnRecords.length > ReflectionEngine.MAX_TURN_RECORDS) {
+            ReflectionEngine.turnRecords = ReflectionEngine.turnRecords.slice(
+                -ReflectionEngine.MAX_TURN_RECORDS
+            );
+        }
+    }
+
+    /**
+     * Allows external code (e.g., AgentService) to report a tool failure directly.
+     */
+    static reportToolFailure(tool: string, error: string) {
+        ReflectionEngine.failedToolBuffer.push({ tool, error });
+    }
+
+    /**
+     * Returns current latency statistics (for external monitoring/metrics).
+     */
+    static getLatencyStats(): { count: number; avgMs: number; p95Ms: number; maxMs: number } {
+        const records = ReflectionEngine.turnRecords;
+        if (records.length === 0) return { count: 0, avgMs: 0, p95Ms: 0, maxMs: 0 };
+
+        const latencies = records.map(r => r.latencyMs).sort((a, b) => a - b);
+        const sum = latencies.reduce((a, b) => a + b, 0);
+        const p95Index = Math.floor(latencies.length * 0.95);
+
+        return {
+            count: latencies.length,
+            avgMs: Math.round(sum / latencies.length),
+            p95Ms: latencies[p95Index] || latencies[latencies.length - 1],
+            maxMs: latencies[latencies.length - 1]
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  Log Interceptor
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Installs a one-time interceptor on console.error to capture errors
@@ -65,12 +118,9 @@ export class ReflectionEngine {
         console.log('[ReflectionEngine] Log interceptor installed — capturing real errors.');
     }
 
-    /**
-     * Allows external code (e.g., AgentService) to report a tool failure directly.
-     */
-    static reportToolFailure(tool: string, error: string) {
-        ReflectionEngine.failedToolBuffer.push({ tool, error });
-    }
+    // ═══════════════════════════════════════════════════════════
+    //  Reflection Cycle
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Runs a reflection cycle based on real captured evidence.
@@ -81,45 +131,57 @@ export class ReflectionEngine {
         // 1. Capture real evidence
         const evidence = await this.collectEvidence();
 
-        if (evidence.errors.length === 0 && evidence.failedToolCalls.length === 0) {
+        if (evidence.errors.length === 0 && evidence.failedToolCalls.length === 0 && evidence.turns.length === 0) {
             console.log('[ReflectionEngine] No critical evidence found. System healthy.');
             return null;
         }
 
-        // 2. Synthesize into a ReflectionEvent
+        // 2. Compute latency metrics from turn records
+        const latencyStats = this.computeLatencyFromTurns(evidence.turns);
+
+        // 3. Synthesize into a ReflectionEvent
         const errorSummary = evidence.errors.length > 3
             ? `${evidence.errors.length} errors detected (showing first 3)`
             : `${evidence.errors.length} error(s) detected`;
 
+        const turnSummary = evidence.turns.length > 0
+            ? `, ${evidence.turns.length} agent turn(s) tracked`
+            : '';
+
         const event: ReflectionEvent = {
             id: uuidv4(),
             timestamp: new Date().toISOString(),
-            summary: `${errorSummary}, ${evidence.failedToolCalls.length} tool failure(s).`,
+            summary: `${errorSummary}, ${evidence.failedToolCalls.length} tool failure(s)${turnSummary}.`,
             evidence: evidence,
-            observations: this.generateObservations(evidence),
+            observations: this.generateObservations(evidence, latencyStats),
             metrics: {
-                averageLatencyMs: 0, // TODO: instrument AgentService with timing
-                errorRate: evidence.errors.length / Math.max(evidence.turns.length, 1)
+                averageLatencyMs: latencyStats.avgMs,
+                errorRate: evidence.turns.length > 0
+                    ? evidence.errors.length / evidence.turns.length
+                    : (evidence.errors.length > 0 ? 1.0 : 0)
             }
         };
 
         await this.store.saveReflection(event);
         console.log(`[ReflectionEngine] Reflection saved: ${event.id} — ${event.summary}`);
+        console.log(`[ReflectionEngine] Metrics: avgLatency=${latencyStats.avgMs}ms, p95=${latencyStats.p95Ms}ms, errorRate=${(event.metrics.errorRate * 100).toFixed(1)}%`);
         return event;
     }
 
     /**
-     * Collects REAL evidence from the rolling error buffer.
-     * Drains the buffer after collection (each error is analyzed once).
+     * Collects REAL evidence from the rolling buffers.
+     * Drains all buffers after collection (each data point is analyzed once).
      */
     private async collectEvidence() {
         // Drain the buffers (snapshot + clear)
         const errors = [...ReflectionEngine.errorBuffer];
         const failedToolCalls = [...ReflectionEngine.failedToolBuffer];
+        const turns = [...ReflectionEngine.turnRecords];
 
-        // Clear after collection so we don't re-analyze the same errors
+        // Clear after collection so we don't re-analyze
         ReflectionEngine.errorBuffer = [];
         ReflectionEngine.failedToolBuffer = [];
+        ReflectionEngine.turnRecords = [];
 
         // Filter out noise (internal framework messages, etc.)
         const significantErrors = errors.filter(e =>
@@ -129,17 +191,73 @@ export class ReflectionEngine {
         );
 
         return {
-            turns: [], // TODO: instrument AgentService to track turn counts
+            turns: turns.map(t => ({
+                timestamp: t.timestamp,
+                latencyMs: t.latencyMs,
+                turnNumber: t.turnNumber,
+                model: t.model,
+                tokensUsed: t.tokensUsed,
+                hadToolCalls: t.hadToolCalls,
+                error: t.error
+            })),
             errors: significantErrors.slice(0, 20), // Cap at 20 per cycle
             failedToolCalls: failedToolCalls.slice(0, 10) // Cap at 10 per cycle
         };
     }
 
     /**
+     * Computes latency statistics from collected turn records.
+     */
+    private computeLatencyFromTurns(turns: any[]): {
+        avgMs: number;
+        p95Ms: number;
+        maxMs: number;
+        totalTurns: number;
+        failedTurns: number;
+    } {
+        if (turns.length === 0) {
+            return { avgMs: 0, p95Ms: 0, maxMs: 0, totalTurns: 0, failedTurns: 0 };
+        }
+
+        const latencies = turns.map(t => t.latencyMs).sort((a: number, b: number) => a - b);
+        const sum = latencies.reduce((a: number, b: number) => a + b, 0);
+        const p95Index = Math.floor(latencies.length * 0.95);
+        const failedTurns = turns.filter(t => t.error).length;
+
+        return {
+            avgMs: Math.round(sum / latencies.length),
+            p95Ms: latencies[p95Index] || latencies[latencies.length - 1],
+            maxMs: latencies[latencies.length - 1],
+            totalTurns: turns.length,
+            failedTurns
+        };
+    }
+
+    /**
      * Generates human-readable observations from evidence patterns.
      */
-    private generateObservations(evidence: { errors: string[]; failedToolCalls: any[] }): string[] {
+    private generateObservations(
+        evidence: { errors: string[]; failedToolCalls: any[]; turns: any[] },
+        latencyStats: { avgMs: number; p95Ms: number; maxMs: number; totalTurns: number; failedTurns: number }
+    ): string[] {
         const obs: string[] = [];
+
+        // Turn tracking observations
+        if (latencyStats.totalTurns > 0) {
+            obs.push(`Tracked ${latencyStats.totalTurns} agent turn(s) — avg latency: ${latencyStats.avgMs}ms, p95: ${latencyStats.p95Ms}ms, max: ${latencyStats.maxMs}ms.`);
+
+            if (latencyStats.avgMs > 15000) {
+                obs.push(`⚠️ Average latency exceeds 15s — inference performance may be degraded.`);
+            }
+
+            if (latencyStats.p95Ms > 30000) {
+                obs.push(`⚠️ P95 latency exceeds 30s — consider model optimization or provider change.`);
+            }
+
+            if (latencyStats.failedTurns > 0) {
+                obs.push(`${latencyStats.failedTurns}/${latencyStats.totalTurns} turn(s) ended with errors.`);
+            }
+        }
 
         // Check for timeout patterns
         const timeoutErrors = evidence.errors.filter(e => /timeout|timed? out/i.test(e));
@@ -159,6 +277,14 @@ export class ReflectionEngine {
             obs.push(`Failed tools: ${toolNames.join(', ')}.`);
         }
 
+        // Model diversity check
+        if (evidence.turns.length > 0) {
+            const models = [...new Set(evidence.turns.map(t => t.model).filter(Boolean))];
+            if (models.length > 0) {
+                obs.push(`Models used: ${models.join(', ')}.`);
+            }
+        }
+
         // If no patterns matched, report clean state
         if (obs.length === 0 && evidence.errors.length > 0) {
             obs.push(`${evidence.errors.length} miscellaneous error(s) detected. Review artifacts for details.`);
@@ -166,4 +292,25 @@ export class ReflectionEngine {
 
         return obs;
     }
+}
+
+/**
+ * Represents a single agent turn with performance data.
+ * Recorded by AgentService, consumed by ReflectionEngine.
+ */
+export interface TurnRecord {
+    /** ISO timestamp of when the turn completed. */
+    timestamp: string;
+    /** Time in milliseconds from inference request to response. */
+    latencyMs: number;
+    /** Which turn number within the agent loop (1-indexed). */
+    turnNumber: number;
+    /** Which model/brain was used for this turn. */
+    model?: string;
+    /** Total tokens used in this turn. */
+    tokensUsed?: number;
+    /** Whether the turn included tool calls. */
+    hadToolCalls: boolean;
+    /** Error message if the turn failed. */
+    error?: string;
 }

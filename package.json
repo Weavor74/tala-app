@@ -12,6 +12,8 @@
     "dist": "npm run build && electron-builder",
     "dist:universal": "scripts\\make_universal.bat",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview",
     "postinstall": "patch-package"
   },
@@ -124,6 +126,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
+    "vitest": "^4.0.18",
     "wait-on": "^9.0.3"
   }
 }
