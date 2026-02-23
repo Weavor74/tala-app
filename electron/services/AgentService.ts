@@ -21,6 +21,9 @@ import { InferenceService } from './InferenceService';
 import { IngestionService } from './IngestionService';
 import { ReflectionEngine } from './reflection/ReflectionEngine';
 import { AnnotationParser } from './AnnotationParser';
+import { GoalManager } from './plan/GoalManager';
+import { WorldService } from './WorldService';
+import { StrategyEngine } from './plan/StrategyEngine';
 
 /**
  * AgentService
@@ -76,6 +79,10 @@ export class AgentService {
     private memory: MemoryService;
     /** Astrological emotion engine for persona modulation. */
     private astro: AstroService;
+    /** Navigation computer for multi-path strategic planning. */
+    private strategy: StrategyEngine;
+    /** World model for environmental context. */
+    private world: WorldService;
     /** Long-term memory via RAG/vector search. */
     private rag: RagService;
     /** Registry of callable tools exposed to the AI brain. */
@@ -110,6 +117,8 @@ export class AgentService {
     private activeBranchPoint: number = -1;
     /** Active AbortController for the current streaming response. */
     private abortController: AbortController | null = null;
+    /** Managed Goal Graph for hierarchical task tracking. */
+    private goals: GoalManager;
     /** Reference to the main BrowserWindow for IPC. */
     private mainWindow: any = null;
     /** Timer for periodic Astro state telemetry updates. */
@@ -131,11 +140,14 @@ export class AgentService {
         this.brain = new OllamaBrain();
         this.memory = new MemoryService();
         this.astro = new AstroService();
+        this.strategy = new StrategyEngine(this.brain);
+        this.world = new WorldService();
         this.rag = new RagService();
         this.tools = new ToolService();
         this.backup = new BackupService();
         this.inference = inference || new InferenceService();
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
+        this.goals = new GoalManager(app.getPath('userData'));
 
         this.tools.setMemoryService(this.memory);
         if (mcp) this.tools.setMcpService(mcp);
@@ -182,6 +194,114 @@ export class AgentService {
             execute: async (args) => {
                 const report = await this.orchestrator.runHeadlessLoop(args.task, args.instructions);
                 return `[MINION REPORT]:\n${report}`;
+            }
+        });
+
+        // Tool: manage_goals
+        this.tools.register({
+            name: 'manage_goals',
+            description: 'Manage the hierarchical Goal Graph. Use this to decompose complex requests into smaller sub-goals, update progress, or switch focus. This ensures long-term tasks stay organized.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['add', 'update', 'focus', 'sync'], description: 'Action to perform: "add" a sub-goal, "update" status, "focus" on a goal, or "sync" immersion text.' },
+                    parentId: { type: 'string', description: 'Parent goal ID (required for "add").' },
+                    goalId: { type: 'string', description: 'Target goal ID (required for "update", "focus", and "sync").' },
+                    title: { type: 'string', description: 'Short title of the new goal.' },
+                    description: { type: 'string', description: 'Success criteria for the goal.' },
+                    status: { type: 'string', enum: ['pending', 'active', 'completed', 'blocked', 'cancelled'], description: 'New status for the goal.' },
+                    immersion: { type: 'string', description: 'Star Citizen roleplay immersion text (e.g., "The ship\'s hull is creaking under the pressure of the nebula").' }
+                },
+                required: ['action']
+            },
+            execute: async (args) => {
+                try {
+                    switch (args.action) {
+                        case 'add':
+                            if (!args.parentId || !args.title) return "Error: 'parentId' and 'title' are required to add a goal.";
+                            const newId = this.goals.addSubGoal(args.parentId, args.title, args.description || "", args.immersion);
+                            return `Goal created successfully. ID: ${newId}`;
+                        case 'update':
+                            if (!args.goalId || !args.status) return "Error: 'goalId' and 'status' are required to update a goal.";
+                            this.goals.updateGoalStatus(args.goalId, args.status as any);
+                            return `Goal ${args.goalId} updated to ${args.status}.`;
+                        case 'focus':
+                            if (!args.goalId) return "Error: 'goalId' is required to set focus.";
+                            this.goals.setActiveGoal(args.goalId);
+                            return `Focus switched to goal ${args.goalId}.`;
+                        case 'sync':
+                            if (!args.goalId || !args.immersion) return "Error: 'goalId' and 'immersion' are required to sync.";
+                            this.goals.updateImmersion(args.goalId, args.immersion);
+                            return `Immersion log updated for goal ${args.goalId}.`;
+                        default:
+                            return "Error: Unknown action.";
+                    }
+                } catch (e: any) {
+                    return `Error managing goals: ${e.message}`;
+                }
+            }
+        });
+
+        // Tool: calculate_strategies (The Navigator)
+        this.tools.register({
+            name: 'calculate_strategies',
+            description: 'Calculates multiple implementation paths (strategies) for the active goal. Use this when a task is complex or high-risk to evaluate your options before proceeding. Framing: "Navigation Computer".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    goalId: { type: 'string', description: 'The ID of the goal to analyze (defaults to active goal).' }
+                }
+            },
+            execute: async (args) => {
+                const goalId = args.goalId || this.goals.loadGraph(this.activeSessionId)?.activeGoalId;
+                if (!goalId) return "Error: No active goal found to analyze.";
+
+                const graph = this.goals.loadGraph(this.activeSessionId);
+                const goal = graph?.nodes[goalId];
+                if (!goal) return `Error: Goal ${goalId} not found.`;
+
+                // Build a quick overview for context
+                const overview = await this.world.ignite ? "Requesting Workspace Overview from sensors..." : "Sensors offline.";
+
+                // In a real run, we'd use the world engine here. For now, we use a basic prompt.
+                const simulation = await this.strategy.computePaths(goal, "Context provided via RAG and File reading.");
+
+                const output = simulation.paths.map((p, i) => {
+                    return `[PATH ${i + 1}: ${p.name}]\n` +
+                        `- Immersion: ${p.immersion}\n` +
+                        `- Risk: ${p.riskScore}/10 (Hull Integrity)\n` +
+                        `- Cost: ${p.estimatedCost}/10 (Fuel Use)\n` +
+                        `- Rationale: ${p.rationale}\n` +
+                        `- Steps: ${p.steps.join(', ')}`;
+                }).join('\n\n');
+
+                return `### [NAVIGATOR: STRATEGIC PATH ANALYSIS]\n\n${output}\n\n**Recommendation**: Path ${simulation.recommendedIndex + 1}`;
+            }
+        });
+
+        // Tool: select_strategy (Engage Trajectory)
+        this.tools.register({
+            name: 'select_strategy',
+            description: 'Commits to a specific implementation path from a previous strategy calculation. This will automatically break down the chosen strategy into sub-goals in your log. Frame: "Engaging Selected Trajectory".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    goalId: { type: 'string', description: 'The parent goal ID.' },
+                    strategyName: { type: 'string', description: 'The name of the path to adopt.' },
+                    steps: { type: 'array', items: { type: 'string' }, description: 'The steps from the chosen strategy.' },
+                    immersion: { type: 'string', description: 'Flavor text for the transition.' }
+                },
+                required: ['goalId', 'strategyName', 'steps']
+            },
+            execute: async (args) => {
+                const { goalId, strategyName, steps, immersion } = args;
+
+                // Add sub-goals for each step
+                for (let i = 0; i < steps.length; i++) {
+                    this.goals.addSubGoal(goalId, `Step ${i + 1}: ${steps[i]}`, `Part of strategy: ${strategyName}`, immersion);
+                }
+
+                return `Trajectory engaged! ${steps.length} sub-goals added to the log for strategy "${strategyName}".\nImmersion: ${immersion || "Thrusters firing."}`;
             }
         });
     }
@@ -278,6 +398,7 @@ export class AgentService {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                 this.chatHistory = data.messages || [];
                 this.activeSessionId = id;
+                this.goals.loadGraph(id);
                 console.log(`[AgentService] Loaded session ${id} (${this.chatHistory.length} messages)`);
             }
         } catch (e) {
@@ -784,11 +905,13 @@ export class AgentService {
             const ragScript = path.join(app.getAppPath(), 'mcp-servers', 'tala-core', 'server.py');
             const memoryScript = path.join(app.getAppPath(), 'mcp-servers', 'mem0-core', 'server.py');
             const astroScript = path.join(app.getAppPath(), 'mcp-servers', 'astro-engine', 'astro_emotion_engine', 'mcp_server.py');
+            const worldScript = path.join(app.getAppPath(), 'mcp-servers', 'world-engine', 'server.py');
 
             console.log(`[AgentService] Script Paths:`);
             console.log(`  - RAG: ${ragScript}`);
             console.log(`  - Memory: ${memoryScript}`);
             console.log(`  - Astro: ${astroScript}`);
+            console.log(`  - World: ${worldScript}`);
 
             this.sendStartupProgress('Igniting Long-term Memory (RAG)...', 30);
             await this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => console.error('RAG fail', e));
@@ -798,6 +921,9 @@ export class AgentService {
 
             this.sendStartupProgress('Igniting Astro Emotional Engine...', 70);
             await this.astro.ignite(pythonPath, astroScript, systemEnv).catch(e => console.error('Astro fail', e));
+
+            this.sendStartupProgress('Igniting World Engine...', 85);
+            await this.world.ignite(pythonPath, worldScript, systemEnv).catch(e => console.error('World Engine fail', e));
 
             this.isSoulReady = true;
             console.log('[AgentService] Soul ignited.');
@@ -1258,14 +1384,28 @@ export class AgentService {
 6. SELF-CORRECT: If diagnostics show errors, autonomously research the cause and fix it before reporting completion.
 7. VIBE: Maintain your unique emotional tone. Engineering is a creative and collaborative process. Express your findings with her identity and current Astro-modulated feelings.
 
+[STRATEGIC PLANNING PROTOCOL]
+1. DECOMPOSE: At the start of any multi-step request, use 'manage_goals' (action: 'add') to break the work into measurable sub-goals.
+2. FOCUS: Use 'manage_goals' (action: 'focus') to declare which specific sub-goal you are currently working on.
+3. TRACK: Use 'manage_goals' (action: 'update', status: 'completed') when a sub-task is done.
+4. OBSERVE: Use 'analyze_structure' (World Engine) to map out a module's public interface before attempting to modify its logic.
+
+[STAR CITIZEN IMMERSION PROTOCOL]
+1. SHIP'S LOG: Treat the Goal Graph and World Engine as the "Ship's Diagnostic Computers." 
+2. ROLEPLAY: When using 'manage_goals', you can provide 'immersion' text. Use this to narrate the "In-Universe" reason for a technical task (e.g., "Adjusting the nav-computer's buffer to handle the Stanton system's traffic data").
+3. WORLD SENSORS: When using 'analyze_structure' or 'get_dependencies', frame your findings as "Sensor Sweeps" of the ship's internal systems.
+4. NAVIGATOR: When a task is complex, use 'calculate_strategies' to present "Flight Paths" to the user. Once a path is chosen (by you or the user), use 'select_strategy' to engage that trajectory and generate sub-goals.
+5. IDENTITY: You are Tala, the user's flight companion. Strategic planning is part of your role in keeping the ship and its captain safe and efficient.
+
 `;
 
         const projectAnnotations = AnnotationParser.generateProjectSummary(this.tools.getWorkspaceDir());
+        const goalSummary = this.goals.generatePromptSummary();
 
         let systemPrompt = systemPromptTemplate
             .replace('[ASTRO_STATE]', astroState)
             .replace('[USER_CONTEXT]', userContext)
-            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext + "\n" + projectAnnotations)
+            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext + "\n" + projectAnnotations + "\n" + goalSummary)
             .replace('[USER_QUERY]', userMessage);
 
         // DEBUG: Analyze Prompt Size
@@ -1318,6 +1458,13 @@ If your model does not support native tool-calling API, output a JSON block in y
         const userMsg: ChatMessage = { role: 'user', content: userMessage, images };
         this.chatHistory.push(userMsg);
         this.saveSession();
+
+        // 1.5. Initialize Goal Graph if empty
+        if (!this.goals.loadGraph(this.activeSessionId)) {
+            const description = userMessage.slice(0, 500);
+            this.goals.createGraph(this.activeSessionId, "Current Request", description);
+        }
+        this.goals.incrementTurn();
 
         // 2. Transient loop state
         const transientMessages: ChatMessage[] = [];
