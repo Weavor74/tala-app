@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tala — Loading</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            background: #0a0a0f;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            overflow: hidden;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-app-region: drag;
+        }
+
+        /* starfield canvas */
+        #stars {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+        }
+
+        /* Central card */
+        .card {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0;
+        }
+
+        /* Glow halo behind logo */
+        .halo {
+            position: absolute;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 122, 204, 0.28) 0%, rgba(0, 122, 204, 0.08) 55%, transparent 80%);
+            filter: blur(28px);
+            animation: pulse 3s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 0.7;
+            }
+
+            50% {
+                transform: scale(1.18);
+                opacity: 1;
+            }
+        }
+
+        /* Avatar ring */
+        .avatar-ring {
+            position: relative;
+            width: 130px;
+            height: 130px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #007acc 0%, #00d4ff 50%, #005f9e 100%);
+            padding: 3px;
+            box-shadow: 0 0 40px rgba(0, 122, 204, 0.5), 0 0 80px rgba(0, 122, 204, 0.2);
+            animation: ringGlow 3s ease-in-out infinite;
+            margin-bottom: 32px;
+        }
+
+        @keyframes ringGlow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 30px rgba(0, 122, 204, 0.45), 0 0 60px rgba(0, 122, 204, 0.15);
+            }
+
+            50% {
+                box-shadow: 0 0 60px rgba(0, 122, 204, 0.7), 0 0 110px rgba(0, 122, 204, 0.3);
+            }
+        }
+
+        .avatar-inner {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: #0e0e18;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .avatar-inner img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center top;
+            border-radius: 50%;
+        }
+
+        /* TALA wordmark */
+        .wordmark {
+            font-size: 52px;
+            font-weight: 900;
+            letter-spacing: 12px;
+            text-transform: uppercase;
+            background: linear-gradient(90deg, #7ab8e8 0%, #ffffff 40%, #7ab8e8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 6px;
+            animation: fadeSlideUp 0.9s ease both;
+            animation-delay: 0.2s;
+            opacity: 0;
+        }
+
+        .tagline {
+            font-size: 11px;
+            font-weight: 400;
+            letter-spacing: 4px;
+            color: #4a6a8a;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            animation: fadeSlideUp 0.9s ease both;
+            animation-delay: 0.4s;
+            opacity: 0;
+        }
+
+        .acronym-row {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 42px;
+            animation: fadeSlideUp 0.9s ease both;
+            animation-delay: 0.5s;
+            opacity: 0;
+        }
+
+        .acr-item {
+            font-size: 10px;
+            font-weight: 500;
+            color: #3a5a7a;
+            letter-spacing: 0.5px;
+        }
+
+        .acr-item em {
+            font-style: normal;
+            font-weight: 800;
+            color: #7ab8e8;
+        }
+
+        .acr-dot {
+            color: #1e3a52;
+            font-size: 13px;
+        }
+
+        @keyframes fadeSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Progress bar */
+        .progress-track {
+            width: 260px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.07);
+            border-radius: 99px;
+            overflow: hidden;
+            margin-bottom: 22px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #007acc, #00d4ff);
+            border-radius: 99px;
+            width: 0%;
+            animation: progressAnim 3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            animation-delay: 0.6s;
+            box-shadow: 0 0 12px rgba(0, 122, 204, 0.8);
+        }
+
+        @keyframes progressAnim {
+            0% {
+                width: 0%;
+            }
+
+            30% {
+                width: 35%;
+            }
+
+            55% {
+                width: 62%;
+            }
+
+            75% {
+                width: 80%;
+            }
+
+            90% {
+                width: 91%;
+            }
+
+            100% {
+                width: 100%;
+            }
+        }
+
+        /* Status message */
+        .status {
+            font-size: 11px;
+            color: #3a5a7a;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            height: 16px;
+            animation: fadeSlideUp 0.9s ease both;
+            animation-delay: 0.7s;
+            opacity: 0;
+        }
+
+        /* Footer */
+        .footer {
+            position: fixed;
+            bottom: 28px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            animation: fadeSlideUp 0.9s ease both;
+            animation-delay: 0.9s;
+            opacity: 0;
+        }
+
+        .footer-creator {
+            font-size: 11px;
+            font-weight: 700;
+            color: #4a6a8a;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        .footer-creator span {
+            color: #7ab8e8;
+        }
+
+        .footer-year {
+            font-size: 10px;
+            color: #2a3a4a;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* Orbit rings decoration */
+        .orbit-container {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .orbit {
+            position: absolute;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 122, 204, 0.08);
+        }
+
+        .orbit-1 {
+            width: 320px;
+            height: 320px;
+            animation: spin 18s linear infinite;
+        }
+
+        .orbit-2 {
+            width: 480px;
+            height: 480px;
+            animation: spin 30s linear infinite reverse;
+            border-color: rgba(0, 180, 255, 0.05);
+        }
+
+        .orbit-3 {
+            width: 620px;
+            height: 620px;
+            animation: spin 45s linear infinite;
+            border-color: rgba(0, 122, 204, 0.04);
+        }
+
+        /* Small dot on each orbit */
+        .orbit::after {
+            content: '';
+            position: absolute;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: rgba(0, 180, 255, 0.6);
+            top: -2.5px;
+            left: 50%;
+            transform: translateX(-50%);
+            box-shadow: 0 0 8px rgba(0, 180, 255, 0.8);
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Version badge */
+        .version-badge {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            font-size: 9px;
+            font-weight: 700;
+            color: #2a4a6a;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="stars"></canvas>
+
+    <!-- Orbit decoration -->
+    <div class="orbit-container">
+        <div class="orbit orbit-1"></div>
+        <div class="orbit orbit-2"></div>
+        <div class="orbit orbit-3"></div>
+    </div>
+
+    <!-- Version -->
+    <div class="version-badge">v 0.0.0</div>
+
+    <!-- Main card -->
+    <div class="card">
+        <div class="halo"></div>
+
+        <!-- Avatar -->
+        <div class="avatar-ring">
+            <div class="avatar-inner">
+                <img src="assets/tala_suit.png" alt="Tala"
+                    onerror="this.style.display='none'; this.parentElement.innerHTML='<div style=\'font-size:56px;line-height:130px;text-align:center\'>🤖</div>'" />
+            </div>
+        </div>
+
+        <!-- Wordmark -->
+        <div class="wordmark">T.A.L.A.</div>
+        <div class="tagline">Tactical Autonomous Learning Architecture</div>
+        <div class="acronym-row">
+            <span class="acr-item"><em>T</em>actical</span>
+            <span class="acr-dot">&middot;</span>
+            <span class="acr-item"><em>A</em>utonomous</span>
+            <span class="acr-dot">&middot;</span>
+            <span class="acr-item"><em>L</em>earning</span>
+            <span class="acr-dot">&middot;</span>
+            <span class="acr-item"><em>A</em>rchitecture</span>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-track">
+            <div class="progress-fill"></div>
+        </div>
+
+        <div class="status" id="status-msg">Initializing core systems...</div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="footer-creator">Created by <span>Steven Pollard</span></div>
+        <div class="footer-year">© 2023 — All Rights Reserved</div>
+    </div>
+
+    <script>
+        // ── Starfield ──────────────────────────────────────────────
+        const canvas = document.getElementById('stars');
+        const ctx = canvas.getContext('2d');
+        let W, H, stars = [];
+
+        function resize() {
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+        }
+
+        function initStars() {
+            stars = Array.from({ length: 90 }, () => ({
+                x: Math.random() * W,
+                y: Math.random() * H,
+                r: Math.random() * 1.2 + 0.2,
+                a: Math.random(),
+                speed: Math.random() * 0.003 + 0.001,
+                phase: Math.random() * Math.PI * 2,
+            }));
+        }
+
+        function drawStars(t) {
+            ctx.clearRect(0, 0, W, H);
+            for (const s of stars) {
+                const alpha = s.a * (0.5 + 0.5 * Math.sin(t * s.speed * 60 + s.phase));
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(${170 + Math.floor(s.a * 85)},${200 + Math.floor(s.a * 55)},255,${alpha})`;
+                ctx.fill();
+            }
+        }
+
+        let raf;
+        function tick(t) {
+            drawStars(t / 1000);
+            raf = requestAnimationFrame(tick);
+        }
+
+        resize();
+        initStars();
+        window.addEventListener('resize', () => { resize(); initStars(); });
+        requestAnimationFrame(tick);
+
+        // ── Status messages ───────────────────────────────────────
+        const messages = [
+            'Initializing core systems...',
+            'Igniting AI soul...',
+            'Connecting memory layers...',
+            'Loading MCP servers...',
+            'Calibrating astro engine...',
+            'Syncing knowledge base...',
+            'Ready.',
+        ];
+
+        let msgIdx = 0;
+        const statusEl = document.getElementById('status-msg');
+
+        function nextMsg() {
+            if (msgIdx < messages.length - 1) {
+                msgIdx++;
+                statusEl.style.opacity = '0';
+                statusEl.style.transition = 'opacity 0.3s';
+                setTimeout(() => {
+                    statusEl.textContent = messages[msgIdx];
+                    statusEl.style.opacity = '1';
+                    if (msgIdx < messages.length - 1) {
+                        setTimeout(nextMsg, 600 + Math.random() * 400);
+                    }
+                }, 300);
+            }
+        }
+
+        setTimeout(nextMsg, 900);
+    </script>
+</body>
+
+</html>

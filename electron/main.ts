@@ -175,6 +175,7 @@ if (require('electron-squirrel-startup')) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
 let isQuitting = false;
 
 /**
@@ -190,10 +191,32 @@ let isQuitting = false;
  * In production, loads the built `dist/index.html`.
  */
 const createWindow = () => {
+  // ── Splash screen ──────────────────────────────────────────────────
+  splashWindow = new BrowserWindow({
+    width: 520,
+    height: 380,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    center: true,
+    skipTaskbar: true,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+
+  // In dev, serve splash from Vite's public folder; in prod, from dist.
+  if (process.env.VITE_DEV_SERVER_URL) {
+    splashWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}splash.html`);
+  } else {
+    splashWindow.loadFile(path.join(__dirname, '../dist/splash.html'));
+  }
+
+  // ── Main window ───────────────────────────────────────────────────
+  // Show it immediately — splash is alwaysOnTop so covers it while loading.
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#0a0a0f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -217,6 +240,19 @@ const createWindow = () => {
   };
 
   loadApp();
+
+  // Close splash after 3 s — give the animation time to play through.
+  // Hard failsafe at 5 s ensures the splash never permanently blocks the app.
+  const closeSplash = () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+  };
+  const splashTimer = setTimeout(closeSplash, 3000);
+  // Failsafe — in case the 3 s timer somehow doesn't fire
+  setTimeout(() => { clearTimeout(splashTimer); closeSplash(); }, 5000);
+
   terminalService.setWindow(mainWindow);
   agent.setMainWindow(mainWindow);
 };

@@ -119,7 +119,7 @@ export const Settings = () => {
     const [workspaceSettings, setWorkspaceSettings] = useState<Partial<AppSettings>>({});
     const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS); // Interactive view
 
-    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails'>('inference');
+    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'about'>('inference');
     const [workflowSubTab, setWorkflowSubTab] = useState<'workflow' | 'mcp' | 'function'>('workflow');
     const [status, setStatus] = useState('');
     const [downloading, setDownloading] = useState(false);
@@ -466,7 +466,8 @@ export const Settings = () => {
                     { id: 'storage', label: 'Storage' },
                     { id: 'backup', label: 'Backup' },
                     { id: 'server', label: 'Runtime' },
-                    { id: 'auth', label: 'Auth' }
+                    { id: 'auth', label: 'Auth' },
+                    { id: 'about', label: 'About' }
                 ].map(tab => (
                     <div
                         key={tab.id}
@@ -3415,11 +3416,175 @@ Tone: Minimalist, calm, practical.
                 {/* GUARDRAILS TAB — GuardrailsAI-compatible Guard Builder + Validator Builder */}
                 {activeTab === 'guardrails' && <GuardrailsTab settings={settings} api={api} />}
 
+                {/* ABOUT TAB */}
+                {activeTab === 'about' && <AboutPanel />}
+
             </div>
             {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}
         </div>
     );
 };
+
+
+// ═══════════════════════════════════════════════════════════════
+// AboutPanel — identity, creator, and project info
+// ═══════════════════════════════════════════════════════════════
+function AboutPanel() {
+    const GITHUB_URL = 'https://github.com/Weavor74/tala-app';
+    const EMAIL = 'steven.k.pollard@gmail.com';
+    const VERSION = '0.0.0';
+
+    const openExternal = (url: string) => {
+        const api = (window as any).tala;
+        if (api?.openExternal) { api.openExternal(url); }
+        else { window.open(url, '_blank'); }
+    };
+
+    const card: React.CSSProperties = {
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.07)',
+        borderRadius: 10,
+        padding: '22px 26px',
+        marginBottom: 16,
+    };
+    const lbl: React.CSSProperties = {
+        fontSize: 9, fontWeight: 800, color: '#555',
+        letterSpacing: 1.8, textTransform: 'uppercase', marginBottom: 5,
+        display: 'block',
+    };
+    const linkBtn: React.CSSProperties = {
+        display: 'inline-flex', alignItems: 'center', gap: 7,
+        background: 'rgba(0,122,204,0.12)',
+        border: '1px solid rgba(0,122,204,0.3)',
+        color: '#7ab8e8', fontSize: 12, fontWeight: 600,
+        padding: '8px 16px', borderRadius: 6,
+        cursor: 'pointer', textDecoration: 'none',
+        transition: '0.15s',
+    };
+
+    const CAPABILITIES = [
+        '🧠 Hybrid LLM Inference (Local + Cloud)',
+        '🔮 Astro-Emotional Engine (Dynamic personality)',
+        '💾 Dual Memory: mem0 (short-term) + RAG (long-term)',
+        '🔁 Reflection System (Self-improvement loop)',
+        '🌐 Browser Perception & Automation',
+        '⚡ MCP Server Ecosystem',
+        '🛡 Guard Builder + Custom Validator Builder',
+        '🗂 Workflow Engine + Visual Editor',
+        '🔗 Git Integration',
+        '🎙 Voice I/O (Whisper + ElevenLabs)',
+        '📦 Portable / USB-deployable Build',
+    ];
+
+    return (
+        <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif", maxWidth: 700, paddingBottom: 40 }}>
+
+            {/* Hero */}
+            <div style={{
+                ...card,
+                background: 'linear-gradient(135deg, rgba(0,122,204,0.12) 0%, rgba(0,30,60,0.4) 100%)',
+                border: '1px solid rgba(0,122,204,0.25)',
+                textAlign: 'center', padding: '40px 30px',
+            }}>
+                {/* Wordmark */}
+                <div style={{
+                    fontSize: 56, fontWeight: 900, letterSpacing: 14,
+                    background: 'linear-gradient(90deg,#7ab8e8 0%,#fff 45%,#7ab8e8 100%)',
+                    WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text', marginBottom: 10,
+                }}>T.A.L.A.</div>
+
+                {/* Acronym expansion */}
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+                    {[
+                        ['T', 'actical'],
+                        ['A', 'utonomous'],
+                        ['L', 'earning'],
+                        ['A', 'rchitecture'],
+                    ].map(([letter, rest], i, arr) => (
+                        <>
+                            <span key={letter + rest} style={{ fontSize: 13, color: '#3a5a7a' }}>
+                                <span style={{ color: '#7ab8e8', fontWeight: 800 }}>{letter}</span>{rest}
+                            </span>
+                            {i < arr.length - 1 && <span style={{ color: '#1e3a52', fontSize: 16 }}>·</span>}
+                        </>
+                    ))}
+                </div>
+
+                <div style={{ fontSize: 11, color: '#3a5a7a', letterSpacing: 2, textTransform: 'uppercase' }}>
+                    Autonomous Intelligence System &nbsp;·&nbsp; v{VERSION}
+                </div>
+            </div>
+
+            {/* Creator */}
+            <div style={card}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#555', letterSpacing: 1.8, textTransform: 'uppercase', marginBottom: 16 }}>Creator</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                    <div>
+                        <label style={lbl}>Name</label>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: '#dcdcaa' }}>Steven Pollard</div>
+                    </div>
+                    <div>
+                        <label style={lbl}>Email</label>
+                        <a
+                            href={`mailto:${EMAIL}`}
+                            style={{ fontSize: 13, color: '#7ab8e8', textDecoration: 'none', fontWeight: 500 }}
+                        >
+                            {EMAIL}
+                        </a>
+                    </div>
+                    <div>
+                        <label style={lbl}>Founded</label>
+                        <div style={{ fontSize: 13, color: '#aaa' }}>2023</div>
+                    </div>
+                    <div>
+                        <label style={lbl}>License</label>
+                        <div style={{ fontSize: 13, color: '#aaa' }}>Proprietary — All Rights Reserved</div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Source */}
+            <div style={card}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#555', letterSpacing: 1.8, textTransform: 'uppercase', marginBottom: 16 }}>Source Repository</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#ccc', marginBottom: 4 }}>GitHub — Weavor74/tala-app</div>
+                        <div style={{ fontSize: 11, color: '#555' }}>
+                            🔒 Private repository — requires access invitation
+                        </div>
+                        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#459', marginTop: 6, letterSpacing: 0.5 }}>
+                            {GITHUB_URL}
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => openExternal(GITHUB_URL)}
+                        style={linkBtn}
+                    >
+                        <span style={{ fontSize: 16 }}>🐙</span> Open on GitHub
+                    </button>
+                </div>
+            </div>
+
+            {/* Capabilities */}
+            <div style={card}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#555', letterSpacing: 1.8, textTransform: 'uppercase', marginBottom: 16 }}>Capabilities</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {CAPABILITIES.map(cap => (
+                        <div key={cap} style={{ fontSize: 11, color: '#888', display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
+                            {cap}
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Footer note */}
+            <div style={{ textAlign: 'center', fontSize: 10, color: '#2a3a4a', letterSpacing: 1.5, textTransform: 'uppercase', paddingTop: 10 }}>
+                © 2023 Steven Pollard — T.A.L.A. Tactical Autonomous Learning Architecture
+            </div>
+        </div>
+    );
+}
 
 
 // ═══════════════════════════════════════════════════════════════
