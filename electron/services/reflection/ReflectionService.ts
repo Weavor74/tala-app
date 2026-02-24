@@ -131,6 +131,10 @@ export class ReflectionService {
             return await this.store.getProposals(status);
         });
 
+        ipcMain.handle('reflection:get-reflections', async () => {
+            return await this.store.getReflections();
+        });
+
         ipcMain.handle('reflection:approve-proposal', async (_, proposalId: string) => {
             const proposals = await this.store.getProposals();
             const proposal = proposals.find(p => p.id === proposalId);

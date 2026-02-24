@@ -118,8 +118,14 @@ function App() {
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
+  // Layout & General UI State
   const [statusText, setStatusText] = useState('Loading...');
   const [showWizard, setShowWizard] = useState(false);
+
+  // Engine Status
+  const [localEngineRunning, setLocalEngineRunning] = useState(false);
+  const [appSettings, setAppSettings] = useState<any>(null);
+  const [isStartingEngine, setIsStartingEngine] = useState(false);
 
   // Model Warning State
   const [modelStatus, setModelStatus] = useState<{ id: string, isLowFidelity: boolean, warning?: string } | null>(null);
@@ -156,6 +162,14 @@ function App() {
           }
         }
 
+        if (api.getLocalEngineStatus) {
+          const engineStatus = await api.getLocalEngineStatus();
+          setLocalEngineRunning(engineStatus.isRunning);
+        }
+
+        // Store settings for use in ignition
+        setAppSettings(result.global);
+
         // Fetch Model Status
         if (api.getModelStatus) {
           const status = await api.getModelStatus();
@@ -167,8 +181,8 @@ function App() {
       }
     };
     loadStatus();
-    // Poll every 10s to keep fresh if settings change
-    const interval = setInterval(loadStatus, 10000);
+    // Poll every 5s for engine status & model info
+    const interval = setInterval(loadStatus, 5000);
     return () => clearInterval(interval);
   }, [api]);
 
@@ -763,6 +777,39 @@ function App() {
     fileInput.click();
   };
 
+  const handleIgniteEngine = async () => {
+    if (!api || !appSettings) return;
+    if (localEngineRunning) {
+      if (confirm("Stop local inference engine?")) {
+        await api.stopLocalEngine();
+        setLocalEngineRunning(false);
+        addToast({ type: 'info', message: 'Inference Engine Offline' });
+      }
+      return;
+    }
+
+    const { localEngine } = appSettings.inference || {};
+    if (!localEngine || !localEngine.modelPath) {
+      addToast({ type: 'error', message: 'No local model configured. Go to Settings.' });
+      return;
+    }
+
+    setIsStartingEngine(true);
+    addToast({ type: 'info', message: 'Igniting Local Engine...' });
+    try {
+      await api.startLocalEngine({
+        modelPath: localEngine.modelPath,
+        options: localEngine.options
+      });
+      setLocalEngineRunning(true);
+      addToast({ type: 'success', message: 'Local Engine Ignite Sequence Complete' });
+    } catch (e: any) {
+      addToast({ type: 'error', message: `Ignition Failed: ${e.message}` });
+    } finally {
+      setIsStartingEngine(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Global Save shortcut
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -1307,6 +1354,34 @@ function App() {
           <IconPanel /> <span>Toggle Terminal</span>
         </div>
         <div className="status-item" onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}>Toggle Chat</div>
+
+        <div
+          className="status-item"
+          onClick={handleIgniteEngine}
+          style={{
+            background: localEngineRunning ? '#1e3a1e' : (isStartingEngine ? '#333' : '#3a1e1e'),
+            color: '#fff',
+            fontWeight: 'bold',
+            cursor: isStartingEngine ? 'wait' : 'pointer',
+            padding: '0 12px',
+            borderRadius: '2px',
+            transition: 'all 0.3s ease',
+            marginLeft: 5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6
+          }}
+        >
+          {isStartingEngine ? (
+            <>⏳ Starting...</>
+          ) : (
+            localEngineRunning ? (
+              <>🔥 ENGINE ACTIVE</>
+            ) : (
+              <>❄️ IGNITE ENGINE</>
+            )
+          )}
+        </div>
 
         {modelStatus?.isLowFidelity && (
           <div className="status-item" style={{ color: '#ffaa00', display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }} title={modelStatus.warning || "Performance may be degraded"}>

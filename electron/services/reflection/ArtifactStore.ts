@@ -48,11 +48,34 @@ export class ArtifactStore {
 
     async getProposals(status?: string): Promise<ChangeProposal[]> {
         const dir = path.join(this.baseDir, 'proposals');
-        const files = fs.readdirSync(dir);
-        return files.map(f => {
-            const content = fs.readFileSync(path.join(dir, f), 'utf-8');
-            return JSON.parse(content) as ChangeProposal;
-        }).filter(p => !status || p.status === status);
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        const results: ChangeProposal[] = [];
+        for (const f of files) {
+            try {
+                const content = fs.readFileSync(path.join(dir, f), 'utf-8');
+                results.push(JSON.parse(content) as ChangeProposal);
+            } catch (err) {
+                console.error(`[ArtifactStore] Failed to load proposal ${f}:`, err);
+            }
+        }
+        return results.filter(p => !status || p.status === status);
+    }
+
+    async getReflections(): Promise<ReflectionEvent[]> {
+        const dir = path.join(this.baseDir, 'reflections');
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        const results: ReflectionEvent[] = [];
+        for (const f of files) {
+            try {
+                const content = fs.readFileSync(path.join(dir, f), 'utf-8');
+                results.push(JSON.parse(content) as ReflectionEvent);
+            } catch (err) {
+                console.error(`[ArtifactStore] Failed to load reflection ${f}:`, err);
+            }
+        }
+        return results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     }
 
     private updateIndex(type: string, id: string, timestamp: string) {

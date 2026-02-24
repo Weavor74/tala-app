@@ -1193,31 +1193,13 @@ You can use environment variables to override the manifest settings:
         try {
             const settings = loadSettings(this.settingsPath);
 
-            // 1. Built-in Local Engine (Prioritized Fallback)
-            const scanned = await this.scanLocalModels();
-            const ollamaResponsive = scanned.some(p => p.id === 'ollama-local');
+            // 1. Built-in Local Engine (Removed Auto-Ignition)
+            // We no longer auto-ignite the engine here to save resources and allow
+            // the user to start it manually via the UI.
+            this.sendStartupProgress('Core Systems Ready (Engine Await)...', 15);
 
-            // Only ignite built-in if user explicitly enabled it AND (it's their selected engine OR no other local engines are found)
-            const useBuiltin = settings.inference.localEngine?.enabled &&
-                (settings.inference.activeLocalId === 'llama-local-cpu' || !ollamaResponsive);
 
-            if (useBuiltin) {
-                try {
-                    console.log('[AgentService] Auto-starting Built-in Local Engine...');
-                    this.sendStartupProgress('Starting Local Inference Engine...', 15);
-                    await this.inference.getLocalEngine().ignite(
-                        settings.inference.localEngine.modelPath,
-                        settings.inference.localEngine.options
-                    );
-                } catch (e) {
-                    console.error('[AgentService] Built-in Engine failed to ignite:', e);
-                }
-            } else {
-                console.log('[AgentService] Skipping built-in engine ignition (Ollama detected or engine disabled).');
-                this.sendStartupProgress('Using External Local Inference...', 15);
-            }
-
-            // 2. RAG & Memory
+            // 2. RAG & Memory Configuration
             const systemEnv = this.systemInfo?.envVariables || {};
             let ragEnv: Record<string, string> = {
                 ...systemEnv,
@@ -1238,23 +1220,19 @@ You can use environment variables to override the manifest settings:
             const astroScript = path.join(app.getAppPath(), 'mcp-servers', 'astro-engine', 'astro_emotion_engine', 'mcp_server.py');
             const worldScript = path.join(app.getAppPath(), 'mcp-servers', 'world-engine', 'server.py');
 
-            console.log(`[AgentService] Script Paths: `);
-            console.log(`  - RAG: ${ragScript} `);
-            console.log(`  - Memory: ${memoryScript} `);
-            console.log(`  - Astro: ${astroScript} `);
-            console.log(`  - World: ${worldScript} `);
+            // 2. RAG, Memory, Astro, World (Parallel Ignition)
+            console.log('[AgentService] Igniting Core Knowledge Servers in parallel...');
+            this.sendStartupProgress('Igniting Knowledge Ecosystem...', 30);
 
-            this.sendStartupProgress('Igniting Long-term Memory (RAG)...', 30);
-            await this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => console.error('RAG fail', e));
+            const ignitionTasks = [
+                this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => console.error('RAG fail', e)),
+                this.memory.ignite(pythonPath, memoryScript, systemEnv).catch(e => console.error('Memory fail', e)),
+                this.astro.ignite(pythonPath, astroScript, systemEnv).catch(e => console.error('Astro fail', e)),
+                this.world.ignite(pythonPath, worldScript, systemEnv).catch(e => console.error('World Engine fail', e))
+            ];
 
-            this.sendStartupProgress('Igniting Short-term Memory (Mem0)...', 50);
-            await this.memory.ignite(pythonPath, memoryScript, systemEnv).catch(e => console.error('Memory fail', e));
-
-            this.sendStartupProgress('Igniting Astro Emotional Engine...', 70);
-            await this.astro.ignite(pythonPath, astroScript, systemEnv).catch(e => console.error('Astro fail', e));
-
-            this.sendStartupProgress('Igniting World Engine...', 85);
-            await this.world.ignite(pythonPath, worldScript, systemEnv).catch(e => console.error('World Engine fail', e));
+            // Wait for core services to at least attempt ignition
+            await Promise.all(ignitionTasks);
 
             this.isSoulReady = true;
             console.log('[AgentService] Soul ignited.');

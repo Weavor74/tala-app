@@ -71,3 +71,32 @@ export interface ReflectionMetrics {
     successRate: number;
     lastHeartbeat: string;
 }
+
+// ─── SOUL TYPES ─────────────────────────────────────────────────────────────
+
+export interface EmotionalState {
+    warmth: number;
+    focus: number;
+    calm: number;
+    empowerment: number;
+    conflict: number;
+}
+
+export interface SoulIdentity {
+    values: string[];
+    boundaries: string[];
+    roles: string[];
+    evolutionLog: any[];
+}
+
+export interface SoulReflection {
+    id: string;
+    timestamp: string;
+    decision: string;
+    context: string;
+    emotionalState: EmotionalState;
+    confidence: number;
+    uncertainties?: string[];
+    postDecisionReflection?: string;
+}
+

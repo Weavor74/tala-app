@@ -357,7 +357,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Gets reflection system metrics (counts, success rate). */
     getReflectionMetrics: () => ipcRenderer.invoke('reflection:get-metrics'),
     /** Lists pending proposals awaiting approval. */
-    getReflectionProposals: () => ipcRenderer.invoke('reflection:get-proposals'),
+    getReflectionProposals: (status?: string) => ipcRenderer.invoke('reflection:get-proposals', status),
+    /** Lists historical reflection events. */
+    getReflectionEvents: () => ipcRenderer.invoke('reflection:get-reflections'),
     /** Approves a proposal by ID. */
     approveProposal: (id: string) => ipcRenderer.invoke('reflection:approve-proposal', id),
     /** Rejects a proposal by ID. */
@@ -390,4 +392,24 @@ contextBridge.exposeInMainWorld('tala', {
     voiceTranscribeBuffer: (audioBuffer: Buffer, format: string) => ipcRenderer.invoke('voice:transcribe-buffer', audioBuffer, format),
     /** Gets voice service status (STT/TTS availability). */
     voiceStatus: () => ipcRenderer.invoke('voice:status'),
+
+    // ─── Soul & Identity ──────────────────────────────────────────
+    /** Gets Tala's current identity state (values, boundaries, roles). */
+    getSoulIdentity: () => ipcRenderer.invoke('soul:get-identity'),
+    /** Updates Tala's identity state with a context reason. */
+    updateSoulIdentity: (changes: any, context: string) => ipcRenderer.invoke('soul:update-identity', changes, context),
+    /** Gets recent behavioral reflection events. */
+    getSoulReflections: (count?: number) => ipcRenderer.invoke('soul:get-reflections', count),
+    /** Evaluates a decision against ethical frameworks. */
+    evaluateEthics: (ctx: any) => ipcRenderer.invoke('soul:evaluate-ethics', ctx),
+    /** Generates an in-universe narrative log. */
+    generateNarrative: (ctx: any) => ipcRenderer.invoke('soul:generate-narrative', ctx),
+    /** Proposes a hypothesis to test an ambiguity. */
+    proposeHypothesis: (ambiguity: string, hypothesis: string, test: string) =>
+        ipcRenderer.invoke('soul:propose-hypothesis', ambiguity, hypothesis, test),
+    /** Resolves a previous hypothesis. */
+    resolveHypothesis: (id: string, status: 'accepted' | 'rejected') =>
+        ipcRenderer.invoke('soul:resolve-hypothesis', id, status),
+    /** Gets a cross-engine summary of Tala's state. */
+    getSoulSummary: () => ipcRenderer.invoke('soul:get-summary'),
 });

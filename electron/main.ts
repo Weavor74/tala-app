@@ -91,6 +91,7 @@ const EFFECTIVE_WORKSPACE_ROOT = deploymentMode === 'usb'
 
 import { ReflectionService } from './services/reflection/ReflectionService';
 import { VoiceService } from './services/VoiceService';
+import { SoulService } from './services/soul/SoulService';
 
 const terminalService = new TerminalService();
 const mcpService = new McpService();
@@ -102,11 +103,15 @@ const inferenceService = new InferenceService();
 const workflowService = new WorkflowService(fileService.getRoot());
 const agent = new AgentService(terminalService, functionService, mcpService, inferenceService);
 const reflectionService = new ReflectionService(USER_DATA_DIR, SETTINGS_PATH);
+const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent); // Instantiate Engine
 const guardrailService = new GuardrailService();
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
+
+// Register Soul IPC Handlers
+soulService.registerIpcHandlers();
 
 // Register Reflection IPC Handlers
 reflectionService.registerIpcHandlers();
@@ -872,6 +877,99 @@ ipcMain.handle('test-backup-connection', async (event, config) => {
  * @param {string} provider - `'google'`, `'github'`, or `'microsoft'`.
  * @returns {Promise<{ success: boolean, provider: string, token: string }>}
  */
+// ═══════════════════════════════════════════════════════════════════════
+// IPC HANDLERS — INFERENCE (Local Engine)
+// ═══════════════════════════════════════════════════════════════════════
+
+ipcMain.handle('scan-local-providers', async () => {
+  return await inferenceService.scanLocal();
+});
+
+ipcMain.handle('scan-local-models', async () => {
+  return await agent.scanLocalModels();
+});
+
+ipcMain.handle('install-local-engine', async (event, engineId) => {
+  return await inferenceService.installEngine(engineId, mainWindow?.webContents);
+});
+
+// Built-in Local Engine Handlers
+
+ipcMain.handle('local-engine-status', async () => {
+  return inferenceService.getLocalEngine().getStatus();
+});
+
+ipcMain.handle('local-engine-start', async (event, { modelPath, options }) => {
+  try {
+    await inferenceService.getLocalEngine().ignite(modelPath, options);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('local-engine-stop', async () => {
+  inferenceService.getLocalEngine().extinguish();
+  return true;
+});
+
+ipcMain.handle('local-engine-download-binary', async () => {
+  try {
+    const binPath = await inferenceService.getLocalEngine().downloadBinary((progress) => {
+      mainWindow?.webContents.send('local-engine-download-progress', { type: 'binary', progress });
+    });
+
+    // Update Settings
+    const s = loadSettings(SETTINGS_PATH);
+    if (!s.inference) s.inference = {};
+    if (!s.inference.localEngine) s.inference.localEngine = {};
+    s.inference.localEngine.binaryPath = binPath;
+    saveSettings(SETTINGS_PATH, s);
+
+    return { success: true, path: binPath };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('local-engine-download-model', async () => {
+  try {
+    const modelPath = await inferenceService.getLocalEngine().downloadModel((progress) => {
+      mainWindow?.webContents.send('local-engine-download-progress', { type: 'model', progress });
+    });
+
+    // Update Settings -> Enable Engine
+    const s = loadSettings(SETTINGS_PATH);
+    if (!s.inference) s.inference = {};
+    if (!s.inference.localEngine) s.inference.localEngine = {};
+
+    s.inference.localEngine.modelPath = modelPath;
+    s.inference.localEngine.enabled = true; // Auto-enable
+    s.inference.mode = 'local-only'; // Auto-switch mode
+    s.inference.activeLocalId = 'builtin-llamacpp'; // Auto-select
+
+    saveSettings(SETTINGS_PATH, s);
+
+    // Reload agent to pick up changes
+    await agent.reloadConfig();
+
+    return { success: true, path: modelPath };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('local-engine-download-python', async () => {
+  try {
+    const pyPath = await inferenceService.getLocalEngine().downloadPython((progress) => {
+      mainWindow?.webContents.send('local-engine-download-progress', { type: 'python', progress });
+    });
+    return { success: true, path: pyPath };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+});
+
 ipcMain.handle('login', async (event, provider) => {
   const { shell } = require('electron');
   const http = require('http');
@@ -924,109 +1022,7 @@ ipcMain.handle('login', async (event, provider) => {
     }
 
     // 2. Start Local Loopback Server
-
     const server = http.createServer(async (req: any, res: any) => {
-      /*
-      // IPC HANDLERS — INFERENCE (Local Engine)
-      // ═══════════════════════════════════════════════════════════════════════
-  
-      ipcMain.handle('scan-local-providers', async () => {
-  
-        return await inferenceService.scanLocal();
-      });
-  
-      ipcMain.handle('scan-local-models', async () => {
-        return await agent.scanLocalModels();
-      });
-  
-      ipcMain.handle('install-local-engine', async (event, engineId) => {
-        return await inferenceService.installEngine(engineId, mainWindow?.webContents);
-      });
-  
-      // Built-in Local Engine Handlers
-  
-      ipcMain.handle('local-engine-status', async () => {
-        return inferenceService.getLocalEngine().getStatus();
-      });
-  
-      ipcMain.handle('local-engine-start', async (event, { modelPath, options }) => {
-        try {
-          await inferenceService.getLocalEngine().ignite(modelPath, options);
-          return { success: true };
-        } catch (e: any) {
-          return { success: false, error: e.message };
-        }
-      });
-  
-        }
-      });
-
-
-
-      ipcMain.handle('local-engine-stop', async () => {
-        inferenceService.getLocalEngine().extinguish();
-        return true;
-      });
-  
-      ipcMain.handle('local-engine-download-binary', async () => {
-        try {
-          const binPath = await inferenceService.getLocalEngine().downloadBinary((progress) => {
-            mainWindow?.webContents.send('local-engine-download-progress', { type: 'binary', progress });
-          });
-  
-          // Update Settings
-          const s = loadSettings(SETTINGS_PATH);
-          if (!s.inference) s.inference = {};
-          if (!s.inference.localEngine) s.inference.localEngine = {};
-          s.inference.localEngine.binaryPath = binPath;
-          saveSettings(SETTINGS_PATH, s);
-  
-          return { success: true, path: binPath };
-        } catch (e: any) {
-          return { success: false, error: e.message };
-        }
-      });
-  
-      ipcMain.handle('local-engine-download-model', async () => {
-        try {
-          const modelPath = await inferenceService.getLocalEngine().downloadModel((progress) => {
-            mainWindow?.webContents.send('local-engine-download-progress', { type: 'model', progress });
-          });
-  
-          // Update Settings -> Enable Engine
-          const s = loadSettings(SETTINGS_PATH);
-          if (!s.inference) s.inference = {};
-          if (!s.inference.localEngine) s.inference.localEngine = {};
-  
-          s.inference.localEngine.modelPath = modelPath;
-          s.inference.localEngine.enabled = true; // Auto-enable
-          s.inference.mode = 'local-only'; // Auto-switch mode
-          s.inference.activeLocalId = 'builtin-llamacpp'; // Auto-select
-  
-          saveSettings(SETTINGS_PATH, s);
-  
-          // Reload agent to pick up changes
-          await agent.reloadConfig();
-  
-          return { success: true, path: modelPath };
-        } catch (e: any) {
-          return { success: false, error: e.message };
-        }
-      });
-  
-      ipcMain.handle('local-engine-download-python', async () => {
-        try {
-          const pyPath = await inferenceService.getLocalEngine().downloadPython((progress) => {
-            mainWindow?.webContents.send('local-engine-download-progress', { type: 'python', progress });
-          });
-          return { success: true, path: pyPath };
-        } catch (e: any) {
-          return { success: false, error: e.message };
-        }
-      });
-  });
-  
-        */
       const reqUrl = url.parse(req.url, true);
 
       if (reqUrl.pathname === '/callback') {
@@ -1074,11 +1070,6 @@ ipcMain.handle('login', async (event, provider) => {
 
                 console.log(`[AuthService] ${provider} token received successfully.`);
 
-                // Fetch User Info (Optional but helpful for Profile)
-                let name = `Authenticated ${provider} User`;
-                let email = `user@${provider}.com`;
-                let avatar = `https://ui-avatars.com/api/?name=${provider}&background=random`;
-
                 // Success Response to browser
                 res.writeHead(200, { 'Content-Type': 'text/html' });
                 res.end('<h1>Authentication Successful</h1><p>You may close this window and return to Tala.</p><script>window.close()</script>');
@@ -1089,50 +1080,42 @@ ipcMain.handle('login', async (event, provider) => {
                   provider,
                   token: data.access_token,
                   refreshToken: data.refresh_token,
-                  email,
-                  name,
-                  avatar
+                  email: `user@${provider}.com`,
+                  name: `Authenticated ${provider} User`,
+                  avatar: `https://ui-avatars.com/api/?name=${provider}&background=random`
                 });
               } catch (e: any) {
-                res.end(`Token Exchange Error: ${e.message}`);
+                res.end(`Auth Exchange Failed: ${e.message}`);
                 server.close();
-                reject(new Error(`Token Exchange Failed: ${e.message}`));
+                reject(e);
               }
             });
           });
 
           tokenReq.on('error', (e: any) => {
-            res.end(`Request Error: ${e.message}`);
+            res.end(`Auth Request Failed: ${e.message}`);
             server.close();
-            reject(new Error(`Network Error during token exchange: ${e.message}`));
+            reject(e);
           });
 
           tokenReq.write(postData);
           tokenReq.end();
-
         } catch (e: any) {
-          res.end(`Critical Error: ${e.message}`);
+          res.end(`Auth Error: ${e.message}`);
           server.close();
-          reject(new Error(`Critical Error: ${e.message}`));
+          reject(e);
         }
+      } else {
+        res.end('Waiting for authorization code...');
       }
     });
 
-    server.on('error', (err: any) => {
-      console.error('[AuthService] Server Error:', err);
-      reject(new Error('Failed to start local callback server: ' + err.message));
-    });
-
-    server.listen(0, () => {
+    server.listen(0, 'localhost', () => {
       const addr = server.address();
       const port = addr && typeof addr !== 'string' ? addr.port : 0;
       const redirectUri = `http://localhost:${port}/callback`;
-
-      // Update authUrl with real redirectUri
       const finalAuthUrl = `${authUrl}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-      console.log(`[AuthService] Opening Authorization URL: ${finalAuthUrl}`);
-
-      // Dual-launch: Open in system browser AND internal browser
+      console.log(`[AuthService] Opening Browser for Auth: ${finalAuthUrl}`);
       shell.openExternal(finalAuthUrl);
       if (mainWindow) {
         mainWindow.webContents.send('agent-event', {

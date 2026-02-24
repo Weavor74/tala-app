@@ -143,7 +143,7 @@ def get_dependencies(target_path: str, workspace_root: str) -> Dict[str, Any]:
     }
 
 @mcp.tool()
-def workspace_overview(workspace_root: str, max_depth: number = 2) -> Dict[str, Any]:
+def workspace_overview(workspace_root: str, max_depth: int = 2) -> Dict[str, Any]:
     """
     Scans the workspace to build a high-level map of components.
     """
