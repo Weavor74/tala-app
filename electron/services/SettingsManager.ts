@@ -68,6 +68,13 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
     },
     mcpServers: [],
     guardrails: [],
+    search: {
+        activeProviderId: 'default-google',
+        providers: [
+            { id: 'default-google', name: 'Google Search', type: 'google', enabled: false },
+            { id: 'default-brave', name: 'Brave Search', type: 'brave', enabled: false }
+        ]
+    },
     workflows: {},
     reflection: {
         enabled: true,
@@ -76,7 +83,8 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         autoApplyRiskLevel: 3, // Low (1-3)
         retentionDays: 30,
         maxProposalsPerDay: 5
-    }
+    },
+    notebooks: []
 };
 
 /** Deep merges two objects. */

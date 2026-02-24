@@ -37,7 +37,7 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
     const [cursor, setCursor] = useState<{ x: number, y: number, show: boolean }>({ x: 0, y: 0, show: false });
 
     // Stable partition ID to prevent resets
-    const [partitionId] = useState(() => "tala-session-" + Date.now());
+    const [partitionId] = useState("persist:tala-browser-v1");
     const [preloadPath, setPreloadPath] = useState<string>('');
 
     useEffect(() => {

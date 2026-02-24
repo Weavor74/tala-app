@@ -23,7 +23,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from astro_emotion_engine.services.chart_factory import ChartFactory
 from astro_emotion_engine.services.profile_manager import ProfileManager
-from .engine import AstroEmotionEngine
+from astro_emotion_engine.engine import AstroEmotionEngine
 from .schemas.request import EmotionRequest
 
 # Initialize FastMCP Server

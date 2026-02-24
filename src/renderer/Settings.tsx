@@ -119,7 +119,7 @@ export const Settings = () => {
     const [workspaceSettings, setWorkspaceSettings] = useState<Partial<AppSettings>>({});
     const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS); // Interactive view
 
-    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'about'>('inference');
+    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about'>('inference');
     const [workflowSubTab, setWorkflowSubTab] = useState<'workflow' | 'mcp' | 'function'>('workflow');
     const [status, setStatus] = useState('');
     const [downloading, setDownloading] = useState(false);
@@ -461,6 +461,7 @@ export const Settings = () => {
                     { id: 'agent', label: 'Agent' },
                     { id: 'workflows', label: 'Workflows' },
                     { id: 'guardrails', label: 'Guardrails' },
+                    { id: 'search', label: 'Search' },
                     { id: 'system', label: 'System' },
                     { id: 'sourceControl', label: 'Git' },
                     { id: 'storage', label: 'Storage' },
@@ -939,32 +940,44 @@ export const Settings = () => {
                         )}
 
                         {/* MODE TOGGLE */}
-                        <div style={{ background: '#333', padding: 10, borderRadius: 4, marginBottom: 20, borderLeft: settings.inference.mode === 'local-only' ? '4px solid #4CAF50' : '4px solid #007acc' }}>
+                        <div style={{ background: '#333', padding: 10, borderRadius: 4, marginBottom: 20, borderLeft: settings.inference.mode === 'local-only' ? '4px solid #4CAF50' : (settings.inference.mode === 'cloud-only' ? '4px solid #e91e63' : '4px solid #007acc') }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div>
                                     <div style={{ fontWeight: 'bold', color: 'white', marginBottom: 4 }}>
-                                        Running Mode: {settings.inference.mode === 'local-only' ? 'LOCAL ONLY (SAFE)' : 'HYBRID (CLOUD ALLOWED)'}
+                                        Inference Strategy: {settings.inference.mode === 'local-only' ? 'LOCAL ONLY (SAFE)' : (settings.inference.mode === 'cloud-only' ? 'CLOUD ONLY (HIGH FIDELITY)' : 'HYBRID (SMART)')}
                                     </div>
                                     <div style={{ fontSize: 11 }}>
                                         {settings.inference.mode === 'local-only'
-                                            ? "Only the Active Local Provider will be used."
-                                            : "Cloud providers will be used if configured, falling back to Local."}
+                                            ? "Strictly local. No data leaves this machine."
+                                            : settings.inference.mode === 'cloud-only'
+                                                ? "Always use Cloud providers for maximum quality."
+                                                : "Automatically selects the best model for the task."}
                                     </div>
                                 </div>
-                                <button
-                                    onClick={() => update('inference', 'mode', settings.inference.mode === 'local-only' ? 'hybrid' : 'local-only')}
-                                    style={{
-                                        background: settings.inference.mode === 'local-only' ? '#4CAF50' : '#2d2d2d',
-                                        color: 'white',
-                                        border: '1px solid #555',
-                                        padding: '6px 12px',
-                                        cursor: 'pointer',
-                                        fontWeight: 'bold',
-                                        fontSize: 11
-                                    }}
-                                >
-                                    {settings.inference.mode === 'local-only' ? 'ENABLE CLOUD' : 'GO LOCAL ONLY'}
-                                </button>
+                                <div style={{ display: 'flex', background: '#252526', padding: 4, borderRadius: 4 }}>
+                                    {[
+                                        { id: 'local-only', label: 'LOCAL' },
+                                        { id: 'hybrid', label: 'HYBRID' },
+                                        { id: 'cloud-only', label: 'CLOUD' }
+                                    ].map(m => (
+                                        <div
+                                            key={m.id}
+                                            onClick={() => update('inference', 'mode', m.id)}
+                                            style={{
+                                                padding: '6px 12px',
+                                                cursor: 'pointer',
+                                                background: settings.inference.mode === m.id ? (m.id === 'local-only' ? '#4CAF50' : (m.id === 'cloud-only' ? '#e91e63' : '#007acc')) : 'transparent',
+                                                color: 'white',
+                                                borderRadius: 2,
+                                                fontSize: 10,
+                                                fontWeight: 'bold',
+                                                transition: '0.2s all'
+                                            }}
+                                        >
+                                            {m.label}
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
 
@@ -1895,6 +1908,141 @@ export const Settings = () => {
                         </div>
                     )
                 }
+
+                {/* SEARCH TAB */}
+                {activeTab === 'search' && settings.search && (
+                    <div style={sectionStyle}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                            <div>
+                                <h3 style={{ margin: 0, color: '#dcdcaa' }}>SEARCH PROVIDERS</h3>
+                                <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Credentials for external information retrieval.</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newProv = {
+                                        id: `search-${Math.random().toString(36).substr(2, 5)}`,
+                                        name: 'New Provider',
+                                        type: 'rest',
+                                        enabled: false
+                                    };
+                                    update('search', 'providers', [...settings.search.providers, newProv]);
+                                }}
+                                style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
+                            >
+                                + ADD PROVIDER
+                            </button>
+                        </div>
+
+                        <div style={{ marginBottom: 20, background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #007acc' }}>
+                            <label style={labelStyle}>ACTIVE SEARCH PROVIDER</label>
+                            <select
+                                style={{ ...selectStyle, marginBottom: 0 }}
+                                value={settings.search.activeProviderId}
+                                onChange={e => update('search', 'activeProviderId', e.target.value)}
+                            >
+                                {(settings.search.providers || []).map((p: any) => (
+                                    <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            {(settings.search.providers || []).map((p: any, idx: number) => (
+                                <div key={p.id} style={{ background: '#252526', border: '1px solid #3e3e42', padding: 20, borderRadius: 4 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
+                                        <div style={{ flex: 1, marginRight: 20 }}>
+                                            <input
+                                                value={p.name}
+                                                onChange={e => {
+                                                    const list = [...settings.search.providers];
+                                                    list[idx].name = e.target.value;
+                                                    update('search', 'providers', list);
+                                                }}
+                                                style={{ ...inputStyle, marginBottom: 5, fontWeight: 'bold' }}
+                                                placeholder="Provider Name (e.g. Google REST API)"
+                                            />
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                const list = settings.search.providers.filter((x: any) => x.id !== p.id);
+                                                update('search', 'providers', list);
+                                            }}
+                                            style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18 }}
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+                                        <div>
+                                            <label style={labelStyle}>TYPE</label>
+                                            <select
+                                                style={selectStyle}
+                                                value={p.type}
+                                                onChange={e => {
+                                                    const list = [...settings.search.providers];
+                                                    list[idx].type = e.target.value as any;
+                                                    update('search', 'providers', list);
+                                                }}
+                                            >
+                                                <option value="google">Google API</option>
+                                                <option value="brave">Brave Search</option>
+                                                <option value="serper">Serper.dev</option>
+                                                <option value="tavily">Tavily AI</option>
+                                                <option value="rest">Generic REST Endpoint</option>
+                                                <option value="custom">Custom Implementation</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={labelStyle}>STATUS</label>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', height: 40 }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={p.enabled}
+                                                    onChange={e => {
+                                                        const list = [...settings.search.providers];
+                                                        list[idx].enabled = e.target.checked;
+                                                        update('search', 'providers', list);
+                                                    }}
+                                                />
+                                                <span style={{ fontSize: 12 }}>Enabled</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ marginTop: 15 }}>
+                                        <label style={labelStyle}>REST ENDPOINT / URL</label>
+                                        <input
+                                            style={inputStyle}
+                                            value={p.endpoint || ''}
+                                            onChange={e => {
+                                                const list = [...settings.search.providers];
+                                                list[idx].endpoint = e.target.value;
+                                                update('search', 'providers', list);
+                                            }}
+                                            placeholder="https://api.custom-search.com/v1/query"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label style={labelStyle}>API KEY / CREDENTIALS</label>
+                                        <input
+                                            type="password"
+                                            style={inputStyle}
+                                            value={p.apiKey || ''}
+                                            onChange={e => {
+                                                const list = [...settings.search.providers];
+                                                list[idx].apiKey = e.target.value;
+                                                update('search', 'providers', list);
+                                            }}
+                                            placeholder="Enter sensitive token here..."
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* STORAGE TAB */}
                 {

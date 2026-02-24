@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('tala', {
     /** Returns the current astro state string (including emotional vector). */
     getEmotionState: () => ipcRenderer.invoke('get-emotion-state'),
     saveSettings: (data: any) => ipcRenderer.invoke('save-settings', data),
+    /** Sets the active notebook context (ID and source paths) for the agent. */
+    setActiveNotebookContext: (id: string | null, sourcePaths: string[]) => ipcRenderer.invoke('set-active-notebook-context', { id, sourcePaths }),
     /** Saves workspace-specific settings to `.tala/settings.json`. */
     saveWorkspaceSettings: (data: any) => ipcRenderer.invoke('save-workspace-settings', data),
     /** Exports global settings to a user-selected JSON file. */

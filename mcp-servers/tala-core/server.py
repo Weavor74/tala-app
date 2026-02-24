@@ -121,7 +121,12 @@ class SimpleVectorStore:
             for i, meta in enumerate(self.metadata):
                 match = True
                 for k, v in filter_meta.items():
-                    if meta.get(k) != v:
+                    val = meta.get(k)
+                    if isinstance(v, list):
+                        if val not in v:
+                            match = False
+                            break
+                    elif val != v:
                         match = False
                         break
                 if match:

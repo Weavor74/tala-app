@@ -1115,8 +1115,8 @@ ipcMain.handle('login', async (event, provider) => {
       const port = addr && typeof addr !== 'string' ? addr.port : 0;
       const redirectUri = `http://localhost:${port}/callback`;
       const finalAuthUrl = `${authUrl}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-      console.log(`[AuthService] Opening Browser for Auth: ${finalAuthUrl}`);
-      shell.openExternal(finalAuthUrl);
+      console.log(`[AuthService] Navigating Internal Browser for Auth: ${finalAuthUrl}`);
+
       if (mainWindow) {
         mainWindow.webContents.send('agent-event', {
           type: 'browser-navigate',
@@ -1125,59 +1125,6 @@ ipcMain.handle('login', async (event, provider) => {
       }
     });
   });
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// IPC HANDLERS — INFERENCE
-// ═══════════════════════════════════════════════════════════════════════
-
-/** Scans for locally-available inference providers (Ollama, LlamaCPP, vLLM). */
-ipcMain.handle('scan-local-providers', async () => {
-  console.log('[Inference] Scanning for local providers...');
-  return await inferenceService.scanLocal();
-});
-
-/** Downloads and installs a local inference engine binary. */
-ipcMain.handle('install-local-engine', async (event, engineId) => {
-  return await inferenceService.installEngine(engineId, event.sender);
-});
-
-ipcMain.handle('local-engine-start', async (event, { modelPath, options }) => {
-  return await inferenceService.getLocalEngine().ignite(modelPath, options);
-});
-
-ipcMain.handle('local-engine-stop', async () => {
-  return await inferenceService.getLocalEngine().extinguish();
-});
-
-ipcMain.handle('local-engine-status', async () => {
-  return await inferenceService.getLocalEngine().getStatus();
-});
-
-ipcMain.handle('local-engine-download-binary', async (event) => {
-  const engine = inferenceService.getLocalEngine();
-  return await engine.downloadBinary((progress) => {
-    event.sender.send('local-engine-download-progress', { type: 'binary', progress });
-  });
-});
-
-ipcMain.handle('local-engine-download-model', async (event) => {
-  const engine = inferenceService.getLocalEngine();
-  return await engine.downloadModel((progress) => {
-    event.sender.send('local-engine-download-progress', { type: 'model', progress });
-  });
-});
-
-ipcMain.handle('local-engine-download-python', async (event) => {
-  const engine = inferenceService.getLocalEngine();
-  return await engine.downloadPython((progress) => {
-    event.sender.send('local-engine-download-progress', { type: 'python', progress });
-  });
-});
-
-/** Scans for local LLM models (Ollama, LM Studio). */
-ipcMain.handle('scan-local-models', async () => {
-  return await agent.scanLocalModels();
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1380,6 +1327,11 @@ ipcMain.handle('branch-session', async (_e, { sourceId, messageIndex }: { source
 /** Cancels the currently streaming response. */
 ipcMain.on('chat-cancel', () => {
   agent.cancelChat();
+});
+
+/** Sets the active notebook context for the agent. */
+ipcMain.handle('set-active-notebook-context', async (event, { id, sourcePaths }) => {
+  return agent.setActiveNotebookContext(id, sourcePaths);
 });
 
 /** Returns the persisted chat history for UI restoration on reload. */

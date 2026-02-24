@@ -1,5 +1,5 @@
 
-import { IBrain, ChatMessage, BrainResponse } from './IBrain';
+import { IBrain, ChatMessage, BrainResponse, BrainOptions } from './IBrain';
 import https from 'https';
 import http from 'http';
 
@@ -137,7 +137,7 @@ export class CloudBrain implements IBrain {
      * @returns {Promise<BrainResponse>} The complete accumulated response.
      * @throws {Error} If the API returns a non-2xx status or network error.
      */
-    public async streamResponse(messages: ChatMessage[], systemPrompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<BrainResponse> {
+    public async streamResponse(messages: ChatMessage[], systemPrompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, tools?: any[], options?: BrainOptions): Promise<BrainResponse> {
         return new Promise((resolve, reject) => {
             // Smart URL Construction
             let raw = this.config.endpoint.trim();
@@ -148,6 +148,11 @@ export class CloudBrain implements IBrain {
             if (raw.endsWith('/chat/completions')) {
                 // User provided full path, trust it.
                 url = raw;
+            } else if (raw.includes('googleapis.com')) {
+                // Google AI Studio OpenAI-compatible format
+                // Usually https://generativelanguage.googleapis.com/v1beta/openai
+                if (raw.endsWith('/')) url = `${raw}chat/completions`;
+                else url = `${raw}/chat/completions`;
             } else if (raw.endsWith('/v1')) {
                 // User provided versioned base, just add resource
                 url = `${raw}/chat/completions`;
@@ -210,24 +215,6 @@ export class CloudBrain implements IBrain {
 
             // FINAL VALIDATION LOG
             console.log(`[CloudBrain] Outgoing Payload - ${allMessages.length} messages`);
-            allMessages.forEach((m, i) => {
-                if (m.role === 'tool' || m.tool_calls) {
-                    console.log(`  [Msg ${i}] Role: ${m.role}, ID: ${m.tool_call_id || 'N/A'}`);
-                    if (m.tool_calls) {
-                        m.tool_calls.forEach((tc: any, j: number) => {
-                            console.log(`    Call ${j} [ID: ${tc.id}]: ${tc.function.name}`);
-                        });
-                    }
-                    if (m.role === 'tool' && i > 0) {
-                        const prev = allMessages[i - 1];
-                        if (prev.role === 'assistant' && prev.tool_calls) {
-                            const match = prev.tool_calls.find((tc: any) => tc.id === m.tool_call_id);
-                            if (!match) console.warn(`[CloudBrain] WARNING: Tool message ID ${m.tool_call_id} NOT FOUND in previous assistant message! (Assistant IDs: ${prev.tool_calls.map((x: any) => x.id).join(', ')})`);
-                            else console.log(`[CloudBrain] MATCH FOUND: ${m.tool_call_id}`);
-                        }
-                    }
-                }
-            });
 
             // Broader detection for Reasoning/Next-Gen models (o1, o3, gpt-5, etc)
             // These models reject 'temperature' and 'max_tokens' in favor of 'max_completion_tokens'
@@ -241,12 +228,27 @@ export class CloudBrain implements IBrain {
                 stream_options: { include_usage: true } // Request usage stats in stream
             };
 
-            if (isReasoningModel) {
-                payload.max_completion_tokens = 4096;
-            } else {
-                payload.max_tokens = 4096;
-                payload.temperature = 0.7;
+            if (tools && tools.length > 0) {
+                payload.tools = tools.map(t => ({
+                    type: 'function',
+                    function: {
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.parameters
+                    }
+                }));
             }
+
+            if (isReasoningModel) {
+                payload.max_completion_tokens = options?.max_tokens || 4096;
+            } else {
+                payload.max_tokens = options?.max_tokens || 4096;
+                payload.temperature = options?.temperature !== undefined ? options.temperature : 0.7;
+            }
+
+            // Other options
+            if (options?.top_p !== undefined) payload.top_p = options.top_p;
+            if (options?.stop) payload.stop = options.stop;
 
             const body = JSON.stringify(payload);
             let fullContent = "";

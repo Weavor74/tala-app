@@ -42,7 +42,7 @@ export interface InferenceInstance {
 }
 
 export interface InferenceConfig {
-    mode: 'hybrid' | 'local-only';
+    mode: 'hybrid' | 'local-only' | 'cloud-only';
     activeLocalId?: string; // Explicit pointer to the active local provider
     activeCloudId?: string; // Explicit pointer to the active cloud provider
     instances: InferenceInstance[];
@@ -104,6 +104,20 @@ export interface GuardrailConfig {
     enabled: boolean;
     scope: 'global' | 'agent' | 'session';
     // Note: When scope === 'agent', assignment is done in AgentProfile.guardrailIds
+}
+
+export interface SearchProvider {
+    id: string;
+    name: string;
+    type: 'google' | 'brave' | 'serper' | 'tavily' | 'custom' | 'rest';
+    endpoint?: string;
+    apiKey?: string;
+    enabled: boolean;
+}
+
+export interface SearchConfig {
+    activeProviderId: string;
+    providers: SearchProvider[];
 }
 
 export interface BackupConfig extends BaseConfig {
@@ -231,6 +245,14 @@ export interface WorkflowConfig {
     autoSync?: boolean;
 }
 
+export interface Notebook {
+    id: string;
+    name: string;
+    description?: string;
+    sourcePaths: string[]; // Paths to files in memory/ or elsewhere
+    createdAt: number;
+}
+
 export interface AppSettings {
     deploymentMode: 'usb' | 'local' | 'remote';
     inference: InferenceConfig;
@@ -243,7 +265,9 @@ export interface AppSettings {
     system: SystemConfig;
     mcpServers: McpServerConfig[];
     guardrails: GuardrailConfig[];
+    search: SearchConfig;
     workflows: WorkflowConfig;
+    notebooks: Notebook[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -370,9 +394,17 @@ CORE CONSTRAINTS:
         { id: 'google-search', name: 'Google Search', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-google-search'], enabled: false }
     ],
     guardrails: [],
+    search: {
+        activeProviderId: 'default-google',
+        providers: [
+            { id: 'default-google', name: 'Google Search', type: 'google', enabled: false },
+            { id: 'default-brave', name: 'Brave Search', type: 'brave', enabled: false }
+        ]
+    },
     workflows: {
         autoSync: false
-    }
+    },
+    notebooks: []
 };
 
 export const migrateSettings = (loaded: any): AppSettings => {
@@ -482,6 +514,16 @@ export const migrateSettings = (loaded: any): AppSettings => {
     // Migrate Workflows
     if (loaded.workflows) {
         base.workflows = { ...base.workflows, ...loaded.workflows };
+    }
+
+    // Migrate Search
+    if (loaded.search) {
+        base.search = loaded.search;
+    }
+
+    // Migrate Notebooks
+    if (loaded.notebooks && Array.isArray(loaded.notebooks)) {
+        base.notebooks = loaded.notebooks;
     }
 
     return base;

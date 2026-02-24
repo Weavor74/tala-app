@@ -38,18 +38,16 @@ import { UserProfile } from './renderer/UserProfile';
 import { Settings } from './renderer/Settings';
 import { FileExplorer } from './renderer/components/FileExplorer';
 import { Terminal } from './renderer/components/Terminal';
-import { Library } from './renderer/components/Library';
 import Browser from './renderer/components/Browser';
 import { SourceControl } from './renderer/components/SourceControl';
-import { Search } from './renderer/components/Search';
 import { ToastProvider, useToast } from './renderer/components/ToastNotification';
 import { ChatSessions } from './renderer/components/ChatSessions';
 import { EmotionDisplay } from './renderer/components/EmotionDisplay';
-import { MemoryViewer } from './renderer/components/MemoryViewer';
 import { FirstRunWizard } from './renderer/components/FirstRunWizard';
 import { ConflictEditor } from './renderer/components/ConflictEditor';
 import { StartupSplash } from './renderer/components/StartupSplash';
-import ReflectionPanel from './renderer/components/ReflectionPanel';
+import { Notebooks } from './renderer/components/Notebooks';
+import { CoreWorkspace } from './renderer/components/CoreWorkspace';
 
 
 /** A single chat message in the conversation history. */
@@ -66,8 +64,6 @@ interface Message {
 
 /** Inline SVG icon components for the activity bar. */
 const IconMenu = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="18" x2="21" y2="18" /></svg>;
-const IconSearch = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>;
-const IconLibrary = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>;
 const IconSourceControl = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>;
 const IconSettings = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>;
 const IconPanel = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="3" y1="15" x2="21" y2="15" /></svg>;
@@ -75,6 +71,7 @@ const IconProfile = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="
 const IconBrowser = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>;
 const IconHistory = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>;
 const IconBrain = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z" /><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z" /></svg>;
+const IconNotebook = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>;
 const IconSun = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>;
 const IconMoon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
 
@@ -149,15 +146,18 @@ function App() {
 
           if (settings.inference && settings.inference.instances) {
             const inf = settings.inference;
-            // Find active logic: use explicit active ID or defaulting to priority 0
-            const active = inf.instances.find((i: any) => i.id === inf.activeLocalId)
-              || inf.instances.sort((a: any, b: any) => a.priority - b.priority)[0];
+            if (inf.instances && inf.instances.length > 0) {
+              const active = inf.mode === 'cloud-only'
+                ? (inf.instances.find((i: any) => i.source === 'cloud') || inf.instances[0])
+                : (inf.instances.find((i: any) => i.id === inf.activeLocalId) || inf.instances.sort((a: any, b: any) => a.priority - b.priority)[0]);
 
-            if (active) {
-              const engine = active.engine.charAt(0).toUpperCase() + active.engine.slice(1);
-              setStatusText(`${engine}: ${active.model}`);
-            } else {
-              setStatusText('No Provider Active');
+              if (active) {
+                const engine = active.engine.charAt(0).toUpperCase() + active.engine.slice(1);
+                const modePrefix = inf.mode === 'cloud-only' ? '[Cloud] ' : (inf.mode === 'local-only' ? '[Local] ' : '[Smart] ');
+                setStatusText(`${modePrefix}${engine}: ${active.model}`);
+              } else {
+                setStatusText('No Provider Active');
+              }
             }
           }
         }
@@ -758,9 +758,6 @@ function App() {
   };
 
   const handleSelectImage = async () => {
-    // Hidden file input approach would be cleaner but for now use paste or future dialog
-    // Ideally use api.openFileDialog but that returns paths, we need base64 for browser.
-    // For now, Paste is the primary way, or we can add a file input trigger.
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
@@ -811,20 +808,15 @@ function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Global Save shortcut
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       handleSaveFile();
     }
-
-    // Clear chat (Ctrl+L)
     if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
       e.preventDefault();
       setMessages([]);
       chatInputRef.current?.focus();
     }
-
-    // Export session (Ctrl+Shift+E)
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
       e.preventDefault();
       (window as any).tala?.exportSessionFile?.('markdown')
@@ -838,7 +830,6 @@ function App() {
         })
         .catch(() => { });
     }
-
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -851,11 +842,9 @@ function App() {
       const start = e.currentTarget.selectionStart;
       const end = e.currentTarget.selectionEnd;
       const value = e.currentTarget.value;
-
       const newValue = value.substring(0, start) + "    " + value.substring(end);
       if (activeTab && activeTab.type === 'file') {
         updateActiveTabContent(newValue);
-        // Set cursor position after render (approximate or use ref)
         setTimeout(() => {
           if (e.currentTarget) {
             e.currentTarget.selectionStart = e.currentTarget.selectionEnd = start + 4;
@@ -869,10 +858,8 @@ function App() {
     <div className="ide-shell">
       <StartupSplash />
 
-      {/* 1. LEFT PANEL CONTAINER (Activity + Sidebar) */}
       <div className="left-panel-container">
         <div className="activity-bar">
-          {/* Explorer */}
           <div
             className={`activity-item ${activeView === 'explorer' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('explorer')}
@@ -880,17 +867,6 @@ function App() {
             <IconMenu />
           </div>
 
-
-          {/* Search */}
-          <div
-            className={`activity-item ${activeView === 'search' && isLeftPanelOpen ? 'active' : ''}`}
-            onClick={() => toggleSidebar('search')}
-            title="Search"
-          >
-            <IconSearch />
-          </div>
-
-          {/* Browser */}
           <div
             className={`activity-item ${activeView === 'browser' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('browser')}
@@ -899,25 +875,22 @@ function App() {
             <IconBrowser />
           </div>
 
-          {/* Library */}
           <div
-            className={`activity-item ${activeView === 'library' && isLeftPanelOpen ? 'active' : ''}`}
-            onClick={() => toggleSidebar('library')}
-            title="Library (RAG)"
+            className={`activity-item ${activeView === 'notebooks' && isLeftPanelOpen ? 'active' : ''}`}
+            onClick={() => toggleSidebar('notebooks')}
+            title="Notebooks & Search"
           >
-            <IconLibrary />
+            <IconNotebook />
           </div>
 
-          {/* Reflection */}
           <div
-            className={`activity-item ${activeView === 'reflection' && isLeftPanelOpen ? 'active' : ''}`}
-            onClick={() => toggleSidebar('reflection')}
-            title="Reflection Dashboard"
+            className={`activity-item ${activeView === 'core' && isLeftPanelOpen ? 'active' : ''}`}
+            onClick={() => toggleSidebar('core')}
+            title="Core Systems (Memory & Reflection)"
           >
             <IconBrain />
           </div>
 
-          {/* Source Control */}
           <div
             className={`activity-item ${activeView === 'source_control' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('source_control')}
@@ -926,7 +899,6 @@ function App() {
             <IconSourceControl />
           </div>
 
-          {/* Chat History */}
           <div
             className={`activity-item ${activeView === 'sessions' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('sessions')}
@@ -935,29 +907,20 @@ function App() {
             <IconHistory />
           </div>
 
-          {/* Memory */}
-          <div
-            className={`activity-item ${activeView === 'memory' && isLeftPanelOpen ? 'active' : ''}`}
-            onClick={() => toggleSidebar('memory')}
-            title="Memory Bank"
-          >
-            <IconBrain />
-          </div>
-
-          {/* User Profile */}
           <div
             className={`activity-item ${activeView === 'profile' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('profile')}
+            title="User Profile"
           >
             <IconProfile />
           </div>
 
           <div className="spacer" />
 
-          {/* Settings */}
           <div
             className={`activity-item ${activeView === 'settings' && isLeftPanelOpen ? 'active' : ''}`}
             onClick={() => toggleSidebar('settings')}
+            title="Settings"
           >
             <IconSettings />
           </div>
@@ -967,25 +930,17 @@ function App() {
           <div style={{ minWidth: isLeftPanelOpen ? sidebarWidth : 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div className="sidebar-header">
               {activeView === 'explorer' && 'EXPLORER'}
-              {activeView === 'search' && 'SEARCH'}
-              {activeView === 'library' && 'LIBRARY'}
+              {activeView === 'notebooks' && 'RESEARCH'}
               {activeView === 'source_control' && 'SOURCE CONTROL'}
               {activeView === 'profile' && 'PROFILE'}
               {activeView === 'settings' && 'SETTINGS'}
               {activeView === 'browser' && 'BROWSER'}
               {activeView === 'sessions' && 'CHAT HISTORY'}
-              {activeView === 'memory' && 'MEMORY BANK'}
-              {activeView === 'reflection' && 'REFLECTION'}
+              {activeView === 'core' && 'CORE SYSTEMS'}
             </div>
             <div className="sidebar-content">
               {activeView === 'explorer' && (
                 <FileExplorer onOpenFile={openFileTab} />
-              )}
-              {activeView === 'search' && (
-                <Search onOpenFile={openFileTab} />
-              )}
-              {activeView === 'library' && (
-                <Library onOpenFile={openFileTab} />
               )}
               {activeView === 'source_control' && (
                 <SourceControl onOpenConflict={openConflictTab} />
@@ -1010,34 +965,36 @@ function App() {
                   onLoadSession={(msgs) => setMessages(msgs.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })))}
                 />
               )}
-              {activeView === 'memory' && (
-                <MemoryViewer />
+              {activeView === 'core' && (
+                <CoreWorkspace />
               )}
-              {activeView === 'reflection' && (
-                <ReflectionPanel />
+              {activeView === 'notebooks' && (
+                <Notebooks onOpenFile={(path) => openFileTab(path)} />
               )}
             </div>
           </div>
         </div>
-      </div>
+      </div >
 
       {/* RESIZER */}
-      {isLeftPanelOpen && (
-        <div
-          className="resizer"
-          onMouseDown={() => setResizingPanel('left')}
-          style={{
-            width: 4,
-            cursor: 'col-resize',
-            background: resizingPanel === 'left' ? '#007acc' : 'transparent',
-            zIndex: 100,
-            height: '100%',
-            position: 'absolute',
-            left: 50 + sidebarWidth, // Activity bar + sidebar
-          }}
-          title="Drag to resize"
-        />
-      )}
+      {
+        isLeftPanelOpen && (
+          <div
+            className="resizer"
+            onMouseDown={() => setResizingPanel('left')}
+            style={{
+              width: 4,
+              cursor: 'col-resize',
+              background: resizingPanel === 'left' ? '#007acc' : 'transparent',
+              zIndex: 100,
+              height: '100%',
+              position: 'absolute',
+              left: 50 + sidebarWidth, // Activity bar + sidebar
+            }}
+            title="Drag to resize"
+          />
+        )
+      }
 
       {/* 2. CENTER PANEL (Main Canvas) */}
       <div className="center-panel">
@@ -1386,7 +1343,6 @@ function App() {
         {modelStatus?.isLowFidelity && (
           <div className="status-item" style={{ color: '#ffaa00', display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }} title={modelStatus.warning || "Performance may be degraded"}>
             <span>⚠️</span> <span>Low Fidelity</span>
-            {activeView === 'reflection' && <ReflectionPanel />}
           </div>
         )}
 

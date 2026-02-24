@@ -29,40 +29,48 @@ interface Result {
 interface SearchProps {
     /** Callback to open a local file in the editor panel. */
     onOpenFile?: (path: string) => void;
+    /** ID of the notebook to pre-select. */
+    initialNotebookId?: string | null;
+    /** Callback when a source is successfully added to a notebook. */
+    onAdd?: () => void;
 }
 
 /**
  * Search panel with local/web toggle, query input, result list,
  * and bulk-scrape capability for web results.
  */
-export const Search: React.FC<SearchProps> = ({ onOpenFile }) => {
+export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, onAdd }) => {
     const [query, setQuery] = useState('');
     const [mode, setMode] = useState<'local' | 'remote'>('remote'); // Default to remote as per user request context
     const [results, setResults] = useState<Result[]>([]);
     const [loading, setLoading] = useState(false);
     const [scraping, setScraping] = useState<string | null>(null);
     const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
+    const [notebooks, setNotebooks] = useState<any[]>([]);
+    const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || '');
 
     const api = (window as any).tala;
 
 
     const handleBulkAdd = async () => {
-        if (selectedUrls.size === 0) return;
-        setLoading(true); // repurpose loading or use a new state?
+        if (selectedUrls.size === 0 || !selectedNotebookId) return;
+        setLoading(true);
 
         const urls = Array.from(selectedUrls);
         let successCount = 0;
         let failCount = 0;
 
+        // 1. Ingest files
+        const ingestedPaths: string[] = [];
         for (const url of urls) {
             const resItem = results.find(r => r.url === url);
             const title = resItem?.title || 'Web Resource';
-            setScraping(url); // Show activity on specific item
+            setScraping(url);
             try {
                 const res = await api.scrapeUrl(url, title);
-                if (res.success) {
+                if (res.success && res.path) {
                     successCount++;
-                    // Remove from selection on success?
+                    ingestedPaths.push(res.path);
                     setSelectedUrls(prev => {
                         const next = new Set(prev);
                         next.delete(url);
@@ -75,10 +83,57 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile }) => {
                 failCount++;
             }
         }
+
+        // 2. Update Notebook
+        if (ingestedPaths.length > 0) {
+            const settings = await api.getSettings();
+            let nbs = [...(settings.notebooks || [])];
+            let targetId = selectedNotebookId;
+
+            if (selectedNotebookId === 'CREATE_NEW_NB') {
+                const name = prompt("Enter New Notebook Name:");
+                if (!name) {
+                    setScraping(null);
+                    setLoading(false);
+                    return;
+                }
+                const newNb = {
+                    id: `nb-${Math.random().toString(36).substr(2, 9)}`,
+                    name,
+                    sourcePaths: ingestedPaths,
+                    createdAt: Date.now()
+                };
+                nbs.push(newNb);
+                targetId = newNb.id;
+            } else {
+                const nbIdx = nbs.findIndex((n: any) => n.id === targetId);
+                if (nbIdx >= 0) {
+                    nbs[nbIdx].sourcePaths = Array.from(new Set([...nbs[nbIdx].sourcePaths, ...ingestedPaths]));
+                }
+            }
+            await api.saveSettings({ ...settings, notebooks: nbs });
+            setSelectedNotebookId(targetId);
+        }
+
         setScraping(null);
         setLoading(false);
-        alert(`Bulk Import Complete.\nSuccess: ${successCount}\nFailed: ${failCount}`);
+        alert(`Notebook Updated.\nAdded: ${successCount}\nFailed: ${failCount}`);
+        if (onAdd) onAdd();
     };
+
+    const loadNotebooks = async () => {
+        if (api?.getSettings) {
+            const settings = await api.getSettings();
+            setNotebooks(settings.notebooks || []);
+            if (settings.notebooks?.length > 0 && !selectedNotebookId) {
+                setSelectedNotebookId(settings.notebooks[0].id);
+            }
+        }
+    };
+
+    React.useEffect(() => {
+        loadNotebooks();
+    }, []);
 
     const handleSearch = async () => {
         if (!query.trim()) return;
@@ -192,21 +247,34 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile }) => {
 
                 {/* Bulk Actions Toolbar */}
                 {mode === 'remote' && selectedUrls.size > 0 && (
-                    <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#2d2d2d', padding: '5px 10px', borderRadius: 4 }}>
-                        <span style={{ fontSize: 12 }}>{selectedUrls.size} selected</span>
+                    <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#2d2d2d', padding: '5px 10px', borderRadius: 4 }}>
+                        <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{selectedUrls.size} selected</span>
+                        <select
+                            value={selectedNotebookId}
+                            onChange={e => setSelectedNotebookId(e.target.value)}
+                            style={{ flex: 1, background: '#1e1e1e', border: '1px solid #444', color: '#fff', fontSize: 11, padding: '2px 5px', borderRadius: 2 }}
+                        >
+                            <option value="">Select Notebook...</option>
+                            <option value="CREATE_NEW_NB">+ Create New Notebook...</option>
+                            {notebooks.map(nb => (
+                                <option key={nb.id} value={nb.id}>{nb.name}</option>
+                            ))}
+                        </select>
                         <button
                             onClick={handleBulkAdd}
+                            disabled={!selectedNotebookId}
                             style={{
-                                background: '#1a8c3e',
+                                background: selectedNotebookId ? '#1a8c3e' : '#444',
                                 border: 'none',
                                 color: 'white',
                                 fontSize: 11,
                                 padding: '4px 10px',
                                 borderRadius: 2,
-                                cursor: 'pointer'
+                                cursor: selectedNotebookId ? 'pointer' : 'default',
+                                whiteSpace: 'nowrap'
                             }}
                         >
-                            ADD TO LIBRARY
+                            ADD TO NOTEBOOK
                         </button>
                     </div>
                 )}

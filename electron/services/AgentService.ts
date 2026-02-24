@@ -75,6 +75,7 @@ import { SmartRouterService } from './SmartRouterService';
 export class AgentService {
     /** The active LLM inference backend (OllamaBrain or CloudBrain). */
     private brain: IBrain;
+    private activeNotebookContext: { id: string | null, sourcePaths: string[] } = { id: null, sourcePaths: [] };
     /** Whether `igniteSoul()` has completed successfully. */
     private isSoulReady = false;
     /** Short-term conversational memory (Mem0). */
@@ -1024,9 +1025,11 @@ You can use environment variables to override the manifest settings:
                     candidate = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId);
                 }
                 if (!candidate) {
-                    let candidates = settings.inference.instances;
+                    let candidates = [...settings.inference.instances];
                     if (settings.inference.mode === 'local-only') {
                         candidates = candidates.filter((i: any) => i.source === 'local');
+                    } else if (settings.inference.mode === 'cloud-only') {
+                        candidates = candidates.filter((i: any) => i.source === 'cloud');
                     }
                     candidate = candidates.sort((a: any, b: any) => a.priority - b.priority)[0];
                 }
@@ -1048,19 +1051,23 @@ You can use environment variables to override the manifest settings:
                     }
 
                     // Initialize Router with Local vs Cloud
-                    const local = settings.inference.instances.find((i: any) => i.source === 'local') || candidate;
-                    const cloud = settings.inference.instances.find((i: any) => i.source === 'cloud') || candidate;
+                    const localCandidate = settings.inference.instances.find((i: any) => i.source === 'local') || candidate;
+                    const cloudCandidate = settings.inference.instances.find((i: any) => i.source === 'cloud') || candidate;
 
                     const localBrain = new OllamaBrain();
-                    localBrain.configure(local.endpoint, local.model);
+                    localBrain.configure(localCandidate.endpoint, localCandidate.model);
 
                     const cloudBrain = new CloudBrain({
-                        endpoint: cloud.endpoint || 'https://api.openai.com/v1',
-                        apiKey: cloud.apiKey,
-                        model: cloud.model || 'gpt-4'
+                        endpoint: cloudCandidate.endpoint || 'https://api.openai.com/v1',
+                        apiKey: cloudCandidate.apiKey,
+                        model: cloudCandidate.model || 'gpt-4'
                     });
 
                     this.router = new SmartRouterService(localBrain, cloudBrain);
+
+                    // Sync Router Mode
+                    const routerMode = settings.inference.mode === 'hybrid' ? 'auto' : settings.inference.mode;
+                    this.router.setMode(routerMode as any);
                 }
             }
         } catch (e) {
@@ -1196,7 +1203,7 @@ You can use environment variables to override the manifest settings:
             // 1. Built-in Local Engine (Removed Auto-Ignition)
             // We no longer auto-ignite the engine here to save resources and allow
             // the user to start it manually via the UI.
-            this.sendStartupProgress('Core Systems Ready (Engine Await)...', 15);
+            this.sendStartupProgress('Core Systems Ready...', 15);
 
 
             // 2. RAG & Memory Configuration
@@ -1585,11 +1592,19 @@ You can use environment variables to override the manifest settings:
                 if (memories.length > 0) memoryContext += `[MEMORIES]\n${memories.map(m => m.text).join('\n')}`;
 
                 // Dual-Stream RAG Search (Roleplay vs Assistant)
-                // We boost the limit for Roleplay to ensure we catch relevant story beats even if they rank lower.
+                // If a notebook is active, we significantly boost the contribution of its sources.
                 console.log('[AgentService] RAG Search starting...');
-                const [ragRoleplay, ragAssistant] = await Promise.all([
+
+                const searchFilters: any = {};
+                if (this.activeNotebookContext.sourcePaths?.length > 0) {
+                    searchFilters.source = this.activeNotebookContext.sourcePaths;
+                    console.log(`[AgentService] Filtering search to notebook sources: ${this.activeNotebookContext.sourcePaths.length} items`);
+                }
+
+                const [ragRoleplay, ragAssistant, ragNotebook] = await Promise.all([
                     this.rag.search(userMessage, { filter: { category: 'roleplay' }, limit: 8 }),
-                    this.rag.search(userMessage, { filter: { category: 'assistant' }, limit: 3 })
+                    this.rag.search(userMessage, { filter: { category: 'assistant' }, limit: 3 }),
+                    this.activeNotebookContext.sourcePaths?.length > 0 ? this.rag.search(userMessage, { filter: searchFilters, limit: 10 }) : Promise.resolve('')
                 ]);
 
                 if (ragRoleplay) {
@@ -1602,6 +1617,11 @@ You can use environment variables to override the manifest settings:
                 if (ragAssistant) {
                     console.log(`[AgentService] ASSISTANT RAG HIT (${ragAssistant.length} chars)`);
                     memoryContext += `\n[LONG TERM - KNOWLEDGE]\n${ragAssistant}`;
+                }
+
+                if (ragNotebook) {
+                    console.log(`[AgentService] NOTEBOOK RAG HIT (${ragNotebook.length} chars)`);
+                    memoryContext += `\n[NOTEBOOK CONTEXT - RESEARCH MATERIAL]\nThe user is currently referencing a "Notebook" for this task. The following sections are the MOST RELEVANT excerpts from your research sources. Prioritize these for accurate, grounded delivery:\n${ragNotebook}`;
                 }
             } else {
                 console.log('[AgentService] Memory/RAG Skipped (Disabled by User)');
@@ -1654,7 +1674,7 @@ You can use environment variables to override the manifest settings:
         const providerConfig = settings.inference?.providers?.find((p: any) => p.id === activeProviderId);
         const providerType = providerConfig?.type || 'ollama';
 
-        const supportsNativeTools = (providerType === 'ollama' || providerType === 'openai' || providerType === 'anthropic');
+        const supportsNativeTools = (providerType === 'ollama' || providerType === 'openai' || providerType === 'anthropic' || providerType === 'google' || providerType === 'gemini');
         const toolSchemas = supportsNativeTools ? this.tools.getToolSignatures() : this.tools.getToolSchemas();
 
         // Debug Log
@@ -2483,6 +2503,16 @@ If your model does not support native tool-calling API, output a JSON block in y
                 this.chatHistory = this.chatHistory.slice(0, index);
             }
         }
+    }
+
+    /**
+     * Sets the notebook context for the current conversation.
+     * When set, RAG searches will be filtered to only include these source paths.
+     */
+    public setActiveNotebookContext(id: string | null, sourcePaths: string[]) {
+        console.log(`[AgentService] Setting Active Notebook Context: ${id} (${sourcePaths.length} sources)`);
+        this.activeNotebookContext = { id, sourcePaths };
+        return true;
     }
 
     /**
