@@ -38,6 +38,8 @@ export interface ToolCall {
         name: string;
         arguments: any; // JSON object or string
     };
+    /** Support for model-specific extensions (e.g., Gemini's thought_signature) */
+    [key: string]: any;
 }
 
 /**

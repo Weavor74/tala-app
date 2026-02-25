@@ -5,7 +5,7 @@
     "birth_date": "2024-01-01T12:00:00",
     "birth_place": "San Francisco",
     "created_at": "2026-02-13T07:55:12.064695",
-    "updated_at": "2026-02-13T07:55:12.064703"
+    "updated_at": "2026-02-24T20:31:34.055539"
   },
   "default-tala": {
     "agent_id": "default-tala",
@@ -13,6 +13,6 @@
     "birth_date": "1977-07-20T12:00:00",
     "birth_place": "San Francisco",
     "created_at": "2026-02-13T09:17:31.171148",
-    "updated_at": "2026-02-24T12:08:27.565609"
+    "updated_at": "2026-02-25T09:45:13.422010"
   }
 }

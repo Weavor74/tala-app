@@ -56,7 +56,7 @@ echo.
 "%PYTHON_EXE%" -m llama_cpp.server ^
     --model "%MODEL%" ^
     --host 127.0.0.1 ^
-    --port 8000 ^
+    --port 8080 ^
     --n_ctx %N_CTX% ^
     --n_gpu_layers 0 ^
     --verbose True

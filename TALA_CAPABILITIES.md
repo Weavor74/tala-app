@@ -6,6 +6,7 @@
 - **Identity**: Tala (Persistent Persona)
 - **Engine**: Local Agentic System (Electron + Python MCP)
 - **Brain**: Hybrid LLM (Local via Ollama, Cloud via OpenAI/Anthropic/Gemini/Groq)
+- **Embedded Llama.cpp Fallback**: Automatic failover to built-in CPU engine if Ollama is unreachable.
 - **Emotional State**: Dynamic modulation via `astro-engine` (Python MCP)
 
 ## Memory Systems
@@ -79,6 +80,8 @@ Tala can act as a user to navigate complex websites.
 - **A2UI Dynamic Rendering**: Agent-generated JSON → React components.
 - **Guardrails**: Content safety rules.
 - **Backup**: Scheduled workspace backups with optional AES-256 encryption.
+- **Local Engine**: `manage_local_engine` - Start, stop, and download the embedded llama.cpp inference server.
+- **User Profile**: `get_user_profile` - Retrieve detailed user identity and age verification data.
 
 ## MCP Servers
 | Server | Purpose |

@@ -13,6 +13,9 @@ import { app } from 'electron';
 export class LocalEngineService {
     private serverProcess: ChildProcess | null = null;
     private isRunning = false;
+    private isDownloading = false;
+    private downloadProgress = 0;
+    private downloadTask = '';
     private port = 8080; // Default llama.cpp port
     private binaryPath: string;
 
@@ -79,7 +82,7 @@ export class LocalEngineService {
             '-m', modelPath,
             '--port', this.port.toString(),
             '-c', ctx.toString(),
-            '--ngl', ngl.toString(),
+            '-ngl', ngl.toString(),
             '--embedding' // Enable embedding endpoint by default
         ];
 
@@ -96,11 +99,12 @@ export class LocalEngineService {
 
         this.serverProcess.stderr?.on('data', (data) => {
             const msg = data.toString();
-            if (msg.includes('HTTP server listening')) {
+            // console.log(`[LocalEngine ERR]: ${msg}`);
+            // Various success messages across versions
+            if (msg.includes('HTTP server listening') || msg.includes('HTTP server is listening') || msg.includes('llama server listening')) {
                 this.isRunning = true;
                 console.log('[LocalEngine] Server is ready and listening.');
             }
-            // console.error(`[LocalEngine ERR]: ${msg}`);
         });
 
         this.serverProcess.on('exit', (code) => {
@@ -113,8 +117,8 @@ export class LocalEngineService {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 if (this.isRunning) resolve();
-                else reject(new Error('Local engine failed to start within 30 seconds.'));
-            }, 30000);
+                else reject(new Error('Local engine failed to start within 60 seconds.'));
+            }, 60000);
 
             const checkReady = setInterval(() => {
                 if (this.isRunning) {
@@ -165,9 +169,22 @@ export class LocalEngineService {
 
         await this.downloadFile(url, zipPath, onProgress);
 
-        // Note: We'd need to unzip here. For simplicity in this step, let's assume we fetch a direct binary if possible,
-        // or just documented that we need an unzip helper. 
-        // For a true "one-click", I should use a library or powershell to unzip.
+        // Extraction Logic
+        console.log(`[LocalEngine] Extracting binary to ${binDir}...`);
+        if (isWin) {
+            // Use PowerShell to unzip on Windows
+            const cmd = `Expand-Archive -Path "${zipPath}" -DestinationPath "${binDir}" -Force`;
+            await new Promise((resolve, reject) => {
+                const child = spawn('powershell.exe', ['-Command', cmd]);
+                child.on('exit', (code) => {
+                    if (code === 0) resolve(true);
+                    else reject(new Error(`Extraction failed with code ${code}`));
+                });
+            });
+        }
+
+        // Cleanup zip
+        try { fs.unlinkSync(zipPath); } catch (e) { }
 
         return binDir;
     }
@@ -263,7 +280,36 @@ export class LocalEngineService {
     public getStatus() {
         return {
             isRunning: this.isRunning,
+            isDownloading: this.isDownloading,
+            downloadProgress: this.downloadProgress,
+            downloadTask: this.downloadTask,
             port: this.port
         };
+    }
+
+    public async ensureReady(): Promise<boolean> {
+        if (this.isRunning) return true;
+
+        const modelDir = path.join(process.cwd(), 'models');
+        const defaultModel = path.join(modelDir, 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
+
+        if (!fs.existsSync(this.binaryPath) || !fs.existsSync(defaultModel)) {
+            this.isDownloading = true;
+            try {
+                if (!fs.existsSync(this.binaryPath)) {
+                    this.downloadTask = 'Downloading Llama.cpp Binary';
+                    await this.downloadBinary((p) => this.downloadProgress = p);
+                }
+                if (!fs.existsSync(defaultModel)) {
+                    this.downloadTask = 'Downloading Model (4.9GB)';
+                    await this.downloadModel((p) => this.downloadProgress = p);
+                }
+            } finally {
+                this.isDownloading = false;
+                this.downloadProgress = 0;
+                this.downloadTask = '';
+            }
+        }
+        return true;
     }
 }

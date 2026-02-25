@@ -18,6 +18,8 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 // ─────────────────────────────────────────────────────────────────────
 // TYPES & INTERFACES
@@ -68,8 +70,9 @@ export type AuditEventType =
 // CONFIGURATION
 // ─────────────────────────────────────────────────────────────────────
 
-const AUDIT_LOG_PATH = './DOCS_TODAY/audit-log.jsonl';
-const SECRET_KEY = process.env.TALA_AUDIT_SECRET || 'default-dev-key'; // ⚠️ IN PRODUCTION: Use secure key management
+const AUDIT_LOG_DIR = './DOCS_TODAY';
+const AUDIT_LOG_PATH = path.join(AUDIT_LOG_DIR, 'audit-log.jsonl');
+const SECRET_KEY = process.env.TALA_AUDIT_SECRET || 'default-dev-key';
 
 // ─────────────────────────────────────────────────────────────────────
 // CORE LOGIC
@@ -115,7 +118,9 @@ export function logAuditEvent(event: AuditEvent): void {
 
   // 3. Append to log file (synchronous for safety)
   try {
-    const fs = require('fs');
+    if (!fs.existsSync(AUDIT_LOG_DIR)) {
+      fs.mkdirSync(AUDIT_LOG_DIR, { recursive: true });
+    }
     if (!fs.existsSync(AUDIT_LOG_PATH)) {
       fs.writeFileSync(AUDIT_LOG_PATH, '');
     }
@@ -172,13 +177,12 @@ export function logToolCall(
  * Used for legal documentation and compliance reviews.
  */
 export function generateAuditReport(): string {
-  const fs = require('fs');
   if (!fs.existsSync(AUDIT_LOG_PATH)) {
     return 'No audit events recorded yet.';
   }
 
   const lines = fs.readFileSync(AUDIT_LOG_PATH, 'utf8').trim().split('\n');
-  const events: AuditEvent[] = lines.map((line) => JSON.parse(line));
+  const events: AuditEvent[] = lines.filter(l => l.trim()).map((line: string) => JSON.parse(line));
 
   const report = `
 # Tala Audit Report — ${new Date().toISOString()}
@@ -202,7 +206,7 @@ ${events.slice(-5).map((e) => `
 `;
 
   // Save report
-  fs.writeFileSync('./DOCS_TODAY/audit-report.md', report);
+  fs.writeFileSync(path.join(AUDIT_LOG_DIR, 'audit-report.md'), report);
   return report;
 }
 

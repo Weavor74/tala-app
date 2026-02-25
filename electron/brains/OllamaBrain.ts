@@ -135,6 +135,14 @@ export class OllamaBrain implements IBrain {
             if (!response.ok) {
                 const errorText = await response.text().catch(() => response.statusText);
                 console.error(`[OllamaBrain] HTTP 400 ERROR. Payload trace:`, JSON.stringify(body).substring(0, 1000));
+
+                // Resiliency: If the model doesn't support tools, retry without them.
+                // This triggers the fallback text-based tool extraction in AgentService.
+                if (response.status === 400 && errorText.includes('does not support tools') && tools && tools.length > 0) {
+                    console.warn(`[OllamaBrain] Model ${this.model} does not support native tools. Retrying without tools...`);
+                    return this.generateResponse(messages, systemPrompt, undefined, options);
+                }
+
                 throw new Error(`Ollama Error (${response.status}): ${errorText}`);
             }
 
@@ -216,6 +224,13 @@ export class OllamaBrain implements IBrain {
             if (!response.ok) {
                 const errorData = await response.text().catch(() => 'Unknown error');
                 console.error(`[OllamaBrain] HTTP 400 ERROR (Stream). Payload trace:`, JSON.stringify(body).substring(0, 1000));
+
+                // Resiliency: If the model doesn't support tools, retry without them.
+                if (response.status === 400 && errorData.includes('does not support tools') && tools && tools.length > 0) {
+                    console.warn(`[OllamaBrain] Model ${this.model} does not support native tools. Retrying stream without tools...`);
+                    return this.streamResponse(messages, systemPrompt, onChunk, signal, undefined, options);
+                }
+
                 throw new Error(`Ollama Error (${response.status}): ${errorData}`);
             }
 

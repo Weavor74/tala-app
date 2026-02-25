@@ -62,6 +62,7 @@ export class GoalManager {
                 console.error(`[GoalManager] Error loading graph ${sessionId}:`, e);
             }
         }
+        this.activeGraph = null;
         return null;
     }
 

@@ -425,6 +425,25 @@ export class ToolService {
             }
         });
 
+        // Tool: get_user_profile
+        this.register({
+            name: 'get_user_profile',
+            description: 'Retrieves the detailed user profile, including real-world and roleplay (RP) identity information such as birthdate, contact details, and history. Use this if you need to verify the user\'s age or personal details before proceeding with limited content.',
+            parameters: { type: 'object', properties: {} },
+            execute: async () => {
+                try {
+                    const profilePath = path.join(this.workspaceDir, 'data', 'user_profile.json');
+                    if (!fs.existsSync(profilePath)) {
+                        return "Error: User profile not found at data/user_profile.json";
+                    }
+                    const profile = fs.readFileSync(profilePath, 'utf-8');
+                    return profile;
+                } catch (e: any) {
+                    return `Error reading user profile: ${e.message}`;
+                }
+            }
+        });
+
         // Tool: patch_file
         this.register({
             name: 'patch_file',
@@ -998,7 +1017,7 @@ export class ToolService {
             definitions.push({
                 type: 'function',
                 function: {
-                    name: tool.name,
+                    name: name, // Use registry key 'name' which is guaranteed to be the correct ID
                     description: tool.description || 'No description provided.',
                     parameters: tool.inputSchema || tool.parameters
                 }
@@ -1047,6 +1066,11 @@ export class ToolService {
      *   like `'BROWSER_NAVIGATE:'` that triggers event handling in AgentService).
      */
     public async executeTool(name: string, args: any): Promise<any> {
+        // Strip provider-specific prefixes if present (e.g. Gemini OpenAI shim prepends 'default_api:')
+        if (name.startsWith('default_api:')) {
+            name = name.substring('default_api:'.length);
+        }
+
         // Core Tool
         if (this.tools.has(name)) {
             const tool = this.tools.get(name)!;

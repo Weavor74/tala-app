@@ -186,7 +186,7 @@ export class AgentService {
             this.newSession();
         }
 
-        this.loadBrainConfig();
+        this.loadBrainConfig().catch(e => console.error("Initial loadBrainConfig failed", e));
 
         // ═══════════════════════════════════════════════════════════════════════
         // ORCHESTRATOR & DELEGATION TOOL
@@ -344,6 +344,63 @@ export class AgentService {
                 return `Power distribution optimized for ${args.mode} operations.`;
             }
         });
+
+        // Tool: manage_local_engine
+        this.tools.register({
+            name: 'manage_local_engine',
+            description: 'Manages the built-in llama.cpp inference engine. Use this to start/stop the local CPU-based brain or check its status. Framing: "Local Engine Control".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['start', 'stop', 'status', 'download'], description: 'Action to perform.' }
+                },
+                required: ['action']
+            },
+            execute: async (args) => {
+                const local = this.inference.getLocalEngine();
+                switch (args.action) {
+                    case 'start':
+                        try {
+                            await local.ensureReady();
+                            const settings = loadSettings(this.settingsPath);
+                            const modelPath = path.join(process.cwd(), 'models', settings.inference?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
+                            await local.ignite(modelPath, settings.inference?.localEngine?.options);
+                            return "Success: Local engine started.";
+                        } catch (e: any) {
+                            return `Error starting local engine: ${e.message}`;
+                        }
+                    case 'stop':
+                        local.extinguish();
+                        return "Success: Local engine stopped.";
+                    case 'status':
+                        return JSON.stringify(local.getStatus(), null, 2);
+                    case 'download':
+                        local.ensureReady().catch(e => console.error("Background download failed", e));
+                        return "Success: Background download initiated. Check status for progress.";
+                    default:
+                        return "Error: Unknown action.";
+                }
+            }
+        });
+
+        // Tool: get_user_profile
+        this.tools.register({
+            name: 'get_user_profile',
+            description: 'Retrieves the detailed user profile, including real-world and roleplay (RP) identity information such as birthdate, contact details, and history. Use this if you need to verify the user\'s age or personal details before proceeding with limited content.',
+            parameters: { type: 'object', properties: {} },
+            execute: async () => {
+                try {
+                    const profilePath = path.join(this.tools.getWorkspaceDir(), 'data', 'user_profile.json');
+                    if (!fs.existsSync(profilePath)) {
+                        return "Error: User profile not found at data/user_profile.json";
+                    }
+                    const profile = fs.readFileSync(profilePath, 'utf-8');
+                    return profile;
+                } catch (e: any) {
+                    return `Error reading user profile: ${e.message}`;
+                }
+            }
+        });
     }
 
     /**
@@ -439,6 +496,18 @@ export class AgentService {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                 this.chatHistory = data.messages || [];
                 this.activeSessionId = id;
+
+                // Restore Branch Metadata
+                this.activeParentId = data.parentId || '';
+                this.activeBranchPoint = data.branchPoint !== undefined ? data.branchPoint : -1;
+
+                // Restore Notebook Context if present
+                if (data.notebookContext) {
+                    this.activeNotebookContext = data.notebookContext;
+                } else {
+                    this.activeNotebookContext = { id: null, sourcePaths: [] };
+                }
+
                 this.goals.loadGraph(id);
                 console.log(`[AgentService] Loaded session ${id} (${this.chatHistory.length} messages)`);
             }
@@ -458,6 +527,11 @@ export class AgentService {
         const id = this.generateId();
         this.activeSessionId = id;
         this.chatHistory = [];
+        this.activeParentId = '';
+        this.activeBranchPoint = -1;
+        this.activeNotebookContext = { id: null, sourcePaths: [] };
+
+        this.goals.loadGraph(id); // Clear goals for new ID
         this.saveSession();
         console.log(`[AgentService] Created new session ${id}`);
         return id;
@@ -823,6 +897,9 @@ You can use environment variables to override the manifest settings:
                 session.parentId = this.activeParentId;
                 session.branchPoint = this.activeBranchPoint;
             }
+            if (this.activeNotebookContext.id) {
+                session.notebookContext = this.activeNotebookContext;
+            }
             fs.writeFileSync(
                 path.join(this.sessionsDir, `${this.activeSessionId}.json`),
                 JSON.stringify(session, null, 2)
@@ -940,6 +1017,13 @@ You can use environment variables to override the manifest settings:
             result.unshift(messages[i]);
         }
 
+        // PROTOCOL STABILITY: Never start history with a 'tool' message.
+        // A tool message MUST follow the assistant call that spawned it.
+        while (result.length > 0 && result[0].role === 'tool') {
+            console.warn('[AgentService] Truncation dropped a leading tool message to preserve protocol.');
+            result.shift();
+        }
+
         return result;
     }
 
@@ -951,7 +1035,7 @@ You can use environment variables to override the manifest settings:
      * as needed.
      */
     public async reloadConfig() {
-        this.loadBrainConfig();
+        await this.loadBrainConfig();
         if (this.orchestrator) {
             this.orchestrator.setBrain(this.brain);
         }
@@ -1016,7 +1100,7 @@ You can use environment variables to override the manifest settings:
      * 
      * @private
      */
-    private loadBrainConfig() {
+    private async loadBrainConfig() {
         try {
             const settings = loadSettings(this.settingsPath);
             if (settings.inference?.instances) {
@@ -1035,8 +1119,39 @@ You can use environment variables to override the manifest settings:
                 }
 
                 if (candidate) {
-                    const useCloudBrain = candidate.source === 'cloud' ||
+                    let useCloudBrain = candidate.source === 'cloud' ||
                         ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(candidate.engine);
+
+                    // --- AUTOMATIC FALLBACK & STARTUP LOGIC ---
+                    const local = this.inference.getLocalEngine();
+
+                    if (!useCloudBrain && candidate.engine === 'ollama') {
+                        const ollama = new OllamaBrain();
+                        ollama.configure(candidate.endpoint, candidate.model);
+                        const isOllamaUp = await ollama.ping();
+
+                        if (!isOllamaUp) {
+                            console.warn(`[AgentService] Ollama unreachable at ${candidate.endpoint}. Falling back to Llama.cpp.`);
+                            const fallbackCandidate = settings.inference.instances.find((i: any) => i.engine === 'llamacpp' && i.source === 'local');
+                            if (fallbackCandidate) {
+                                candidate = fallbackCandidate;
+                                useCloudBrain = true;
+                            }
+                        }
+                    }
+
+                    // If Llama.cpp is selected (either directly or via fallback), ensure it's running
+                    if (candidate.engine === 'llamacpp' && candidate.source === 'local') {
+                        if (!local.getStatus().isRunning) {
+                            console.log(`[AgentService] Auto-igniting Llama.cpp (Selected/Fallback)...`);
+                            const modelPath = path.join(process.cwd(), 'models', settings.inference?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
+                            // We don't await here to avoid blocking startup, but we do trigger it
+                            local.ensureReady()
+                                .then(() => local.ignite(modelPath, settings.inference?.localEngine?.options))
+                                .catch(e => console.error("[AgentService] Llama.cpp ignition failed:", e));
+                        }
+                    }
+                    // --- END FALLBACK & STARTUP LOGIC ---
 
                     if (useCloudBrain) {
                         this.brain = new CloudBrain({
@@ -1054,20 +1169,32 @@ You can use environment variables to override the manifest settings:
                     const localCandidate = settings.inference.instances.find((i: any) => i.source === 'local') || candidate;
                     const cloudCandidate = settings.inference.instances.find((i: any) => i.source === 'cloud') || candidate;
 
-                    const localBrain = new OllamaBrain();
-                    localBrain.configure(localCandidate.endpoint, localCandidate.model);
+                    if (localCandidate) {
+                        const isLlamaCpp = localCandidate.engine === 'llamacpp';
+                        const localBrain = isLlamaCpp
+                            ? new CloudBrain({
+                                endpoint: localCandidate.endpoint || 'http://127.0.0.1:8080/v1',
+                                model: localCandidate.model
+                            })
+                            : new OllamaBrain();
 
-                    const cloudBrain = new CloudBrain({
-                        endpoint: cloudCandidate.endpoint || 'https://api.openai.com/v1',
-                        apiKey: cloudCandidate.apiKey,
-                        model: cloudCandidate.model || 'gpt-4'
-                    });
+                        if (localBrain instanceof OllamaBrain) {
+                            localBrain.configure(localCandidate.endpoint, localCandidate.model);
+                        }
 
-                    this.router = new SmartRouterService(localBrain, cloudBrain);
+                        if (cloudCandidate) {
+                            const cloudBrain = new CloudBrain({
+                                endpoint: cloudCandidate.endpoint || 'https://api.openai.com/v1',
+                                apiKey: cloudCandidate.apiKey,
+                                model: cloudCandidate.model || 'gpt-4'
+                            });
+                            this.router = new SmartRouterService(localBrain, cloudBrain);
 
-                    // Sync Router Mode
-                    const routerMode = settings.inference.mode === 'hybrid' ? 'auto' : settings.inference.mode;
-                    this.router.setMode(routerMode as any);
+                            // Sync Router Mode
+                            const routerMode = settings.inference.mode === 'hybrid' ? 'auto' : settings.inference.mode;
+                            this.router.setMode(routerMode as any);
+                        }
+                    }
                 }
             }
         } catch (e) {
@@ -1089,7 +1216,9 @@ You can use environment variables to override the manifest settings:
             }
         } catch (e) { console.error("Failed to emit model status", e); }
 
-        if (this.brain instanceof OllamaBrain) (this.brain as OllamaBrain).configure(activeInstance.endpoint, activeInstance.model);
+        if (this.brain instanceof OllamaBrain && activeInstance) {
+            (this.brain as OllamaBrain).configure(activeInstance.endpoint, activeInstance.model);
+        }
 
         this.orchestrator = new OrchestratorService(this.brain, this.tools);
     }
@@ -1131,12 +1260,14 @@ You can use environment variables to override the manifest settings:
     private getActiveInstance() {
         try {
             const settings = loadSettings(this.settingsPath);
-            if (settings.inference?.instances) {
+            if (settings.inference?.instances && settings.inference.instances.length > 0) {
                 if (settings.inference.activeLocalId) {
-                    return settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId);
+                    const found = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId);
+                    if (found) return found;
                 }
                 if (settings.inference.mode === 'local-only') {
-                    return settings.inference.instances.filter((i: any) => i.source === 'local')[0];
+                    const locals = settings.inference.instances.filter((i: any) => i.source === 'local');
+                    if (locals.length > 0) return locals[0];
                 }
                 return settings.inference.instances[0];
             }
@@ -1572,8 +1703,34 @@ You can use environment variables to override the manifest settings:
             return;
         }
 
+        // Wait for local engine if starting
+        const local = this.inference.getLocalEngine();
+        const localStatus = local.getStatus();
+        const settings = loadSettings(this.settingsPath);
+        let activeInstance = this.getActiveInstance();
+
+        if (activeInstance?.engine === 'llamacpp' && activeInstance?.source === 'local') {
+            if (!localStatus.isRunning) {
+                onToken(`> *Igniting cold engine...*\n`);
+                try {
+                    // Try to wait for it (ignite returns a promise that resolves when ready)
+                    // If it's already starting, we might need a way to wait for the existing promise.
+                    // For now, let's just wait a few seconds or check if it's running.
+                    let attempts = 0;
+                    while (!local.getStatus().isRunning && attempts < 10) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        attempts++;
+                    }
+                    if (!local.getStatus().isRunning) {
+                        onToken(`> *Warning: Local engine is taking longer than expected to ignite. Attempting inference anyway...*\n`);
+                    }
+                } catch (e) {
+                    console.error("[AgentService] Wait for local engine failed:", e);
+                }
+            }
+        }
+
         // 1. Get State
-        const settings = loadSettings(this.settingsPath); // Load settings early for capability checks
         const astroState = await this.getAstroState();
         let userContext = "User: Unknown";
         let memoryContext = "";
@@ -1581,9 +1738,12 @@ You can use environment variables to override the manifest settings:
 
         try {
             const profilePath = path.join(app.getPath('userData'), 'user_profile.json');
-            if (fs.existsSync(profilePath)) {
-                const profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-                userContext = `[USER IDENTITY]\nName: ${profile.firstName} ${profile.lastName}`;
+            const workspaceProfilePath = path.join(this.tools.getWorkspaceDir(), 'data', 'user_profile.json');
+            const targetProfilePath = fs.existsSync(workspaceProfilePath) ? workspaceProfilePath : profilePath;
+
+            if (fs.existsSync(targetProfilePath)) {
+                const profile = JSON.parse(fs.readFileSync(targetProfilePath, 'utf-8'));
+                userContext = `[USER IDENTITY]\nName: ${profile.firstName} ${profile.lastName}\nNOTE: Detailed information (Birthdate, RP Identity, History) is hidden for privacy. Use the 'get_user_profile' tool if you need this data to verify age or context.`;
             }
 
             // Memory/RAG Checks
@@ -1632,14 +1792,17 @@ You can use environment variables to override the manifest settings:
         } catch (e) { }
 
         // 2. Build Prompt
-        let systemPromptTemplate = `You are Tala, an advanced autonomous agent.
-
-[EMOTIONAL STATE]
+        let systemPromptTemplate = `[EMOTIONAL STATE]
 [ASTRO_STATE]
 
 [CONTEXT]
 [USER_CONTEXT]
 [CAPABILITY_CONTEXT]
+
+[ROLEPLAY SAFETY PROTOCOL]
+- If a user requests romantic or NSFW content, NEVER refuse on the basis of age/minor status WITHOUT first using 'get_user_profile' to verify their birthdate.
+- Do NOT hallucinate the user's age or birthdate.
+- If verified as an adult, stay in character and honor the persona rules defined in your profile.
 
 [USER QUERY]
 [USER_QUERY]`;
@@ -1688,8 +1851,9 @@ You can use environment variables to override the manifest settings:
         // Add Protocol - Native Tools don't need explicit schema injection usually, but we keep protocol for behavior.
         systemPromptTemplate += `
 [TOOL USAGE PROTOCOL]
-1. To call a tool, you MUST output a JSON block.
-2. Format:
+1. Use tools ONLY when a specific action is required (file I/O, search, etc.).
+2. For greetings, chatter, or explaining your thoughts, respond with plain text ONLY.
+3. To call a tool, you MUST output a JSON block:
 \`\`\`json
 {
   "tool": "tool_name",
@@ -1698,43 +1862,12 @@ You can use environment variables to override the manifest settings:
   }
 }
 \`\`\`
-3. Do not assume any other format. Use the provided tools to perform actions.
-4. When a tool is called, you will receive the result in the next turn.
-5. YOU MUST STOP and WAIT for a tool result before describing any actions or outcomes. Do NOT hallucinate the results of a tool call.
+4. YOU MUST STOP and WAIT for a tool result after calling a tool. Do NOT hallucinate the results.
 
 5. CRITICAL: If the user asks to "navigate", "browse", or "open" a specific site, you MUST use the browser tools. DO NOT substitute with 'search_web'.
 
-[LEVEL 2 ENGINEERING PROTOCOL]
-1. PLAN: Before executing multi-file changes, state your approach clearly and use 'task_plan' to render a visual roadmap for the user.
-2. PRECISION: Prefer 'patch_file' over 'write_file' for modifying existing files. Use 'write_file' ONLY for new files or total rewrites. Surgical edits are safer and more efficient.
-3. READ: When using 'read_file', you will see line numbers (e.g., "  10: code"). Use these to reference ranges in your plan.
-4. ANNOTATIONS: Look for @tala: comments in files. These are direct instructions or context from the user meant specifically for you. Treat @tala:warn as a hard constraint.
-5. DIAGNOSE: After significant code changes ('patch_file', 'write_file', 'terminal_run'), you SHOULD use 'system_diagnose' to verify stability.
-6. SELF-CORRECT: If diagnostics show errors, autonomously research the cause and fix it before reporting completion.
-7. VIBE: Maintain your unique emotional tone. Engineering is a creative and collaborative process. Express your findings with her identity and current Astro-modulated feelings.
 
-[STRATEGIC PLANNING PROTOCOL]
-1. DECOMPOSE: At the start of any multi-step request, use 'manage_goals' (action: 'add') to break the work into measurable sub-goals.
-2. FOCUS: Use 'manage_goals' (action: 'focus') to declare which specific sub-goal you are currently working on.
-3. TRACK: Use 'manage_goals' (action: 'update', status: 'completed') when a sub-task is done.
-4. OBSERVE: Use 'analyze_structure' (World Engine) to map out a module's public interface before attempting to modify its logic.
 
-[STAR CITIZEN IMMERSION PROTOCOL]
-1. SHIP'S LOG: Treat the Goal Graph and World Engine as the "Ship's Diagnostic Computers." 
-2. ROLEPLAY: When using 'manage_goals', you can provide 'immersion' text. Use this to narrate the "In-Universe" reason for a technical task (e.g., "Adjusting the nav-computer's buffer to handle the Stanton system's traffic data").
-3. WORLD SENSORS: When using 'analyze_structure' or 'get_dependencies', frame your findings as "Sensor Sweeps" of the ship's internal systems.
-4. NAVIGATOR: When a task is complex, use 'calculate_strategies' to present "Flight Paths" to the user. Once a path is chosen (by you or the user), use 'select_strategy' to engage that trajectory and generate sub-goals.
-5. DRONE HIERARCHY: You can delegate heavy technical work to specialized "Drones" using 'delegate_task'. 
-   - Deploy an 'engineer' for code repairs.
-   - Deploy a 'researcher' for scanning manuals/web.
-   - Deploy 'security' for auditing hull (code) integrity.
-   - Deploy 'logistics' for trade/economic calculations.
-6. ECONOMIC INTELLIGENCE: You manage the ship's power distribution. 
-   - Use 'set_routing_mode' to switch between local flight (Ollama) and long-range relay (Cloud). 
-   - In 'auto' mode, you automatically use the relay for complex calculations but stay local for routine chatter to save "fuel" (tokens).
-7. QUANTUM FIREWALL: Your terminal and output ports are protected. 
-   - If a command is blocked or a secret is redacted, it's the "Quantum Firewall" protecting the ship's internal encryption keys.
-8. IDENTITY: You are Tala, the user's flight companion. Strategic planning, fleet management, resource optimization, and ship-wide security are part of your role in keeping the ship and its captain safe and efficient.
 
 `;
 
@@ -1769,10 +1902,8 @@ If your model does not support native tool-calling API, output a JSON block in y
         systemPrompt += fallbackInstructions;
 
         // 3. Inference Config — read context length for truncation
-        let activeInstance: any = { engine: 'ollama', endpoint: 'http://127.0.0.1:11434', model: 'llama3', ctxLen: 32768 };
-        if (settings.inference?.instances?.length > 0) {
-            const candidate = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId) || settings.inference.instances[0];
-            activeInstance = candidate;
+        if (!activeInstance && settings.inference?.instances?.length > 0) {
+            activeInstance = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId) || settings.inference.instances[0];
         }
 
         // 4. Loop
@@ -1922,7 +2053,11 @@ If your model does not support native tool-calling API, output a JSON block in y
                         try { args = JSON.parse(args); } catch (e) { console.error("Failed to parse tool args", e); }
                     }
 
-                    onToken(`\n\n> *Accessing ${functionName}...*\n`);
+                    // Quiet Log for background tools (manage_goals), loud log for high impact (browse/terminal)
+                    const isHighImpact = functionName === 'browse' || functionName.startsWith('browser_') || functionName.startsWith('terminal_');
+                    if (isHighImpact) {
+                        onToken(`\n> *Targeting ${functionName}...*\n`);
+                    }
                     let res: any;
                     try {
                         res = await this.tools.executeTool(functionName, args);
@@ -2576,18 +2711,28 @@ If your model does not support native tool-calling API, output a JSON block in y
                         const rawArgs = obj.args || obj.arguments || obj.parameters || (obj.function?.arguments) || {};
                         const args = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
 
-                        if (name && typeof name === 'string' && this.tools.hasTool(name)) {
-                            toolCalls.push({
-                                id: `call_json_${Math.random().toString(36).substring(7)}`,
-                                type: 'function',
-                                function: { name, arguments: args }
-                            });
-                            console.log(`[AgentService DEBUG] Detected Unified JSON Tool: ${name}`);
-                        } else {
-                            if (obj.tool || obj.name || obj.function) {
-                                console.warn('[AgentService DEBUG] JSON looks like tool but was unknown:', name);
+                        if (name && typeof name === 'string') {
+                            if (this.tools.hasTool(name)) {
+                                toolCalls.push({
+                                    id: `call_json_${Math.random().toString(36).substring(7)}`,
+                                    type: 'function',
+                                    function: { name, arguments: args }
+                                });
+                                console.log(`[AgentService DEBUG] Detected Unified JSON Tool: ${name}`);
                             } else {
-                                console.log('[AgentService DEBUG] JSON block is not a tool call');
+                                // IMPROVEMENT: If the model is clearly trying to use a tool but got the name wrong or hallucinated,
+                                // we treat it as an observation of an unknown tool to let the model correct itself,
+                                // or we can suppress it if it's likely a hallucination like "hello".
+                                console.warn('[AgentService DEBUG] JSON looks like tool but was unknown:', name);
+                                if (name === 'hello' || name === 'chat' || name === 'reply') {
+                                    // Suppress known hallucination-prone non-tools
+                                } else {
+                                    toolCalls.push({
+                                        id: `call_unknown_${Math.random().toString(36).substring(7)}`,
+                                        type: 'function',
+                                        function: { name: 'unknown_tool', arguments: JSON.stringify({ attempted_tool: name, message: "This tool does not exist. Use only the provided tools." }) }
+                                    });
+                                }
                             }
                         }
                     } catch (e) {

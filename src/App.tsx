@@ -576,6 +576,8 @@ function App() {
       if (event.type === 'browser-navigate') {
         const browserTab = tabs.find(t => t.type === 'browser');
         if (browserTab) {
+          // Update the tab's URL in state so it persists if unmounted/remounted
+          setTabs(prev => prev.map(t => t.id === browserTab.id ? { ...t, data: { ...t.data, url: event.data?.url } } : t));
           activateTab(browserTab.id);
         } else {
           openBrowserTab(event.data?.url);

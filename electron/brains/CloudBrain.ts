@@ -64,6 +64,78 @@ export class CloudBrain implements IBrain {
     }
 
     /**
+     * Repairs mangled IDs or names that were accidentally concatenated during
+     * a previous unstable generation turn.
+     * Example: "f-123f-123" -> "f-123"
+     */
+    private repairMangled(val: any): string {
+        if (val === undefined || val === null) return "";
+        let s = val.toString().trim();
+
+        // 1. Fix repeating 'function-call-' (Common in Gemini stream fragments)
+        if (s.includes('function-call-')) {
+            const parts = s.split('function-call-').filter((p: string) => p.trim());
+            if (parts.length > 0) {
+                const first = parts[0].trim();
+                s = first.startsWith('function-call-') ? first : 'function-call-' + first;
+            }
+        }
+
+        // 2. Fix Concatenated JSON objects (take the last complete block)
+        if (s.includes('}{')) {
+            const blocks = s.split('}{');
+            const last = blocks[blocks.length - 1];
+            s = last.startsWith('{') ? last : '{' + last;
+        }
+
+        // 3. Deduplicate exact repetition (e.g. "browsebrowse")
+        if (s.length > 0 && s.length % 2 === 0) {
+            const mid = s.length / 2;
+            if (s.substring(0, mid) === s.substring(mid)) {
+                s = s.substring(0, mid);
+            }
+        }
+
+        // 4. Special case for common core tool mangling (including triple concatenation)
+        if (s.includes('manage_goals') && s.endsWith('browse')) return 'browse';
+        if (s.includes('manage_goals') && s.endsWith('read_file')) return 'read_file';
+        if (s.includes('manage_goals') && s.endsWith('terminal')) return 'terminal_run';
+
+        // 5. Strip Antigravity/Agentic internal prefixes if they leaked into history
+        s = s.replace(/^default_api:/i, '');
+
+        return s;
+    }
+
+    /**
+     * Checks if a message is 'poisoned' by previous concatenation bugs.
+     * Corrupted turns cause Gemini to return 400 INVALID_ARGUMENT.
+     */
+    private isPoisonedTurn(m: ChatMessage): boolean {
+        const content = m.content || "";
+        const toolCallsStr = m.tool_calls ? JSON.stringify(m.tool_calls) : "";
+        const name = m.name || "";
+        const id = m.tool_call_id || "";
+
+        const combined = (content + toolCallsStr + name + id).toLowerCase();
+
+        // 1. Double core names
+        if (combined.includes('manage_goalsmanage_goals')) return true;
+        if (combined.includes('browsebrowse')) return true;
+
+        // 2. Fragmented/Glued JSON
+        if (toolCallsStr.includes('}{')) return true;
+
+        // 3. Deeply nested triple calls (mangled)
+        if (id.includes('function-call-') && id.split('function-call-').length > 3) return true;
+
+        // 4. Antigravity internal tool leakage
+        if (combined.includes('default_api:')) return true;
+
+        return false;
+    }
+
+    /**
      * Checks if the cloud API is reachable by sending a GET to `/models`.
      * 
      * Uses the appropriate `http` or `https` module based on the endpoint URL.
@@ -165,36 +237,86 @@ export class CloudBrain implements IBrain {
 
             const lib = url.startsWith('https') ? https : http;
 
-            // Handle Multimodal Content (Images)
+            // SURGICAL REPAIR + PRUNING: 
+            // 1. Filter poisoned direct turns.
+            // 2. Prune tool results whose parent assistant message was removed.
+            const initialClean = messages.filter(m => !this.isPoisonedTurn(m));
+            const assistantCallIds = new Set(
+                initialClean
+                    .filter(m => m.role === 'assistant' && m.tool_calls)
+                    .flatMap(m => m.tool_calls!.map(tc => this.repairMangled(tc.id)))
+            );
+
+            const cleanMessages = initialClean.filter(m => {
+                if (m.role === 'tool') {
+                    const tid = this.repairMangled(m.tool_call_id);
+                    if (!assistantCallIds.has(tid)) {
+                        console.warn('[CloudBrain] Pruning orphaned tool result:', tid);
+                        return false;
+                    }
+                }
+                return true;
+            });
+
             const allMessages = [
                 { role: 'system', content: systemPrompt },
-                ...messages.map((m, i) => {
-                    const msg: any = { role: m.role, content: m.content };
+                ...cleanMessages.map((m, i) => {
+                    const msg: any = { role: m.role, content: m.content || "" };
 
-                    if (m.name) msg.name = m.name;
-
-                    // SLEDGEHAMMER: Force reconcile tool_call_id if missing
+                    // PARANOID RECONCILIATION: Gemini requires non-empty names for tool results.
                     let effectiveId = m.tool_call_id;
-                    if (m.role === 'tool' && !effectiveId && i > 0) {
-                        const prev = messages[i - 1];
-                        if (prev.role === 'assistant' && prev.tool_calls && prev.tool_calls.length > 0) {
-                            effectiveId = prev.tool_calls[0].id;
-                            console.log(`[CloudBrain] Sledgehammer: Reconciled missing ID ${effectiveId} for tool message ${i}`);
+                    let effectiveName = m.name;
+
+                    if (m.role === 'tool') {
+                        // Look back through CLEAN history to find the original tool call
+                        for (let j = i - 1; j >= 0; j--) {
+                            const past = cleanMessages[j];
+                            if (past.role === 'assistant' && past.tool_calls) {
+                                const match = past.tool_calls.find(tc => !effectiveId || this.repairMangled(tc.id) === this.repairMangled(effectiveId));
+                                if (match) {
+                                    if (!effectiveName) effectiveName = match.function.name;
+                                    if (!effectiveId) effectiveId = match.id;
+                                    break;
+                                }
+                            }
                         }
+
+                        // Sanitize Name (Gemini is picky but allows alphanumeric, underscores, dashes, dots, and colons)
+                        const finalBase = (effectiveName || m.name || 'unknown_tool').toString();
+                        const finalName = this.repairMangled(finalBase);
+                        msg.name = finalName.replace(/[^a-zA-Z0-9_:.-]/g, '_') || 'unknown_tool';
+                        msg.tool_call_id = this.repairMangled(effectiveId) || `call_err_${Math.random().toString(36).substring(7)}`;
+
+                        // Gemini strictly forbids empty tool content
+                        if (!msg.content) msg.content = "Tool executed successfully (no output).";
                     }
-                    if (effectiveId !== undefined) msg.tool_call_id = effectiveId;
 
                     if (m.tool_calls) {
-                        msg.tool_calls = m.tool_calls.map(tc => ({
-                            id: tc.id || `call_gen_${Math.random().toString(36).substring(7)}`, // Last resort fallback
-                            type: tc.type || 'function',
-                            function: {
-                                name: tc.function.name,
+                        msg.tool_calls = m.tool_calls.map(tc => {
+                            if (!tc || !tc.function) return null;
+                            const mapped: any = { ...tc };
+                            mapped.id = this.repairMangled(tc.id) || `call_gen_${Math.random().toString(36).substring(7)}`;
+                            mapped.type = 'function';
+                            mapped.function = {
+                                name: this.repairMangled(tc.function.name || 'unknown_tool').replace(/[^a-zA-Z0-9_:.-]/g, '_'),
                                 arguments: typeof tc.function.arguments === 'string'
                                     ? tc.function.arguments
                                     : JSON.stringify(tc.function.arguments)
+                            };
+
+                            // Stability: Move thought_signature from extra_content if present
+                            // Gemini Thinking models require this signature for multi-turn tool use.
+                            if (mapped.thought_signature === undefined) {
+                                if (mapped.extra_content?.google?.thought_signature) {
+                                    mapped.thought_signature = mapped.extra_content.google.thought_signature;
+                                    // Keep extra_content for now just in case the shim still looks for it
+                                } else if (mapped.metadata?.thought_signature) {
+                                    mapped.thought_signature = mapped.metadata.thought_signature;
+                                }
                             }
-                        }));
+
+                            return mapped;
+                        }).filter(Boolean);
                     }
 
                     // Multimodal (array) content is only supported for 'user' and 'assistant' roles (OpenAI spec)
@@ -222,21 +344,30 @@ export class CloudBrain implements IBrain {
 
             // Build body based on model type (Reasoning models have strict constraints)
             const payload: any = {
-                model: this.config.model || 'gpt-4o',
+                model: this.config.model?.trim() || 'gpt-4o',
                 messages: allMessages,
-                stream: true,
-                stream_options: { include_usage: true } // Request usage stats in stream
+                stream: true
             };
 
+            // DEBUG: Log the full outgoing payload (excluding images for brevity)
+            console.log(`[CloudBrain] FULL PAYLOAD:`, JSON.stringify({
+                ...payload,
+                messages: payload.messages.map((m: any) => ({ ...m, content: typeof m.content === 'string' ? m.content.substring(0, 100) + '...' : 'MULTIMODAL' }))
+            }, null, 2));
+
             if (tools && tools.length > 0) {
-                payload.tools = tools.map(t => ({
-                    type: 'function',
-                    function: {
-                        name: t.name,
-                        description: t.description,
-                        parameters: t.parameters
-                    }
-                }));
+                payload.tools = tools.map(t => {
+                    const func = t.function || t;
+                    const rawName = func.name || 'unknown_tool';
+                    return {
+                        type: 'function',
+                        function: {
+                            name: rawName.replace(/[^a-zA-Z0-9_:.-]/g, '_'),
+                            description: func.description || 'No description provided.',
+                            parameters: func.parameters || func.inputSchema || { type: 'object', properties: {} }
+                        }
+                    };
+                });
             }
 
             if (isReasoningModel) {
@@ -259,7 +390,8 @@ export class CloudBrain implements IBrain {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.config.apiKey}`,
                     'Content-Length': Buffer.byteLength(body)
-                }
+                },
+                timeout: 60000 // 60s timeout for cloud response
             }, (res) => {
                 if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
                     let errBody = '';
@@ -273,9 +405,17 @@ export class CloudBrain implements IBrain {
 
                 let usage: any = undefined;
                 let accumulatedToolCalls: any[] = [];
+                let lineBuffer = '';
+                let isReasoning = false;
 
                 res.on('data', (chunk) => {
-                    const lines = chunk.toString().split('\n');
+                    const decoded = chunk.toString();
+                    const lines = (lineBuffer + decoded).split('\n');
+
+                    // The last element is either an empty string (if chunk ended with \n)
+                    // or a partial line (if it didn't). Buffer it.
+                    lineBuffer = lines.pop() || '';
+
                     for (const line of lines) {
                         const trimmed = line.trim();
                         if (!trimmed || trimmed === 'data: [DONE]') continue;
@@ -291,10 +431,24 @@ export class CloudBrain implements IBrain {
                                 if (json.choices && json.choices[0] && json.choices[0].delta) {
                                     const delta = json.choices[0].delta;
 
-                                    // Text Content
-                                    if (delta.content) {
-                                        onChunk(delta.content);
-                                        fullContent += delta.content;
+                                    // Text Content (Content or Reasoning/Thought)
+                                    const reasoning = delta.reasoning_content || delta.thought || '';
+                                    const content = delta.content || '';
+
+                                    if (reasoning) {
+                                        if (!isReasoning) {
+                                            onChunk('\n> *Thinking*: ');
+                                            isReasoning = true;
+                                        }
+                                        onChunk(reasoning);
+                                        fullContent += reasoning;
+                                    } else if (content) {
+                                        if (isReasoning) {
+                                            onChunk('\n\n'); // End thought block
+                                            isReasoning = false;
+                                        }
+                                        onChunk(content);
+                                        fullContent += content;
                                     }
 
                                     // Tool Calls (OpenAI/Gemini format)
@@ -303,19 +457,35 @@ export class CloudBrain implements IBrain {
                                             const idx = tc.index ?? 0;
                                             if (!accumulatedToolCalls[idx]) {
                                                 accumulatedToolCalls[idx] = {
-                                                    id: tc.id || '',
+                                                    id: '',
                                                     type: 'function',
                                                     function: { name: '', arguments: '' }
                                                 };
                                             }
-                                            if (tc.id) accumulatedToolCalls[idx].id = tc.id;
-                                            if (tc.function?.name) accumulatedToolCalls[idx].function.name += tc.function.name;
-                                            if (tc.function?.arguments) accumulatedToolCalls[idx].function.arguments += tc.function.arguments;
+
+                                            const entry = accumulatedToolCalls[idx];
+
+                                            // 1. Atomic properties (overwrite, don't append)
+                                            if (tc.id) entry.id = tc.id;
+                                            if (tc.type) entry.type = tc.type;
+
+                                            // 2. Fragmented properties (append)
+                                            if (tc.function) {
+                                                if (tc.function.name) entry.function.name += tc.function.name;
+                                                if (tc.function.arguments) entry.function.arguments += tc.function.arguments;
+                                            }
+
+                                            // 3. Metadata/Extensions (spread)
+                                            for (const key in tc) {
+                                                if (['index', 'id', 'type', 'function'].includes(key)) continue;
+                                                // For extra fields like 'thought_signature', we overwrite
+                                                entry[key] = tc[key];
+                                            }
                                         }
                                     }
                                 }
                             } catch (e) {
-                                // ignore parse error on partial chunks
+                                // ignore parse error on partial chunks that didn't get buffered correctly
                             }
                         }
                     }
