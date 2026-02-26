@@ -135,6 +135,8 @@ contextBridge.exposeInMainWorld('tala', {
     getAllTools: () => ipcRenderer.invoke('get-all-tools'),
 
     // ─── System ──────────────────────────────────────────────────
+    /** Triggers a clean shutdown of the application. */
+    shutdown: () => ipcRenderer.invoke('app:shutdown'),
     /** Gets system environment info (OS, Python/Node paths). */
     getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
     /** Gets the current startup progress status. */

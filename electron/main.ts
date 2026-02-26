@@ -329,7 +329,7 @@ app.on('before-quit', async (event: any) => {
   } catch (e) {
     console.error('[Main] Shutdown error:', e);
   } finally {
-    console.log('[Main] Cleanup complete. Exiting.');
+    console.log('[Main] Cleanup complete. Terminating parent process and exiting.');
     app.exit(0);
   }
 });
@@ -337,6 +337,11 @@ app.on('before-quit', async (event: any) => {
 // ═══════════════════════════════════════════════════════════════════════
 // IPC HANDLERS — PROFILE & SETTINGS
 // ═══════════════════════════════════════════════════════════════════════
+
+/** Triggers a clean shutdown of the application, invoking before-quit handlers. */
+ipcMain.handle('app:shutdown', () => {
+  app.quit();
+});
 
 ipcMain.handle('ingest-scan', async () => {
   return await agent.scanAndIngest();

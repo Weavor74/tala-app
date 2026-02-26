@@ -1,0 +1,3 @@
+@echo off
+echo Starting TALA Environment...
+npm run dev

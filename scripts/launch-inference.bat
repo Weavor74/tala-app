@@ -12,10 +12,12 @@ if %ERRORLEVEL% equ 0 (
     echo.
     echo [INFO] Ollama detected on port 11434. 
     echo [INFO] Skipping local llama_cpp instance to avoid conflicts.
+    echo [INFO] Entering standby mode to keep the process tree alive...
     echo.
-    :: Small delay so the user can see the message in the concurrent window
-    ping 127.0.0.1 -n 6 >nul
-    exit /b 0
+    :: Loop indefinitely so `concurrently` does not terminate the other services
+    :idle_loop
+    ping 127.0.0.1 -n 60 >nul
+    goto idle_loop
 )
 
 set "N_CTX=16384"

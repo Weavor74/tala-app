@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "main": "dist-electron/electron/main.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\" \"npm run dev:inference\"",
+    "dev": "concurrently --kill-others \"npm run dev:vite\" \"npm run dev:electron\" \"npm run dev:inference\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p electron && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "dev:inference": "launch-inference.bat",
+    "dev:inference": ".\\scripts\\launch-inference.bat",
     "build": "tsc -b && tsc -p electron && vite build",
     "dist": "npm run build && electron-builder",
     "dist:universal": "scripts\\make_universal.bat",
