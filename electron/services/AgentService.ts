@@ -1762,9 +1762,9 @@ You can use environment variables to override the manifest settings:
                 }
 
                 const [ragRoleplay, ragAssistant, ragNotebook] = await Promise.all([
-                    this.rag.search(userMessage, { filter: { category: 'roleplay' }, limit: 8 }),
-                    this.rag.search(userMessage, { filter: { category: 'assistant' }, limit: 3 }),
-                    this.activeNotebookContext.sourcePaths?.length > 0 ? this.rag.search(userMessage, { filter: searchFilters, limit: 10 }) : Promise.resolve('')
+                    this.rag.search(userMessage, { filter: { category: 'roleplay' }, limit: 3 }),
+                    this.rag.search(userMessage, { filter: { category: 'assistant' }, limit: 1 }),
+                    this.activeNotebookContext.sourcePaths?.length > 0 ? this.rag.search(userMessage, { filter: searchFilters, limit: 3 }) : Promise.resolve('')
                 ]);
 
                 if (ragRoleplay) {
@@ -1914,7 +1914,16 @@ If your model does not support native tool-calling API, output a JSON block in y
         // Reserve context: System Prompt + 20% for generation buffer
         const systemTokens = this.estimateTokens(systemPrompt);
         const generationBuffer = Math.floor(maxTokens * 0.2);
-        const messageBudget = Math.max(maxTokens - systemTokens - generationBuffer, 2048);
+        let messageBudget = Math.max(maxTokens - systemTokens - generationBuffer, 2048);
+
+        // AGGRESSIVE CONTEXT PRUNING:
+        // Local models (especially 3B/8B) suffer from "lost in the middle" with huge contexts.
+        // Even if the engine (like Ollama) reports a 32k context window, we strictly cap
+        // the chat history budget to keep the attention mechanism focused on recent turns.
+        if (activeInstance && (activeInstance.source === 'local' || activeInstance.engine === 'ollama' || (activeInstance.model && activeInstance.model.toLowerCase().includes('3b')))) {
+            messageBudget = Math.min(messageBudget, 3072);
+            console.log(`[AgentService] 3B/Local Model detected. Forcing aggressive context pruning. messageBudget capped to ${messageBudget}`);
+        }
 
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
@@ -1944,6 +1953,9 @@ If your model does not support native tool-calling API, output a JSON block in y
 
         // Prepare Native Tools
         const tools = this.tools.getToolDefinitions();
+
+        // ADDED: Circuit breaker for infinite tool failure loops
+        let consecutiveToolErrors = 0;
 
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
@@ -2041,6 +2053,9 @@ If your model does not support native tool-calling API, output a JSON block in y
                     break;
                 }
 
+                // We track if ANY tool in parallel execution failed
+                let currentTurnHadError = false;
+
                 // Execute Native Tools - Parallel where possible
                 // We execute "read" tools in parallel, but force "side-effect" tools (browser/terminal)
                 // to run sequentially to avoid race conditions (e.g. colliding wait loops).
@@ -2062,7 +2077,15 @@ If your model does not support native tool-calling API, output a JSON block in y
                     try {
                         res = await this.tools.executeTool(functionName, args);
                     } catch (err: any) {
-                        res = `Error executing tool ${functionName}: ${err.message}`;
+                        currentTurnHadError = true;
+                        // SELF-HEALING: Summarize complex errors for 3B models
+                        const rawError = err.message || String(err);
+                        console.error(`Tool Execution Error (${functionName}):`, rawError);
+
+                        // Strip out long stack traces or confusing internal Node.js paths
+                        const cleanError = rawError.split('\n')[0].replace(/(\/.*?\/)|([C-Z]:\\.*?\\)/g, '[PATH]/');
+
+                        res = `[TOOL ERROR] Execution failed.\nReason: ${cleanError}\nAction required: Please review the arguments you provided and try a different approach. Do not repeat the exact same tool call.`;
                     }
 
                     // Create tool result message
@@ -2227,6 +2250,22 @@ If your model does not support native tool-calling API, output a JSON block in y
                         // Sequential task, run now (blocking)
                         transientMessages.push(await taskExecutors[i]());
                     }
+                }
+
+                // ADDED: Circuit breaker check
+                if (currentTurnHadError) {
+                    consecutiveToolErrors++;
+                    if (consecutiveToolErrors >= 3) {
+                        console.warn(`[AgentService] Circuit breaker tripped! 3 consecutive turns with tool errors.`);
+                        onToken(`\n\n> 🛑 *Circuit Breaker Tripped: I'm having trouble executing these tools correctly. I will stop trying and await your guidance.*\n`);
+                        transientMessages.push({
+                            role: 'system',
+                            content: `SYSTEM WARNING: Circuit breaker tripped due to 3 consecutive failed tool execution attempts. The agent loop has been forcefully halted. Please review the errors and ask the user for help or clarification before trying again.`
+                        });
+                        break; // Break the while (turn < AgentService.MAX_AGENT_ITERATIONS) loop
+                    }
+                } else {
+                    consecutiveToolErrors = 0;
                 }
 
             } catch (e: any) {

@@ -993,8 +993,44 @@ export class ToolService {
     }
 
     /**
+     * Recursively rewrites a JSON schema to comply with OpenAI's Strict Structured Outputs (GBNF).
+     * Enforces `additionalProperties: false` on all objects and explicitly lists all properties in `required`.
+     */
+    private makeStrictSchema(schema: any): any {
+        if (!schema || typeof schema !== 'object') return schema;
+
+        const strictSchema = { ...schema };
+
+        if (strictSchema.type === 'object') {
+            strictSchema.additionalProperties = false;
+
+            // Collect all properties
+            const props = strictSchema.properties ? Object.keys(strictSchema.properties) : [];
+
+            // Ensure all properties are required for strict outputs
+            if (props.length > 0) {
+                strictSchema.required = props;
+            } else {
+                // If it's an object with no properties, strict mode requires an empty properties object
+                strictSchema.properties = {};
+            }
+
+            // Recursively apply to all child properties
+            if (strictSchema.properties) {
+                for (const key in strictSchema.properties) {
+                    strictSchema.properties[key] = this.makeStrictSchema(strictSchema.properties[key]);
+                }
+            }
+        } else if (strictSchema.type === 'array' && strictSchema.items) {
+            strictSchema.items = this.makeStrictSchema(strictSchema.items);
+        }
+
+        return strictSchema;
+    }
+
+    /**
      * Returns tool definitions in the format expected by OpenAI/Ollama APIs.
-     * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any } }>}
+     * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any, strict?: boolean } }>}
      */
     public getToolDefinitions() {
         const definitions: any[] = [];
@@ -1006,7 +1042,8 @@ export class ToolService {
                 function: {
                     name: tool.name,
                     description: tool.description,
-                    parameters: tool.parameters
+                    strict: true,
+                    parameters: this.makeStrictSchema(tool.parameters || { type: 'object', properties: {} })
                 }
             });
         });
@@ -1019,7 +1056,8 @@ export class ToolService {
                 function: {
                     name: name, // Use registry key 'name' which is guaranteed to be the correct ID
                     description: tool.description || 'No description provided.',
-                    parameters: tool.inputSchema || tool.parameters
+                    strict: true,
+                    parameters: this.makeStrictSchema(tool.inputSchema || tool.parameters || { type: 'object', properties: {} })
                 }
             });
         });

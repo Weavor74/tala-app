@@ -192,29 +192,17 @@ def get_emotional_state(agent_id: str = "tala") -> str:
     style = "- Voice: Quiet, Direct, Technical.\n- Metaphor: Mechanics, Pressure, Voltage.\n- Stance: The work comes first."
     return f"{header}\n{style}"
 
-from typing import Any
 @mcp.tool()
-def search_memory(query: str, limit: int = 3, filter_json: Any = None) -> list[dict]:
+def search_memory(query: str, limit: int = 3) -> list[dict]:
     """
-    Searches memory for relevant context.
+    Searches memory for relevant context using semantic similarity.
     Args:
-        query: The search text
-        limit: Max results
-        filter_json: Optional JSON string for metadata filtering e.g. '{"category": "roleplay"}'
+        query: The search text representing the information you are looking for.
+        limit: Max results to return.
     """
     try:
-        filter_meta = None
-        if filter_json:
-            if isinstance(filter_json, dict):
-                filter_meta = filter_json
-            else:
-                try:
-                    filter_meta = json.loads(filter_json)
-                except:
-                    pass # Ignore bad json
-                
         query_vector = model.encode(query).tolist()
-        results = store.search(query_vector, limit, filter_meta)
+        results = store.search(query_vector, limit, None)
         
         # Return structured list for client to format
         return results

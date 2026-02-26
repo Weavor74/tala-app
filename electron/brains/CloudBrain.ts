@@ -359,13 +359,17 @@ export class CloudBrain implements IBrain {
                 payload.tools = tools.map(t => {
                     const func = t.function || t;
                     const rawName = func.name || 'unknown_tool';
+                    const mappedFunc: any = {
+                        name: rawName.replace(/[^a-zA-Z0-9_:.-]/g, '_'),
+                        description: func.description || 'No description provided.',
+                        parameters: func.parameters || func.inputSchema || { type: 'object', properties: {} }
+                    };
+                    if (func.strict !== undefined) {
+                        mappedFunc.strict = func.strict;
+                    }
                     return {
                         type: 'function',
-                        function: {
-                            name: rawName.replace(/[^a-zA-Z0-9_:.-]/g, '_'),
-                            description: func.description || 'No description provided.',
-                            parameters: func.parameters || func.inputSchema || { type: 'object', properties: {} }
-                        }
+                        function: mappedFunc
                     };
                 });
             }

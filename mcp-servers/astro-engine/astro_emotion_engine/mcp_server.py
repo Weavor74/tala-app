@@ -35,92 +35,52 @@ engine = AstroEmotionEngine()
 profile_manager = ProfileManager()
 
 @mcp.tool()
-def get_emotional_state(
-    agent_id: str = "",
-    birth_date: str = "",
-    birth_place: str = "",
-    context_prompt: str = ""
-) -> str:
+def get_agent_emotional_state(agent_id: str, context_prompt: str = "") -> str:
     """
-    Calculates the astrological emotional state for an agent or user.
+    Calculates the astrological emotional state for an agent using their registered profile.
     
     Args:
-        agent_id: Agent profile ID (e.g. "sage") - auto-loads birth data from profile
-        birth_date: ISO 8601 string (e.g. "1990-01-01T12:00:00") - for one-off calculations
-        birth_place: City name (e.g. "London", "New York") - for one-off calculations
+        agent_id: Agent profile ID (e.g. "sage")
         context_prompt: Optional context (e.g. "User is asking about career")
         
     Returns:
         Formatted string containing System Instructions, Style Guide, and Emotional Vector.
-        
-    Usage:
-        - Agent mode: get_emotional_state(agent_id="sage")
-        - User mode: get_emotional_state(birth_date="...", birth_place="...")
     """
     try:
-        # Priority 1: Load profile by agent_id
-        if agent_id:
-            profile = profile_manager.get_profile(agent_id)
-            if not profile:
-                available = profile_manager.list_profiles()
-                available_ids = [p.agent_id for p in available]
-                return (
-                    f"❌ Error: Agent profile '{agent_id}' not found.\n\n"
-                    f"Available profiles: {', '.join(available_ids) if available_ids else 'None'}\n\n"
-                    f"Create a profile first using create_agent_profile tool."
-                )
-            birth_date = profile.birth_date
-            birth_place = profile.birth_place
-            subject_id = agent_id
-        
-        # Priority 2: Use provided birth_date and birth_place
-        elif birth_date and birth_place:
-            subject_id = "direct_calculation"
-        
-        # Error: Need either agent_id or birth data
-        else:
+        profile = profile_manager.get_profile(agent_id)
+        if not profile:
+            available = profile_manager.list_profiles()
+            available_ids = [p.agent_id for p in available]
             return (
-                "❌ Error: Must provide either:\n"
-                "  - agent_id (to load profile), OR\n"
-                "  - birth_date + birth_place (for one-off calculation)\n\n"
-                "Example: get_emotional_state(agent_id='sage')"
+                f"❌ Error: Agent profile '{agent_id}' not found.\n\n"
+                f"Available profiles: {', '.join(available_ids) if available_ids else 'None'}\n\n"
+                f"Create a profile first using create_agent_profile tool."
             )
         
-        # 1. Generate Chart
-        natal_profile = chart_factory.create_chart(birth_date, birth_place)
-        
-        # 2. Create Request (using current time)
+        natal_profile = chart_factory.create_chart(profile.birth_date, profile.birth_place)
         req = EmotionRequest(
-            subject_id=subject_id,
+            subject_id=agent_id,
             timestamp=datetime.now().astimezone(),
             natal_profile=natal_profile,
             context_hints={"prompt": context_prompt}
         )
-        
-        # 3. Compute
         resp = engine.compute_emotion_state(req)
         
-        # 4. Format Output for LLM Consumption
-        # The LLM (Claude/Gemini) calling this tool needs a concise summary to inject into its context.
-        
-        # Filter vector for significant values
         active_emotions = {k: v for k, v in resp.emotion_vector.items() if abs(v - 0.5) > 0.1}
-        
-        output = []
-        output.append("### Astro-Emotional State")
-        output.append(f"**Calculated for**: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        output.append("")
-        output.append(f"**System Instruction**: {resp.prompt_injection.system_fragment}")
-        output.append(f"**Style Guideline**: {resp.prompt_injection.style_fragment}")
-        output.append("")
-        output.append("**Emotional Vector** (0.0-1.0):")
-        # Always return all axes for UI parsing and LLM awareness
+        output = [
+            "### Astro-Emotional State",
+            f"**Calculated for**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "",
+            f"**System Instruction**: {resp.prompt_injection.system_fragment}",
+            f"**Style Guideline**: {resp.prompt_injection.style_fragment}",
+            "",
+            "**Emotional Vector** (0.0-1.0):"
+        ]
         for k, v in resp.emotion_vector.items():
             output.append(f"- {k}: {v:.2f}")
             
         output.append("")
         output.append("**Key Influences**:")
-        # Sort by strength
         top_influences = sorted(resp.influences, key=lambda x: x.strength, reverse=True)[:3]
         for inf in top_influences:
             output.append(f"- {inf.description} (Strength: {inf.strength:.1f})")
@@ -129,20 +89,98 @@ def get_emotional_state(
         
     except Exception as e:
         import traceback
-        traceback.print_exc() # This will show up in the verification script's stderr/stdout 
+        traceback.print_exc() 
         return f"Error calculating state: {str(e)}"
 
 @mcp.tool()
-def get_raw_emotional_state(
-    agent_id: str = "",
-    birth_date: str = "",
-    birth_place: str = ""
-) -> str:
+def get_ad_hoc_emotional_state(birth_date: str, birth_place: str, context_prompt: str = "") -> str:
     """
-    Returns the raw emotional JSON data for programmatic use.
+    Calculates the astrological emotional state for a one-off chart (e.g., for the user).
+    
+    Args:
+        birth_date: ISO 8601 string (e.g. "1990-01-01T12:00:00")
+        birth_place: City name (e.g. "London", "New York")
+        context_prompt: Optional context (e.g. "User is asking about career")
+        
+    Returns:
+        Formatted string containing System Instructions, Style Guide, and Emotional Vector.
+    """
+    try:
+        natal_profile = chart_factory.create_chart(birth_date, birth_place)
+        req = EmotionRequest(
+            subject_id="direct_calculation",
+            timestamp=datetime.now().astimezone(),
+            natal_profile=natal_profile,
+            context_hints={"prompt": context_prompt}
+        )
+        resp = engine.compute_emotion_state(req)
+        
+        active_emotions = {k: v for k, v in resp.emotion_vector.items() if abs(v - 0.5) > 0.1}
+        output = [
+            "### Astro-Emotional State",
+            f"**Calculated for**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "",
+            f"**System Instruction**: {resp.prompt_injection.system_fragment}",
+            f"**Style Guideline**: {resp.prompt_injection.style_fragment}",
+            "",
+            "**Emotional Vector** (0.0-1.0):"
+        ]
+        for k, v in resp.emotion_vector.items():
+            output.append(f"- {k}: {v:.2f}")
+            
+        output.append("")
+        output.append("**Key Influences**:")
+        top_influences = sorted(resp.influences, key=lambda x: x.strength, reverse=True)[:3]
+        for inf in top_influences:
+            output.append(f"- {inf.description} (Strength: {inf.strength:.1f})")
+            
+        return "\n".join(output)
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc() 
+        return f"Error calculating state: {str(e)}"
+
+@mcp.tool()
+def get_raw_agent_emotional_state(agent_id: str) -> str:
+    """
+    Returns the raw emotional JSON data for a registered agent profile.
     
     Args:
         agent_id: Agent profile ID
+        
+    Returns:
+        JSON string of the full emotion state response.
+    """
+    try:
+        profile = profile_manager.get_profile(agent_id)
+        if not profile:
+            return json.dumps({"error": f"Profile {agent_id} not found"})
+            
+        natal_profile = chart_factory.create_chart(profile.birth_date, profile.birth_place)
+        req = EmotionRequest(
+            subject_id=agent_id,
+            timestamp=datetime.now().astimezone(),
+            natal_profile=natal_profile,
+            context_hints={}
+        )
+        resp = engine.compute_emotion_state(req)
+        
+        return json.dumps({
+            "subject_id": resp.subject_id,
+            "emotional_vector": resp.emotion_vector,
+            "mood_label": resp.mood_label,
+            "influences": [{"desc": i.description, "strength": i.strength} for i in resp.influences]
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@mcp.tool()
+def get_raw_ad_hoc_emotional_state(birth_date: str, birth_place: str) -> str:
+    """
+    Returns the raw emotional JSON data for a one-off chart calculation.
+    
+    Args:
         birth_date: ISO 8601 string
         birth_place: City name
         
@@ -150,28 +188,15 @@ def get_raw_emotional_state(
         JSON string of the full emotion state response.
     """
     try:
-        if agent_id:
-            profile = profile_manager.get_profile(agent_id)
-            if not profile:
-                return json.dumps({"error": f"Profile {agent_id} not found"})
-            birth_date = profile.birth_date
-            birth_place = profile.birth_place
-            subject_id = agent_id
-        elif birth_date and birth_place:
-            subject_id = "direct_calculation"
-        else:
-            return json.dumps({"error": "Missing agent_id or birth data"})
-
         natal_profile = chart_factory.create_chart(birth_date, birth_place)
         req = EmotionRequest(
-            subject_id=subject_id,
+            subject_id="direct_calculation",
             timestamp=datetime.now().astimezone(),
             natal_profile=natal_profile,
             context_hints={}
         )
         resp = engine.compute_emotion_state(req)
         
-        # Return serializable dict
         return json.dumps({
             "subject_id": resp.subject_id,
             "emotional_vector": resp.emotion_vector,
