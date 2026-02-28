@@ -210,7 +210,9 @@ export class CloudBrain implements IBrain {
      * @throws {Error} If the API returns a non-2xx status or network error.
      */
     public async streamResponse(messages: ChatMessage[], systemPrompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, tools?: any[], options?: BrainOptions): Promise<BrainResponse> {
+        console.log(`[CloudBrain] streamResponse invoked`);
         return new Promise((resolve, reject) => {
+            console.log(`[CloudBrain] Constructing URL...`);
             // Smart URL Construction
             let raw = this.config.endpoint.trim();
             // Remove common copy-paste artifacts (trailing backslash from curl, trailing slash)

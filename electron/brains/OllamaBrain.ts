@@ -200,6 +200,7 @@ export class OllamaBrain implements IBrain {
             if (signal) signal.addEventListener('abort', () => internalController.abort());
             if (options?.signal) options.signal.addEventListener('abort', () => internalController.abort());
 
+            console.log(`[OllamaBrain] streamResponse constructing body...`);
             const ollamaOptions: any = {};
             if (options) {
                 if (options.num_ctx) ollamaOptions.num_ctx = options.num_ctx;
@@ -211,10 +212,15 @@ export class OllamaBrain implements IBrain {
                 if (options.stop) ollamaOptions.stop = options.stop;
             }
 
+            console.log(`[OllamaBrain] Trying to JSON.stringify body...`);
+            const bodyString = JSON.stringify({ ...body, options: ollamaOptions });
+            console.log(`[OllamaBrain] JSON.stringify successful. Length: ${Math.round(bodyString.length / 1024)} KB`);
+
+            console.log(`[OllamaBrain] Calling fetch() to ${this.baseUrl}/api/chat...`);
             const response = await fetch(`${this.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...body, options: ollamaOptions }),
+                body: bodyString,
                 signal: internalController.signal,
                 // @ts-ignore - undici dispatcher support
                 dispatcher: this.dispatcher

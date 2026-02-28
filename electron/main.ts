@@ -1271,6 +1271,7 @@ ipcMain.handle('terminal-kill', (event, id) => terminalService.kill(id));
  */
 ipcMain.on('chat-message', async (event, payload) => {
   try {
+    console.log("[DEBUG] ipcMain 'chat-message' triggered with payload:", payload);
     let fullResponse = '';
     let text = "";
     let images: string[] = [];
@@ -1282,6 +1283,7 @@ ipcMain.on('chat-message', async (event, payload) => {
       text = String(payload);
     }
 
+    console.log("[DEBUG] Calling agent.chat() with text length:", text.length, "and images:", images.length);
     await agent.chat(text, (token) => {
       fullResponse += token;
       event.sender.send('chat-token', token);

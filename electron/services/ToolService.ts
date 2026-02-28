@@ -996,10 +996,25 @@ export class ToolService {
      * Recursively rewrites a JSON schema to comply with OpenAI's Strict Structured Outputs (GBNF).
      * Enforces `additionalProperties: false` on all objects and explicitly lists all properties in `required`.
      */
-    private makeStrictSchema(schema: any): any {
+    private makeStrictSchema(schema: any, seen = new WeakSet()): any {
         if (!schema || typeof schema !== 'object') return schema;
 
-        const strictSchema = { ...schema };
+        // Prevent infinite recursion on cyclic structures
+        if (seen.has(schema)) return schema;
+        seen.add(schema);
+
+        // Perform a fresh deep clone of the schema to avoid mutating 
+        // the original tool definitions between different inference turns.
+        let strictSchema;
+        try {
+            strictSchema = structuredClone(schema);
+        } catch (e) {
+            // Fallback for objects that cannot be structured cloned (e.g. instances with methods)
+            strictSchema = { ...schema };
+            if (strictSchema.properties) {
+                strictSchema.properties = { ...strictSchema.properties };
+            }
+        }
 
         if (strictSchema.type === 'object') {
             strictSchema.additionalProperties = false;
@@ -1018,11 +1033,12 @@ export class ToolService {
             // Recursively apply to all child properties
             if (strictSchema.properties) {
                 for (const key in strictSchema.properties) {
-                    strictSchema.properties[key] = this.makeStrictSchema(strictSchema.properties[key]);
+                    // Because we already deep cloned, we can just replace in place
+                    strictSchema.properties[key] = this.makeStrictSchema(strictSchema.properties[key], seen);
                 }
             }
         } else if (strictSchema.type === 'array' && strictSchema.items) {
-            strictSchema.items = this.makeStrictSchema(strictSchema.items);
+            strictSchema.items = this.makeStrictSchema(strictSchema.items, seen);
         }
 
         return strictSchema;

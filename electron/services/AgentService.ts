@@ -261,6 +261,55 @@ export class AgentService {
             }
         });
 
+        // Tool: build_guardrail
+        this.tools.register({
+            name: 'build_guardrail',
+            description: 'Create a new Guardrail or Validator. A Guardrail is a collection of Validators. If the user asks you to build a validator for specific criteria (e.g. "with x, y, and z"), use the "CustomLLM" type and write a precise prompt to check for those criteria. Other available types: ToxicLanguage, BanList, DetectPII, RegexMatch, ContainsString.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string', description: 'Name of the guardrail or validator.' },
+                    description: { type: 'string', description: 'What this guardrail/validator checks for.' },
+                    validators: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                type: { type: 'string', enum: ['CustomLLM', 'ToxicLanguage', 'BanList', 'DetectPII', 'RegexMatch', 'ContainsString', 'ProfanityFree', 'RestrictToTopic', 'ValidLength'], description: 'The type of validator. Use CustomLLM for custom/bespoke rules.' },
+                                target: { type: 'string', enum: ['input', 'output', 'both'], description: 'Whether to validate user input, agent output, or both.' },
+                                on_fail: { type: 'string', enum: ['noop', 'fix', 'filter', 'refrain', 'exception'], description: 'Action to take on failure. "noop" logs it, "filter" removes it, "refrain" blocks the response, "exception" throws an error.' },
+                                args: { type: 'object', description: 'Args for the validator. For CustomLLM: {"prompt": "Does this text mention x, y, z, 1, 2, or 3? Reply PASS if it does, FAIL if it doesn\'t. Text:{value}"}. For BanList: {"banned_words": ["x", "y"]}.' }
+                            },
+                            required: ['type', 'target', 'on_fail', 'args']
+                        }
+                    }
+                },
+                required: ['name', 'description', 'validators']
+            },
+            execute: async (args) => {
+                try {
+                    const { GuardrailService } = require('./GuardrailService');
+                    const gs = new GuardrailService(app.getPath('userData'));
+                    const definition = {
+                        name: args.name,
+                        description: args.description,
+                        validators: args.validators.map((v: any) => ({
+                            id: Math.random().toString(36).substring(7),
+                            type: v.type,
+                            target: v.target,
+                            on_fail: v.on_fail,
+                            args: v.args,
+                            enabled: true
+                        }))
+                    };
+                    const saved = gs.saveGuard(definition);
+                    return `Successfully created Guardrail/Validator "${saved.name}" with ID: ${saved.id}. You DO NOT need to write any code, the system handles it. Tell the user it is built.`;
+                } catch (e: any) {
+                    return `Error creating guardrail: ${e.message}`;
+                }
+            }
+        });
+
         // Tool: calculate_strategies (The Navigator)
         this.tools.register({
             name: 'calculate_strategies',
@@ -1687,6 +1736,8 @@ You can use environment variables to override the manifest settings:
      * @returns {Promise<void>}
      */
     public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[]) {
+        console.log(`[AgentService] ====== CHAT STARTED ====== Length: ${userMessage.length}, Images: ${images?.length || 0}`);
+
         // 0. Intercept Functions
         if (userMessage.startsWith('/') && this.functions?.exists(userMessage.substring(1).split(' ')[0])) {
             const parts = userMessage.substring(1).trim().split(' ');
@@ -1930,13 +1981,18 @@ If your model does not support native tool-calling API, output a JSON block in y
 
         // Ensure active session
         if (!this.activeSessionId) {
+            console.log("[AgentService] Creating new session");
             this.newSession();
         }
 
         // 1. Commit User Message
+        console.log("[AgentService] Committing user message to chatHistory");
         const userMsg: ChatMessage = { role: 'user', content: userMessage, images };
         this.chatHistory.push(userMsg);
+
+        console.log("[AgentService] Calling saveSession()");
         this.saveSession();
+        console.log("[AgentService] saveSession() completed");
 
         // 1.5. Initialize Goal Graph if empty
         if (!this.goals.loadGraph(this.activeSessionId)) {
@@ -1952,7 +2008,9 @@ If your model does not support native tool-calling API, output a JSON block in y
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
         // Prepare Native Tools
+        console.log("[AgentService] Calling this.tools.getToolDefinitions()...");
         const tools = this.tools.getToolDefinitions();
+        console.log(`[AgentService] Received ${tools.length} tool definitions`);
 
         // ADDED: Circuit breaker for infinite tool failure loops
         let consecutiveToolErrors = 0;
@@ -1981,9 +2039,15 @@ If your model does not support native tool-calling API, output a JSON block in y
                 const turnStart = Date.now();
 
                 // Economic Intelligence: Determine best brain for this turn
+                console.log(`[AgentService] Calling router.route()...`);
                 const turnBrain = await this.router?.route(truncatedMessages, systemPrompt) || this.brain;
+                console.log(`[AgentService] router.route() returned. Brain selected:`, turnBrain ? 'Yes' : 'No');
 
+                console.log(`[AgentService] Calling this.streamWithBrain()...`);
                 const response = await this.streamWithBrain(turnBrain, truncatedMessages, systemPrompt, (token: string) => {
+                    if (assistantText.length === 0) {
+                        console.log(`[AgentService] Received first token from streamWithBrain!`);
+                    }
                     assistantText += token;
                     onToken(token);
                 }, signal, tools, { timeout: 1800000, num_ctx: 32768, temperature: profile?.temperature || 0.7 }, onToken);
@@ -2345,10 +2409,15 @@ If your model does not support native tool-calling API, output a JSON block in y
         options: any,
         onToken?: (msg: string) => void
     ) {
+        console.log(`\n\n[AgentService] ====== ENTERING streamWithBrain ====== `);
+        console.log(`[AgentService] Tools passed: ${tools?.length || 0}`);
         let lastError: any;
         for (let attempt = 1; attempt <= AgentService.MAX_INFERENCE_RETRIES; attempt++) {
             try {
-                return await brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
+                console.log(`[AgentService] About to call brain.streamResponse (attempt ${attempt})...`);
+                const result = await brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
+                console.log(`[AgentService] brain.streamResponse returned successfully.`);
+                return result;
             } catch (e: any) {
                 lastError = e;
                 const msg = e?.message || String(e);

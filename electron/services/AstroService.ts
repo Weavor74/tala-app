@@ -160,9 +160,9 @@ export class AstroService {
         }
 
         try {
-            console.log(`[AstroService] Invoking MCP tool 'get_emotional_state' for ${agentId}...`);
+            console.log(`[AstroService] Invoking MCP tool 'get_agent_emotional_state' for ${agentId}...`);
             const result = await this.client.callTool({
-                name: 'get_emotional_state',
+                name: 'get_agent_emotional_state',
                 arguments: {
                     agent_id: agentId,
                     context_prompt: contextPrompt
@@ -198,7 +198,7 @@ export class AstroService {
 
         try {
             const result = await this.client.callTool({
-                name: 'get_raw_emotional_state',
+                name: 'get_raw_agent_emotional_state',
                 arguments: { agent_id: agentId }
             });
 
