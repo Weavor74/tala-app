@@ -4,6 +4,7 @@ import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/webso
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import { McpServerConfig } from '../../src/renderer/settingsData';
+import { auditLogger } from './AuditLogger';
 
 /**
  * Represents an active connection to a single MCP (Model Context Protocol) server.
@@ -141,10 +142,22 @@ export class McpService {
                 config
             });
 
+            auditLogger.info('mcp_connect_ok', 'McpService', {
+                serverId: config.id,
+                name: config.name,
+                transport: config.type,
+                command: config.command
+            });
+
             console.log(`[McpService] Connected to ${config.name}`);
             return true;
 
-        } catch (e) {
+        } catch (e: any) {
+            auditLogger.error('mcp_connect_fail', 'McpService', {
+                serverId: config.id,
+                name: config.name,
+                error: e.message
+            });
             console.error(`[McpService] Failed to connect to ${config.name}:`, e);
             return false;
         }
@@ -288,6 +301,7 @@ export class McpService {
                     this.connections.delete(id);
 
                     // Auto-reconnect
+                    auditLogger.info('mcp_reconnect', 'McpService', { serverId: id });
                     const ok = await this.connect(conn.config);
                     if (ok) {
                         console.log(`[McpService] Successfully reconnected ${conn.config.name}.`);

@@ -168,12 +168,14 @@ export class MemoryService {
             }
         };
 
-        const timeoutPromise = new Promise<void>((resolve) => {
+        const timeoutPromise = new Promise<void>((resolve, reject) => {
             setTimeout(() => {
                 if (!this.client) {
-                    console.warn('[MemoryService] Ignition timed out (15000ms). Proceeding in background.');
+                    console.warn('[MemoryService] Ignition timed out (15000ms). Rejecting promise.');
+                    reject(new Error("Mem0 Core ignition timed out. Server failed to start."));
+                } else {
+                    resolve();
                 }
-                resolve();
             }, 15000);
         });
 

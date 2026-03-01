@@ -3,6 +3,7 @@ import path from 'path';
 import { ReflectionEvent } from './types';
 import { ArtifactStore } from './ArtifactStore';
 import { v4 as uuidv4 } from 'uuid';
+import { auditLogger } from '../AuditLogger';
 
 /**
  * Handles the collection of evidence and the high-level analysis of system performance.
@@ -127,6 +128,7 @@ export class ReflectionEngine {
      */
     async runCycle(): Promise<ReflectionEvent | null> {
         console.log('[ReflectionEngine] Starting reflection cycle...');
+        auditLogger.info('reflection_start', 'ReflectionEngine');
 
         // 1. Capture real evidence
         const evidence = await this.collectEvidence();
@@ -163,6 +165,12 @@ export class ReflectionEngine {
         };
 
         await this.store.saveReflection(event);
+        auditLogger.info('reflection_end', 'ReflectionEngine', {
+            eventId: event.id,
+            summary: event.summary,
+            errors: evidence.errors.length,
+            tool_failures: evidence.failedToolCalls.length
+        });
         console.log(`[ReflectionEngine] Reflection saved: ${event.id} — ${event.summary}`);
         console.log(`[ReflectionEngine] Metrics: avgLatency=${latencyStats.avgMs}ms, p95=${latencyStats.p95Ms}ms, errorRate=${(event.metrics.errorRate * 100).toFixed(1)}%`);
         return event;

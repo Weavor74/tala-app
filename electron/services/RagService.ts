@@ -104,12 +104,14 @@ export class RagService {
             }
         };
 
-        const timeoutPromise = new Promise<void>((resolve) => {
+        const timeoutPromise = new Promise<void>((resolve, reject) => {
             setTimeout(() => {
                 if (!this.isReady) {
-                    console.warn('[RagService] Ignition timed out (15000ms). Proceeding in background.');
+                    console.warn('[RagService] Ignition timed out (15000ms). Rejecting promise.');
+                    reject(new Error("RAG Core ignition timed out. Server failed to start."));
+                } else {
+                    resolve();
                 }
-                resolve();
             }, 15000);
         });
 

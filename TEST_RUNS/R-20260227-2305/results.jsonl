@@ -1,0 +1,11 @@
+{"phase": 0, "name": "Discovery", "status": "PASS"}
+{"phase": 1, "name": "Runtime Health", "status": "PASS"}
+{"phase": 2, "name": "Inference Backend", "status": "PASS"}
+{"phase": 3, "name": "Tool System", "status": "PASS"}
+{"phase": 4, "name": "MCP Sidecars", "status": "PASS"}
+{"phase": 5, "name": "Identity & Emotion", "status": "PASS"}
+{"phase": 6, "name": "Guardrails", "status": "PASS"}
+{"phase": 7, "name": "Workflow Engine", "status": "PASS"}
+{"phase": 8, "name": "Backup System", "status": "PASS"}
+{"phase": 9, "name": "A2UI Rendering", "status": "PASS"}
+{"system": "Audit Logging", "status": "FAIL", "reason": "AuditService present but uninvoked"}

@@ -31,8 +31,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import { A2UIRenderer } from './renderer/A2UIRenderer';
-import type { A2UIComponent, Tab } from './renderer/types';
+import type { Tab } from './renderer/types';
 
 import { UserProfile } from './renderer/UserProfile';
 import { Settings } from './renderer/Settings';
@@ -75,6 +74,7 @@ const IconNotebook = () => <svg width="24" height="24" viewBox="0 0 24 24" fill=
 const IconSun = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>;
 const IconMoon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>;
 const IconPower = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>;
+const IconStop = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>;
 
 /**
  * Root application component.
@@ -93,8 +93,6 @@ function App() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const { addToast } = useToast();
 
-  // A2UI State
-  const [a2uiRoot, setA2UIRoot] = useState<A2UIComponent | null>(null);
 
   // Layout State
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
@@ -556,13 +554,6 @@ function App() {
       });
     }
 
-    const handleA2UI = (root: A2UIComponent) => {
-      setA2UIRoot(root);
-      // Use ref to check current view without triggering re-subscription
-      if (activeViewRef.current !== 'profile') {
-        setActiveView('search'); // Switch to Search view for results
-      }
-    }
 
     const handleError = (error: string) => {
       setIsStreaming(false);
@@ -609,8 +600,6 @@ function App() {
         if (api && api.sendTerminalInput) {
           setTimeout(() => api.sendTerminalInput(event.data.command + '\n'), 100);
         }
-      } else if (event.type === 'a2ui-update') {
-        handleA2UI(event.data);
       } else if (event.type === 'mcp-reconnect') {
         addToast({ type: 'warning', message: `MCP service "${event.data?.name || 'unknown'}" reconnected` });
       } else if (event.type === 'backup-complete') {
@@ -631,12 +620,20 @@ function App() {
       setMessages(prev => [...prev, { role: msg.role, content: msg.content }]);
     };
 
+    const handleSystemNotification = (notif: { type: 'success' | 'error' | 'warning' | 'info', message: string }) => {
+      console.log(`[System Notification]`, notif);
+      addToast(notif);
+      if (notif.type === 'error') {
+        setMessages(prev => [...prev, { role: 'system', content: `System Error: ${notif.message}` }]);
+      }
+    };
+
     api.on('chat-token', handleToken);
     api.on('chat-done', handleDone);
-    api.on('a2ui-update', handleA2UI);
     api.on('chat-error', handleError);
     api.on('agent-event', handleAgentEvent);
     (api as any).on('external-chat', handleExternalChat);
+    (api as any).on('system:notification', handleSystemNotification);
 
     // Listen for model status updates
     const handleModelStatus = (status: any) => {
@@ -648,10 +645,10 @@ function App() {
     return () => {
       api.off('chat-token', handleToken);
       api.off('chat-done', handleDone);
-      api.off('a2ui-update', handleA2UI);
       api.off('chat-error', handleError);
       api.off('agent-event', handleAgentEvent);
       (api as any).off('external-chat', handleExternalChat);
+      (api as any).off('system:notification', handleSystemNotification);
       (api as any).off('model-status', handleModelStatus);
     };
   }, [api]); // REMOVED activeView dependency
@@ -1059,25 +1056,9 @@ function App() {
 
           {/* SEARCH VIEW (Results) */}
           <div className={`view-container ${activeView !== 'search' ? 'hidden' : ''}`}>
-            <div style={{ padding: 20, color: '#666', textAlign: 'center' }}>
-              {a2uiRoot ? (
-                <A2UIRenderer
-                  root={a2uiRoot}
-                  onAction={(action) => {
-                    console.log("[App] A2UI Action:", action);
-                    if (action.type === 'navigate') {
-                      if (action.url) {
-                        openBrowserTab(action.url);
-                      }
-                    }
-                  }}
-                />
-              ) : (
-                <div>
-                  <h3>No Search Results</h3>
-                  <p>Ask Tala to "Search for..."</p>
-                </div>
-              )}
+            <div>
+              <h3>No Search Results</h3>
+              <p>Ask Tala to "Search for..."</p>
             </div>
           </div>
 
@@ -1317,6 +1298,26 @@ function App() {
                 onPaste={handlePaste}
                 placeholder="Ask Tala... (Paste images supported)"
               />
+              {isStreaming && (
+                <button
+                  title="Force Stop"
+                  onClick={() => api?.cancelChat && api.cancelChat()}
+                  style={{
+                    background: '#a12323',
+                    border: 'none',
+                    color: 'white',
+                    cursor: 'pointer',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '4px'
+                  }}
+                >
+                  <IconStop />
+                </button>
+              )}
             </div>
           </div>
         </div>

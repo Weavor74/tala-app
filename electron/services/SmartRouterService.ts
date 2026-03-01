@@ -1,17 +1,11 @@
 import { IBrain, ChatMessage } from '../brains/IBrain';
-import { OllamaBrain } from '../brains/OllamaBrain';
-import { CloudBrain } from '../brains/CloudBrain';
+import { auditLogger } from './AuditLogger';
 
 /**
  * SmartRouterService
  * 
  * Implements "Economic Intelligence" by selecting the most cost-effective
  * model for a given task. 
- * 
- * Logic:
- * - Simple Chat/Greeting -> Local Small (Ollama)
- * - Complex Strategy/Delegation -> Cloud (High Fidelity)
- * - Code Modification -> Cloud or Large Local
  */
 export class SmartRouterService {
     private localBrain: IBrain;
@@ -31,21 +25,33 @@ export class SmartRouterService {
      * Routes a specific task to the optimal brain.
      */
     public async route(messages: ChatMessage[], systemPrompt: string): Promise<IBrain> {
-        if (this.mode === 'local-only') return this.localBrain;
-        if (this.mode === 'cloud-only') return this.cloudBrain;
-
-        // Auto-routing logic
-        const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || "";
-
-        // Intensity detection
-        const isComplex = this.isComplexTask(lastUserMessage, systemPrompt);
-
-        if (isComplex) {
-            console.log('[SmartRouter] Routing to CLOUD (High Fidelity)');
+        if (this.mode === 'local-only') {
+            auditLogger.info('route_decision', 'SmartRouter', { mode: 'local-only', picked: 'local', reason: 'User setting' });
+            return this.localBrain;
+        }
+        if (this.mode === 'cloud-only') {
+            auditLogger.info('route_decision', 'SmartRouter', { mode: 'cloud-only', picked: 'cloud', reason: 'User setting' });
             return this.cloudBrain;
         }
 
-        console.log('[SmartRouter] Routing to LOCAL (Economic)');
+        // Auto-routing logic
+        const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || "";
+        const isComplex = this.isComplexTask(lastUserMessage, systemPrompt);
+
+        if (isComplex) {
+            auditLogger.info('route_decision', 'SmartRouter', {
+                mode: 'auto',
+                picked: 'cloud',
+                reasons: 'Complex task detected (keywords/heuristic)'
+            });
+            return this.cloudBrain;
+        }
+
+        auditLogger.info('route_decision', 'SmartRouter', {
+            mode: 'auto',
+            picked: 'local',
+            reasons: 'Simple task detected'
+        });
         return this.localBrain;
     }
 

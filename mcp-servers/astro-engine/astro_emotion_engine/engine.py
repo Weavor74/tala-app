@@ -146,12 +146,24 @@ class AstroEmotionEngine:
         # 5. UI-Facing Vector (8-axis model)
         ui_vector = self._map_to_ui_vector(emotion_vector)
         
+        # 6. Determine Mood Label
+        # Find the max value in ui_vector to name the predominant mood
+        top_mood = max(ui_vector, key=ui_vector.get)
+        mood_val = ui_vector[top_mood]
+        if mood_val > 0.7:
+             mood_label = f"Predominantly {top_mood}"
+        elif mood_val < 0.3:
+             mood_label = "Suppressed/Low Energy"
+        else:
+             mood_label = f"Balanced ({top_mood} leaning)"
+
         return EmotionResponse(
             subject_id=request.subject_id,
             timestamp=request.timestamp,
             engine_version=DOMAIN_MODEL_VERSION,
             emotion_vector=ui_vector, # Return the mapped version for standard consumption
             internal_vector=emotion_vector, # Keep the raw one if needed
+            mood_label=mood_label,
             bias_modifiers=bias_modifiers,
             prompt_injection=injection,
             influences=influences,

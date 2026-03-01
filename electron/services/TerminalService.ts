@@ -42,6 +42,8 @@ export class TerminalService {
         'ls', 'dir', 'cd', 'mkdir', 'cat', 'grep', 'find', 'git', 'npm', 'npx',
         'node', 'python', 'type', 'echo', 'rm', 'cp', 'mv', 'tsc', 'vite'
     ];
+    /** Path to application settings for checking firewall status */
+    private settingsPath: string | null = null;
 
     /**
      * Creates a new TerminalService instance.
@@ -54,6 +56,13 @@ export class TerminalService {
      */
     public setWindow(win: BrowserWindow) {
         this.window = win;
+    }
+
+    /**
+     * Sets the path to the app settings file for firewall checks.
+     */
+    public setSettingsPath(path: string) {
+        this.settingsPath = path;
     }
 
     /**
@@ -152,6 +161,22 @@ export class TerminalService {
     }
 
     private isAllowed(data: string): boolean {
+        // Quantum Firewall settings check
+        if (this.settingsPath) {
+            try {
+                const fs = require('fs');
+                if (fs.existsSync(this.settingsPath)) {
+                    const settingsRaw = fs.readFileSync(this.settingsPath, 'utf-8');
+                    const settings = JSON.parse(settingsRaw);
+                    if (settings.firewall && settings.firewall.enabled === false) {
+                        return true; // Firewall is disabled, allow all
+                    }
+                }
+            } catch (e) {
+                console.error('[TerminalService] Failed to check firewall settings:', e);
+            }
+        }
+
         const trimmed = data.trim().toLowerCase();
         if (!trimmed) return true;
 

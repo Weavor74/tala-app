@@ -253,6 +253,14 @@ export interface Notebook {
     createdAt: number;
 }
 
+export interface FirewallConfig {
+    enabled: boolean;
+    sensitivity: number; // 0..1
+    targetPatterns: string[];
+    replacementText: string;
+    logRedactions: boolean;
+}
+
 export interface AppSettings {
     deploymentMode: 'usb' | 'local' | 'remote';
     inference: InferenceConfig;
@@ -268,6 +276,7 @@ export interface AppSettings {
     search: SearchConfig;
     workflows: WorkflowConfig;
     notebooks: Notebook[];
+    firewall: FirewallConfig;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -404,7 +413,14 @@ CORE CONSTRAINTS:
     workflows: {
         autoSync: false
     },
-    notebooks: []
+    notebooks: [],
+    firewall: {
+        enabled: true,
+        sensitivity: 0.5,
+        targetPatterns: ["sk-", "ant-api-", "[0-9a-f]{32,}", "AIza", "xoxp-", "xoxb-"],
+        replacementText: "[REDACTED BY QUANTUM FIREWALL]",
+        logRedactions: true
+    }
 };
 
 export const migrateSettings = (loaded: any): AppSettings => {
@@ -524,6 +540,11 @@ export const migrateSettings = (loaded: any): AppSettings => {
     // Migrate Notebooks
     if (loaded.notebooks && Array.isArray(loaded.notebooks)) {
         base.notebooks = loaded.notebooks;
+    }
+
+    // Migrate Firewall
+    if (loaded.firewall) {
+        base.firewall = { ...base.firewall, ...loaded.firewall };
     }
 
     return base;

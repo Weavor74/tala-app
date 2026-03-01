@@ -30,6 +30,7 @@ class EmotionResponse(BaseModel):
     
     emotion_vector: Dict[str, float]
     internal_vector: Optional[Dict[str, float]] = None
+    mood_label: str = "Neutral"
     bias_modifiers: Dict[str, float]
     
     prompt_injection: PromptInjection

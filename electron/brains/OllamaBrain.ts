@@ -1,4 +1,6 @@
 import { fetch, Agent } from 'undici';
+import path from 'path';
+import fs from 'fs';
 import type { IBrain, ChatMessage, BrainResponse, BrainOptions } from './IBrain';
 
 /**
@@ -68,10 +70,21 @@ export class OllamaBrain implements IBrain {
                     let args = tc.function.arguments;
                     if (typeof args === 'string') {
                         try {
-                            args = JSON.parse(args);
+                            // Robust extraction: find the outermost { ... } block
+                            const jsonMatch = args.match(/\{[\s\S]*\}/);
+                            if (jsonMatch) {
+                                args = JSON.parse(jsonMatch[0]);
+                            } else {
+                                args = JSON.parse(args);
+                            }
                         } catch (e) {
                             console.error(`[OllamaBrain] Failed to parse tool arguments for ${tc.function.name}:`, args);
+                            // Fallback to empty object to satisfy Ollama's strict validation
+                            args = {};
                         }
+                    } else if (!args || typeof args !== 'object') {
+                        // Ensure it's at least an empty object if somehow null/undefined
+                        args = {};
                     }
                     return {
                         id: tc.id,
@@ -228,8 +241,17 @@ export class OllamaBrain implements IBrain {
             clearTimeout(timeoutId);
 
             if (!response.ok) {
-                const errorData = await response.text().catch(() => 'Unknown error');
-                console.error(`[OllamaBrain] HTTP 400 ERROR (Stream). Payload trace:`, JSON.stringify(body).substring(0, 1000));
+                const errorData = await response.text();
+                console.error(`[OllamaBrain] Error (${response.status}): ${errorData}`);
+
+                // Save failed request for diagnosis
+                try {
+                    const debugPath = path.join(process.cwd(), 'ollama_error_debug.json');
+                    fs.writeFileSync(debugPath, bodyString);
+                    console.log(`[OllamaBrain] Debug: Saved failed request body to ${debugPath}`);
+                } catch (e) {
+                    console.error('[OllamaBrain] Failed to save debug JSON:', e);
+                }
 
                 // Resiliency: If the model doesn't support tools, retry without them.
                 if (response.status === 400 && errorData.includes('does not support tools') && tools && tools.length > 0) {

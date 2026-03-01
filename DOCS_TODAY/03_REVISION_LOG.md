@@ -14,6 +14,7 @@
 | **1.0.0 (Draft)** | 2026-02-22 | Tala | **Initial Draft** | Finalized 3 core documents |
 | **1.1.0 (R2)** | 2026-02-22 | Tala | **Line-Level Sourcing + Examples** | Added exact line references, MCP examples, migration guides |
 | **1.2.0 (R3)** | 2026-02-22 | Tala | **Mermaid Diagrams + Full Schema** | Added backup flow, AppSettings schema, encryption config |
+| **1.3.0 (R4)** | 2026-02-28 | Tala | **Engineering Autonomy & Planning** | Added Engineering Autonomy Protocol, Reflection Awareness, Unified Planning |
 
 ---
 
@@ -74,10 +75,25 @@
 
 ### `03_REVISION_LOG.md` — This Document  
 **Date Added**: 2026-02-22  
-**Status**: ✅ **Revision 2 Complete**  
+**Status**: ✅ **Revision 4 Complete**  
 **Revision 2 Updates**:  
 - ✅ Added Revision 2 summary for all docs  
 - ✅ Updated table with version 1.1.0  
+**Revision 4 Updates**:
+- ✅ Added Version 1.3.0 to Revision Control Summary
+- ✅ Formatted documentation for Engineering Autonomy (v1.3.0)
+
+---
+
+### `06-EngineeringAutonomy.md` — Engineering Autonomy Specification
+**Date Added**: 2026-02-28
+**Status**: ✅ **Revision 4 Complete**
+**Revision 4 Updates**:
+- ✅ Initialized Technical Specification for the EASP layer
+- ✅ Detailed Engineering Autonomy & Strategic Planning Protocols
+- ✅ Documented `task_plan` synchronization logic
+- ✅ Documented `getReflectionSummary` self-awareness features
+- ✅ Added stability improvements (Greedy Parsing, Interruptible Retry)
 
 ---
 

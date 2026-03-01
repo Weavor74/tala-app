@@ -17,23 +17,24 @@ import os
 # Initialize FastMCP Server
 mcp = FastMCP("mem0-core")
 
-# Initialize Local Mem0 (defaults to ~/.mem0 or local DB)
-# In production, might want to configure path to be internal to app
-# Configure for local/portable usage
+# Initialize Local Mem0
 config = {
     "vector_store": {
         "provider": "qdrant",
         "config": {
             "path": os.path.join(os.getcwd(), "data", "qdrant_db"),
-            "host": "localhost",
-            "port": 6333,
-            # "on_disk": True # faster startup
         }
     },
     "embedder": {
-        "provider": "huggingface",
+        "provider": "ollama",
         "config": {
-            "model": "sentence-transformers/all-MiniLM-L6-v2"
+            "model": "nomic-embed-text:latest",
+        }
+    },
+    "llm": {
+        "provider": "ollama",
+        "config": {
+            "model": "huihui_ai/qwen3-abliterated:8b",
         }
     }
 }
@@ -43,9 +44,13 @@ if not os.path.exists(os.environ["MEM0_DIR"]):
     os.makedirs(os.environ["MEM0_DIR"])
 
 try:
-    memory = Memory(config=config)
+    print(f"[mem0-core] Initializing Memory from config...")
+    memory = Memory.from_config(config)
+    print("[mem0-core] Memory initialized successfully.")
 except Exception as e:
-    print(f"Failed to initialize Memory: {e}")
+    import traceback
+    print(f"[mem0-core] Failed to initialize Memory: {e}")
+    traceback.print_exc()
     memory = None
 
 @mcp.tool()

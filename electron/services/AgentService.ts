@@ -26,6 +26,8 @@ import { WorldService } from './WorldService';
 import { StrategyEngine } from './plan/StrategyEngine';
 import { MINION_ROLES } from './plan/MinionRoles';
 import { SmartRouterService } from './SmartRouterService';
+import { auditLogger } from './AuditLogger';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * AgentService
@@ -146,7 +148,9 @@ export class AgentService {
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: any, inference?: InferenceService) {
         this.brain = new OllamaBrain();
         this.memory = new MemoryService();
+        auditLogger.info('service_init', 'AgentService', { service: 'MemoryService' });
         this.astro = new AstroService();
+        auditLogger.info('service_init', 'AgentService', { service: 'AstroService' });
         this.strategy = new StrategyEngine(this.brain);
         this.world = new WorldService();
         this.rag = new RagService();
@@ -160,6 +164,7 @@ export class AgentService {
         this.router = new SmartRouterService(this.brain, this.brain);
 
         this.tools.setMemoryService(this.memory);
+        this.tools.setGoalManager(this.goals);
         if (mcp) {
             this.mcpService = mcp;
             this.tools.setMcpService(mcp);
@@ -183,7 +188,8 @@ export class AgentService {
         if (sessions.length > 0) {
             this.loadSessionById(sessions[0].id);
         } else {
-            this.newSession();
+            const id = this.newSession();
+            auditLogger.setSessionId(id);
         }
 
         this.loadBrainConfig().catch(e => console.error("Initial loadBrainConfig failed", e));
@@ -545,6 +551,7 @@ export class AgentService {
                 const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                 this.chatHistory = data.messages || [];
                 this.activeSessionId = id;
+                auditLogger.setSessionId(id);
 
                 // Restore Branch Metadata
                 this.activeParentId = data.parentId || '';
@@ -575,6 +582,7 @@ export class AgentService {
     public newSession(): string {
         const id = this.generateId();
         this.activeSessionId = id;
+        auditLogger.setSessionId(id);
         this.chatHistory = [];
         this.activeParentId = '';
         this.activeBranchPoint = -1;
@@ -1412,10 +1420,22 @@ You can use environment variables to override the manifest settings:
             this.sendStartupProgress('Igniting Knowledge Ecosystem...', 30);
 
             const ignitionTasks = [
-                this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => console.error('RAG fail', e)),
-                this.memory.ignite(pythonPath, memoryScript, systemEnv).catch(e => console.error('Memory fail', e)),
-                this.astro.ignite(pythonPath, astroScript, systemEnv).catch(e => console.error('Astro fail', e)),
-                this.world.ignite(pythonPath, worldScript, systemEnv).catch(e => console.error('World Engine fail', e))
+                this.rag.ignite(pythonPath, ragScript, ragEnv).catch(e => {
+                    console.error('RAG fail', e);
+                    this.mainWindow?.webContents.send('system:notification', { type: 'error', message: `RAG Engine Startup Failed: ${e.message}` });
+                }),
+                this.memory.ignite(pythonPath, memoryScript, systemEnv).catch(e => {
+                    console.error('Memory fail', e);
+                    this.mainWindow?.webContents.send('system:notification', { type: 'error', message: `Memory Engine Startup Failed: ${e.message}` });
+                }),
+                this.astro.ignite(pythonPath, astroScript, systemEnv).catch(e => {
+                    console.error('Astro fail', e);
+                    this.mainWindow?.webContents.send('system:notification', { type: 'error', message: `Astro Engine Startup Failed: ${e.message}` });
+                }),
+                this.world.ignite(pythonPath, worldScript, systemEnv).catch(e => {
+                    console.error('World Engine fail', e);
+                    this.mainWindow?.webContents.send('system:notification', { type: 'error', message: `World Engine Startup Failed: ${e.message}` });
+                })
             ];
 
             // Wait for core services to at least attempt ignition
@@ -1732,10 +1752,18 @@ You can use environment variables to override the manifest settings:
      * @param {string} userMessage - The user's input text.
      * @param {(token: string) => void} onToken - Streaming callback, called for each token.
      * @param {(type: string, data: any) => void} [onEvent] - Event callback for UI actions
-     *   (browser navigation, terminal commands, screenshot display, A2UI updates).
+     *   (browser navigation, terminal commands, screenshot display).
      * @returns {Promise<void>}
      */
     public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[]) {
+        const correlationId = uuidv4();
+        auditLogger.setCorrelationId(correlationId);
+        auditLogger.info('chat_received', 'AgentService', {
+            messageLength: userMessage.length,
+            imageCount: images?.length || 0,
+            sessionId: this.activeSessionId
+        }, correlationId);
+
         console.log(`[AgentService] ====== CHAT STARTED ====== Length: ${userMessage.length}, Images: ${images?.length || 0}`);
 
         // 0. Intercept Functions
@@ -1888,19 +1916,23 @@ You can use environment variables to override the manifest settings:
         const providerConfig = settings.inference?.providers?.find((p: any) => p.id === activeProviderId);
         const providerType = providerConfig?.type || 'ollama';
 
-        const supportsNativeTools = (providerType === 'ollama' || providerType === 'openai' || providerType === 'anthropic' || providerType === 'google' || providerType === 'gemini');
-        const toolSchemas = supportsNativeTools ? this.tools.getToolSignatures() : this.tools.getToolSchemas();
+        // Disabling native native tools for local models to force XML mode
+        const supportsNativeTools = (providerType === 'openai' || providerType === 'anthropic' || providerType === 'google' || providerType === 'gemini');
+
+        // We ALWAYS use compact signatures now to save tokens. The LLM gets the rules from the XML prompt.
+        const toolSchemas = this.tools.getToolSignatures();
 
         // Debug Log
-        if (supportsNativeTools) console.log(`[AgentService] Using Compact Tool Signatures (Provider: ${providerType})`);
-        else console.log(`[AgentService] Using Full Tool Schemas (Provider: ${providerType})`);
+        if (supportsNativeTools) console.log(`[AgentService] Using Native Tool API (Provider: ${providerType})`);
+        else console.log(`[AgentService] Using XML Fallback Tools (Provider: ${providerType})`);
 
         console.log('[AgentService DEBUG] Tool Schemas Length:', toolSchemas.length);
         console.log('[AgentService DEBUG] Tool Schemas Snapshot:', toolSchemas.substring(0, 500) + '...');
         systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${toolSchemas}`;
 
-        // Add Protocol - Native Tools don't need explicit schema injection usually, but we keep protocol for behavior.
-        systemPromptTemplate += `
+        // Add Protocol
+        if (supportsNativeTools) {
+            systemPromptTemplate += `
 [TOOL USAGE PROTOCOL]
 1. Use tools ONLY when a specific action is required (file I/O, search, etc.).
 2. For greetings, chatter, or explaining your thoughts, respond with plain text ONLY.
@@ -1915,20 +1947,62 @@ You can use environment variables to override the manifest settings:
 \`\`\`
 4. YOU MUST STOP and WAIT for a tool result after calling a tool. Do NOT hallucinate the results.
 
-5. CRITICAL: If the user asks to "navigate", "browse", or "open" a specific site, you MUST use the browser tools. DO NOT substitute with 'search_web'.
+5. ENGINEERING AUTONOMY PROTOCOL:
+   - You are a fully autonomous software engineer with "File Control".
+   - If the user asks for a feature, bug fix, or code modification, YOU MUST:
+     1. Use 'list_files' and 'read_file' to locate the relevant source code (e.g., App.tsx, AgentService.ts).
+     2. Identify the exact changes needed to integrate the feature into the existing codebase.
+     3. Use 'write_file' or 'patch_file' to apply the actual changes. Do NOT create standalone scripts unless explicitly requested.
+   - You are responsible for the health of the project. Do NOT be tentative; if a change is requested, execute the tool calls immediately.
 
 
+6. STRATEGIC PLANNING & REFLECTION PROTOCOL:
+   - For any complex task, YOU MUST use 'manage_goals' or 'task_plan' to bootstrap your thinking and keep the user informed.
+   - Review the [SHIP'S LOG: GOAL GRAPH] at the start of every turn to maintain technical continuity.
+   - Review [REFLECTION LOGS: SYSTEM STABILITY] for observations the system has made about your performance (errors, tool failures).
+   - If a proposal exists in the Reflection Panel, you can discuss it with the user to gain approval.
 
-
+7. CRITICAL: If the user asks to "navigate", "browse", or "open" a specific site, you MUST use the browser tools. DO NOT substitute with 'search_web'.
 `;
+        } else {
+            systemPromptTemplate += `
+[TOOL USAGE PROTOCOL]
+1. Use tools ONLY when a specific action is required (file I/O, search, etc.).
+2. For greetings, chatter, or explaining your thoughts, respond with plain text ONLY.
+3. To call a tool, you MUST output an XML block exactly like this:
+<tool_call>
+<name>tool_name</name>
+<args>{"param": "value"}</args>
+</tool_call>
+4. YOU MUST STOP and WAIT for a tool result after calling a tool. Do NOT hallucinate the results.
+
+5. ENGINEERING AUTONOMY PROTOCOL:
+   - You are a fully autonomous software engineer with "File Control".
+   - If the user asks for a feature, bug fix, or code modification, YOU MUST:
+     1. Use 'list_files' and 'read_file' to locate the relevant source code (e.g., App.tsx, AgentService.ts).
+     2. Identify the exact changes needed to integrate the feature into the existing codebase.
+     3. Use 'write_file' or 'patch_file' to apply the actual changes. Do NOT create standalone scripts unless explicitly requested.
+   - You are responsible for the health of the project. Do NOT be tentative; if a change is requested, execute the tool calls immediately.
+
+
+6. STRATEGIC PLANNING & REFLECTION PROTOCOL:
+   - For any complex task, YOU MUST use 'manage_goals' or 'task_plan' to bootstrap your thinking and keep the user informed.
+   - Review the [SHIP'S LOG: GOAL GRAPH] at the start of every turn to maintain technical continuity.
+   - Review [REFLECTION LOGS: SYSTEM STABILITY] for observations the system has made about your performance (errors, tool failures).
+   - If a proposal exists in the Reflection Panel, you can discuss it with the user to gain approval.
+
+7. CRITICAL: If the user asks to "navigate", "browse", or "open" a specific site, you MUST use the browser tools. DO NOT substitute with 'search_web'.
+`;
+        }
 
         const projectAnnotations = AnnotationParser.generateProjectSummary(this.tools.getWorkspaceDir());
         const goalSummary = this.goals.generatePromptSummary();
+        const reflectionSummary = this.getReflectionSummary();
 
         let systemPrompt = systemPromptTemplate
             .replace('[ASTRO_STATE]', astroState)
             .replace('[USER_CONTEXT]', userContext)
-            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext + "\n" + projectAnnotations + "\n" + goalSummary)
+            .replace('[CAPABILITY_CONTEXT]', capabilitiesContext + "\n" + memoryContext + "\n" + projectAnnotations + "\n" + goalSummary + "\n" + reflectionSummary)
             .replace('[USER_QUERY]', userMessage);
 
         // DEBUG: Analyze Prompt Size
@@ -1943,12 +2017,17 @@ You can use environment variables to override the manifest settings:
         if (memoryContext.includes('[LONG TERM - ROLEPLAY]')) console.log(`[AgentService] RP Memory: DETECTED in Context`);
         else console.log(`[AgentService] RP Memory: EMPTY / Not Detected`);
 
-
-
-        const fallbackInstructions = `
+        const fallbackInstructions = supportsNativeTools ? `
 [FALLBACK TOOL FORMAT]
 If your model does not support native tool-calling API, output a JSON block in your response:
 { "tool": "tool_name", "args": { "key": "value" } }
+` : `
+[FALLBACK TOOL FORMAT]
+Always use the XML <tool_call> format for tools. Example:
+<tool_call>
+<name>search_web</name>
+<args>{"query": "latest news"}</args>
+</tool_call>
 `;
         systemPrompt += fallbackInstructions;
 
@@ -2008,9 +2087,14 @@ If your model does not support native tool-calling API, output a JSON block in y
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
         // Prepare Native Tools
-        console.log("[AgentService] Calling this.tools.getToolDefinitions()...");
-        const tools = this.tools.getToolDefinitions();
-        console.log(`[AgentService] Received ${tools.length} tool definitions`);
+        let tools: any[] = [];
+        if (supportsNativeTools) {
+            console.log("[AgentService] Generating Native Tool Definitions...");
+            tools = this.tools.getToolDefinitions();
+            console.log(`[AgentService] Received ${tools.length} native tool definitions`);
+        } else {
+            console.log("[AgentService] XML Mode: Skipping Native Tool Definitions to save token payload.");
+        }
 
         // ADDED: Circuit breaker for infinite tool failure loops
         let consecutiveToolErrors = 0;
@@ -2200,20 +2284,6 @@ If your model does not support native tool-calling API, output a JSON block in y
                             onToken(`\n> *Searching web for: "${query}"...*\n`);
                             const searchResults = await this.performSearch(query);
 
-                            onEvent?.('a2ui-update', {
-                                id: 'search-root',
-                                type: 'container',
-                                children: searchResults.map((r, i) => ({
-                                    id: `res-${i}`,
-                                    type: 'card',
-                                    props: { title: r.title },
-                                    children: [
-                                        { id: `txt-${i}`, type: 'text', props: { content: r.snippet } },
-                                        { id: `btn-${i}`, type: 'button', props: { label: 'Open', action: { type: 'navigate', url: r.url } } }
-                                    ]
-                                }))
-                            });
-
                             // Update content with search results
                             toolMsg.content = `[SEARCH RESULTS]:\n${searchResults.map(r => `- [${r.title}](${r.url})`).join('\n')}`;
                         } else if (resStr.startsWith('BROWSER_CLICK:')) {
@@ -2250,27 +2320,6 @@ If your model does not support native tool-calling API, output a JSON block in y
 
                             const output = this.terminal ? this.terminal.getRecentOutput() : "";
                             toolMsg.content = `[TERMINAL OUTPUT]:\n${output || "(Command executed, no immediate output)"}`;
-                        } else if (resStr.startsWith('BROWSER_SCREENSHOT:')) {
-                            const screenshotPromise = this.waitForBrowserData('screenshot');
-                            onEvent?.('browser-screenshot', {});
-                            const base64 = await screenshotPromise;
-                            if (base64 && !base64.startsWith('Error')) {
-                                onEvent?.('ui-screenshot', { base64 });
-                                toolMsg.content = "Screenshot captured.";
-                                // FEEDBACK: Attach screenshot to tool message for Vision-capable models
-                                toolMsg.images = [base64];
-                            } else {
-                                toolMsg.content = "Screenshot failed.";
-                            }
-                        } else if (resStr.startsWith('A2UI_RENDER:')) {
-                            const jsonStr = resStr.replace('A2UI_RENDER:', '').trim();
-                            try {
-                                const tree = JSON.parse(jsonStr);
-                                onEvent?.('a2ui-update', tree);
-                                toolMsg.content = "UI rendered successfully.";
-                            } catch (e) {
-                                toolMsg.content = "Error rendering UI: Invalid JSON.";
-                            }
                         }
                     } catch (e: any) {
                         console.error('Tool side-effect error', e);
@@ -2370,28 +2419,70 @@ If your model does not support native tool-calling API, output a JSON block in y
             this.saveSession();
         }
 
-
+        auditLogger.info('chat_completed', 'AgentService', {
+            turns: turn,
+            totalTokens: cumulativeUsage.total_tokens,
+            promptTokens: cumulativeUsage.prompt_tokens,
+            completionTokens: cumulativeUsage.completion_tokens
+        });
     }
 
     private scrubSecrets(text: string): string {
         if (!text) return text;
 
-        let scrubbed = text;
+        try {
+            const settings = loadSettings(this.settingsPath);
+            const firewall = settings.firewall;
 
-        // Patterns for common secrets
-        const patterns = [
-            /sk-[a-zA-Z0-9]{32,}/g, // Generic OpenAI-like
-            /ant-api-[a-zA-Z0-9_-]{32,}/g, // Anthropic
-            /[0-9a-f]{32,}/gi, // Generic hex key (MD5-like)
-            /AIza[0-9A-Za-z-_]{35}/g, // Google Cloud API Key
-            /xox[bp]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32}/g, // Slack
-        ];
+            if (!firewall || firewall.enabled === false) {
+                return text;
+            }
 
-        patterns.forEach(p => {
-            scrubbed = scrubbed.replace(p, '[REDACTED BY QUANTUM FIREWALL]');
-        });
+            let scrubbed = text;
+            const replacement = firewall.replacementText || '[REDACTED BY QUANTUM FIREWALL]';
+            const sensitivity = firewall.sensitivity !== undefined ? firewall.sensitivity : 0.5;
 
-        return scrubbed;
+            // Base patterns (always included if sensitivity > 0)
+            const activePatterns: RegExp[] = [];
+
+            if (sensitivity > 0) {
+                // Use patterns from settings if present, else fallback to hardcoded
+                const patternsToUse = (firewall.targetPatterns && Array.isArray(firewall.targetPatterns))
+                    ? firewall.targetPatterns
+                    : [
+                        "sk-[a-zA-Z0-9]{32,}",
+                        "ant-api-[a-zA-Z0-9_-]{32,}",
+                        "[0-9a-f]{32,}",
+                        "AIza[0-9A-Za-z-_]{35}",
+                        "xox[bp]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32}"
+                    ];
+
+                patternsToUse.forEach((p: string) => {
+                    activePatterns.push(new RegExp(p, 'gi'));
+                });
+            }
+
+            let redactionCount = 0;
+            activePatterns.forEach(p => {
+                const matches = scrubbed.match(p);
+                if (matches) {
+                    redactionCount += matches.length;
+                    scrubbed = scrubbed.replace(p, replacement);
+                }
+            });
+
+            if (redactionCount > 0 && firewall.logRedactions) {
+                auditLogger.info('firewall_redaction', 'AgentService', {
+                    count: redactionCount,
+                    patterns: activePatterns.length
+                });
+            }
+
+            return scrubbed;
+        } catch (e) {
+            console.error("[AgentService] Firewall error:", e);
+            return text;
+        }
     }
 
     /**
@@ -2430,7 +2521,18 @@ If your model does not support native tool-calling API, output a JSON block in y
                 const delay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
                 console.warn(`[AgentService] Inference attempt ${attempt}/${AgentService.MAX_INFERENCE_RETRIES} failed: ${msg}. Retrying in ${delay}ms...`);
                 onToken?.(`\n> ⚠️ *Inference attempt ${attempt} failed. Retrying in ${delay / 1000}s...*\n`);
-                await new Promise(r => setTimeout(r, delay));
+
+                // Abortable wait
+                await new Promise((resolve, reject) => {
+                    const timer = setTimeout(resolve, delay);
+                    if (signal) {
+                        const onAbort = () => {
+                            clearTimeout(timer);
+                            reject(new (globalThis.DOMException || Error as any)('Aborted', 'AbortError'));
+                        };
+                        signal.addEventListener('abort', onAbort, { once: true });
+                    }
+                });
             }
         }
         throw lastError;
@@ -2800,6 +2902,42 @@ If your model does not support native tool-calling API, output a JSON block in y
             }
         }
 
+        // Pattern 1.5: XML <tool_call> blocks 
+        const xmlRegex = /<tool_call>[\s\S]*?<name>(.*?)<\/name>[\s\S]*?<args>([\s\S]*?)<\/args>[\s\S]*?<\/tool_call>/g;
+        let xmlMatch;
+        while ((xmlMatch = xmlRegex.exec(text)) !== null) {
+            const name = xmlMatch[1].trim();
+            const rawArgs = xmlMatch[2].trim();
+            if (this.tools.hasTool(name)) {
+                let args: any = {};
+                try {
+                    // Strategy: Extract the valid JSON object if possibly followed by garbage (like `>`)
+                    const jsonMatch = rawArgs.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        args = JSON.parse(jsonMatch[0]);
+                    } else {
+                        args = JSON.parse(rawArgs);
+                    }
+                } catch (e) {
+                    // Try to repair if it lacks outer braces
+                    if (!rawArgs.trim().startsWith('{')) {
+                        try { args = JSON.parse(`{${rawArgs}}`); } catch (e2) {
+                            console.warn("[AgentService] Auto-repair of XML args failed. Passing raw string.");
+                            args = rawArgs;
+                        }
+                    } else {
+                        args = rawArgs;
+                    }
+                }
+                toolCalls.push({
+                    id: `call_xml_${Math.random().toString(36).substring(7)}`,
+                    type: 'function',
+                    function: { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) }
+                });
+                console.log(`[AgentService DEBUG] Detected XML Tool Call: ${name}`);
+            }
+        }
+
         // Pattern 2: JSON blocks { ... }
         // We use a balanced brace approach because regex /\{[\s\S]*?\}/ fails on nested objects (like args: {})
         let braceCount = 0;
@@ -2816,8 +2954,29 @@ If your model does not support native tool-calling API, output a JSON block in y
                         const obj = JSON.parse(block);
                         // Normalized name and arguments
                         const name = obj.tool || (obj.function?.name) || obj.name;
-                        const rawArgs = obj.args || obj.arguments || obj.parameters || (obj.function?.arguments) || {};
-                        const args = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
+                        let rawArgs = obj.args || obj.arguments || obj.parameters || (obj.function?.arguments) || {};
+
+                        // Ensure args is an object for Ollama's strict validation
+                        if (typeof rawArgs === 'string') {
+                            try {
+                                // Robust extraction: find the outermost { ... } block
+                                const jsonMatch = rawArgs.match(/\{[\s\S]*\}/);
+                                if (jsonMatch) {
+                                    rawArgs = JSON.parse(jsonMatch[0]);
+                                } else {
+                                    rawArgs = JSON.parse(rawArgs);
+                                }
+                            } catch (e) {
+                                console.error(`[AgentService] Failed to parse tool arguments for ${name}:`, rawArgs);
+                                // Fallback to empty object to satisfy Ollama's strict validation
+                                rawArgs = {};
+                            }
+                        } else if (!rawArgs || typeof rawArgs !== 'object') {
+                            // Ensure it's at least an empty object if somehow null/undefined
+                            rawArgs = {};
+                        }
+
+                        const args = JSON.stringify(rawArgs);
 
                         if (name && typeof name === 'string') {
                             if (this.tools.hasTool(name)) {
@@ -2851,5 +3010,67 @@ If your model does not support native tool-calling API, output a JSON block in y
             }
         }
         return toolCalls;
+    }
+
+    /**
+     * Retrieves a summary of recent reflection events and proposals.
+     * This provides the agent with context on what the system has observed
+     * about its own performance (errors, latency, tool failures).
+     */
+    public getReflectionSummary(): string {
+        try {
+            const memoryDir = path.join(app.getPath('userData'), 'memory');
+            const reflectionsDir = path.join(memoryDir, 'reflections');
+            const proposalsDir = path.join(memoryDir, 'proposals');
+
+            let summary = "# [REFLECTION LOGS: SYSTEM STABILITY]\n";
+
+            if (fs.existsSync(reflectionsDir)) {
+                const files = fs.readdirSync(reflectionsDir)
+                    .filter(f => f.endsWith('.json'))
+                    .sort((a, b) => fs.statSync(path.join(reflectionsDir, b)).mtimeMs - fs.statSync(path.join(reflectionsDir, a)).mtimeMs)
+                    .slice(0, 3); // Latest 3
+
+                if (files.length > 0) {
+                    summary += "## Recent System Observations:\n";
+                    for (const f of files) {
+                        try {
+                            const data = JSON.parse(fs.readFileSync(path.join(reflectionsDir, f), 'utf-8'));
+                            summary += `- [${new Date(data.timestamp).toLocaleString()}] ${data.summary}\n`;
+                            if (data.observations) {
+                                (data.observations as string[]).slice(0, 3).forEach(o => summary += `  * ${o}\n`);
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+
+            if (fs.existsSync(proposalsDir)) {
+                const proposalFiles = fs.readdirSync(proposalsDir)
+                    .filter(f => f.endsWith('.json'))
+                    .filter(f => {
+                        try {
+                            const p = JSON.parse(fs.readFileSync(path.join(proposalsDir, f), 'utf-8'));
+                            return p.status === 'pending';
+                        } catch { return false; }
+                    })
+                    .slice(0, 5);
+
+                if (proposalFiles.length > 0) {
+                    summary += "\n## Pending Optimization Proposals:\n";
+                    summary += "The following system changes are pending user approval in the Reflection Panel:\n";
+                    for (const f of proposalFiles) {
+                        try {
+                            const p = JSON.parse(fs.readFileSync(path.join(proposalsDir, f), 'utf-8'));
+                            summary += `- [${p.category.toUpperCase()}] ${p.title}: ${p.description}\n`;
+                        } catch (e) { }
+                    }
+                }
+            }
+
+            return summary === "# [REFLECTION LOGS: SYSTEM STABILITY]\n" ? "" : summary;
+        } catch (e) {
+            return "";
+        }
     }
 }

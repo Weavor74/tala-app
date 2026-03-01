@@ -66,7 +66,7 @@ export const MemoryViewer: React.FC = () => {
     };
 
     const filtered = memories.filter(m =>
-        m.text.toLowerCase().includes(filter.toLowerCase())
+        (m.text || '').toLowerCase().includes(filter.toLowerCase())
     );
 
     return (

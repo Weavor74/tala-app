@@ -119,7 +119,7 @@ export const Settings = () => {
     const [workspaceSettings, setWorkspaceSettings] = useState<Partial<AppSettings>>({});
     const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS); // Interactive view
 
-    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about'>('inference');
+    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about' | 'firewall'>('inference');
     const [workflowSubTab, setWorkflowSubTab] = useState<'workflow' | 'mcp' | 'function'>('workflow');
     const [status, setStatus] = useState('');
     const [downloading, setDownloading] = useState(false);
@@ -468,6 +468,7 @@ export const Settings = () => {
                     { id: 'backup', label: 'Backup' },
                     { id: 'server', label: 'Runtime' },
                     { id: 'auth', label: 'Auth' },
+                    { id: 'firewall', label: 'Firewall' },
                     { id: 'about', label: 'About' }
                 ].map(tab => (
                     <div
@@ -2680,6 +2681,130 @@ export const Settings = () => {
                         </div >
                     )
                 }
+
+                {/* FIREWALL TAB */}
+                {activeTab === 'firewall' && (
+                    <div style={sectionStyle}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 15, marginBottom: 20 }}>
+                            <div style={{ fontSize: 32 }}>🛡️</div>
+                            <div>
+                                <h3 style={{ margin: 0, color: '#00ffff', letterSpacing: '1px' }}>QUANTUM FIREWALL</h3>
+                                <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Cryptographic secret scrubbing & data loss prevention.</p>
+                            </div>
+                        </div>
+
+                        <div style={{ background: 'rgba(0, 255, 255, 0.05)', border: '1px solid rgba(0, 255, 255, 0.2)', padding: 20, borderRadius: 8, marginBottom: 30 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                                <div>
+                                    <h4 style={{ margin: 0, color: '#fff' }}>SYSTEM STATUS</h4>
+                                    <div style={{ fontSize: 10, color: settings.firewall?.enabled ? '#00ff00' : '#ff4444', fontWeight: 'bold', marginTop: 4 }}>
+                                        {settings.firewall?.enabled ? '● ACTIVE & MONITORING' : '○ DEACTIVATED'}
+                                    </div>
+                                </div>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 10, background: '#121212', padding: '8px 16px', borderRadius: 20, border: '1px solid #333' }}>
+                                    <span style={{ fontSize: 10, fontWeight: 'bold' }}>{settings.firewall?.enabled ? 'DISABLE' : 'ENABLE'}</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.firewall?.enabled}
+                                        onChange={e => update('firewall', 'enabled', e.target.checked)}
+                                        style={{ width: 18, height: 18 }}
+                                    />
+                                </label>
+                            </div>
+
+                            <p style={{ fontSize: 11, color: '#aaa', lineHeight: '1.6' }}>
+                                The Quantum Firewall automatically detects and redacts sensitive patterns (API keys, security tokens, UUIDs)
+                                from internal logs and context. This prevents accidental leakage of credentials into long-term memory
+                                or external API calls.
+                            </p>
+                        </div>
+
+                        {settings.firewall?.enabled && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 25 }}>
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                                        <label style={labelStyle}>SENSITIVITY THRESHOLD</label>
+                                        <span style={{ fontSize: 11, color: '#00ffff', fontWeight: 'bold' }}>{Math.round((settings.firewall?.sensitivity ?? 0.5) * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.05"
+                                        style={{ width: '100%', cursor: 'pointer', accentColor: '#00ffff' }}
+                                        value={settings.firewall?.sensitivity ?? 0.5}
+                                        onChange={e => update('firewall', 'sensitivity', parseFloat(e.target.value))}
+                                    />
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 9, color: '#555' }}>
+                                        <span>PERMISSIVE (OFF)</span>
+                                        <span>BALANCED</span>
+                                        <span>PARANOID (STRICT)</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={labelStyle}>TARGET REDACTION PATTERNS (REGEX)</label>
+                                    <div style={{ background: '#121212', border: '1px solid #333', borderRadius: 4, padding: 8 }}>
+                                        {(settings.firewall?.targetPatterns || []).map((pattern: string, idx: number) => (
+                                            <div key={idx} style={{ display: 'flex', gap: 5, marginBottom: 5 }}>
+                                                <input
+                                                    style={{ ...inputStyle, marginBottom: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }}
+                                                    value={pattern}
+                                                    onChange={e => {
+                                                        const p = [...(settings.firewall?.targetPatterns || [])];
+                                                        p[idx] = e.target.value;
+                                                        update('firewall', 'targetPatterns', p);
+                                                    }}
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        const p = (settings.firewall?.targetPatterns || []).filter((_: any, i: number) => i !== idx);
+                                                        update('firewall', 'targetPatterns', p);
+                                                    }}
+                                                    style={{ background: 'transparent', border: 'none', color: '#ff4444', cursor: 'pointer', padding: '0 10px' }}
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <button
+                                            onClick={() => {
+                                                const p = [...(settings.firewall?.targetPatterns || []), ""];
+                                                update('firewall', 'targetPatterns', p);
+                                            }}
+                                            style={{ background: 'transparent', border: '1px dashed #444', color: '#888', padding: '8px', cursor: 'pointer', width: '100%', fontSize: 10, marginTop: 5 }}
+                                        >
+                                            + ADD PATTERN
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                                    <div>
+                                        <label style={labelStyle}>REPLACEMENT ANCHOR TEXT</label>
+                                        <input
+                                            style={inputStyle}
+                                            value={settings.firewall?.replacementText || '[REDACTED BY QUANTUM FIREWALL]'}
+                                            onChange={e => update('firewall', 'replacementText', e.target.value)}
+                                            placeholder="[REDACTED]"
+                                        />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        <label style={labelStyle}>AUDIT OPTIONS</label>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', color: '#ccc' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.firewall?.logRedactions !== false}
+                                                onChange={e => update('firewall', 'logRedactions', e.target.checked)}
+                                            />
+                                            <span>Log redaction events to audit-log.jsonl</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* SERVER TAB */}
                 {

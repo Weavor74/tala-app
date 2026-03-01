@@ -1,0 +1,56 @@
+{
+    "run_id": "R-20260228-1830",
+    "timestamp": "2026-02-28T18:30:00Z",
+    "tool_inventory": {
+        "core": [
+            "write_file",
+            "read_file",
+            "list_files",
+            "terminal_run",
+            "mem0_add",
+            "mem0_search",
+            "system_diagnose",
+            "manage_goals",
+            "calculate_strategies"
+        ],
+        "mcp": [
+            "get_agent_emotional_state",
+            "search_memory",
+            "ingest_file",
+            "add",
+            "search"
+        ],
+        "total_count": 25
+    },
+    "failures_detected": [
+        {
+            "id": "T-004",
+            "component": "AstroService",
+            "error": "AttributeError: 'EmotionResponse' object has no attribute 'mood_label'",
+            "impact": "Raw emotional state retrieval fails."
+        },
+        {
+            "id": "T-006",
+            "component": "MemoryService",
+            "error": "Ollama 404: model 'llama3' not found",
+            "impact": "Mem0 cannot extract facts from new memories."
+        },
+        {
+            "id": "T-007",
+            "component": "MemoryService",
+            "error": "ValueError: shapes (0,1536) and (384,) not aligned",
+            "impact": "Memory search fails due to dimension mismatch (likely defaulting to 1536 but index is 384)."
+        },
+        {
+            "id": "S-001",
+            "component": "SystemService",
+            "error": "Venv not detected in data/workspace",
+            "impact": "App defaults to bundled python, missing some soul-contextual dependencies if not pre-installed."
+        }
+    ],
+    "improvement_actions": [
+        "Fix AstroEngine schema to include 'mood_label' in response.",
+        "Parameterize Mem0 LLM model to match user's active Ollama profile.",
+        "Update SystemService to scan project root for venvs when data-dir is redirected."
+    ]
+}

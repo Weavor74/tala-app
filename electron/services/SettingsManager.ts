@@ -84,7 +84,14 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         retentionDays: 30,
         maxProposalsPerDay: 5
     },
-    notebooks: []
+    notebooks: [],
+    firewall: {
+        enabled: true,
+        sensitivity: 0.5,
+        targetPatterns: ["sk-", "ant-api-", "[0-9a-f]{32,}", "AIza", "xoxp-", "xoxb-"],
+        replacementText: "[REDACTED BY QUANTUM FIREWALL]",
+        logRedactions: true
+    }
 };
 
 /** Deep merges two objects. */
