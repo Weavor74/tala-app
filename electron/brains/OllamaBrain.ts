@@ -78,9 +78,23 @@ export class OllamaBrain implements IBrain {
                                 args = JSON.parse(args);
                             }
                         } catch (e) {
-                            console.error(`[OllamaBrain] Failed to parse tool arguments for ${tc.function.name}:`, args);
-                            // Fallback to empty object to satisfy Ollama's strict validation
-                            args = {};
+                            // Try XML parsing fallback
+                            const argRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+                            const parsedArgs: any = {};
+                            let match;
+                            let foundAny = false;
+                            while ((match = argRegex.exec(args)) !== null) {
+                                parsedArgs[match[1]] = match[2].trim();
+                                foundAny = true;
+                            }
+
+                            if (foundAny) {
+                                args = parsedArgs;
+                            } else {
+                                console.error(`[OllamaBrain] Failed to parse tool arguments for ${tc.function.name}:`, args);
+                                // Fallback to empty object to satisfy Ollama's strict validation
+                                args = {};
+                            }
                         }
                     } else if (!args || typeof args !== 'object') {
                         // Ensure it's at least an empty object if somehow null/undefined

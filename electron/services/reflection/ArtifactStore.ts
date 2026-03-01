@@ -168,4 +168,36 @@ export class ArtifactStore {
                 .map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')) as OutcomeRecord);
         } catch { return []; }
     }
+
+    /**
+     * Deletes proposal files based on their status.
+     * @returns Number of files deleted.
+     */
+    async deleteProposalsByStatus(status: 'applied' | 'rejected' | 'failed'): Promise<number> {
+        const dir = path.join(this.baseDir, 'proposals');
+        if (!fs.existsSync(dir)) return 0;
+
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        let deletedCount = 0;
+
+        for (const file of files) {
+            const filePath = path.join(dir, file);
+            try {
+                const content = fs.readFileSync(filePath, 'utf-8');
+                const proposal = JSON.parse(content) as ChangeProposal;
+                if (proposal.status === status) {
+                    fs.unlinkSync(filePath);
+                    deletedCount++;
+                }
+            } catch (err) {
+                console.error(`[ArtifactStore] Failed to process proposal ${file} during cleanup:`, err);
+            }
+        }
+
+        if (deletedCount > 0) {
+            this.rebuildIndex();
+        }
+
+        return deletedCount;
+    }
 }

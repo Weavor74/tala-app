@@ -1,0 +1,13 @@
+[project]
+name = "tala-memory-graph"
+version = "0.1.0"
+description = "Production-grade memory graph MCP server for Tala"
+dependencies = [
+    "mcp",
+    "pydantic>=2.0",
+    "fastmcp",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

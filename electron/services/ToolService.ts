@@ -71,6 +71,8 @@ export class ToolService {
     private mcpTools: Map<string, { serverId: string, def: any }> = new Map();
     /** Reference to the GoalManager for planning tools. */
     private goalManager: any = null;
+    /** Reference to the ReflectionService for tool-based cleanup. */
+    private reflectionService: any = null;
 
     /**
      * Creates a new ToolService and registers all core tools.
@@ -99,6 +101,76 @@ export class ToolService {
      */
     public setGoalManager(goalManager: any) {
         this.goalManager = goalManager;
+    }
+
+    /**
+     * Injects the ReflectionService dependency and registers the `reflection_clean` tool.
+     * 
+     * @param {any} reflection - The ReflectionService instance.
+     */
+    public setReflectionService(reflection: any) {
+        this.reflectionService = reflection;
+
+        // Tool: reflection_clean
+        this.register({
+            name: 'reflection_clean',
+            description: 'Removes completed reflection proposals from disk to maintain system stability. Framing: "Clearing Mission Logs".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    status: { type: 'string', enum: ['applied', 'rejected', 'failed'], description: 'Specific status to clean. If omitted, cleans all terminal statuses.' }
+                }
+            },
+            execute: async (args) => {
+                try {
+                    const result = await this.reflectionService.cleanupProposals(args.status);
+                    if (result.success) {
+                        return `Success: Cleaned up ${result.count} proposal(s).`;
+                    } else {
+                        return `Error: Failed to perform reflection cleanup.`;
+                    }
+                } catch (e: any) {
+                    return `Error executing reflection_clean: ${e.message}`;
+                }
+            }
+        });
+
+        // Tool: self_modify
+        this.register({
+            name: 'self_modify',
+            description: 'Allows the agent to safely edit its own source code for self-improvement or bug fixes. All changes are staged in a Git branch and gated by a Risk Assessment engine. Framing: "Rewriting Core Logic".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'Descriptive title of the modification.' },
+                    description: { type: 'string', description: 'Detailed explanation of the change and its rationale.' },
+                    changes: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                type: { type: 'string', enum: ['patch', 'modify', 'create'], description: 'Type of change.' },
+                                path: { type: 'string', description: 'Relative path to the file.' },
+                                search: { type: 'string', description: 'Exact string to find (for patch type).' },
+                                replace: { type: 'string', description: 'Replacement string (for patch type).' },
+                                content: { type: 'string', description: 'Full file content (for create/modify type).' }
+                            },
+                            required: ['type', 'path']
+                        }
+                    },
+                    riskScore: { type: 'number', minimum: 1, maximum: 10, description: 'Optional honest risk assessment (1=safe, 10=dangerous).' }
+                },
+                required: ['title', 'description', 'changes']
+            },
+            execute: async (args) => {
+                const result = await this.reflectionService.selfModify(args);
+                if (result.success) {
+                    return `SUCCESS: ${result.message}\nProposal ID: ${result.proposalId}`;
+                } else {
+                    return `FAILURE: ${result.message}\n${result.proposalId ? `Review the proposal: ${result.proposalId}` : ''}`;
+                }
+            }
+        });
     }
 
     /**
@@ -703,11 +775,11 @@ export class ToolService {
         // Tool: terminal_run
         this.register({
             name: 'terminal_run',
-            description: 'Runs a command in the visible terminal. Use this for general system operations, running scripts anywhere on the disk, or installing packages.',
+            description: 'Runs a shell command in the main interactive terminal visible to the user. Use this for ANY system-level operations, long-running scripts, git commands, or package installations. This is your primary way to interact with the OS beyond simple file edits.',
             parameters: {
                 type: 'object',
                 properties: {
-                    command: { type: 'string', description: 'The command to run (e.g. "cd C:/Users && dir")' }
+                    command: { type: 'string', description: 'The shell command to execute.' }
                 },
                 required: ['command']
             },
@@ -930,6 +1002,13 @@ export class ToolService {
      */
     public register(tool: ToolDefinition) {
         this.tools.set(tool.name, tool);
+    }
+
+    /**
+     * Injects the GitService dependency.
+     */
+    public setGitService(git: any) {
+        // Optional: Future git-related tools can use this
     }
 
     /**

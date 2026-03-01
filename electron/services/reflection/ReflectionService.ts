@@ -27,6 +27,7 @@ export class ReflectionService {
     private risk: RiskEngine;
     private apply: ApplyEngine;
     private rollback: RollbackEngine;
+    private git: any = null;
     private settingsPath: string;
     private isEnabled: boolean;
 
@@ -81,6 +82,111 @@ export class ReflectionService {
     }
 
     /**
+     * Injects the GitService dependency.
+     */
+    public setGitService(git: any) {
+        this.git = git;
+    }
+
+    /**
+     * Direct entry point for the self_modify tool.
+     * Proposes a change, creates a branch, applies it, and commits if successful.
+     */
+    async selfModify(args: {
+        title: string,
+        description: string,
+        changes: any[],
+        category?: any,
+        riskScore?: number
+    }): Promise<{ success: boolean; message: string; proposalId?: string }> {
+        if (!this.git) {
+            return { success: false, message: 'Git capability not available. Self-modification requires an active Git workspace.' };
+        }
+
+        const proposalId = `selffix_${Math.random().toString(36).substring(7)}`;
+        const branchName = `tala/self-modify/${proposalId}`;
+
+        try {
+            console.log(`[ReflectionService] 🧬 Initiating Self-Modification: ${args.title}`);
+
+            // 1. Create a logical proposal object
+            const proposal: ChangeProposal = {
+                id: proposalId,
+                reflectionId: 'manual_tool_invocation',
+                category: args.category || 'bugfix',
+                title: args.title,
+                description: args.description,
+                risk: {
+                    score: (args.riskScore ?? 5) as any,
+                    reasoning: 'Self-modification requested via tool.'
+                },
+                changes: args.changes,
+                rollbackPlan: `Git checkout previous branch and delete ${branchName}`,
+                status: 'pending'
+            };
+
+            // 2. Risk Assessment (Gate)
+            const assessment = await this.risk.assess(proposal);
+            if (!assessment.canAutoApply) {
+                // If it fails auto-apply, we save it and wait for manual approval
+                await this.store.saveProposal(proposal);
+                this.notifyRenderer('reflection:proposal-created', {
+                    id: proposal.id,
+                    title: proposal.title,
+                    score: assessment.finalScore,
+                    category: proposal.category
+                });
+                return {
+                    success: false,
+                    message: `Risk level (${assessment.finalScore}) or safety gates require manual approval for this modification. View the proposal in the Reflection Panel.`,
+                    proposalId
+                };
+            }
+
+            // 3. Prepare Workspace (Git)
+            const originalBranch = await this.git.getCurrentBranch();
+            await this.git.createBranch(branchName);
+
+            // 4. Apply Changes
+            const outcome = await this.apply.apply(proposal);
+
+            if (!outcome.success) {
+                // Rollback Git
+                await this.git.checkout(originalBranch);
+                await this.git.deleteBranch(branchName);
+                return { success: false, message: `Failed to apply changes: ${outcome.error}` };
+            }
+
+            // 5. Verification (Simple check for now, can be expanded)
+            // If the app is still running and this code executed, it's a good sign.
+            // Future: Run 'npm test' or similar here.
+
+            // 6. Finalize (Commit)
+            for (const change of args.changes) {
+                await this.git.stage(change.path);
+            }
+            await this.git.commit(`[Tala Self-Modify] ${args.title}\n\n${args.description}`);
+
+            return {
+                success: true,
+                message: `Successfully applied and committed modification to branch ${branchName}.`,
+                proposalId
+            };
+
+        } catch (error: any) {
+            console.error('[ReflectionService] Self-modification crashed:', error);
+            // Attempt cleanup
+            try {
+                const current = await this.git.getCurrentBranch();
+                if (current === branchName) {
+                    await this.git.checkout('main'); // Fallback
+                }
+            } catch { }
+            return { success: false, message: `System error during modification: ${error.message}` };
+        }
+    }
+
+    /**
      * Executes a full reflection cycle: Capture -> Analyze -> Propose -> Gate -> Apply/Wait.
      */
     async runReflectionCycle() {
@@ -120,6 +226,31 @@ export class ReflectionService {
             console.log('[ReflectionService] ── Reflection Cycle End ──');
         } catch (error) {
             console.error('[ReflectionService] Error in reflection cycle:', error);
+        }
+    }
+
+    /**
+     * Cleans up proposals based on status.
+     */
+    async cleanupProposals(status?: 'applied' | 'rejected' | 'failed'): Promise<{ success: boolean; count: number }> {
+        try {
+            console.log(`[ReflectionService] Cleaning up proposals with status: ${status || 'all completed/failed'}...`);
+            let totalDeleted = 0;
+
+            if (status) {
+                totalDeleted = await this.store.deleteProposalsByStatus(status);
+            } else {
+                // Batch clean all terminal statuses
+                totalDeleted += await this.store.deleteProposalsByStatus('applied');
+                totalDeleted += await this.store.deleteProposalsByStatus('rejected');
+                totalDeleted += await this.store.deleteProposalsByStatus('failed');
+            }
+
+            console.log(`[ReflectionService] Cleaned up ${totalDeleted} proposal(s).`);
+            return { success: true, count: totalDeleted };
+        } catch (error) {
+            console.error('[ReflectionService] Error during proposal cleanup:', error);
+            return { success: false, count: 0 };
         }
     }
 
@@ -171,6 +302,10 @@ export class ReflectionService {
                 successRate: total > 0 ? applied / total : 1.0,
                 lastHeartbeat: new Date().toISOString()
             };
+        });
+
+        ipcMain.handle('reflection:clean-proposals', async (_, status?: 'applied' | 'rejected' | 'failed') => {
+            return await this.cleanupProposals(status);
         });
     }
 

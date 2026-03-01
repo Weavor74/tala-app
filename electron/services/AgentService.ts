@@ -100,6 +100,8 @@ export class AgentService {
     private ingestion: IngestionService;
     /** Sub-agent orchestrator for background tasks. */
     private orchestrator!: OrchestratorService;
+    /** Reference to the reflection service for self-modification and cleanup. */
+    private reflectionService: any = null;
     /** Optional reference to the terminal for executing commands. */
     private terminal: TerminalService | null = null;
     /** Optional reference to the function service for `/command` shortcuts. */
@@ -468,10 +470,19 @@ export class AgentService {
 
     /**
      * Injects the GitService dependency.
-     * (Currently unused by Agent directly, but kept for API consistency/future expansion)
      */
     public setGitService(git: any) {
-        // Future: Register git tools here if needed
+        this.tools.setGitService(git);
+        // ReflectionService also needs Git for self-modification
+        this.reflectionService?.setGitService(git);
+    }
+
+    /**
+     * Injects the ReflectionService dependency.
+     */
+    public setReflectionService(reflection: any) {
+        this.reflectionService = reflection;
+        this.tools.setReflectionService(reflection);
     }
 
     /**
@@ -1916,8 +1927,11 @@ You can use environment variables to override the manifest settings:
         const providerConfig = settings.inference?.providers?.find((p: any) => p.id === activeProviderId);
         const providerType = providerConfig?.type || 'ollama';
 
-        // Disabling native native tools for local models to force XML mode
-        const supportsNativeTools = (providerType === 'openai' || providerType === 'anthropic' || providerType === 'google' || providerType === 'gemini');
+        // Expanding native tool support for Ollama and other OpenAI-compatible providers
+        const supportsNativeTools = [
+            'openai', 'anthropic', 'google', 'gemini',
+            'ollama', 'llamacpp', 'vllm', 'openrouter', 'groq', 'custom'
+        ].includes(providerType);
 
         // We ALWAYS use compact signatures now to save tokens. The LLM gets the rules from the XML prompt.
         const toolSchemas = this.tools.getToolSignatures();
@@ -2903,7 +2917,7 @@ Always use the XML <tool_call> format for tools. Example:
         }
 
         // Pattern 1.5: XML <tool_call> blocks 
-        const xmlRegex = /<tool_call>[\s\S]*?<name>(.*?)<\/name>[\s\S]*?<args>([\s\S]*?)<\/args>[\s\S]*?<\/tool_call>/g;
+        const xmlRegex = /<tool_call\s*>[\s\S]*?<name\s*>(.*?)<\/name\s*>[\s\S]*?<args\s*>([\s\S]*?)<\/args\s*>[\s\S]*?<\/tool_call\s*>/g;
         let xmlMatch;
         while ((xmlMatch = xmlRegex.exec(text)) !== null) {
             const name = xmlMatch[1].trim();
@@ -2919,8 +2933,20 @@ Always use the XML <tool_call> format for tools. Example:
                         args = JSON.parse(rawArgs);
                     }
                 } catch (e) {
-                    // Try to repair if it lacks outer braces
-                    if (!rawArgs.trim().startsWith('{')) {
+                    // Strategy 2: Try to parse XML-style tags: <arg>value</arg>
+                    const argRegex = /<(\w+)\s*>([\s\S]*?)<\/\1\s*>/g;
+                    const parsedArgs: any = {};
+                    let match;
+                    let foundAny = false;
+                    while ((match = argRegex.exec(rawArgs)) !== null) {
+                        parsedArgs[match[1]] = match[2].trim();
+                        foundAny = true;
+                    }
+
+                    if (foundAny) {
+                        args = parsedArgs;
+                    } else if (!rawArgs.trim().startsWith('{')) {
+                        // Strategy 3: Try to repair if it lacks outer braces
                         try { args = JSON.parse(`{${rawArgs}}`); } catch (e2) {
                             console.warn("[AgentService] Auto-repair of XML args failed. Passing raw string.");
                             args = rawArgs;

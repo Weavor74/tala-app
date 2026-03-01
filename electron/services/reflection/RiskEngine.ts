@@ -189,7 +189,13 @@ export class RiskEngine {
     }
 
     private containsForbiddenActions(proposal: ChangeProposal): boolean {
-        const forbiddenPatterns = [/rm -rf \//, /app\.quit\(\)/, /chmod 777/];
+        const forbiddenPatterns = [
+            /rm -rf \//,
+            /app\.quit\(\)/,
+            /chmod 777/,
+            /autoApplyRiskLevel\s*=\s*10/, // Forbid disabling risk gate
+            /passed:\s*true/              // Forbid spoofing gate results in source
+        ];
         return proposal.changes.some(c => {
             const content = (c.content || c.replace || '');
             return forbiddenPatterns.some(p => p.test(content));

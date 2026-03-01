@@ -83,6 +83,7 @@ ipcMain.handle('voice:status', async () => voiceService.getStatus());
 // Wire Dependencies
 agent.setMcpService(mcpService);
 agent.setGitService(gitService);
+agent.setReflectionService(reflectionService);
 guardrailService.setInferenceFn((prompt: string) => agent.headlessInference(prompt));
 
 // Initialize Workflow Scheduler
