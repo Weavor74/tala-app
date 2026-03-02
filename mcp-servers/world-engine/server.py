@@ -1,3 +1,9 @@
+import sys
+
+# === CRITICAL: Redirect stdout to stderr BEFORE any imports ===
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
 from mcp.server.fastmcp import FastMCP
 import os
 import ast
@@ -170,4 +176,5 @@ def workspace_overview(workspace_root: str, max_depth: int = 2) -> Dict[str, Any
     return overview
 
 if __name__ == "__main__":
+    sys.stdout = _real_stdout  # restore for MCP protocol transport
     mcp.run(transport='stdio')

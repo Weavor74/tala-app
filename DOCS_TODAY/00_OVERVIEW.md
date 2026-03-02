@@ -12,10 +12,9 @@
 
 The **Tala Application** (`tala-app`) is a self-aware, Electron-based desktop environment that integrates:
 
-- A full-featured React frontend  
-- Local & cloud LLM inference endpoints (hybrid mode)  
-- Persistent memory via MCP servers (memory, filesystem, astro-emotion)  
-- Dynamic UI rendering (A2UI)  
+- A full-featured React frontend
+- Local & cloud LLM inference endpoints (hybrid mode)
+- Persistent memory via MCP servers (memory, filesystem, astro-emotion)
 - Full runtime code read/write access to its own source (`tala-app/` folder)
 
 It runs as a standalone desktop application (no server dependency by default), supports offline-first deployment, and is built with TypeScript, React 19, Vite, and Electron 34.
@@ -33,7 +32,6 @@ It runs as a standalone desktop application (no server dependency by default), s
 | **Memory** | Persistent vector-backed recall via `mem0-core` | `mcp-servers/mem0-core/server.py` | Memory is stored locally (`./data/memory/`) unless remote provider configured |
 | **Emotion** | Real-time astro-emotion modulation based on birth time/place | `mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py` | Uses only birth *date/time/place*—no biometric or continuous tracking |
 | **Code Self-Modification** | Read/write access to own codebase (`tala-app/`) | Toolset: `read_file`, `write_file`, `patch_file`, `edit_file` | Explicitly documented and enabled per user request; auditable |
-| **UI Rendering** | Dynamic A2UI rendering (JSON → React components) | `A2UIRenderer.tsx`, `catalog/` | Components strictly limited to UI rendering—no filesystem access |
 | **Source Control** | Git / GitHub / GitLab / Bitbucket integration | MCP-based source control server | Credentials stored only in encrypted local storage |
 | **Terminal & Browser** | Integrated terminal, file explorer, and web browser | `Terminal.tsx`, `FileExplorer.tsx`, `Browser.tsx` | All access scoped to user’s host; no remote telemetry |
 
@@ -49,7 +47,7 @@ It runs as a standalone desktop application (no server dependency by default), s
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Tala Frontend (React 19)                   │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────────┐ │
-│  │  A2UI Render│ │  Settings   │ │ UserProfile │ │   Workflows   │ │
+│  │  Chat/Term  │ │  Settings   │ │ UserProfile │ │   Workflows   │ │
 │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────────┘ │
 └────────────────────┬────────────────────────────────────────────────┘
                      │ IPC (Electron)
@@ -80,7 +78,7 @@ It runs as a standalone desktop application (no server dependency by default), s
 1. **User Input** → React components (`Terminal.tsx`, `ChatSessions.tsx`)  
 2. **IPC → Agent Service** → MCP tools (filesystem, memory, astro-emotion)  
 3. **Agent → LLM (Local/Cloud)** → Response stream  
-4. **Response → A2UI Renderer** → Dynamic React UI (cards, buttons, forms, etc.)  
+4. **Response → React UI** → Text/markdown rendering in chat interface  
 5. **User Action → `AppSettings` persistence** → JSON disk write  
 
 All data paths are *local-first* by default.

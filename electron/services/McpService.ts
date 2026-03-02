@@ -116,7 +116,7 @@ export class McpService {
                 transport = new StdioClientTransport({
                     command: command,
                     args: config.args || [],
-                    env: process.env as any // config.env not yet in interface
+                    env: (config as any).env || process.env as any
                 });
 
             } else if (config.type === 'websocket') {

@@ -16,6 +16,14 @@ Agent profiles are stored as JSON on disk via ``ProfileManager``.
 Charts are computed on-the-fly via ``ChartFactory`` + ``AstroEmotionEngine``.
 """
 
+import sys
+
+# === CRITICAL: Redirect stdout to stderr BEFORE any imports ===
+# MCP uses stdout as its JSON-RPC transport. Astro engine imports
+# (ephem, pyswisseph, dateutil) may print during load. Swap before importing.
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
 from datetime import datetime
 import json
 import logging
@@ -89,7 +97,7 @@ def get_agent_emotional_state(agent_id: str, context_prompt: str = "") -> str:
         
     except Exception as e:
         import traceback
-        traceback.print_exc() 
+        traceback.print_exc(file=sys.stderr)
         return f"Error calculating state: {str(e)}"
 
 @mcp.tool()
@@ -138,7 +146,7 @@ def get_ad_hoc_emotional_state(birth_date: str, birth_place: str, context_prompt
         
     except Exception as e:
         import traceback
-        traceback.print_exc() 
+        traceback.print_exc(file=sys.stderr)
         return f"Error calculating state: {str(e)}"
 
 @mcp.tool()
@@ -377,4 +385,5 @@ def get_current_state() -> str:
     return "Current global transit state implementation pending."
 
 if __name__ == "__main__":
+    sys.stdout = _real_stdout  # restore for MCP protocol transport
     mcp.run(transport='stdio')

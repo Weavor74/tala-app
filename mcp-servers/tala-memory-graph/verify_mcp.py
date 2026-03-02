@@ -18,10 +18,18 @@ def test_mcp_logic():
     assert len(ids) == 1
     
     # Retrieve context
-    print("2. Testing retrieve_context...")
-    context = memory.retrieve_context("Tala")
+    print("2. Testing retrieve_context with emotion...")
+    context = memory.retrieve_context("Tala", emotion="happy", intensity=1.0)
     print(f"Context:\n{context['context_str']}")
+    assert "HAPPY" in context['context_str']
     assert "Tala is a production-grade assistant" in context['context_str']
+    
+    # Check Audit Log
+    print("3. Checking Audit Log...")
+    if os.path.exists("memory_audit.jsonl"):
+        print("Audit log exists and verified.")
+    else:
+        raise Exception("Audit log missing!")
     
     # Close connection
     del memory

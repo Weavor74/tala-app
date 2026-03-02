@@ -11,6 +11,7 @@ import { RagService } from './RagService';
  */
 export class IngestionService {
     private isScanning = false;
+    private isStructuredMode = false;
     private memoryDirPath: string;
 
     private processedDirPath: string;
@@ -26,6 +27,14 @@ export class IngestionService {
     public setWorkspaceRoot(root: string): void {
         this.memoryDirPath = path.join(root, 'memory');
         this.processedDirPath = path.join(this.memoryDirPath, 'processed');
+    }
+
+    /**
+     * Toggles structured LTMF mode. If true, .txt files are ignored during ingestion scans.
+     */
+    public setStructuredMode(enabled: boolean): void {
+        this.isStructuredMode = enabled;
+        console.log(`[Ingestion] Structured LTMF mode: ${enabled ? 'ENABLED (Ignoring .txt)' : 'DISABLED'}`);
     }
 
     /**
@@ -49,7 +58,10 @@ export class IngestionService {
             const folders = [
                 { name: 'root', path: this.memoryDirPath, category: 'general' },
                 { name: 'roleplay', path: path.join(this.memoryDirPath, 'roleplay'), category: 'roleplay' },
-                { name: 'assistant', path: path.join(this.memoryDirPath, 'assistant'), category: 'assistant' }
+                { name: 'assistant', path: path.join(this.memoryDirPath, 'assistant'), category: 'assistant' },
+                { name: 'roleplay_md', path: path.join(this.memoryDirPath, 'roleplay_md'), category: 'roleplay' },
+                // Also check processed/roleplay_md in case they were moved there without indexing
+                { name: 'processed_roleplay_md', path: path.join(this.processedDirPath, 'roleplay_md'), category: 'roleplay' }
             ];
 
             // Ensure subdirectories exist
@@ -90,7 +102,10 @@ export class IngestionService {
 
                     if (stat.isDirectory()) continue;
 
-                    if (stat.isFile() && (file.endsWith('.md') || file.endsWith('.docx') || file.endsWith('.txt'))) {
+                    const allowedExtensions = this.isStructuredMode ? ['.md', '.docx'] : ['.md', '.docx', '.txt'];
+                    const ext = path.extname(file).toLowerCase();
+
+                    if (stat.isFile() && allowedExtensions.includes(ext)) {
                         console.log(`[Ingestion] Found inbox file in ${folder.name}: ${file}`);
 
                         // Determine destination: memory/processed/{category}/file.txt
@@ -155,13 +170,43 @@ export class IngestionService {
     }
 
     /**
-     * Unifies file path formatting for consistent comparison across platforms.
-     * matching the logic in RagService.ts.
+     * Moves all legacy .txt files from processed folders to an archive directory.
+     * This prevents them from being used for retrieval while preserving the files.
      */
-    private normalizePath(p: string): string {
-        let normalized = p.replace(/\//g, '\\');
-        normalized = normalized.replace(/\\\\/g, '\\');
-        // Allow lowercase for full case insensitivity
-        return normalized.toLowerCase();
+    public async archiveLegacy(): Promise<number> {
+        console.log('[Ingestion] Archiving legacy .txt memories...');
+        const archiveDir = path.join(this.memoryDirPath, 'archive');
+        if (!fs.existsSync(archiveDir)) {
+            fs.mkdirSync(archiveDir, { recursive: true });
+        }
+
+        let archivedCount = 0;
+        const categories = ['roleplay', 'assistant', 'general'];
+
+        for (const cat of categories) {
+            const catProcessedDir = path.join(this.processedDirPath, cat);
+            if (!fs.existsSync(catProcessedDir)) continue;
+
+            const files = fs.readdirSync(catProcessedDir);
+            for (const file of files) {
+                if (file.endsWith('.txt')) {
+                    const srcPath = path.join(catProcessedDir, file);
+                    const destCatDir = path.join(archiveDir, cat);
+                    if (!fs.existsSync(destCatDir)) fs.mkdirSync(destCatDir, { recursive: true });
+
+                    const destPath = path.join(destCatDir, file);
+                    try {
+                        if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+                        fs.renameSync(srcPath, destPath);
+                        archivedCount++;
+                    } catch (e) {
+                        console.error(`[Ingestion] Failed to archive ${file}:`, e);
+                    }
+                }
+            }
+        }
+
+        console.log(`[Ingestion] Archived ${archivedCount} legacy files.`);
+        return archivedCount;
     }
 }

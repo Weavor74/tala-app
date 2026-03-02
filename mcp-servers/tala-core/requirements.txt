@@ -3,5 +3,10 @@ fastapi
 uvicorn
 pydantic
 numpy
-sentence-transformers
+# Pinned to a known-good set. huggingface_hub 0.25+ changed token_classification APIs
+# that break sentence-transformers < 3.x. Pin together to avoid silent import errors.
+sentence-transformers>=3.0.0,<4.0.0
+huggingface_hub>=0.24.0,<0.26.0
+transformers>=4.40.0,<4.50.0
 python-dateutil
+PyYAML

@@ -245,10 +245,23 @@ export class MemoryService {
                     name: "mem0_search",
                     arguments: { query, limit }
                 });
+                // Parse JSON response from the server
                 if (result && result.content && Array.isArray(result.content)) {
-                    return result.content
-                        .filter((c: any) => c.type === 'text')
-                        .map((c: any) => ({ id: 'remote', text: c.text, timestamp: Date.now() }));
+                    const textContent = result.content.find((c: any) => c.type === 'text');
+                    if (textContent && textContent.text) {
+                        try {
+                            const memories = JSON.parse(textContent.text);
+                            if (Array.isArray(memories)) {
+                                return memories.map((m: any) => ({
+                                    id: 'remote',
+                                    text: m.text || String(m),
+                                    timestamp: Date.now()
+                                }));
+                            }
+                        } catch (parseError) {
+                            console.warn("[Memory] Failed to parse JSON response:", parseError);
+                        }
+                    }
                 }
             } catch (e) {
                 console.warn("[Memory] Remote search failed, falling back to local.");
@@ -305,7 +318,7 @@ export class MemoryService {
             try {
                 await this.client.callTool({
                     name: "mem0_add",
-                    arguments: { text, ...metadata }
+                    arguments: { text, metadata }
                 });
             } catch (e) {
                 console.warn("[Memory] Remote add failed");

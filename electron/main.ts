@@ -181,11 +181,6 @@ app.on('ready', async () => {
   if (fs.existsSync(SETTINGS_PATH)) {
     try {
       const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-      if (settings.mcpServers) {
-        const userServers = settings.mcpServers.filter((s: any) => !['astro-emotion', 'tala-core', 'memory'].includes(s.id));
-        await mcpService.sync(userServers);
-        await agent.refreshMcpTools();
-      }
       if (settings.system?.env) terminalService.setCustomEnv(settings.system.env);
     } catch (e) { }
   }

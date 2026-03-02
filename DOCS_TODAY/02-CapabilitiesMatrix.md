@@ -24,30 +24,19 @@ This document catalogs **every operational capability** of the Tala Application,
 
 ## 2. UI Layer Capabilities
 
-### 2.1 A2UI Dynamic Rendering
+### 2.1 Chat Interface
 
 | Capability | Source | Signature | Notes |
 |---|---|---|---|
-| Render JSON → React UI | `src/renderer/A2UIRenderer.tsx:22` | `RecursiveRenderer(component: A2UIComponent): ReactNode` | Converts agent-generated JSON into React elements using catalog components (`button`, `card`, `text`, `code`, `form`, etc.) |
-| Catalog lookup | `src/renderer/catalog/BasicComponents.tsx:15`, `FormComponents.tsx:20` | `export const COMPONENT_MAP: Record<string, React.FC<any>>` | Maps string types (e.g., `"button"`) to React components |
+| Chat message rendering | `src/renderer/components/ChatSessions.tsx` | Message list with markdown support | Renders LLM responses as markdown/text |
+| Browser embed | `src/renderer/components/Browser.tsx:128` | `navigate(url: string)` | Uses `browser.navigate` IPC |
+| Terminal embed | `src/renderer/components/Terminal.tsx:45` | `terminal_run(command: string)` | Uses `terminal_run` tool (Node.js `spawn`) |
 
-**Compliance**: UI rendering is *passive* — no side effects beyond DOM. No file or network access occurs within A2UI components.
-
----
-
-### 2.2 Browser View
-
-| Capability | Source | Signature | Notes |
-|---|---|---|---|
-| Navigate to URL | `src/renderer/components/Browser.tsx:128` | `navigate(url: string)` | Uses `browser.navigate` IPC |
-| Execute DOM clicks | `Browser.tsx:135` | `click(selector: string)` | Uses `browser_click` tool internally (MCP) |
-| Type into forms | `Browser.tsx:142` | `type(selector: string, text: string)` | Uses `browser_type` tool internally |
-
-**Compliance**: Browser view is a UI container only. All interaction occurs via MCP tools (no direct DOM manipulation in React layer).
+**Compliance**: UI rendering is *passive* — no side effects beyond DOM. No file or network access occurs within UI components.
 
 ---
 
-### 2.3 File Explorer
+### 2.2 File Explorer
 
 | Capability | Source | Signature | Notes |
 |---|---|---|---|
@@ -59,7 +48,7 @@ This document catalogs **every operational capability** of the Tala Application,
 
 ---
 
-### 2.4 Terminal
+### 2.3 Terminal
 
 | Capability | Source | Signature | Notes |
 |---|---|---|---|

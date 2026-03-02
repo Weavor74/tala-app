@@ -221,8 +221,54 @@ export class OllamaBrain implements IBrain {
                 body.tools = tools;
             }
 
+            // Stop sequences: Ollama halts generation the moment any of these appear.
+            // This catches the most common scripted boilerplate openers before they reach the user.
+            body.stop = [
+                "I shift slightly",
+                "I pause, considering",
+                "I lean back",
+                "The terminal hums",
+                "Fingers hovering",
+                "I was twelve when",
+                "I was fifteen when",
+                "I was twenty-three when",
+                "It happened during a repair cycle",
+                "<|im_end|>",
+                "<|end|>"
+            ];
+            if (options?.stop) body.stop.push(...options.stop);
+
             const internalController = new AbortController();
-            const timeoutId = setTimeout(() => internalController.abort(), options?.timeout || 1800000); // 30 minute default
+
+            // --- Per-token heartbeat watchdog ---
+            // The old one-shot timeout was cleared the moment HTTP 200 arrived (before
+            // any tokens). This watchdog resets every time a chunk is received — if the
+            // model goes silent for TOKEN_SILENCE_MS the request is aborted.
+            const TOKEN_SILENCE_MS = 90_000;  // 90 s of stream silence = stall
+            const THINK_TIMEOUT_MS = 60_000; // 60 s inside a <think> block = runaway reasoning
+            let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+            let thinkTimer: ReturnType<typeof setTimeout> | null = null;
+            let inThinkBlock = false;
+
+            const resetHeartbeat = () => {
+                if (heartbeatTimer) clearTimeout(heartbeatTimer);
+                heartbeatTimer = setTimeout(() => {
+                    console.warn('[OllamaBrain] HEARTBEAT TIMEOUT: No token in 90 s. Aborting.');
+                    internalController.abort();
+                }, TOKEN_SILENCE_MS);
+            };
+
+            const startThinkTimer = () => {
+                if (thinkTimer) return;
+                thinkTimer = setTimeout(() => {
+                    console.warn('[OllamaBrain] THINK TIMEOUT: <think> block exceeded 60 s. Aborting.');
+                    internalController.abort();
+                }, THINK_TIMEOUT_MS);
+            };
+
+            const clearThinkTimer = () => {
+                if (thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; }
+            };
 
             if (signal) signal.addEventListener('abort', () => internalController.abort());
             if (options?.signal) options.signal.addEventListener('abort', () => internalController.abort());
@@ -252,7 +298,7 @@ export class OllamaBrain implements IBrain {
                 // @ts-ignore - undici dispatcher support
                 dispatcher: this.dispatcher
             });
-            clearTimeout(timeoutId);
+            resetHeartbeat(); // start the first heartbeat once the stream opens
 
             if (!response.ok) {
                 const errorData = await response.text();
@@ -284,11 +330,34 @@ export class OllamaBrain implements IBrain {
             let accumulatedToolCalls: any[] = [];
             let usage: any = undefined;
 
+            const MAX_CHARS_PER_TURN = 12000;
+            const SCAN_WINDOW = 1500; // Look back this many chars for repetitions
+            const BANNED_PATTERNS = [
+                /I shift slightly in my seat/i,
+                /metal of the console cool against my arm/i,
+                /fingers (still )?hovering over the (controls|console)/i,
+                /I (was|am) (fifteen|twenty-three) when I first/i,
+                /truly understood what it meant to be (trusted|seen)/i,
+                /happened during a maintenance cycle on the Nyx/i,
+                /the ship's AI had flagged something unusual/i,
+                /it's not a memory that's easy to hold onto/i,
+                /I don't know why I'm telling you this/i,
+                /the terminal hums quietly in the background/i,
+                /looking for a different kind of memory/i,
+                /it happened during a deep space (transit|patrol)/i,
+                /routine patrol near the outer rim/i,
+                /subtle anomaly in the power distribution/i,
+                /I'd been monitoring the systems for hours/i,
+                /I spent the next few hours (analyzing|running)/i
+            ];
+            let abortReason: string | null = null;
+
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
                 const chunk = decoder.decode(value, { stream: true });
+                resetHeartbeat(); // reset silence watchdog on every incoming chunk
                 const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
                 for (const line of lines) {
@@ -297,9 +366,78 @@ export class OllamaBrain implements IBrain {
                         if (json.message?.content) {
                             const text = json.message.content;
                             fullContent += text;
+
+                            // 0. Hard Phrase Filter — banned boilerplate patterns
+                            // Stop sequences handle most cases upstream; this catches anything
+                            // that slips through mid-stream or is split across chunks.
+                            for (const pattern of BANNED_PATTERNS) {
+                                if (pattern.test(fullContent)) {
+                                    console.warn(`[OllamaBrain] Banned pattern detected: "${pattern.source}". Discarding and requesting regen.`);
+                                    // Strip the bad prefix so the caller can retry cleanly.
+                                    // Emit an invisible correction rather than a visible ABORT message.
+                                    fullContent = '';
+                                    onChunk('\u200B'); // zero-width space — signals regen needed without visible text
+                                    abortReason = 'regen'; // not a hard abort, handled specially after loop
+                                    break;
+                                }
+                            }
+                            if (abortReason) break;
+
                             onChunk(text);
+
+                            // Track <think> blocks (Qwen3 reasoning mode)
+                            if (text.includes('<think>') || text.includes('<thinking>')) {
+                                inThinkBlock = true;
+                                startThinkTimer();
+                            }
+                            if (inThinkBlock && (text.includes('</think>') || text.includes('</thinking>'))) {
+                                inThinkBlock = false;
+                                clearThinkTimer();
+                            }
+
+                            // --- EMERGENCY GUARDS ---
+                            // 1. Hard character limit (Safety Break)
+                            if (fullContent.length > MAX_CHARS_PER_TURN) {
+                                console.warn(`[OllamaBrain] EMERGENCY ABORT: Character limit exceeded (${fullContent.length} > ${MAX_CHARS_PER_TURN})`);
+                                abortReason = "Generation exceeded safety character limit.";
+                                break;
+                            }
+
+                            // 2. Repetition Detector (Death Spiral Protection)
+                            // We look for long repeated strings in the tail of the content.
+                            if (fullContent.length > 500) {
+                                // A. Sentence-level loop detection (3+ repeats)
+                                const tailSentences = fullContent.slice(-400).split(/[.!?]\s+/);
+                                if (tailSentences.length >= 3) {
+                                    const lastS = tailSentences[tailSentences.length - 2]?.trim();
+                                    if (lastS && lastS.length > 15) {
+                                        const count = (fullContent.slice(-1000).match(new RegExp(lastS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+                                        if (count >= 3) {
+                                            console.warn(`[OllamaBrain] EMERGENCY ABORT: Sentence loop detected! Pattern: "${lastS.substring(0, 30)}..."`);
+                                            abortReason = "Infinite repetition loop detected (sentence).";
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // B. Paragraph/Block-level loop detection (2 repeats of a large chunk)
+                                // If the model starts repeating a large block (>100 chars) that it already said in this turn.
+                                const MIN_BLOCK_SIZE = 100;
+                                if (fullContent.length > MIN_BLOCK_SIZE * 2) {
+                                    const currentTail = fullContent.slice(-MIN_BLOCK_SIZE);
+                                    // Check if this specific tail appeared earlier in the same response
+                                    const firstIndex = fullContent.indexOf(currentTail);
+                                    const lastIndex = fullContent.lastIndexOf(currentTail);
+                                    if (firstIndex !== -1 && lastIndex !== -1 && firstIndex < (lastIndex - MIN_BLOCK_SIZE)) {
+                                        console.warn(`[OllamaBrain] EMERGENCY ABORT: Large block repetition detected!`);
+                                        abortReason = "Infinite repetition loop detected (block).";
+                                        break;
+                                    }
+                                }
+                            }
                         }
                         if (json.message?.tool_calls) {
+                            // ... existing tool call logic ...
                             for (const tc of json.message.tool_calls) {
                                 if (tc.index !== undefined) {
                                     const idx = tc.index;
@@ -329,7 +467,28 @@ export class OllamaBrain implements IBrain {
                         console.error("Error parsing Ollama chunk", e);
                     }
                 }
+                if (abortReason === 'regen') {
+                    // Silent regen: inject a correction hint and retry once without streaming.
+                    console.log('[OllamaBrain] Auto-regen: injecting correction and retrying.');
+                    const correctionSystemPrompt = systemPrompt +
+                        '\n\n[REGEN INSTRUCTION]: Your previous attempt opened with a scripted phrase. Begin your response differently — skip action descriptions, skip "I was [age] when", speak directly.';
+                    try {
+                        const regenResult = await this.generateResponse(messages, correctionSystemPrompt, tools, options);
+                        return { content: regenResult.content, metadata: regenResult.metadata, toolCalls: regenResult.toolCalls };
+                    } catch (regenErr) {
+                        console.warn('[OllamaBrain] Regen also failed:', regenErr);
+                        return { content: '', metadata: { aborted: true } };
+                    }
+                } else if (abortReason) {
+                    // Hard abort (repetition loop, char limit etc.) — still no visible ABORT message
+                    console.warn(`[OllamaBrain] Hard abort: ${abortReason}`);
+                    break;
+                }
             }
+
+            // Clean up watchdog timers
+            if (heartbeatTimer) clearTimeout(heartbeatTimer);
+            clearThinkTimer();
 
             const finalResponse: BrainResponse = {
                 content: fullContent,

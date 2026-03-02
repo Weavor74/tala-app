@@ -30,8 +30,8 @@ flowchart TD
     D --> F[Inference Endpoint]
     F --> F1[Local: Ollama]
     F --> F2[Cloud: OpenAI, Anthropic, etc.]
-    D --> G[A2UI JSON Generator]
-    G --> H[React A2UI Renderer]
+    D --> G[Response Formatter]
+    G --> H[React Chat UI]
     H --> I[User Interface]
 ```
 
@@ -45,7 +45,6 @@ flowchart TD
 |---|---|---|
 | `src/main.tsx` | React mount | Main process |
 | `src/App.tsx` | Root React component | Renderer process |
-| `src/renderer/A2UIRenderer.tsx` | Dynamic JSON → UI | Renderer |
 | `src/renderer/Settings.tsx` | Settings UI | Renderer |
 | `src/renderer/UserProfile.tsx` | Profile editor | Renderer |
 
@@ -55,10 +54,10 @@ flowchart TD
 
 The agent is not a *single file*, but a **runtime orchestrator** composed of:
 
-- LLM provider selection (`InferenceConfig`)  
-- MCP tool routing (`mcpServers[]`)  
-- System prompt injection (`AgentProfile.systemPrompt`)  
-- Response parsing → A2UI JSON (`agent_response_to_json()`)  
+- LLM provider selection (`InferenceConfig`)
+- MCP tool routing (`mcpServers[]`)
+- System prompt injection (`AgentProfile.systemPrompt`)
+- Response formatting → Markdown/text for chat UI  
 
 **Key Logic (Pseudo-Code)**:
 
@@ -80,7 +79,7 @@ The agent is not a *single file*, but a **runtime orchestrator** composed of:
 | Direction | Message Type | Payload | Use |
 |---|---|---|---|
 | Renderer → Main | `agent-chat` | `{ message: string, session: string }` | Send user query to agent |
-| Main → Renderer | `agent-response` | `{ content: string, a2ui: A2UIComponent[] }` | Stream response back |
+| Main → Renderer | `agent-response` | `{ content: string }` | Stream response back |
 | Renderer → Main | `ipc:settings-save` | `settings: AppSettings` | Persist user settings |
 | Main → Renderer | `ipc:settings-loaded` | `settings: AppSettings` | Load settings at startup |
 | Renderer → Main | `filesystem:list` | `{ path: string }` | List directory |
@@ -107,9 +106,9 @@ flowchart LR
     H -->|Cloud| J[API POST /chat]
     I --> K[Stream response]
     J --> K
-    K --> L[Parse JSON → A2UIComponent[]]
+    K --> L[Parse markdown/text response]
     L --> M[IPC → agent-response]
-    M --> N[React → A2UIRenderer → UI]
+    M --> N[React → Chat UI render]
 ```
 
 ### 4.2 Settings Save Flow
@@ -148,12 +147,13 @@ flowchart LR
 | Component | Parent | Children | Purpose |
 |---|---|---|---|
 | `App.tsx` | — | Tabs, Sidebar | Layout shell |
-| `A2UIRenderer.tsx` | Settings, WorkflowEditor | `catalog/*.tsx` | JSON → React |
 | `Settings.tsx` | App.tsx | Tab headers, modal forms | Config editor |
 | `UserProfile.tsx` | Settings | Form fields, table rows | Profile editor |
 | `WorkflowEditor.tsx` | Settings | ReactFlow graph | Workflow builder |
 
-### 6.2 Catalog Components (Available for A2UI)
+### 6.2 UI Component Library
+
+The following components are available for internal UI use:
 
 | Component Type | React Component | Props |
 |---|---|---|
@@ -166,7 +166,9 @@ flowchart LR
 | `form` | `FormComponents.tsx` | `fields: Field[]`, `onSubmit` |
 | `reactflow` | `WorkflowEditor.tsx` | `nodes`, `edges`, `onNodesChange` |
 
-**Compliance**: Catalog components are *pure React* — no side effects beyond UI rendering.
+**Note**: These components are used directly within the application UI. Dynamic JSON-to-UI rendering (A2UI) is not currently implemented.
+
+**Compliance**: UI components are *pure React* — no side effects beyond UI rendering.
 
 ---
 

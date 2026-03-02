@@ -13,13 +13,24 @@ Exposes tools for:
   - **Index listing** — List indexed source files.
 """
 
-from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel
-import datetime
+import sys
 import os
 import json
+import datetime
+
+# === CRITICAL: Redirect stdout to stderr BEFORE importing heavy libs. ===
+# sentence_transformers/transformers/huggingface_hub print progress info
+# to stdout during import and model loading. MCP uses stdout as its
+# transport, so any stray output corrupts the JSON stream.
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
+from typing import List, Dict, Any, Optional
 import numpy as np
+import yaml
+import re
 from sentence_transformers import SentenceTransformer
+from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP Server
 mcp = FastMCP("Tala Core")
@@ -34,9 +45,9 @@ store = None
 
 # Initialize Embedding Model
 # using all-MiniLM-L6-v2 (384 dim)
-print("Loading model...")
+sys.stderr.write("Loading model...\n")
 model = SentenceTransformer('all-MiniLM-L6-v2')
-print("Model loaded.")
+sys.stderr.write("Model loaded.\n")
 
 class SimpleVectorStore:
     def __init__(self, directory):
@@ -53,9 +64,9 @@ class SimpleVectorStore:
                 self.vectors = np.load(self.vectors_path)
                 with open(self.metadata_path, 'r', encoding='utf-8') as f:
                     self.metadata = json.load(f)
-                print(f"Loaded {len(self.metadata)} entries from {self.directory}")
+                sys.stderr.write(f"Loaded {len(self.metadata)} entries from {self.directory}\n")
             except Exception as e:
-                print(f"Error loading store: {e}. Starting fresh.")
+                sys.stderr.write(f"Error loading store: {e}. Starting fresh.\n")
                 self.vectors = np.empty((0, 384), dtype=np.float32)
                 self.metadata = []
         else:
@@ -193,28 +204,42 @@ def get_emotional_state(agent_id: str = "tala") -> str:
     return f"{header}\n{style}"
 
 @mcp.tool()
-def search_memory(query: str, limit: int = 3) -> list[dict]:
+def search_memory(query: str, limit: int = 3, filter_json: Optional[Any] = None) -> list[dict]:
     """
     Searches memory for relevant context using semantic similarity.
     Args:
         query: The search text representing the information you are looking for.
         limit: Max results to return.
+        filter_json: Optional JSON string or Dict of metadata key-value pairs to filter by.
     """
     try:
+        sys.stderr.write(f"[RAG] Search: '{query}' | Filter: {filter_json} (Type: {type(filter_json)})\n")
         query_vector = model.encode(query).tolist()
-        results = store.search(query_vector, limit, None)
+        
+        filter_meta = None
+        if filter_json:
+            if isinstance(filter_json, str):
+                try:
+                    filter_meta = json.loads(filter_json)
+                except Exception as je:
+                    sys.stderr.write(f"[RAG] Filter JSON error: {je}\n")
+            elif isinstance(filter_json, dict):
+                filter_meta = filter_json
+            else:
+                sys.stderr.write(f"[RAG] Unsupported filter type: {type(filter_json)}\n")
+
+        results = store.search(query_vector, limit, filter_meta)
+        sys.stderr.write(f"[RAG] Found {len(results)} results\n")
         
         # Return structured list for client to format
         return results
     except Exception as e:
-        # Return error as a single item list or throw? 
-        # FastMCP handles exceptions but let's be safe
-        print(f"Search Error: {e}")
+        sys.stderr.write(f"Search Error: {e}\n")
         return []
 
 @mcp.tool()
 def ingest_file(file_path: str, category: str = "general") -> str:
-    """Ingests a file into memory with a specific category."""
+    """Ingests a file into memory with a specific category. Supports LTMF Markdown with YAML frontmatter."""
     if not os.path.exists(file_path):
         return f"Error: File not found {file_path}"
         
@@ -223,70 +248,87 @@ def ingest_file(file_path: str, category: str = "general") -> str:
         store.delete_by_source(file_path)
         
         with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            full_content = f.read()
             
-        raw_chunks = [c.strip() for c in content.split('\n\n') if c.strip()]
-        if not raw_chunks: return "File empty."
+        # 2. Extract YAML frontmatter if present
+        metadata_from_file = {}
+        content_for_indexing = full_content
+        
+        frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', full_content, re.DOTALL)
+        if frontmatter_match:
+            yaml_content = frontmatter_match.group(1)
+            content_for_indexing = full_content[frontmatter_match.end():].strip()
+            try:
+                metadata_from_file = yaml.safe_load(yaml_content) or {}
+            except Exception as ye:
+                sys.stderr.write(f"[RAG] YAML parse error in {file_path}: {ye}\n")
+
+        raw_chunks = [c.strip() for c in content_for_indexing.split('\n\n') if c.strip()]
+        if not raw_chunks: return "File has no indexable content."
 
         # Smart Merge: Combine small chunks to preserve context (target ~1000 chars)
         chunks = []
         current_chunk = ""
         
         for c in raw_chunks:
-            # If adding this chunk keeps us under limit, merge
             if len(current_chunk) + len(c) < 1000:
                 current_chunk = f"{current_chunk}\n\n{c}" if current_chunk else c
             else:
-                # Push current and start new
                 if current_chunk: chunks.append(current_chunk)
                 current_chunk = c
-                
         if current_chunk: chunks.append(current_chunk)
 
         ids = []
         embeddings = []
         metadatas = []
-        docs = [] # text
+        docs = [] 
         
         import uuid
-        base_id = str(uuid.uuid4())
+        document_id = metadata_from_file.get('id') or str(uuid.uuid4())
         
         chunk_texts = [f"Source: {os.path.basename(file_path)}\n\n{c}" for c in chunks if len(c) > 20]
-        if not chunk_texts: return "No valid chunks."
+        if not chunk_texts: return "No valid chunks extracted."
         
         vecs = model.encode(chunk_texts)
         
-        # Optimization: For roleplay memories (small files), we want to retrieve the FULL context 
-        # if any part matches. So we store the full content in the metadata 'text' field.
-        # This implements "Parent Document Retrieval" pattern.
-        stored_text_content = content
-        if len(content) > 10000: # If huge file, keep chunk text to avoid context overflow
-             stored_text_content = None # Will rely on fallback or chunk
+        # Parent Document Retrieval pattern: store the full content (minus frontmatter) in metadata
+        # unless it's excessively large.
+        stored_text_content = content_for_indexing
+        if len(content_for_indexing) > 15000: 
+             stored_text_content = None 
         
         for i, text in enumerate(chunk_texts):
             docs.append(text)
             embeddings.append(vecs[i])
-            ids.append(f"{base_id}_{i}")
+            ids.append(f"{document_id}_{i}")
             
-            # If we have full content and it's reasonable size, use it. 
-            # Otherwise use the chunk text.
             final_text = stored_text_content if stored_text_content else text
-            # Ensure Source header is present in final text if using full content
             if stored_text_content and not final_text.startswith("Source:"):
                  final_text = f"Source: {os.path.basename(file_path)}\n\n{final_text}"
 
-            metadatas.append({
+            # Merge file-level metadata with chunk metadata
+            chunk_metadata = {
                 "source": file_path,
                 "timestamp": datetime.datetime.now().isoformat(),
                 "type": "document",
                 "category": category,
-                "text": final_text 
-            })
+                "text": final_text,
+                "is_structured": bool(frontmatter_match)
+            }
+            # Add LTMF-specific fields if they exist
+            standard_fields = ['id', 'age', 'life_stage', 'emotional_state', 'emotional_weight', 'triggers', 'participants', 'location', 'tags']
+            for field in standard_fields:
+                if field in metadata_from_file:
+                    chunk_metadata[field] = metadata_from_file[field]
+
+            metadatas.append(chunk_metadata)
             
         store.add(docs, embeddings, metadatas, ids)
-        return f"Ingested {len(docs)} chunks from {os.path.basename(file_path)} (Category: {category})"
+        return f"Ingested {len(docs)} chunks from {os.path.basename(file_path)} (LTMF: {bool(frontmatter_match)})"
         
     except Exception as e:
+        import traceback
+        sys.stderr.write(traceback.format_exc())
         return f"Ingestion Error: {str(e)}"
 
 @mcp.tool()
@@ -325,8 +367,10 @@ def log_interaction(user_text: str, agent_text: str) -> bool:
         store.add([entry], [embedding], [metadata], [entry_id])
         return True
     except Exception as e:
-        print(f"Log Interaction Error: {e}")
+        sys.stderr.write(f"Log Interaction Error: {e}\n")
         return False
 
 if __name__ == "__main__":
+    # Restore real stdout for MCP protocol transport
+    sys.stdout = _real_stdout
     mcp.run(transport='stdio')

@@ -1,8 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { spawn, ChildProcess } from 'child_process';
-import path from 'path';
-import fs from 'fs';
 
 
 /**
@@ -37,8 +34,6 @@ import fs from 'fs';
 export class RagService {
     /** MCP SDK client for communicating with the tala-core RAG server. Null if not connected. */
     private client: Client | null = null;
-    /** The spawned Python child process (tracked for cleanup, though StdioClientTransport manages it). */
-    private serverProcess: ChildProcess | null = null;
     /** Whether the MCP client is connected and has been verified with `listTools()`. */
     private isReady = false;
 
@@ -130,51 +125,45 @@ export class RagService {
      */
     async search(query: string, options?: { limit?: number, filter?: Record<string, string> }): Promise<string> {
         if (!this.isReady || !this.client) {
+            console.warn('[RagService] Search skipped: Service not ready');
             return '';
         }
 
         try {
-            const args: any = { query };
+            const args: { query: string; limit?: number; filter_json?: string } = { query };
             if (options?.limit) args.limit = options.limit;
             if (options?.filter) args.filter_json = JSON.stringify(options.filter);
+
+            console.log(`[RagService] Searching: "${query}" with filter: ${args.filter_json || 'none'}`);
 
             const result = await this.client.callTool({
                 name: 'search_memory',
                 arguments: args
             });
 
+            console.log(`[RagService] Raw result content length: ${(result.content as unknown[])?.length || 0}`);
+
             // Handle new list[dict] response from server
             if (result.content && Array.isArray(result.content) && result.content.length > 0) {
-                // The server now returns a list of result objects, but over MCP it comes as text or JSON?
-                // FastMCP might serialize list[dict] as a JSON string in content[0].text
-                // OR as multiple content blocks?
-                // Let's inspect. My python update returns `list[dict]`.
-                // FastMCP usually json-dumps complex return types into content[0].text
-
-                const raw = result.content[0] as any;
+                const raw = result.content[0] as { text?: string };
                 if (raw && 'text' in raw) {
-                    // It might be a JSON string of the list
                     try {
-                        const parsed = JSON.parse(raw.text);
+                        const parsed = JSON.parse(raw.text ?? '') as Array<{ text: string; score?: number }> | { text: string; score?: number };
 
                         if (Array.isArray(parsed)) {
-                            // Format it nicely for the LLM
-                            return parsed.map((r: any) => `- ${r.text} (Score: ${r.score?.toFixed(2)})`).join('\n');
+                            console.log(`[RagService] Parsed ${parsed.length} results`);
+                            return parsed.map((r) => `- ${r.text} (Score: ${r.score?.toFixed(2)})`).join('\n');
                         } else if (typeof parsed === 'object' && parsed !== null) {
-                            // Handle single object case (FastMCP edge case?)
-                            const r = parsed as any;
-                            // We want the text content, not the metadata json
-                            if (r.text) return `- ${r.text} (Score: ${r.score?.toFixed(2)})`;
+                            if ('text' in parsed) return `- ${parsed.text} (Score: ${parsed.score?.toFixed(2)})`;
                         }
 
-                        // If it's a string, maybe it's just the text?
-                        // If it was valid JSON but not an array or object with text...
-                        return raw.text;
-                    } catch (e) {
-                        return raw.text; // Return raw if not json
+                        return raw.text ?? '';
+                    } catch {
+                        return raw.text ?? ''; // Return raw if not json
                     }
                 }
             }
+            console.warn('[RagService] No content in search result');
             return '';
         } catch (error) {
             console.warn('[RagService] Search failed:', error);
@@ -232,15 +221,15 @@ export class RagService {
             });
 
             if (result.content && Array.isArray(result.content) && result.content.length > 0) {
-                const content = result.content[0] as any;
+                const content = result.content[0] as { text?: string };
                 if (content && 'text' in content) {
-                    return content.text;
+                    return content.text ?? '';
                 }
             }
             return 'Ingestion called but no response text.';
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('[RagService] Ingestion failed:', error);
-            return `Ingestion failed: ${error.message}`;
+            return `Ingestion failed: ${error instanceof Error ? error.message : String(error)}`;
         }
     }
 
@@ -262,15 +251,15 @@ export class RagService {
                 arguments: { file_path: filePath }
             });
             if (result.content && Array.isArray(result.content) && result.content.length > 0) {
-                const content = result.content[0] as any;
+                const content = result.content[0] as { text?: string };
                 if (content && 'text' in content) {
-                    return content.text;
+                    return content.text ?? '';
                 }
             }
             return 'Deletion called.';
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('[RagService] Deletion failed:', error);
-            return `Deletion failed: ${error.message}`;
+            return `Deletion failed: ${error instanceof Error ? error.message : String(error)}`;
         }
     }
 
@@ -319,27 +308,27 @@ export class RagService {
             if (result.content.length > 1) {
                 console.log(`[RagService] Detected multi-block response (${result.content.length} items).`);
                 paths = result.content
-                    .map((c: any) => c.text?.trim())
-                    .filter(Boolean);
+                    .map((c: { text?: string }) => c.text?.trim())
+                    .filter((s): s is string => Boolean(s));
             }
             // Case B: Single content block (Might be a JSON string OR a single path)
             else {
-                const rawText = (result.content[0] as any).text || '';
+                const rawText = (result.content[0] as { text?: string }).text || '';
                 try {
                     // Try JSON parse first
-                    const parsed = JSON.parse(rawText);
+                    const parsed = JSON.parse(rawText) as string[] | unknown;
                     if (Array.isArray(parsed)) {
                         paths = parsed;
                     } else {
                         // Not an array? Treat as single path if non-empty
                         if (rawText.length > 0) paths = [rawText];
                     }
-                } catch (e) {
+                } catch {
                     // Not JSON. Treat as single path or python-style list string
                     if (rawText.startsWith('[') && rawText.endsWith(']')) {
                         // Python string representation fallback
                         paths = rawText
-                            .replace(/[\[\]']/g, '')
+                            .replace(/[[\]']/g, '')
                             .split(',')
                             .map((s: string) => s.trim())
                             .filter(Boolean);
