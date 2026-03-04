@@ -3795,7 +3795,7 @@ function AboutPanel() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
                     <div>
                         <label style={lbl}>Name</label>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: '#dcdcaa' }}>Steven Pollard</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: '#dcdcaa' }}>The T.A.L.A. Team</div>
                     </div>
                     <div>
                         <label style={lbl}>Email</label>
@@ -3853,7 +3853,7 @@ function AboutPanel() {
 
             {/* Footer note */}
             <div style={{ textAlign: 'center', fontSize: 10, color: '#2a3a4a', letterSpacing: 1.5, textTransform: 'uppercase', paddingTop: 10 }}>
-                © 2023 Steven Pollard — T.A.L.A. Tactical Autonomous Learning Architecture
+                © 2023 T.A.L.A. System Architecture
             </div>
         </div>
     );

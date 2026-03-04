@@ -24,12 +24,20 @@ sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: initializin
 memory = MemorySystem(DB_PATH)
 router = MemoryRouter()
 
+# Identity Migration & Unification
+current_user_id = os.environ.get("TALA_USER_ID")
+if current_user_id:
+    sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: running identity migration for {current_user_id}\n")
+    memory.run_identity_migration(current_user_id)
+else:
+    sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: WARNING - TALA_USER_ID not found in environment. Skipping identity migration.\n")
+
 sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: initialization complete\n")
 
 @mcp.tool()
 async def route_query(query: str) -> str:
     """Determines which memory engine (graph, mem0, rag) should handle the query."""
-    return router.route(query)
+    return router.route(query, user_id=current_user_id)
 
 @mcp.tool()
 async def process_memory(text: str, source_ref: str = "interaction") -> List[str]:
@@ -75,7 +83,7 @@ async def upsert_edge(source_id: str, target_id: str, relation: str, weight: flo
 async def query_graph(query_text: str) -> str:
     """Performs a complex semantic/graph query across the local memory."""
     # Note: Using retrieve_context as a proxy for complex queries until full Cypher-like query is implemented
-    result = memory.retrieve_context(query_text)
+    result = memory.retrieve_context(query_text, user_id=current_user_id)
     return result.get("context_str", "No relevant graph context found.")
 
 @mcp.tool()
@@ -87,7 +95,7 @@ async def search_nodes(query: str, limit: int = 10) -> List[Dict[Any, Any]]:
 @mcp.tool()
 async def retrieve_context(query: str, limit: int = 5) -> Dict[str, Any]:
     """Retrieves deep context (node + neighbors) for a semantic query."""
-    result = memory.retrieve_context(query, max_nodes=limit)
+    result = memory.retrieve_context(query, max_nodes=limit, user_id=current_user_id)
     # Convert nodes/edges to dicts for JSON serialization
     return {
         "nodes": [n.model_dump() for n in result["nodes"]],

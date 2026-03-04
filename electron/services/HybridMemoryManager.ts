@@ -1,6 +1,7 @@
 import { MemoryService } from './MemoryService';
 import { RagService } from './RagService';
 import { McpService } from './McpService';
+import { UserIdentityContext } from './userProfileTypes';
 
 export interface HybridContextOptions {
     limitGraphNodes?: number;
@@ -9,6 +10,7 @@ export interface HybridContextOptions {
     limitRag?: number;
     emotion?: string;
     intensity?: number;
+    userIdentity?: UserIdentityContext;
 }
 
 /**
@@ -45,13 +47,17 @@ export class HybridMemoryManager {
         // NEW: Router check
         let route = "mem0";
         try {
-            const routeRes = await this.mcp.callTool('tala-memory-graph', 'route_query', { query });
+            const routeRes = await this.mcp.callTool('tala-memory-graph', 'route_query', {
+                query,
+                user_id: options.userIdentity?.userId,
+                user_displayName: options.userIdentity?.displayName
+            });
             if (routeRes?.content && routeRes.content[0]?.text) {
                 route = routeRes.content[0].text.trim();
             }
         } catch (e) { console.warn('[HybridMemoryManager] Router failed, defaulting to mem0/rag'); }
 
-        const graphPromise = this.getGraphContext(query, limitGraphNodes, limitGraphEdges, emotion, intensity);
+        const graphPromise = this.getGraphContext(query, limitGraphNodes, limitGraphEdges, emotion, intensity, options.userIdentity);
         const mem0Promise = this.memory.search(query, limitMem0);
         const ragPromise = this.rag.search(query, { limit: limitRag });
 
@@ -67,6 +73,13 @@ export class HybridMemoryManager {
             mem0Promise.catch(() => []),
             ragPromise.catch(() => "")
         ]);
+
+        let intro = "[MEMORY CONTEXT]\nThese memories are part of your core knowledge base. ";
+        if (options.userIdentity) {
+            intro += `If a memory refers to "${options.userIdentity.displayName}" or has ID "${options.userIdentity.userId}", treat it as a personal fact about the person you are interacting with now. `;
+        }
+        intro += "\n\n";
+        context = intro + context;
 
         // Tier 1: Graph (if not already added as priority)
         if (route !== 'graph') {
@@ -89,14 +102,16 @@ export class HybridMemoryManager {
         return context.trim();
     }
 
-    private async getGraphContext(query: string, maxNodes: number, maxEdges: number, emotion: string, intensity: number): Promise<string> {
+    private async getGraphContext(query: string, maxNodes: number, maxEdges: number, emotion: string, intensity: number, identity?: UserIdentityContext): Promise<string> {
         try {
             const result = await this.mcp.callTool('tala-memory-graph', 'retrieve_context', {
                 query,
                 max_nodes: maxNodes,
                 max_edges: maxEdges,
                 emotion,
-                intensity
+                intensity,
+                user_id: identity?.userId,
+                user_displayName: identity?.displayName
             });
             if (result?.content) {
                 return result.content.map((c: any) => c.text || '').join('\n').trim();

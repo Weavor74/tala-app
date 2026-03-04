@@ -14,6 +14,7 @@ import { GitService } from './GitService';
 import { BackupService } from './BackupService';
 import { InferenceService } from './InferenceService';
 import { loadSettings, saveSettings } from './SettingsManager';
+import { UserProfileService } from './UserProfileService';
 
 export interface IpcRouterContext {
   app: any;
@@ -30,6 +31,7 @@ export interface IpcRouterContext {
   gitService: GitService;
   backupService: BackupService;
   inferenceService: InferenceService;
+  userProfileService: UserProfileService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -44,7 +46,7 @@ export class IpcRouter {
   constructor(private ctx: IpcRouterContext) { }
 
   public registerAll() {
-    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
+    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
 
     // Helper to simulate mutable let from main.ts
     const getSettingsPath = () => this.ctx.getSettingsPath();
@@ -72,18 +74,20 @@ export class IpcRouter {
       return await agent.ingestFile(path);
     });
 
-    /** Writes the user profile JSON to disk (`user_profile.json`). */
+    /** Writes the user profile JSON to disk via UserProfileService. */
     ipcMain.handle('save-profile', async (event, data) => {
-      fs.writeFileSync(USER_DATA_PATH, JSON.stringify(data, null, 2));
+      userProfileService.save(data);
       return true;
     });
 
-    /** Reads and returns the user profile from disk, or null if it doesn't exist. */
+    /** Reads and returns the user profile via UserProfileService. */
     ipcMain.handle('get-profile', async () => {
-      if (fs.existsSync(USER_DATA_PATH)) {
-        return JSON.parse(fs.readFileSync(USER_DATA_PATH, 'utf-8'));
-      }
-      return null;
+      return userProfileService.getFullProfile();
+    });
+
+    /** Returns minimal identity context for the agent. */
+    ipcMain.handle('get-user-identity-context', async () => {
+      return userProfileService.getIdentityContext();
     });
 
     /**

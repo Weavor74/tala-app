@@ -22,6 +22,7 @@ import { IpcRouter } from './services/IpcRouter';
 import { ReflectionService } from './services/reflection/ReflectionService';
 import { VoiceService } from './services/VoiceService';
 import { SoulService } from './services/soul/SoulService';
+import { UserProfileService } from './services/UserProfileService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -59,10 +60,11 @@ const systemService = new SystemService();
 const fileService = new FileService(EFFECTIVE_WORKSPACE_ROOT);
 const functionService = new FunctionService(systemService, fileService.getRoot());
 
+const userProfileService = new UserProfileService(USER_DATA_DIR);
 const inferenceService = new InferenceService();
 const workflowService = new WorkflowService(fileService.getRoot());
-const agent = new AgentService(terminalService, functionService, mcpService, inferenceService);
-const reflectionService = new ReflectionService(USER_DATA_DIR, SETTINGS_PATH);
+const agent = new AgentService(terminalService, functionService, mcpService, inferenceService, userProfileService);
+const reflectionService = new ReflectionService(USER_DATA_DIR, SYSTEM_SETTINGS_PATH);
 const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent);
@@ -218,6 +220,7 @@ const ipcRouter = new IpcRouter({
   gitService,
   backupService,
   inferenceService,
+  userProfileService,
   getSettingsPath: () => SETTINGS_PATH,
   setSettingsPath: (p) => { SETTINGS_PATH = p; },
   USER_DATA_DIR,

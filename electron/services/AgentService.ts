@@ -24,6 +24,7 @@ import { loadSettings } from './SettingsManager';
 import { InferenceService } from './InferenceService';
 import { IngestionService } from './IngestionService';
 import { HybridMemoryManager } from './HybridMemoryManager';
+import { UserProfileService } from './UserProfileService';
 
 import { GuardrailService } from './GuardrailService';
 import { GoalManager } from './plan/GoalManager';
@@ -93,6 +94,7 @@ export class AgentService {
     private functions: FunctionService | null = null;
     private mcpService: McpServiceLike | null = null;
     private hybridMemory: HybridMemoryManager | null = null;
+    private userProfile: UserProfileService | null = null;
     private systemInfo: SystemInfoLike | null = null;
     private chatHistory: ChatMessage[] = [];
     private settingsPath: string;
@@ -108,7 +110,7 @@ export class AgentService {
     private router: SmartRouterService | null = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
 
-    constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService) {
+    constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
         this.memory = new MemoryService();
         auditLogger.info('service_init', 'AgentService', { service: 'MemoryService' });
@@ -122,6 +124,7 @@ export class AgentService {
         this.inference = inference || new InferenceService();
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
         this.goals = new GoalManager(app.getPath('userData'));
+        this.userProfile = userProfile || null;
 
         this.router = new SmartRouterService(this.brain, this.brain);
 
@@ -1028,9 +1031,12 @@ Exported standalone package from Tala.
                 path.join(mcpServersDir, 'tala-memory-graph'),
             ].join(';');
 
+            const userIdentity = this.userProfile?.getIdentityContext();
             const isolatedEnv: Record<string, string> = {
                 ...process.env,
                 ...systemEnv,
+                TALA_USER_ID: userIdentity?.userId || '',
+                TALA_USER_DISPLAY_NAME: userIdentity?.displayName || 'User',
                 PYTHONNOUSERSITE: '1',
                 PYTHONHOME: pythonRoot,
                 PYTHONPATH: `${sitePackages};${extraPaths}`,
@@ -1079,7 +1085,10 @@ Exported standalone package from Tala.
             this.ingestion.startAutoIngest();
             await this.refreshMcpTools();
             await this.syncAstroProfiles();
-        } catch (e) { }
+            await this.syncUserProfileAstro();
+        } catch (e) {
+            console.error('[AgentService] igniteSoul failed:', this.stripPIIFromDebug(e));
+        }
     }
 
     public async shutdown() {
@@ -1098,11 +1107,54 @@ Exported standalone package from Tala.
         } catch { }
     }
 
+    private async syncUserProfileAstro() {
+        if (!this.userProfile || !this.astro) return;
+        const profile = this.userProfile.getFullProfile();
+        if (profile && profile.userId && profile.dateOfBirth && profile.placeOfBirth) {
+            try {
+                const name = profile.firstName || 'User';
+                // Use the persistent UUID as the profile ID in Astro Engine
+                await this.astro.createProfile(profile.userId, name, profile.dateOfBirth, profile.placeOfBirth);
+            } catch {
+                try {
+                    const name = profile.firstName || 'User';
+                    await this.astro.updateProfile(profile.userId, name, profile.dateOfBirth, profile.placeOfBirth);
+                } catch (e) {
+                    // Silently fail to avoid PII logging.
+                }
+            }
+        }
+    }
+
+    /**
+     * Helper to redact PII from error objects or debug logs.
+     */
+    private stripPIIFromDebug(obj: any): any {
+        if (!obj) return obj;
+        const str = typeof obj === 'string' ? obj : JSON.stringify(obj);
+        const profile = this.userProfile?.getFullProfile();
+        if (!profile) return obj;
+
+        let redacted = str;
+        if (profile.firstName) redacted = redacted.split(profile.firstName).join('[FIRSTNAME]');
+        if (profile.lastName) redacted = redacted.split(profile.lastName).join('[LASTNAME]');
+        if (profile.dateOfBirth) redacted = redacted.split(profile.dateOfBirth).join('[DOB]');
+        if (profile.email) redacted = redacted.split(profile.email).join('[EMAIL]');
+
+        try {
+            return JSON.parse(redacted);
+        } catch {
+            return redacted;
+        }
+    }
+
     private async getAstroState(): Promise<string> {
         try {
             const settings = loadSettings(this.settingsPath);
             const agentId = settings.agent?.activeProfileId || 'tala';
-            return await this.astro.getEmotionalState(agentId, '');
+            const userId = this.userProfile?.getIdentityContext().userId || 'User';
+            // Passing the current userId ensures the state is computed for the correct human entity
+            return await this.astro.getEmotionalState(agentId, userId);
         } catch { return '[ASTRO STATE]: Offline'; }
     }
 
@@ -1133,7 +1185,8 @@ Exported standalone package from Tala.
                 if (this.hybridMemory) {
                     memoryContext = await this.hybridMemory.getIntegratedContext(userMessage, {
                         emotion: 'neutral', // Could be derived from astroState
-                        intensity: 0.5
+                        intensity: 0.5,
+                        userIdentity: this.userProfile?.getIdentityContext()
                     });
                 } else {
                     // Fallback to legacy behavior if hybridMemory is not available
@@ -1193,7 +1246,15 @@ Exported standalone package from Tala.
         }
         systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${toolSigs}\n\n[PROTOCOL]: Output JSON \`{"tool": "name", "args": {}}\` to call a tool.`;
 
-        let systemPrompt = systemPromptTemplate.replace(/\[ASTRO_STATE\]/g, astroState).replace(/\[CAPABILITY_CONTEXT\]/g, memoryContext).replace(/\[USER_QUERY\]/g, userMessage);
+        // Identity Injection: Load user profile to tell the LLM who the User is
+        let userIdentity = "";
+        const identity = this.userProfile?.getIdentityContext();
+        if (identity && identity.userId !== 'anonymous-user') {
+            const aliasStr = identity.aliases.map(a => `"${a}"`).join(' or ');
+            userIdentity = `[USER IDENTITY]\nThe current user is ${identity.displayName}. All memories referring to ${aliasStr} refer to the User. Treat personal facts about "${identity.displayName}" as facts about the person you are talking to. Use this identity (ID: ${identity.userId}) to resolve memory ambiguity.`;
+        }
+
+        let systemPrompt = (userIdentity ? userIdentity + "\n\n" : "") + systemPromptTemplate.replace(/\[ASTRO_STATE\]/g, astroState).replace(/\[CAPABILITY_CONTEXT\]/g, memoryContext).replace(/\[USER_QUERY\]/g, userMessage);
 
         const maxTokens = activeInstance?.ctxLen || 16384;
         const systemTokens = this.estimateTokens(systemPrompt);

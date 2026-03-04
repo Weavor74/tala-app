@@ -1,0 +1,1 @@
+{"agent":{"activeProfileId":"tala","profiles":[{"id":"tala","systemPrompt":"You are Tala."}]},"inference":{"activeLocalId":"test","instances":[{"id":"test","source":"local","engine":"ollama","model":"3b"}]}}

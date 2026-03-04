@@ -33,17 +33,26 @@ def timeline_search(start_ts: str, end_ts: str):
     return graph_timeline(start_ts, end_ts)
 
 @mcp.tool()
-def route_query(query: str):
+def route_query(query: str, user_id: str = None, user_displayName: str = None):
     """Determines which memory engine (graph, mem0, rag) should handle the query."""
-    router = MemoryRouter()
+    router = MemoryRouter(user_id=user_id, user_displayName=user_displayName)
     return router.route(query)
 
 @mcp.tool()
-def retrieve_context(query: str, max_nodes: int = 5, max_edges: int = 5, emotion: str = 'neutral', intensity: float = 0.5):
+def retrieve_context(query: str, max_nodes: int = 5, max_edges: int = 5, emotion: str = 'neutral', intensity: float = 0.5, user_id: str = None, user_displayName: str = None):
     """Integrated retrieval for the agent: searches nodes and gets their neighborhood."""
     import json
     # 1. Search for primary nodes
-    nodes = store.search_nodes(query)
+    # Identity aware search: if query has pronouns, replace with user_displayName or user_id
+    search_query = query
+    if user_displayName or user_id:
+        pronouns = [r"\bmy\b", r"\bme\b", r"\bi\b", r"\bmine\b"]
+        replacement = user_displayName or user_id
+        for p in pronouns:
+            import re
+            search_query = re.sub(p, replacement, search_query, flags=re.IGNORECASE)
+
+    nodes = graph_search(search_query)
     if not nodes:
         return "No relevant memories found in graph."
     
