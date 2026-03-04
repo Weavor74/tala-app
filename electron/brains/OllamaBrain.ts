@@ -130,7 +130,17 @@ export class OllamaBrain implements IBrain {
 
         if (tools && tools.length > 0) {
             body.tools = tools;
+            if (options?.tool_choice) {
+                body.tool_choice = options.tool_choice;
+            }
         }
+
+        // Diagnostic Log
+        console.log(`[OllamaBrain] generateResponse tools count: ${tools?.length || 0}`);
+        if (tools && tools.length > 0) {
+            console.log(`[OllamaBrain] tools: ${tools.map(t => t.function?.name || t.name).join(', ')}`);
+        }
+        console.log(`[OllamaBrain] request has tool_choice field: ${!!body.tool_choice}`);
 
         const controller = new AbortController();
         const timeout = options?.timeout || 300000; // 5 minute default
@@ -219,6 +229,9 @@ export class OllamaBrain implements IBrain {
 
             if (tools && tools.length > 0) {
                 body.tools = tools;
+                if (options?.tool_choice) {
+                    body.tool_choice = options.tool_choice;
+                }
             }
 
             // Stop sequences: Ollama halts generation the moment any of these appear.
@@ -286,7 +299,23 @@ export class OllamaBrain implements IBrain {
             }
 
             console.log(`[OllamaBrain] Trying to JSON.stringify body...`);
-            const bodyString = JSON.stringify({ ...body, options: ollamaOptions });
+            const bodyObj = { ...body, options: ollamaOptions };
+            const bodyString = JSON.stringify(bodyObj);
+
+            // --- HARD DIAGNOSTICS ---
+            const toolCount = tools ? tools.length : 0;
+            const toolNames = tools ? tools.map(t => t.function?.name || t.name) : [];
+            console.log(`[OllamaBrain] streamResponse tools passed in: ${toolCount} ${JSON.stringify(toolNames)}`);
+            console.log(`[OllamaBrain] request has tools field: ${!!bodyObj.tools}`);
+            console.log(`[OllamaBrain] request has tool_choice field: ${!!bodyObj.tool_choice}`);
+            if (bodyObj.tools) {
+                console.log(`[OllamaBrain] tools field length: ${bodyObj.tools.length}`);
+            }
+            if (bodyObj.tool_choice) {
+                console.log(`[OllamaBrain] tool_choice value: ${bodyObj.tool_choice}`);
+            }
+            // ------------------------
+
             console.log(`[OllamaBrain] JSON.stringify successful. Length: ${Math.round(bodyString.length / 1024)} KB`);
 
             console.log(`[OllamaBrain] Calling fetch() to ${this.baseUrl}/api/chat...`);

@@ -77,6 +77,13 @@ export interface BrainOptions {
     temperature?: number;
     /** Timeout in milliseconds. */
     timeout?: number;
+    /** 
+     * Optional tool choice constraint. 
+     * - 'auto': model decides (default)
+     * - 'required': model MUST call at least one tool
+     * - 'none': model must NOT call any tools
+     */
+    tool_choice?: 'auto' | 'required' | 'none';
     /** Any other model-specific options. */
     [key: string]: any;
 }

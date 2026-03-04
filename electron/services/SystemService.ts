@@ -264,6 +264,11 @@ export class SystemService {
         env.PYTHONNOUSERSITE = '1';
         env.PYTHONUNBUFFERED = '1';
 
+        // TALA_USER_ID must be preserved or added if missing (usually passed from AgentService)
+        if (!env.TALA_USER_ID) {
+            env.TALA_USER_ID = process.env.TALA_USER_ID || 'anonymous-user';
+        }
+
         return env;
     }
 

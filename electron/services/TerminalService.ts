@@ -1,13 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import os from 'os';
+import fs from 'fs';
+import * as pty from 'node-pty';
 import { CodeAccessPolicy } from './CodeAccessPolicy';
-
-let pty: any;
-try {
-    pty = require('node-pty');
-} catch (e) {
-    console.warn('[TerminalService] Failed to load node-pty. Terminal features will be disabled.', e);
-}
 
 /**
  * TerminalService
@@ -143,68 +138,22 @@ export class TerminalService {
     }
 
     /**
-     * Writes data to the shell's standard input.
+     * Writes raw data to the shell's standard input (PTY stdin relay).
+     *
+     * IMPORTANT: This method is a pure pass-through for PTY stdin data.
+     * It does NOT validate or policy-check the data — that is the responsibility
+     * of CodeControlService.shellRun() when executing agent-initiated commands.
+     * ESC sequences, arrow keys, control characters, and empty strings must all
+     * pass through without interference.
      */
     public write(id: string, data: string) {
+        if (data === undefined || data === null) return;
         const shell = this.shells.get(id);
         if (shell) {
-            // Quantum Firewall: Basic command filtering for AI turns
-            if (this.isAITerminal(id) && !this.isAllowed(data)) {
-                const msg = `\r\n[QUANTUM FIREWALL]: Execution blocked. Command not in safety whitelist.\r\n`;
-                this.outputBuffer += msg;
-                if (this.window) this.window.webContents.send('terminal-data', { id, data: msg });
-                return;
-            }
             shell.write(data);
         } else {
             console.warn(`[TerminalService] Write failed: Terminal ${id} not found.`);
         }
-    }
-
-    private isAITerminal(id: string): boolean {
-        // In this implementation, we assume any terminal used by AgentService is marked or we check the context
-        // For MVP, we apply a blanket whitelist to all writes containing commands.
-        return true;
-    }
-
-    private isAllowed(data: string): boolean {
-        if (this.policy) {
-            const validation = this.policy.validateCommand(data);
-            if (!validation.ok) {
-                console.warn(`[TerminalService] Blocked command by policy: ${data} - ${validation.error}`);
-                return false;
-            }
-            return true;
-        }
-
-        // Fallback to legacy Quantum Firewall logic if no policy set
-        // Quantum Firewall settings check
-        if (this.settingsPath) {
-            try {
-                const fs = require('fs');
-                if (fs.existsSync(this.settingsPath)) {
-                    const settingsRaw = fs.readFileSync(this.settingsPath, 'utf-8');
-                    const settings = JSON.parse(settingsRaw);
-                    if (settings.firewall && settings.firewall.enabled === false) {
-                        return true; // Firewall is disabled, allow all
-                    }
-                }
-            } catch (e) {
-                console.error('[TerminalService] Failed to check firewall settings:', e);
-            }
-        }
-
-        const trimmed = data.trim().toLowerCase();
-        if (!trimmed) return true;
-
-        // Extract base command (e.g. "git" from "git status")
-        const base = trimmed.split(/\s+/)[0];
-
-        // Block dangerous patterns
-        if (trimmed.includes('rm -rf /')) return false;
-        if (trimmed.includes('> /etc/') || trimmed.includes('> c:\\windows')) return false;
-
-        return this.allowedCommands.includes(base) || base.startsWith('.') || base.startsWith('/');
     }
 
     /**

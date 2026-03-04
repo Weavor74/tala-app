@@ -473,16 +473,32 @@ export class FileService {
             this.watcher = chokidar.watch(this.workspaceDir, {
                 ignored: [
                     /(^|[\/\\])\../, // ignore dotfiles
-                    'node_modules/**',
-                    '.git/**',
-                    'dist/**',
-                    'dist-electron/**',
+                    '**/node_modules/**',
+                    '**/.git/**',
+                    '**/dist/**',
+                    '**/bin/**',
+                    '**/qdrant/**',
+                    '**/venv/**',
+                    '**/dist-electron/**',
+                    '**/tmp/**',
+                    '**/logs/**',
                     '**/*.swp',
-                    '**/*~'
+                    '**/*~',
+                    '**/*.exe',
+                    '**/*.dll',
+                    '**/*.bin'
                 ],
                 persistent: true,
                 ignoreInitial: true,
-                depth: 99
+                usePolling: true, // Switched to true for Windows stability
+                interval: 1000,   // Polling interval
+                binaryInterval: 3000,
+                awaitWriteFinish: {
+                    stabilityThreshold: 1000,
+                    pollInterval: 100
+                },
+                ignorePermissionErrors: true, // STEP 5: Add ignorePermissionErrors
+                depth: 9
             });
 
             const onEvent = (filename: string) => {
@@ -500,7 +516,13 @@ export class FileService {
                 .on('unlink', onEvent)
                 .on('addDir', onEvent)
                 .on('unlinkDir', onEvent)
-                .on('error', (error: any) => console.error(`[FileService] Watcher error: ${error}`));
+                .on('error', (error: any) => {
+                    if (error.code === 'EPERM') {
+                        console.warn(`[FileService] Watcher EPERM (Locked file/Access denied) at: ${error.path || 'unknown'}`);
+                    } else {
+                        console.error(`[FileService] Watcher error: ${error}`);
+                    }
+                });
 
             console.log(`[FileService] Watching workspace with chokidar: ${this.workspaceDir}`);
         } catch (e) {

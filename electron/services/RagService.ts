@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * RagService
@@ -11,7 +12,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
  * **How it differs from MemoryService:**
  * - `MemoryService` = short-term, fact-based conversational memory (Mem0).
  * - `RagService` = long-term, document-based narrative memory (ChromaDB vector store).
- *   Stores and retrieves from the 400+ narrative text files in the `memory/` directory.
  * 
  * **Architecture:**
  * The service communicates with `mcp-servers/tala-core/server.py` via the MCP SDK's
@@ -195,6 +195,13 @@ export class RagService {
     async logInteraction(userText: string, agentText: string): Promise<void> {
         if (!this.isReady || !this.client) return;
 
+        // --- RAG Noise Reduction ---
+        // Skip if agent response is empty or purely a tool call/envelope JSON
+        const trimmed = agentText.trim();
+        if (!trimmed || (trimmed.startsWith('{') && trimmed.endsWith('}') && trimmed.includes('tool_calls'))) {
+            return;
+        }
+
         try {
             await this.client.callTool({
                 name: 'log_interaction',
@@ -215,6 +222,13 @@ export class RagService {
         if (!this.isReady || !this.client) return 'RAG Service not ready';
 
         try {
+            // --- RAG Noise Reduction: Skip Oversized Files ---
+            const stats = fs.statSync(filePath);
+            if (stats.size > 1024 * 1024) { // 1MB Cap for RAG items
+                console.warn(`[RagService] Skipping oversized file: ${filePath} (${stats.size} bytes)`);
+                return 'File too large for RAG ingestion';
+            }
+
             const result = await this.client.callTool({
                 name: 'ingest_file',
                 arguments: { file_path: filePath, category }

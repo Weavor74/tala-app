@@ -33,9 +33,12 @@ export class CodeAccessPolicy {
         '**/*.db'
     ];
 
-    private allowedBaseCommands = [
+    private allowedPrefixes = [
         'npm', 'node', 'npx', 'python', 'pip', 'git', 'tsc', 'eslint', 'vitest', 'pytest',
-        'ls', 'dir', 'cd', 'mkdir', 'echo', 'type', 'cat', 'grep', 'find'
+        'ls', 'dir', 'cd', 'mkdir', 'echo', 'type', 'cat', 'grep', 'find',
+        'python.exe', '.\\scripts\\',
+        // Common full paths for bundled binaries
+        'D:\\src\\client1\\tala-app\\bin\\python-win\\python.exe'
     ];
 
     constructor(options: CodeAccessPolicyOptions) {
@@ -84,26 +87,53 @@ export class CodeAccessPolicy {
     }
 
     /**
+     * Normalizes a shell command string by trimming, collapsing whitespace,
+     * and stripping wrapping quotes.
+     */
+    public normalizeCommand(command: string): string {
+        let cmd = (command || '').trim();
+        // Collapse multiple whitespaces
+        cmd = cmd.replace(/\s+/g, ' ');
+        // Strip wrapping quotes (e.g. "npm run lint" -> npm run lint)
+        if ((cmd.startsWith('"') && cmd.endsWith('"')) || (cmd.startsWith("'") && cmd.endsWith("'"))) {
+            cmd = cmd.substring(1, cmd.length - 1);
+        }
+        return cmd;
+    }
+
+    /**
      * Validates a shell command against the allowlist and denylist.
+     * Expects a normalized command.
      */
     public validateCommand(command: string): { ok: boolean, error?: string } {
-        const trimmed = command.trim();
-        if (!trimmed) return { ok: false, error: 'Empty command.' };
+        if (!command) return { ok: false, error: 'Command cannot be empty' };
 
-        const base = trimmed.split(/\s+/)[0].toLowerCase();
+        const lowerCmd = command.toLowerCase();
 
-        // 1. Deny dangerous patterns
+        // 1. Block shell chaining / redirection operators anywhere in the command
+        // This prevents injection via: cmd1 && cmd2, cmd1 || cmd2, cmd1 | cmd2,
+        // cmd1 ; cmd2, cmd > file, cmd < file, cmd &
+        // Note: we allow '>' only inside quoted strings would require a full parser;
+        // for safety we block unconditionally since agent commands should be atomic.
+        const CHAIN_OPS = /[&|;<>]/;
+        if (CHAIN_OPS.test(command)) {
+            return { ok: false, error: 'Command chaining/redirection operators (&&, ||, |, ;, >, <, &) are not allowed. Use atomic commands only.' };
+        }
+
+        // 2. Deny dangerous patterns
         const dangerous = [
-            'rm -rf /', '> /etc/', '> c:\\windows', 'format ', 'mkfs', 'dd ',
-            'wget ', 'curl ', 'ssh ', 'scp ' // exfil prevention
+            'rm -rf /', 'format ', 'mkfs', 'dd ',
+            'wget ', 'curl ', 'ssh ', 'scp ', 'powershell ', 'cmd /c', 'del /s /q /f'
         ];
-        if (dangerous.some(p => trimmed.toLowerCase().includes(p))) {
+        if (dangerous.some(p => lowerCmd.includes(p))) {
             return { ok: false, error: 'Potentially destructive or global command blocked.' };
         }
 
-        // 2. Allowlist check
-        if (!this.allowedBaseCommands.includes(base) && !base.startsWith('.') && !base.startsWith('/')) {
-            return { ok: false, error: 'Command not in safety whitelist.' };
+        // 3. Prefix allowlist check
+        const isAllowed = this.allowedPrefixes.some(prefix => lowerCmd.startsWith(prefix.toLowerCase()));
+
+        if (!isAllowed && !lowerCmd.startsWith('.') && !lowerCmd.startsWith('/') && !/^[a-z]:\\/i.test(lowerCmd)) {
+            return { ok: false, error: `Command not in safety whitelist (Prefix check failed).` };
         }
 
         return { ok: true };

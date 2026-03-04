@@ -112,6 +112,7 @@ export class AgentService {
     private router: SmartRouterService | null = null;
     private codeControl: any = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
+    private MAX_TOOL_CALLS_PER_TURN = 8;
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -993,6 +994,54 @@ Exported standalone package from Tala.
         }
     }
 
+    private detectToolIntent(userMessage: string): string {
+        const lower = userMessage.toLowerCase();
+
+        // 1. FILE_PATH_PATTERN (Explicit files/exts) -> ALWAYS coding
+        const FILE_PATH_PATTERN = /\b[a-zA-Z0-9_\-/]+\.(ts|js|json|txt|md|py|tsx|jsx|yml|yaml|sh|css|html|env|toml|ini)\b/i;
+        if (FILE_PATH_PATTERN.test(userMessage)) {
+            return 'coding';
+        }
+
+        // 2. Explicit Memory
+        const MEMORY_PATTERN = /\b(remember|save to memory|store this|add to memory|look up in memory|mem0|memory graph|retrieve context|memory)\b/i;
+        if (MEMORY_PATTERN.test(lower)) {
+            return 'memory';
+        }
+
+        // 3. Explicit Management
+        const MGMT_PATTERN = /\b(current goal|goals|manage goals|self audit|audit|reflection|routing mode|settings|identity|soul)\b/i;
+        if (MGMT_PATTERN.test(lower)) {
+            return 'management';
+        }
+
+        // 4. REPO_INSPECTION_PATTERN (Explicit actions requiring tools but no specific path)
+        const REPO_INSPECTION_PATTERN = /\b(list files|scan|count files|search for|grep|find in repo|show tree|read file|open file|inspect package\.json)\b/i;
+        if (REPO_INSPECTION_PATTERN.test(lower)) {
+            return 'coding';
+        }
+
+        // 5. Tool-action heuristic (anyVerb && anyNoun)
+        const intentVerbs = ['create', 'write', 'edit', 'modify', 'delete', 'remove', 'add', 'update', 'patch', 'refactor', 'generate', 'scaffold', 'implement', 'fix', 'run', 'execute', 'lint', 'test', 'build', 'install', 'start'];
+        const intentNouns = ['file', 'script', 'folder', 'directory', 'path', 'ts', 'js', 'json', 'md', 'txt', 'npm', 'node', 'pnpm', 'yarn', 'python', 'pytest', 'eslint', 'tsc'];
+        const hasVerb = intentVerbs.some(v => lower.includes(v));
+        const hasNoun = intentNouns.some(n => lower.includes(n));
+
+        if (hasVerb && hasNoun) {
+            return 'coding';
+        }
+
+        // 6. Otherwise -> conversation
+        return 'conversation';
+    }
+
+    private getToolTimeout(toolName: string): number {
+        if (toolName === 'shell_run' || toolName === 'run_command') return 60000;
+        if (toolName.startsWith('fs_') || toolName.includes('file') || toolName.includes('dir')) return 10000;
+        if (toolName.includes('browser') || toolName.includes('web')) return 90000;
+        return 30000; // Default
+    }
+
     private estimateTokens(text: string): number {
         return Math.ceil(text.length / 4);
     }
@@ -1250,6 +1299,122 @@ Exported standalone package from Tala.
         }
     }
 
+    private parseToolArguments(toolName: string, rawArgs: any): any {
+        if (typeof rawArgs === 'object' && rawArgs !== null) return rawArgs;
+        if (typeof rawArgs !== 'string') return {};
+
+        const trimmed = rawArgs.trim();
+        if (!trimmed) return {};
+
+        try {
+            return JSON.parse(trimmed);
+        } catch (e) {
+            // Case 3 — tolerant repair (development only)
+            try {
+                const repaired = trimmed
+                    .replace(/'/g, '"') // Single quotes to double
+                    .replace(/,\s*([}\]])/g, '$1'); // Trailing commas
+                return JSON.parse(repaired);
+            } catch (e2) {
+                throw new Error(`Invalid tool arguments JSON for ${toolName}: ${trimmed.substring(0, 200)}...`);
+            }
+        }
+    }
+
+    private validateToolArguments(name: string, args: any) {
+        if (name === 'fs_write_text') {
+            if (!args.path) throw new Error(`Missing required argument "path" for fs_write_text`);
+            if (args.content === undefined) throw new Error(`Missing required argument "content" for fs_write_text`);
+        } else if (name === 'fs_read_text') {
+            if (!args.path) throw new Error(`Missing required argument "path" for fs_read_text`);
+        } else if (name === 'fs_list') {
+            if (!args.path) throw new Error(`Missing required argument "path" for fs_list`);
+        } else if (name === 'shell_run') {
+            if (!args.command) throw new Error(`Missing required argument "command" for shell_run`);
+        }
+    }
+
+    /**
+     * extractJsonObjectEnvelope
+     *
+     * Robustly extracts the first JSON object containing a top-level "tool_calls" key
+     * from a string that may have prose before/after it.
+     *
+     * Algorithm:
+     *  1. Scan the string character-by-character with a brace-depth counter.
+     *  2. At depth-zero, each '{' starts a candidate object. Track its start index.
+     *  3. The matching '}' (depth returns to 0) is the end of that candidate.
+     *  4. Attempt JSON.parse on each candidate. If it has tool_calls -> return it.
+     *  5. If no candidate parses with tool_calls, return null.
+     *
+     * This is tolerant of:
+     *  - Surrounding prose before/after the JSON object
+     *  - Nested JSON objects/arrays inside the tool_calls
+     *  - Multiple JSON objects in the text (picks the one with tool_calls)
+     *  - Strings containing '{' or '}' (we skip inside string literals)
+     */
+    private extractJsonObjectEnvelope(text: string): any | null {
+        const len = text.length;
+        let i = 0;
+
+        while (i < len) {
+            // Skip to the next '{' at depth 0
+            if (text[i] !== '{') { i++; continue; }
+
+            // Found an opening brace — scan forward to find the matching closing brace
+            const start = i;
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+
+            while (i < len) {
+                const ch = text[i];
+
+                if (escape) {
+                    escape = false;
+                    i++;
+                    continue;
+                }
+
+                if (ch === '\\' && inString) {
+                    escape = true;
+                    i++;
+                    continue;
+                }
+
+                if (ch === '"') {
+                    inString = !inString;
+                    i++;
+                    continue;
+                }
+
+                if (!inString) {
+                    if (ch === '{') depth++;
+                    else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            // Candidate object found: [start, i]
+                            const candidate = text.substring(start, i + 1);
+                            try {
+                                const parsed = JSON.parse(candidate);
+                                if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tool_calls)) {
+                                    return parsed;
+                                }
+                            } catch { /* not valid JSON, try next starting '{' */ }
+                            // Move past this candidate and look for the next '{'
+                            i++;
+                            break;
+                        }
+                    }
+                }
+                i++;
+            }
+        }
+
+        return null;
+    }
+
+
     private async getAstroState(): Promise<string> {
         try {
             const settings = loadSettings(this.settingsPath);
@@ -1262,7 +1427,9 @@ Exported standalone package from Tala.
 
     public async scanLocalModels(): Promise<any[]> {
         const found: any[] = [];
-        try { if ((await OllamaBrain.listModels('http://127.0.0.1:11434', 2000)).length > 0) found.push({ id: 'ollama-local', engine: 'ollama', endpoint: 'http://127.0.0.1:11434', source: 'local' }); } catch { }
+        try {
+            if ((await OllamaBrain.listModels('http://127.0.0.1:11434', 2000)).length > 0) found.push({ id: 'ollama-local', engine: 'ollama', endpoint: 'http://127.0.0.1:11434', source: 'local' });
+        } catch { }
         return found;
     }
 
@@ -1380,13 +1547,24 @@ Exported standalone package from Tala.
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
+        const toolCategory = this.detectToolIntent(userMessage);
+        const filteredTools = this.tools.getToolDefinitions(toolCategory);
+        // Build the set of allowed tool names for this turn — used for execution-time gating.
+        // This set is computed once from filteredTools and MUST NOT change during retries.
+        const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
+
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
             turn++;
             const truncated = this.truncateHistory([...this.chatHistory, ...transientMessages], messageBudget);
 
             try {
-                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, this.tools.getToolDefinitions(), { temperature: 0.3, repeat_penalty: 1.15 });
+                const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15 };
+                if (toolCategory === 'coding') brainOptions.tool_choice = 'required';
+
+                console.log(`[AgentService] turn=${turn} intent=${toolCategory} tools=${filteredTools.length} names=[${filteredTools.map(t => t.function.name).join(',')}]`);
+                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, filteredTools, brainOptions);
+
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens;
                     cumulativeUsage.completion_tokens += response.metadata.usage.completion_tokens;
@@ -1395,7 +1573,104 @@ Exported standalone package from Tala.
 
                 const assistantMsg: ChatMessage = { role: 'assistant', content: response.content || "" };
                 let calls = response.toolCalls || [];
-                if (calls.length === 0) calls = this.extractToolCallsFromText(response.content || "");
+
+                // --- HARDENED ToolRequired Gate ---
+                const intentVerbs = ['create', 'write', 'edit', 'modify', 'delete', 'remove', 'add', 'update', 'patch', 'refactor', 'generate', 'scaffold', 'implement', 'fix', 'run', 'execute', 'lint', 'test', 'build', 'install', 'start'];
+                const intentNouns = ['file', 'script', 'folder', 'directory', 'path', 'ts', 'js', 'json', 'md', 'txt', 'npm', 'node', 'pnpm', 'yarn', 'python', 'pytest', 'eslint', 'tsc'];
+                const lowerUserMsg = userMessage.toLowerCase();
+                const requiresTool = intentVerbs.some(v => lowerUserMsg.includes(v)) && intentNouns.some(n => lowerUserMsg.includes(n));
+
+                if (requiresTool && calls.length === 0) {
+                    console.log(`[AgentService] retry=ToolRequired intent=${toolCategory} tools=${filteredTools.length}`);
+                    const envelopeSystem = `Tool call required. Critical instruction: You are in a strict execution environment. You MUST NOT narrate or explain. Output ONLY a valid JSON object matching this schema: 
+{
+  "tool_calls": [
+    {
+      "name": "tool_name",
+      "arguments": { "arg1": "value" }
+    }
+  ]
+}
+Failure to provide a tool call will result in system termination.`;
+
+                    const retryOptions: any = { temperature: 0.1 };
+                    if (toolCategory === 'coding') retryOptions.tool_choice = 'required';
+
+                    const retryResponse = await this.brain.streamResponse(truncated, envelopeSystem + "\n\n" + systemPrompt, onToken, signal, filteredTools, retryOptions);
+
+                    calls = retryResponse.toolCalls || [];
+                    if (calls.length === 0 && retryResponse.content) {
+                        // --- ROBUST ENVELOPE EXTRACTION ---
+                        // Use brace-depth scanner to find the JSON object with tool_calls
+                        // even when the model prefixes/suffixes it with prose.
+                        const retryText = retryResponse.content;
+                        const parsed = this.extractJsonObjectEnvelope(retryText);
+                        if (parsed?.tool_calls && Array.isArray(parsed.tool_calls)) {
+                            // --- STRICT MODE: log if there is non-JSON prose surrounding the object ---
+                            const toolsOnlyStrict = toolCategory === 'coding';
+                            if (toolsOnlyStrict) {
+                                // Determine if there is text outside the JSON object
+                                const jsonStr = JSON.stringify(parsed);
+                                const jsonIdx = retryText.indexOf('{');
+                                const before = retryText.substring(0, jsonIdx).trim();
+                                const afterIdx = retryText.lastIndexOf('}');
+                                const after = retryText.substring(afterIdx + 1).trim();
+                                if (before.length > 0 || after.length > 0) {
+                                    const nonJsonLen = before.length + after.length;
+                                    console.log(`[AgentService] toolsOnlyStrict violation: non-json output suppressed (len=${nonJsonLen})`);
+                                }
+                            }
+
+                            // --- ENVELOPE VALIDATION ---
+                            if (parsed.tool_calls.length > this.MAX_TOOL_CALLS_PER_TURN) {
+                                console.warn(`[AgentService] Envelope: tool_calls array too long (${parsed.tool_calls.length} > ${this.MAX_TOOL_CALLS_PER_TURN}). HardFail.`);
+                                finalResponse = `Tool envelope invalid: too many tool_calls (${parsed.tool_calls.length}). Max is ${this.MAX_TOOL_CALLS_PER_TURN}.`;
+                                break;
+                            }
+                            const invalidEntry = parsed.tool_calls.find((tc: any) => {
+                                if (typeof tc.name !== 'string') return true;
+                                if (!allowedToolNames.has(tc.name)) return true;
+                                if (typeof tc.arguments !== 'object' || tc.arguments === null || Array.isArray(tc.arguments)) return true;
+                                if (JSON.stringify(tc.arguments).length >= 32768) return true;
+                                return false;
+                            });
+                            if (invalidEntry) {
+                                const reason = !allowedToolNames.has(invalidEntry.name)
+                                    ? `name '${invalidEntry.name}' not in allowedToolNames=[${[...allowedToolNames].join(',')}]`
+                                    : `invalid arguments or size for '${invalidEntry.name}'`;
+                                console.warn(`[AgentService] Envelope validation failed: ${reason}`);
+                                finalResponse = `Tool envelope invalid: ${reason}`;
+                                break;
+                            }
+                            calls = parsed.tool_calls.map((tc: any, i: number) => ({
+                                id: `env_${Date.now()}_${i}`,
+                                type: 'function',
+                                function: { name: tc.name, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments) }
+                            }));
+                        }
+                    }
+
+                    if (calls.length === 0) {
+                        if (toolCategory === 'coding') {
+                            console.log(`[AgentService] HardFail: intent=coding but no tool calls after retry`);
+                            finalResponse = "Tool call required for this task. The model did not emit tool calls.";
+                        } else {
+                            finalResponse = "Tool call required for this task. Re-issue using tools only.";
+                        }
+                        break;
+                    }
+                }
+
+                // --- TOOLS-ONLY RENDER SUPPRESSION ---
+                // For coding intent: if tool calls exist, the assistant prose must not reach the UI.
+                // The model often outputs narration alongside or before the JSON envelope;
+                // both paths (native toolCalls + envelope) are covered here.
+                if (toolCategory === 'coding' && calls.length > 0) {
+                    if (assistantMsg.content && assistantMsg.content.trim().length > 0) {
+                        console.log(`[AgentService] toolsOnly: suppressing ${assistantMsg.content.length}B of assistant prose for coding turn`);
+                    }
+                    assistantMsg.content = ''; // suppress prose from reaching the UI
+                }
 
                 if (calls.length === 0) {
                     finalResponse = response.content || "";
@@ -1403,12 +1678,52 @@ Exported standalone package from Tala.
                     break;
                 }
 
+                // --- EXECUTION CAP ---
+                if (calls.length > this.MAX_TOOL_CALLS_PER_TURN) {
+                    console.warn(`[AgentService] Too many tool calls (${calls.length}), capping at ${this.MAX_TOOL_CALLS_PER_TURN}`);
+                    calls = calls.slice(0, this.MAX_TOOL_CALLS_PER_TURN);
+                }
+
                 assistantMsg.tool_calls = calls;
                 transientMessages.push(assistantMsg);
 
+                // --- HARDENED Tool Execution with Timeouts + Execution-Time Gate ---
                 for (const call of calls) {
-                    const result = await this.tools.executeTool(call.function.name, JSON.parse(call.function.arguments));
-                    transientMessages.push({ role: 'tool', content: String(result), tool_call_id: call.id, name: call.function.name });
+                    const toolName = call.function?.name || (call as any).name;
+                    const toolArgs = call.function?.arguments || (call as any).arguments;
+
+                    // --- EXECUTION-TIME ALLOWED-TOOL GATE ---
+                    // Reject any tool call whose name is not in the set we passed to the brain.
+                    if (!allowedToolNames.has(toolName)) {
+                        console.log(`[AgentService] rejected tool not allowed this turn: ${toolName} allowed=[${[...allowedToolNames].join(',')}]`);
+                        transientMessages.push({ role: 'tool', content: `Error: Tool '${toolName}' is not permitted for this turn. Allowed: [${[...allowedToolNames].join(', ')}]`, tool_call_id: call.id, name: toolName });
+                        continue;
+                    }
+
+                    console.log(`[AgentService] executing tool: ${toolName}`);
+
+                    const timeoutMs = this.getToolTimeout(toolName);
+                    const startTime = Date.now();
+
+                    try {
+                        const executePromise = (async () => {
+                            const args = this.parseToolArguments(toolName, toolArgs);
+                            this.validateToolArguments(toolName, args);
+
+                            const argStr = JSON.stringify(args);
+                            console.log(`[AgentService] args: ${argStr.length > 200 ? argStr.slice(0, 200) + '...' : argStr}`);
+
+                            return await this.tools.executeTool(toolName, args, allowedToolNames);
+                        })();
+
+                        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
+
+                        const result = await Promise.race([executePromise, timeoutPromise]);
+                        transientMessages.push({ role: 'tool', content: String(result), tool_call_id: call.id, name: toolName });
+                    } catch (e: any) {
+                        console.error(`[AgentService] tool error (${toolName}):`, e.message);
+                        transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
+                    }
                 }
             } catch (e) { break; }
         }
@@ -1451,6 +1766,19 @@ Exported standalone package from Tala.
                 }
             };
             storeMemories(); // fire-and-forget
+        }
+
+        // --- FINAL UI BOUNDARY GUARD (Last Line of Defense) ---
+        // Ensure that for coding intent, if any tool calls were executed, no assistant prose remains.
+        const finalCalls = transientMessages.filter(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0);
+        if (toolCategory === 'coding' && finalCalls.length > 0) {
+            for (const msg of transientMessages) {
+                if (msg.role === 'assistant' && msg.content && msg.content.trim().length > 0) {
+                    console.warn(`[AgentService] FINAL GUARD TRIGGERED: Suppressing leaked prose for coding turn. Session: ${this.activeSessionId || 'unknown'}`);
+                    console.log(`[AgentService] Leaked prose preview: ${msg.content.substring(0, 100)}...`);
+                    msg.content = '';
+                }
+            }
         }
 
         this.chatHistory.push(...transientMessages);

@@ -4,6 +4,7 @@ import { CodeAccessPolicy } from './CodeAccessPolicy';
 import { auditLogger } from './AuditLogger';
 import crypto from 'crypto';
 import path from 'path';
+import { exec } from 'child_process';
 
 export class CodeControlService {
     constructor(
@@ -121,34 +122,36 @@ export class CodeControlService {
     }
 
     public async shellRun(command: string, cwd?: string) {
+        console.log(`[CodeControlService] shellRun raw command: ${JSON.stringify(command)}`);
         const start = Date.now();
-        const trimmedCmd = (command || '').trim();
-
-        if (!trimmedCmd) {
-            throw new Error('Command cannot be empty');
+        if (!command || !command.trim()) {
+            const err = new Error('Command cannot be empty');
+            console.error(`[CodeControlService] ${err.message}`, err.stack?.split('\n').slice(0, 3).join('\n'));
+            throw err;
         }
+        const normalizedCmd = this.policy.normalizeCommand(command);
 
         if (this.policy.getMode() === 'manual') {
-            return { ok: false, error: 'Manual approval required for shell execution.', requiresApproval: true, action: 'shell', command };
+            return { ok: false, error: 'Manual approval required for shell execution.', requiresApproval: true, action: 'shell', command: normalizedCmd };
         }
 
         try {
             // Validate command via policy
-            const vCmd = this.policy.validateCommand(trimmedCmd);
+            const vCmd = this.policy.validateCommand(normalizedCmd);
             if (!vCmd.ok) throw new Error(vCmd.error);
 
-            // Create a temporary terminal to run the command and capture output
-            const { exec } = require('child_process');
+            // Execute via TerminalService or directly?
+            // Requirement says Route through CodeControlService. 
+            // We'll use child_process.exec for now as it captures output easily for agents.
             const workspaceRoot = this.policy.getWorkspaceRoot();
             const resolvedCwd = cwd ? path.resolve(workspaceRoot, cwd) : workspaceRoot;
 
-            // Re-verify cwd is within root
             if (!resolvedCwd.startsWith(workspaceRoot)) {
                 throw new Error('CWD must be within workspace root.');
             }
 
             return new Promise((resolve) => {
-                exec(trimmedCmd, { cwd: resolvedCwd, timeout: 60000, env: process.env }, (error: any, stdout: string, stderr: string) => {
+                exec(normalizedCmd, { cwd: resolvedCwd, timeout: 60000, env: process.env }, (error: any, stdout: string, stderr: string) => {
                     const duration = Date.now() - start;
                     const result = {
                         ok: !error,
@@ -157,12 +160,12 @@ export class CodeControlService {
                         stderr: stderr.trim(),
                         duration
                     };
-                    this.logAction('shell:run', { command, exitCode: result.exitCode, duration });
+                    this.logAction('shell:run', { command: normalizedCmd, exitCode: result.exitCode, duration });
                     resolve(result);
                 });
             });
         } catch (e: any) {
-            this.logAction('shell:run:error', { command, error: e.message, duration: Date.now() - start });
+            this.logAction('shell:run:error', { command: normalizedCmd, error: e.message, duration: Date.now() - start });
             return { ok: false, error: e.message };
         }
     }

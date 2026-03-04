@@ -75,6 +75,18 @@ export class ToolService {
     private reflectionService: any = null;
 
     /**
+     * Legacy tool names that are registered internally but MUST NOT be callable
+     * from LLM tool_calls. These are blocked at execution time in `executeTool()`.
+     * The canonical replacements are: fs_read_text, fs_write_text, fs_list, shell_run.
+     */
+    private static readonly LEGACY_TOOLS = new Set([
+        'write_file', 'read_file', 'list_files', 'delete_file',
+        'create_directory', 'patch_file', 'move_file', 'copy_file',
+        'terminal_run', 'execute_command', 'execute_script'
+    ]);
+
+
+    /**
      * Creates a new ToolService and registers all core tools.
      * 
      * Sets the workspace to `~/Documents/TalaWorkspace` by default.
@@ -991,6 +1003,126 @@ export class ToolService {
                 return "Self-audit pulse complete. All critical event classes (Lifecycle, Chat, Router, Tools, MCP, IO, Reflection) have been verified in the JSONL append-only log. The provability of the system is confirmed.";
             }
         });
+
+        // Tool: shell_run (Canonical)
+        this.register({
+            name: 'shell_run',
+            description: 'Runs a shell command in the workspace directory. This is your primary way to interact with the OS (run tests, build, lint, etc.). Always verify path and command before execution.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    command: { type: 'string', description: 'The shell command to execute.' }
+                },
+                required: ['command']
+            },
+            execute: async (args) => {
+                const { exec } = require('child_process');
+                return new Promise((resolve) => {
+                    exec(args.command, { cwd: this.workspaceDir }, (err: any, stdout: string, stderr: string) => {
+                        if (err) resolve(`Error: ${err.message}\n${stderr}`);
+                        else resolve(stdout || stderr || "Command executed successfully.");
+                    });
+                });
+            }
+        });
+
+        // Tool: fs_read_text (Canonical)
+        this.register({
+            name: 'fs_read_text',
+            description: 'Reads text content from a file in the workspace. Path is relative to workspace root. Max 2MB.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative path to the file.' }
+                },
+                required: ['path']
+            },
+            execute: async (args) => {
+                try {
+                    const targetPath = path.join(this.workspaceDir, args.path);
+                    if (!targetPath.startsWith(this.workspaceDir) || !fs.existsSync(targetPath)) {
+                        return 'Error: File not found or access denied.';
+                    }
+                    const stats = fs.statSync(targetPath);
+                    if (stats.size > 2 * 1024 * 1024) {
+                        return `Error: File too large (${Math.round(stats.size / 1024)}KB). Max 2MB.`;
+                    }
+                    return fs.readFileSync(targetPath, 'utf-8');
+                } catch (e: any) {
+                    return `Error reading file: ${e.message}`;
+                }
+            }
+        });
+
+        // Tool: fs_write_text (Canonical)
+        this.register({
+            name: 'fs_write_text',
+            description: 'Writes text content to a file in the workspace. Overwrites if exists.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative path to the file.' },
+                    content: { type: 'string', description: 'Content to write.' }
+                },
+                required: ['path', 'content']
+            },
+            execute: async (args) => {
+                try {
+                    const targetPath = path.join(this.workspaceDir, args.path);
+                    if (!targetPath.startsWith(this.workspaceDir)) {
+                        return 'Error: Access denied. You can only write within the workspace.';
+                    }
+                    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+                    fs.writeFileSync(targetPath, args.content, 'utf-8');
+                    auditLogger.info('file_write', 'ToolService', {
+                        path: args.path,
+                        bytes_written: Buffer.byteLength(args.content, 'utf-8'),
+                        sha256: auditLogger.hashArgs(args.content),
+                        status: 'success'
+                    });
+                    return `Success: File written to ${args.path}`;
+                } catch (e: any) {
+                    return `Error writing file: ${e.message}`;
+                }
+            }
+        });
+
+        // Tool: fs_list (Canonical)
+        this.register({
+            name: 'fs_list',
+            description: 'Lists files and directories at the given path relative to workspace root.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative path to list (empty string for root).' },
+                    recursive: { type: 'boolean', description: 'Whether to list subdirectories.' }
+                },
+                required: ['path']
+            },
+            execute: async (args) => {
+                try {
+                    const targetPath = path.join(this.workspaceDir, args.path || '');
+                    if (!targetPath.startsWith(this.workspaceDir)) return 'Error: Access denied.';
+                    const list = (dir: string, depth = 0): string[] => {
+                        if (depth > 2) return [];
+                        const entries = fs.readdirSync(dir, { withFileTypes: true });
+                        let results: string[] = [];
+                        for (const entry of entries) {
+                            if (['node_modules', '.git', 'dist', 'dist-electron'].includes(entry.name)) continue;
+                            const full = path.join(dir, entry.name);
+                            const rel = path.relative(this.workspaceDir, full).replace(/\\/g, '/');
+                            results.push(`${entry.isDirectory() ? '[DIR]' : '[FILE]'} ${rel}`);
+                            if (args.recursive && entry.isDirectory()) results = [...results, ...list(full, depth + 1)];
+                        }
+                        return results;
+                    };
+                    const files = list(targetPath);
+                    return files.length > 0 ? files.join('\n') : 'Directory is empty.';
+                } catch (e: any) {
+                    return `Error listing files: ${e.message}`;
+                }
+            }
+        });
     }
 
     /**
@@ -1179,11 +1311,34 @@ export class ToolService {
      * Returns tool definitions in the format expected by OpenAI/Ollama APIs.
      * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any, strict?: boolean } }>}
      */
-    public getToolDefinitions() {
+    /**
+     * Returns tool definitions in the format expected by OpenAI/Ollama APIs.
+     * Supports grouping to reduce tool count per turn.
+     * @param {string} [category] - Optional category: 'coding', 'memory', 'management'
+     * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any, strict?: boolean } }>}
+     */
+    public getToolDefinitions(category?: string) {
         const definitions: any[] = [];
+        const legacyTools = [
+            'write_file', 'read_file', 'list_files', 'delete_file',
+            'create_directory', 'patch_file', 'move_file', 'copy_file',
+            'terminal_run', 'execute_command', 'execute_script'
+        ];
+
+        // Define Tool Groups (Strict Minimal Sets)
+        const groups: Record<string, string[]> = {
+            coding: ['fs_read_text', 'fs_write_text', 'fs_list', 'shell_run'],
+            memory: ['mem0_search', 'mem0_add', 'retrieve_context', 'query_graph'],
+            management: ['self_audit', 'reflection_clean', 'manage_goals']
+        };
+
+        const allowedTools = category && groups[category] ? groups[category] : null;
 
         // Core Tools
         this.tools.forEach(tool => {
+            if (legacyTools.includes(tool.name)) return;
+            if (allowedTools && !allowedTools.includes(tool.name)) return;
+
             definitions.push({
                 type: 'function',
                 function: {
@@ -1198,10 +1353,12 @@ export class ToolService {
         // MCP Tools
         this.mcpTools.forEach((entry, name) => {
             const tool = entry.def;
+            if (allowedTools && !allowedTools.includes(name)) return;
+
             definitions.push({
                 type: 'function',
                 function: {
-                    name: name, // Use registry key 'name' which is guaranteed to be the correct ID
+                    name: name,
                     description: tool.description || 'No description provided.',
                     strict: true,
                     parameters: this.makeStrictSchema(tool.inputSchema || tool.parameters || { type: 'object', properties: {} })
@@ -1241,20 +1398,38 @@ export class ToolService {
 
     /**
      * Executes a registered tool with the given arguments.
-     * 
-     * Looks up the tool by name and calls its `execute` function.
-     * If the tool is not found, returns an error string instead of throwing.
-     * 
+     *
      * @param {string} name - The name of the tool to execute.
-     * @param {any} args - The arguments parsed from the AI's `TOOL_CALL` block.
-     * @returns {Promise<any>} The tool's output (may include a special prefix
-     *   like `'BROWSER_NAVIGATE:'` that triggers event handling in AgentService).
+     * @param {any} args - The arguments parsed from the AI's TOOL_CALL block.
+     * @param {ReadonlySet<string>} [allowedNames] - Optional runtime allowlist from AgentService.
+     *   When provided (strongly recommended), any name not in this set throws BEFORE registry lookup.
+     *   This is Gate #2 — a defense-in-depth layer beneath the AgentService pre-execution check.
+     * @returns {Promise<any>}
      */
-    public async executeTool(name: string, args: any): Promise<any> {
+    public async executeTool(name: string, args: any, allowedNames?: ReadonlySet<string>): Promise<any> {
         // Strip provider-specific prefixes if present (e.g. Gemini OpenAI shim prepends 'default_api:')
         if (name.startsWith('default_api:')) {
             name = name.substring('default_api:'.length);
         }
+
+        // --- GATE #2: Runtime turn-scoped allowlist (passed from AgentService) ---
+        // This fires BEFORE the registry lookup, making it impossible for any registered
+        // tool (legacy or otherwise) to execute unless it is in the caller's allowed set.
+        if (allowedNames && !allowedNames.has(name)) {
+            auditLogger.warn('tool_not_allowed_this_turn', 'ToolService', { name, allowed: [...allowedNames] });
+            console.warn(`[ToolService] Gate #2 BLOCKED: '${name}' is not in allowedNames=[${[...allowedNames].join(',')}]`);
+            throw new Error(`ToolNotAllowedThisTurn: ${name}`);
+        }
+
+        // --- GATE #1 (static): LEGACY TOOL BLOCK ---
+        // Legacy tools are still registered internally for compatibility but MUST NOT
+        // be callable via LLM tool_calls. Use fs_read_text, fs_write_text, fs_list, shell_run.
+        if (ToolService.LEGACY_TOOLS.has(name)) {
+            auditLogger.warn('legacy_tool_blocked', 'ToolService', { name });
+            console.warn(`[ToolService] BLOCKED legacy tool call: ${name}. Use canonical tools instead.`);
+            return `Error: Tool '${name}' is a legacy tool and cannot be called directly. Use fs_read_text, fs_write_text, fs_list, or shell_run instead.`;
+        }
+
 
         const startTime = Date.now();
         const argsHash = auditLogger.hashArgs(args);

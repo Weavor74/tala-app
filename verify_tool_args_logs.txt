@@ -1,0 +1,30 @@
+--- Starting Tool Arguments Verification ---
+
+Test: Valid JSON
+  Parsed: {"command":"echo hello"}
+  Validated: OK
+
+Test: Object/Direct
+  Parsed: {"command":"echo hello"}
+  Validated: OK
+
+Test: Single Quote Repair
+  Parsed: {"command":"echo hello"}
+  Validated: OK
+
+Test: Trailing Comma Repair
+  Parsed: {"path":"test.txt","content":"hello"}
+  Validated: OK
+
+Test: Missing Required Field (fs_write_text)
+  Parsed: {"path":"test.txt"}
+  Caught expected error: Missing required argument "content" for fs_write_text
+
+Test: Missing Required Field (shell_run)
+  Parsed: {}
+  Caught expected error: Missing required argument "command" for shell_run
+
+Test: Invalid JSON
+  Caught expected error: Invalid tool arguments JSON for shell_run: {"command": "unclosed...
+
+--- Verification Completed ---

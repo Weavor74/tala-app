@@ -1,0 +1,70 @@
+﻿
+=== verify_tools_only_render.ts ===
+
+Case 1: Pure JSON envelope ΓåÆ extracted, tool_calls recognized
+  Γ£à PASS: Result is non-null
+  Γ£à PASS: tool_calls is array
+  Γ£à PASS: First call is fs_write_text
+
+Case 2: Prose before JSON, prose after ΓåÆ extracted successfully
+  Γ£à PASS: Result is non-null
+  Γ£à PASS: tool_calls recognized
+  Γ£à PASS: name is fs_write_text
+
+Case 3: Multiple JSON objects ΓåÆ picks the one with tool_calls
+  Γ£à PASS: Result is non-null
+  Γ£à PASS: Correct object selected (has tool_calls)
+  Γ£à PASS: First call is shell_run
+
+Case 4: Nested JSON in arguments ΓåÆ scanner handles braces correctly
+node.exe :   Γ¥î FAIL: 
+Result is non-null
+At C:\Program Files\nod
+ejs\npx.ps1:29 char:3
++   & $NODE_EXE 
+$NPX_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (  Γ¥î FAIL: R   
+ esult is non-null:    
+String) [], Remote    
+Exception
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+  Γ¥î FAIL: tool_calls 
+present
+  Γ¥î FAIL: Nested 
+content preserved
+
+Case 5: No JSON at all ΓåÆ null returned
+  Γ£à PASS: Returns null for no-JSON input
+
+Case 6: JSON present but no tool_calls key ΓåÆ null returned
+  Γ£à PASS: Returns null when tool_calls key absent
+
+Case 7: coding intent with calls ΓåÆ assistant prose suppressed to ""
+  Γ£à PASS: Content suppressed to empty string
+
+Case 8: non-coding intent with calls ΓåÆ prose kept
+  Γ£à PASS: Content preserved for non-coding intent
+
+Case 9: coding intent but no calls ΓåÆ prose kept
+  Γ£à PASS: Content preserved when no tool calls
+
+Case 10: escaped quotes inside string values ΓåÆ parser correct
+  Γ£à PASS: Result is non-null
+  Γ£à PASS: tool_calls present
+  Γ£à PASS: Escaped quotes preserved in content
+
+=== Results: 17 passed, 3 failed ===
+{
+  "passed": 17,
+  "failed": 3,
+  "total": 20,
+  "allPassed": false,
+  "timestamp": "2026-03-04T17:59:18.614Z"
+}
