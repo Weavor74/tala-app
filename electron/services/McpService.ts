@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import path from 'path';
 import { McpServerConfig } from '../../src/renderer/settingsData';
 import { auditLogger } from './AuditLogger';
@@ -53,7 +53,11 @@ export class McpService {
     /** The path to the Python executable, used to replace 'python' in stdio commands. */
     private pythonPath: string | null = null;
 
-    constructor() { }
+    private systemService: any = null;
+
+    constructor(systemService?: any) {
+        this.systemService = systemService;
+    }
 
     /** Sets the Python executable path for stdio connections. */
     public setPythonPath(path: string) {
@@ -96,6 +100,14 @@ export class McpService {
             return true;
         }
 
+        // Preflight Check for Python stdio servers
+        if (config.type === 'stdio' && (config.command === 'python' || config.command === this.pythonPath)) {
+            const pyExe = this.getPythonExecutable(config);
+            if (this.systemService) {
+                this.systemService.preflightCheck(pyExe);
+            }
+        }
+
         try {
             console.log(`[McpService] Connecting to ${config.name} (${config.type})...`);
             let transport: any;
@@ -104,19 +116,30 @@ export class McpService {
             if (config.type === 'stdio') {
                 if (!config.command) throw new Error('Command required for stdio');
 
-                // Spawn process manually to track it? Or let SDK handle it?
-                // SDK's StdioClientTransport spawns it but doesn't expose the process easily for cleanup?
-                // Actually StdioClientTransport takes connection args.
-
                 let command = config.command;
-                if (command === 'python' && this.pythonPath) {
-                    command = this.pythonPath;
+                let env = { ...(config as any).env || process.env };
+
+                if (command === 'python' || command === this.pythonPath) {
+                    command = this.getPythonExecutable(config);
+
+                    // Use SystemService for environment sanitization if available
+                    if (this.systemService) {
+                        env = this.systemService.getMcpEnv(env);
+                    } else {
+                        delete env.PYTHONHOME;
+                        delete env.PYTHONPATH;
+                        env.PYTHONNOUSERSITE = '1';
+                        env.PYTHONUNBUFFERED = '1';
+                    }
                 }
+
+                const serverCwd = config.cwd ? path.resolve(process.cwd(), config.cwd) : undefined;
 
                 transport = new StdioClientTransport({
                     command: command,
                     args: config.args || [],
-                    env: (config as any).env || process.env as any
+                    env: env as any,
+                    cwd: serverCwd
                 });
 
             } else if (config.type === 'websocket') {
@@ -351,6 +374,22 @@ export class McpService {
             throw new Error(`MCP Tool Error: ${e.message}`);
         }
     }
+
+    /**
+     * Resolves the Python executable based on config and system settings.
+     * Prefers canonical bundled python unless useMcpVenv is explicit.
+     */
+    private getPythonExecutable(config: McpServerConfig): string {
+        if (this.systemService && typeof this.systemService.resolveMcpPythonPath === 'function') {
+            // We pass a dummy SystemInfo with pythonPath set to this.pythonPath to bridge legacy usage
+            return this.systemService.resolveMcpPythonPath({ useMcpVenv: config.useMcpVenv }, { pythonPath: this.pythonPath });
+        }
+        if (config.useMcpVenv && (config as any).pythonEnvPath) {
+            return (config as any).pythonEnvPath;
+        }
+        return this.pythonPath || 'python';
+    }
+
 
     /**
      * Shuts down the MCP service by disconnecting all active servers

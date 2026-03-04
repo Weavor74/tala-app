@@ -231,4 +231,62 @@ export class SystemService {
 
         return info;
     }
+
+    /**
+     * Resolves the canonical Python executable for MCP servers.
+     * Always prefers bundled/portable python unless useMcpVenv is explicitly true.
+     */
+    public resolveMcpPythonPath(config?: { useMcpVenv?: boolean }, currentInfo?: SystemInfo): string {
+        const info = currentInfo || { pythonPath: '', pythonEnvPath: '' };
+
+        // Venv python must NEVER be selected unless a config flag explicitly enables it (default false).
+        if (config?.useMcpVenv && info.pythonEnvPath) {
+            return info.pythonEnvPath;
+        }
+
+        // info.pythonPath is already resolved to bundled if available in detectEnv
+        // Default MUST be <repoRoot>\bin\python-win\python.exe (resolved in info.pythonPath)
+        return info.pythonPath || 'python';
+    }
+
+    /**
+     * Constructs a sanitized environment for MCP Python processes.
+     * Removes PYTHONHOME/PYTHONPATH to prevent conflicts and sets standard flags.
+     */
+    public getMcpEnv(baseEnv?: Record<string, string>): Record<string, string> {
+        const env = { ...(baseEnv || process.env) } as Record<string, string>;
+
+        // Remove PYTHONHOME/PYTHONPATH to prevent venv pollution
+        delete env.PYTHONHOME;
+        delete env.PYTHONPATH;
+
+        // Set essential flags
+        env.PYTHONNOUSERSITE = '1';
+        env.PYTHONUNBUFFERED = '1';
+
+        return env;
+    }
+
+    /**
+     * Performs a mandatory preflight check to ensure the Python interpreter can import stdlib.
+     * Throws an error on failure.
+     */
+    public preflightCheck(pythonPath: string): void {
+        try {
+            const checkCmd = `"${pythonPath}" -c "import encodings, sys; print('ok')"`;
+            const output = execSync(checkCmd, {
+                timeout: 5000,
+                env: { ...process.env, PYTHONNOUSERSITE: '1' },
+                stdio: ['ignore', 'pipe', 'ignore']
+            }).toString().trim();
+
+            if (output !== 'ok') {
+                throw new Error(`Unexpected output: ${output}`);
+            }
+        } catch (e: unknown) {
+            const errorMsg = `[SystemService] Preflight check failed for ${pythonPath}: ${(e as Error).message}`;
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+    }
 }

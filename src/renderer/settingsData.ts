@@ -63,9 +63,12 @@ export interface McpServerConfig {
     type: 'stdio' | 'websocket';
     command?: string;
     args?: string[];
+    cwd?: string;
+    useMcpVenv?: boolean;
     url?: string;
     enabled: boolean;
 }
+
 
 export interface StorageProvider {
     id: string;

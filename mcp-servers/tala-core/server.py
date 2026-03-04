@@ -370,6 +370,31 @@ def log_interaction(user_text: str, agent_text: str) -> bool:
         sys.stderr.write(f"Log Interaction Error: {e}\n")
         return False
 
+# --- MANDATORY TOOLS ---
+
+@mcp.tool()
+def ping() -> str:
+    """Standard health check."""
+    return "ok"
+
+@mcp.tool()
+def version() -> str:
+    """Returns the package version."""
+    return "1.5.0" # Tala Core version
+
+@mcp.tool()
+def status() -> str:
+    """Returns the current internal status."""
+    return json.dumps({
+        "configured": True,
+        "backend": "numpy",
+        "model": "all-MiniLM-L6-v2",
+        "index_size": len(store.metadata) if store else 0
+    })
+
+# Readiness Signaling
+sys.stderr.write("tala-core: READY (tools=8)\n")
+
 if __name__ == "__main__":
     # Restore real stdout for MCP protocol transport
     sys.stdout = _real_stdout

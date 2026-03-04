@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import os from 'os';
+import { CodeAccessPolicy } from './CodeAccessPolicy';
 
 let pty: any;
 try {
@@ -44,6 +45,7 @@ export class TerminalService {
     ];
     /** Path to application settings for checking firewall status */
     private settingsPath: string | null = null;
+    private policy: CodeAccessPolicy | null = null;
 
     /**
      * Creates a new TerminalService instance.
@@ -70,6 +72,11 @@ export class TerminalService {
      */
     public setRoot(path: string) {
         this.workspaceRoot = path;
+    }
+
+    public setPolicy(policy: CodeAccessPolicy) {
+        this.policy = policy;
+        this.workspaceRoot = policy.getWorkspaceRoot();
     }
 
     /**
@@ -161,6 +168,16 @@ export class TerminalService {
     }
 
     private isAllowed(data: string): boolean {
+        if (this.policy) {
+            const validation = this.policy.validateCommand(data);
+            if (!validation.ok) {
+                console.warn(`[TerminalService] Blocked command by policy: ${data} - ${validation.error}`);
+                return false;
+            }
+            return true;
+        }
+
+        // Fallback to legacy Quantum Firewall logic if no policy set
         // Quantum Firewall settings check
         if (this.settingsPath) {
             try {

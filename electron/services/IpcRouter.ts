@@ -15,6 +15,7 @@ import { BackupService } from './BackupService';
 import { InferenceService } from './InferenceService';
 import { loadSettings, saveSettings } from './SettingsManager';
 import { UserProfileService } from './UserProfileService';
+import { CodeControlService } from './CodeControlService';
 
 export interface IpcRouterContext {
   app: any;
@@ -32,6 +33,7 @@ export interface IpcRouterContext {
   backupService: BackupService;
   inferenceService: InferenceService;
   userProfileService: UserProfileService;
+  codeControlService: CodeControlService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -46,7 +48,7 @@ export class IpcRouter {
   constructor(private ctx: IpcRouterContext) { }
 
   public registerAll() {
-    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
+    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
 
     // Helper to simulate mutable let from main.ts
     const getSettingsPath = () => this.ctx.getSettingsPath();
@@ -588,6 +590,19 @@ export class IpcRouter {
     ipcMain.handle('test-backup-connection', async (event, config) => {
       return await backupService.testConnection(config);
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — CODE MANIPULATION
+    // ═══════════════════════════════════════════════════════════════════════
+
+    ipcMain.handle('fs:read-text', async (_e, path) => codeControlService.readText(path));
+    ipcMain.handle('fs:write-text', async (_e, { path, content }) => codeControlService.writeText(path, content));
+    ipcMain.handle('fs:list', async (_e, path) => codeControlService.list(path));
+    ipcMain.handle('fs:mkdir', async (_e, path) => codeControlService.mkdir(path));
+    ipcMain.handle('fs:move', async (_e, { src, dst }) => codeControlService.move(src, dst));
+    ipcMain.handle('fs:delete', async (_e, path) => codeControlService.delete(path));
+    ipcMain.handle('fs:search', async (_e, query) => codeControlService.search(query));
+    ipcMain.handle('shell:run', async (_e, { command, cwd }) => codeControlService.shellRun(command, cwd));
 
     // ═══════════════════════════════════════════════════════════════════════
     // IPC HANDLERS — OAUTH 2.0 LOGIN

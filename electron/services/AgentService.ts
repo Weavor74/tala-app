@@ -11,6 +11,7 @@ import { CloudBrain } from '../brains/CloudBrain';
 import { BackupService } from './BackupService';
 import type { IBrain, ChatMessage } from '../brains/IBrain';
 import { ToolService } from './ToolService';
+import { SystemService } from './SystemService';
 import { RagService } from './RagService';
 import { MemoryService } from './MemoryService';
 import { AstroService } from './AstroService';
@@ -66,6 +67,7 @@ type ReflectionServiceLike = {
 type SystemInfoLike = {
     workspaceRoot?: string;
     envVariables?: Record<string, string>;
+    systemService?: any;
 };
 
 /**
@@ -108,6 +110,7 @@ export class AgentService {
     private mainWindow: unknown = null;
     private astroTelemetryTimer: NodeJS.Timeout | null = null;
     private router: SmartRouterService | null = null;
+    private codeControl: any = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
@@ -125,6 +128,7 @@ export class AgentService {
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
         this.goals = new GoalManager(app.getPath('userData'));
         this.userProfile = userProfile || null;
+        this.systemInfo = null;
 
         this.router = new SmartRouterService(this.brain, this.brain);
 
@@ -407,6 +411,82 @@ export class AgentService {
                     const errorMessage = e instanceof Error ? e.message : String(e);
                     return `Error reading user profile: ${errorMessage}`;
                 }
+            }
+        });
+    }
+
+    public setCodeControl(codeControl: any) {
+        this.codeControl = codeControl;
+        this.registerCodeTools();
+    }
+
+    private registerCodeTools() {
+        if (!this.codeControl) return;
+
+        this.tools.register({
+            name: 'fs_read_text',
+            description: 'Reads the full text content of a file from the repository. Path is relative to repo root. Max size 2MB.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative path to the file.' }
+                },
+                required: ['path']
+            },
+            execute: async (args) => {
+                const res = await this.codeControl.readText(args.path);
+                return res.ok ? res.content : `Error: ${res.error}`;
+            }
+        });
+
+        this.tools.register({
+            name: 'fs_write_text',
+            description: 'Writes text content to a file in the repository. Overwrites if exists. Follow policy rules.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative path to the file.' },
+                    content: { type: 'string', description: 'New file content.' }
+                },
+                required: ['path', 'content']
+            },
+            execute: async (args) => {
+                const res = await this.codeControl.writeText(args.path, args.content);
+                return res.ok ? `Successfully written to ${args.path}` : `Error: ${res.error}`;
+            }
+        });
+
+        this.tools.register({
+            name: 'fs_list',
+            description: 'Lists files and directories at a given path relative to repository root.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'Relative directory path.' }
+                }
+            },
+            execute: async (args) => {
+                const res = await this.codeControl.list(args.path || '');
+                if (!res.ok) return `Error: ${res.error}`;
+                return res.entries.map((e: any) => `${e.isDirectory ? '[DIR]' : '[FILE]'} ${e.name}`).join('\n');
+            }
+        });
+
+        this.tools.register({
+            name: 'shell_run',
+            description: 'Executes a shell command within the repository root. Captures output and exit code.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    command: { type: 'string', description: 'The shell command to run.' },
+                    cwd: { type: 'string', description: 'Optional subpath to run in.' }
+                },
+                required: ['command']
+            },
+            execute: async (args) => {
+                const res = await this.codeControl.shellRun(args.command, args.cwd);
+                if (!res.ok && !res.stdout && !res.stderr) return `Error: ${res.error}`;
+                return `Exit Code: ${res.exitCode}\nSTDOUT:\n${res.stdout}\nSTDERR:\n${res.stderr}`;
             }
         });
     }
@@ -1023,50 +1103,72 @@ Exported standalone package from Tala.
             const sitePackages = path.join(pythonRoot, 'Lib', 'site-packages');
             const mcpServersDir = path.join(app.getAppPath(), 'mcp-servers');
 
-            // Each MCP server dir must be on PYTHONPATH so local package imports resolve:
-            //   astro-engine needs:       mcp-servers/astro-engine  (for `from astro_emotion_engine.xxx`)
-            //   tala-memory-graph needs:  mcp-servers/tala-memory-graph (for `from src.memory`)
-            const extraPaths = [
-                path.join(mcpServersDir, 'astro-engine'),
-                path.join(mcpServersDir, 'tala-memory-graph'),
-            ].join(';');
-
             const userIdentity = this.userProfile?.getIdentityContext();
-            const isolatedEnv: Record<string, string> = {
+
+            // Resolve Canonical Python and Sanitize Environment
+            const ss = this.systemInfo?.systemService as SystemService;
+            const mcpPython = ss?.resolveMcpPythonPath({}, this.systemInfo as any) || pythonPath;
+
+            // Preflight Checks (Throws on failure, aborting ignition)
+            if (ss) {
+                ss.preflightCheck(mcpPython);
+            }
+
+            const isolatedEnv = ss?.getMcpEnv({
                 ...process.env,
                 ...systemEnv,
                 TALA_USER_ID: userIdentity?.userId || '',
-                TALA_USER_DISPLAY_NAME: userIdentity?.displayName || 'User',
+                TALA_USER_DISPLAY_NAME: userIdentity?.displayName || 'User'
+            }) || {
+                ...process.env,
+                ...systemEnv,
                 PYTHONNOUSERSITE: '1',
-                PYTHONHOME: pythonRoot,
-                PYTHONPATH: `${sitePackages};${extraPaths}`,
-                PATH: `${path.join(pythonRoot, 'Scripts')};${path.join(pythonRoot)};${process.env.PATH}`
+                PYTHONUNBUFFERED: '1'
             };
 
+            console.log(`[AgentService] Using Python for MCP services: ${mcpPython}`);
+
             await Promise.all([
-                this.rag.ignite(pythonPath, ragScript, isolatedEnv),
-                this.memory?.ignite(pythonPath, memoryScript, isolatedEnv).catch(err => console.error('Memory ignition failed:', err)),
-                this.astro?.ignite(pythonPath, astroScript, isolatedEnv).catch(err => console.error('Astro ignition failed:', err)),
-                this.world?.ignite(pythonPath, worldScript, isolatedEnv).catch(err => console.error('World ignition failed:', err)),
+                (async () => {
+                    console.log(`[MCP] tala-core python=${mcpPython}`);
+                    await this.rag.ignite(mcpPython, ragScript, isolatedEnv);
+                })(),
+                (async () => {
+                    if (this.memory) {
+                        console.log(`[MCP] mem0-core python=${mcpPython}`);
+                        await this.memory.ignite(mcpPython, memoryScript, isolatedEnv).catch(err => console.error('Memory ignition failed:', err));
+                    }
+                })(),
+                (async () => {
+                    if (this.astro) {
+                        console.log(`[MCP] astro-engine python=${mcpPython}`);
+                        await this.astro.ignite(mcpPython, astroScript, isolatedEnv).catch(err => console.error('Astro ignition failed:', err));
+                    }
+                })(),
+                (async () => {
+                    if (this.world) {
+                        console.log(`[MCP] world-engine python=${mcpPython}`);
+                        await this.world.ignite(mcpPython, worldScript, isolatedEnv).catch(err => console.error('World ignition failed:', err));
+                    }
+                })(),
                 (async () => {
                     if (this.mcpService) {
                         try {
+                            console.log(`[MCP] tala-memory-graph python=${mcpPython}`);
                             if (typeof this.mcpService.setPythonPath === 'function') {
-                                this.mcpService.setPythonPath(pythonPath);
+                                this.mcpService.setPythonPath(mcpPython);
                             }
-                            if (typeof this.mcpService.connect !== 'function') {
-                                console.warn('[AgentService] MCP Service connect method not available');
-                                return;
+                            if (typeof (this.mcpService as any).connect === 'function') {
+                                await (this.mcpService as any).connect({
+                                    id: 'tala-memory-graph',
+                                    name: 'Memory Graph',
+                                    type: 'stdio',
+                                    command: 'python', // McpService.connect will resolve this to mcpPython
+                                    args: [graphScript],
+                                    enabled: true,
+                                    env: isolatedEnv
+                                } as any);
                             }
-                            await this.mcpService.connect({
-                                id: 'tala-memory-graph',
-                                name: 'Memory Graph',
-                                type: 'stdio',
-                                command: pythonPath,
-                                args: [graphScript],
-                                enabled: true,
-                                env: isolatedEnv
-                            } as any);
                         } catch (error) {
                             console.error('MCP Service connection failed:', error);
                         }
@@ -1212,6 +1314,12 @@ Exported standalone package from Tala.
             'DO NOT use the word "hums" as an opener.',
             'VARY your sentence structure. Do not consistently open responses with "I".',
             'Speak directly. The first sentence must deliver content, not setup.',
+            '',
+            '[AGENT EXECUTION CONTRACT — MANDATORY]:',
+            '  • When performing file, terminal, or code actions, you MUST use the corresponding tools.',
+            '  • You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
+            '  • NEVER claim an action was performed unless the tool output confirms it.',
+            '  • If a tool fails, report the error exactly as received.',
         ].join('\n');
 
         // Add memory availability notice

@@ -1,4 +1,7 @@
 import os
+# DEPRECATED: Use root scripts/diagnose_tala.ts instead.
+# This script is kept for legacy reference only.
+
 import sys
 import json
 from datetime import datetime

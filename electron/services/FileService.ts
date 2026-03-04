@@ -2,6 +2,7 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import chokidar from 'chokidar';
+import { CodeAccessPolicy } from './CodeAccessPolicy';
 
 /**
  * Represents a single file or directory entry within the workspace file tree.
@@ -48,6 +49,7 @@ export interface FileEntry {
 export class FileService {
     /** The absolute path to the current workspace root directory. */
     private workspaceDir: string;
+    private policy: CodeAccessPolicy | null = null;
 
     /**
      * Creates a new FileService instance.
@@ -66,7 +68,7 @@ export class FileService {
             ? process.cwd()
             : path.join(app.getPath('documents'), 'TalaWorkspace'));
 
-        this.workspaceDir = defaultPath;
+        this.workspaceDir = path.resolve(defaultPath);
         if (!fs.existsSync(this.workspaceDir)) {
             try {
                 fs.mkdirSync(this.workspaceDir, { recursive: true });
@@ -76,6 +78,11 @@ export class FileService {
                 this.workspaceDir = process.cwd();
             }
         }
+    }
+
+    public setPolicy(policy: CodeAccessPolicy) {
+        this.policy = policy;
+        this.workspaceDir = policy.getWorkspaceRoot();
     }
 
     /**
@@ -124,9 +131,14 @@ export class FileService {
      * @throws {Error} If the path escapes the workspace root or can't be read.
      */
     public async listDirectory(dirPath: string = ''): Promise<FileEntry[]> {
+        if (this.policy) {
+            const validation = this.policy.validatePath(dirPath, 'read');
+            if (!validation.ok) throw new Error(validation.error);
+        }
+
         const fullPath = path.join(this.workspaceDir, dirPath);
 
-        // Security check
+        // Security check (fallback if no policy)
         if (!fullPath.startsWith(this.workspaceDir)) {
             throw new Error("Access denied");
         }
@@ -179,6 +191,10 @@ export class FileService {
      * @throws {Error} If the path escapes the workspace root.
      */
     public async createDirectory(dirPath: string): Promise<boolean> {
+        if (this.policy) {
+            const validation = this.policy.validatePath(dirPath, 'write');
+            if (!validation.ok) throw new Error(validation.error);
+        }
         const fullPath = path.join(this.workspaceDir, dirPath);
         if (!fullPath.startsWith(this.workspaceDir)) throw new Error("Access denied");
 
@@ -201,6 +217,10 @@ export class FileService {
      *   (e.g., file is locked by another process on Windows).
      */
     public async deletePath(targetPath: string): Promise<boolean> {
+        if (this.policy) {
+            const validation = this.policy.validatePath(targetPath, 'delete');
+            if (!validation.ok) throw new Error(validation.error);
+        }
         const fullPath = path.join(this.workspaceDir, targetPath);
         if (!fullPath.startsWith(this.workspaceDir)) throw new Error("Access denied");
 
@@ -229,6 +249,10 @@ export class FileService {
      * @throws {Error} If the path escapes the workspace root.
      */
     public async createFile(filePath: string, content: string = ''): Promise<boolean> {
+        if (this.policy) {
+            const validation = this.policy.validatePath(filePath, 'write');
+            if (!validation.ok) throw new Error(validation.error);
+        }
         const fullPath = path.join(this.workspaceDir, filePath);
         if (!fullPath.startsWith(this.workspaceDir)) throw new Error("Access denied");
 
@@ -250,6 +274,12 @@ export class FileService {
      *   or the copy operation fails.
      */
     public async copyPath(srcPath: string, destPath: string): Promise<boolean> {
+        if (this.policy) {
+            const vSrc = this.policy.validatePath(srcPath, 'read');
+            const vDest = this.policy.validatePath(destPath, 'write');
+            if (!vSrc.ok) throw new Error(vSrc.error);
+            if (!vDest.ok) throw new Error(vDest.error);
+        }
         const fullSrc = path.join(this.workspaceDir, srcPath);
         let fullDest = path.join(this.workspaceDir, destPath);
 
@@ -289,6 +319,12 @@ export class FileService {
      * @throws {Error} If paths escape the workspace root or source doesn't exist.
      */
     public async movePath(srcPath: string, destPath: string): Promise<boolean> {
+        if (this.policy) {
+            const vSrc = this.policy.validatePath(srcPath, 'delete');
+            const vDest = this.policy.validatePath(destPath, 'write');
+            if (!vSrc.ok) throw new Error(vSrc.error);
+            if (!vDest.ok) throw new Error(vDest.error);
+        }
         const fullSrc = path.join(this.workspaceDir, srcPath);
         const fullDest = path.join(this.workspaceDir, destPath);
 
@@ -322,6 +358,10 @@ export class FileService {
      *   exist, or reading fails.
      */
     public async readFile(filePath: string): Promise<string> {
+        if (this.policy) {
+            const validation = this.policy.validatePath(filePath, 'read');
+            if (!validation.ok) throw new Error(validation.error);
+        }
         const fullPath = path.join(this.workspaceDir, filePath);
 
         // Security check

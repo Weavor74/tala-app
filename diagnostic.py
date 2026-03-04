@@ -1,3 +1,6 @@
+# DEPRECATED: Use scripts/diagnose_tala.ts instead.
+# This script is kept for legacy reference only.
+
 import sys
 import os
 import json

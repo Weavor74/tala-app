@@ -23,6 +23,8 @@ import { ReflectionService } from './services/reflection/ReflectionService';
 import { VoiceService } from './services/VoiceService';
 import { SoulService } from './services/soul/SoulService';
 import { UserProfileService } from './services/UserProfileService';
+import { CodeAccessPolicy } from './services/CodeAccessPolicy';
+import { CodeControlService } from './services/CodeControlService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -46,7 +48,9 @@ if (fs.existsSync(SETTINGS_PATH)) {
 
 const USER_DATA_PATH = path.join(USER_DATA_DIR, 'user_profile.json');
 // Determine effective workspace: defaults to local /workspace if not in dev
-const EFFECTIVE_WORKSPACE_ROOT = path.join(USER_DATA_DIR, 'workspace');
+const EFFECTIVE_WORKSPACE_ROOT = (process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
+  ? process.cwd()
+  : path.join(USER_DATA_DIR, 'workspace');
 
 // Ensure workspace exists
 if (!fs.existsSync(EFFECTIVE_WORKSPACE_ROOT)) {
@@ -72,6 +76,13 @@ const guardrailService = new GuardrailService();
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
 
+// Initialize Code Access Policy and Control Service
+const codePolicy = new CodeAccessPolicy({
+  workspaceRoot: EFFECTIVE_WORKSPACE_ROOT,
+  mode: 'auto' // Default to auto, can be updated via settings later
+});
+const codeControlService = new CodeControlService(fileService, terminalService, codePolicy);
+
 // Register Handlers
 soulService.registerIpcHandlers();
 reflectionService.registerIpcHandlers();
@@ -86,6 +97,7 @@ ipcMain.handle('voice:status', async () => voiceService.getStatus());
 agent.setMcpService(mcpService);
 agent.setGitService(gitService);
 agent.setReflectionService(reflectionService);
+agent.setCodeControl(codeControlService);
 guardrailService.setInferenceFn((prompt: string) => agent.headlessInference(prompt));
 
 // Initialize Workflow Scheduler
@@ -170,10 +182,10 @@ const createWindow = () => {
 app.on('ready', async () => {
   createWindow();
   const info = await systemService.detectEnv(fileService.getRoot());
-  const pythonPath = info.pythonEnvPath || info.pythonPath;
+  const agentPythonPath = info.pythonEnvPath || info.pythonPath;
   agent.setSystemInfo(info);
-  agent.igniteSoul(pythonPath);
-  mcpService.setPythonPath(pythonPath);
+  agent.igniteSoul(agentPythonPath);
+  mcpService.setPythonPath(info.pythonPath); // Use canonical bundled python for MCP servers
   mcpService.startHealthLoop();
   if (mainWindow) fileService.watchWorkspace(mainWindow);
   backupService.init();
@@ -228,7 +240,8 @@ const ipcRouter = new IpcRouter({
   APP_DIR: app.getAppPath(),
   PORTABLE_SETTINGS_PATH: path.join(app.getAppPath(), 'app_settings.json'),
   SYSTEM_SETTINGS_PATH,
-  TEMP_SYSTEM_PATH
+  TEMP_SYSTEM_PATH,
+  codeControlService
 });
 ipcRouter.registerAll();
 
