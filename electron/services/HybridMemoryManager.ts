@@ -41,20 +41,39 @@ export class HybridMemoryManager {
         } = options;
 
         let context = "";
+
+        // NEW: Router check
+        let route = "mem0";
+        try {
+            const routeRes = await this.mcp.callTool('tala-memory-graph', 'route_query', { query });
+            if (routeRes?.content && routeRes.content[0]?.text) {
+                route = routeRes.content[0].text.trim();
+            }
+        } catch (e) { console.warn('[HybridMemoryManager] Router failed, defaulting to mem0/rag'); }
+
         const graphPromise = this.getGraphContext(query, limitGraphNodes, limitGraphEdges, emotion, intensity);
         const mem0Promise = this.memory.search(query, limitMem0);
         const ragPromise = this.rag.search(query, { limit: limitRag });
 
-        // Run in parallel for performance
-        const [graphText, mem0Results, ragText] = await Promise.all([
-            graphPromise,
+        // If route is graph, prioritize it and wait for it
+        if (route === 'graph') {
+            const graphText = await graphPromise;
+            if (graphText && !graphText.includes('No relevant memories')) {
+                context += `[GRAPH MEMORY (PRIORITY)]\n${graphText}\n\n`;
+            }
+        }
+
+        const [mem0Results, ragText] = await Promise.all([
             mem0Promise.catch(() => []),
             ragPromise.catch(() => "")
         ]);
 
-        // Tier 1: Graph
-        if (graphText && !graphText.includes('No relevant memories')) {
-            context += `[GRAPH MEMORY]\n${graphText}\n\n`;
+        // Tier 1: Graph (if not already added as priority)
+        if (route !== 'graph') {
+            const graphText = await graphPromise;
+            if (graphText && !graphText.includes('No relevant memories')) {
+                context += `[GRAPH MEMORY]\n${graphText}\n\n`;
+            }
         }
 
         // Tier 2: Mem0

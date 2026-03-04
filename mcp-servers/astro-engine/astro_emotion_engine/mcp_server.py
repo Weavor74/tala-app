@@ -16,14 +16,7 @@ Agent profiles are stored as JSON on disk via ``ProfileManager``.
 Charts are computed on-the-fly via ``ChartFactory`` + ``AstroEmotionEngine``.
 """
 
-import sys
-
-# === CRITICAL: Redirect stdout to stderr BEFORE any imports ===
-# MCP uses stdout as its JSON-RPC transport. Astro engine imports
-# (ephem, pyswisseph, dateutil) may print during load. Swap before importing.
-_real_stdout = sys.stdout
-sys.stdout = sys.stderr
-
+# imports
 from datetime import datetime
 import json
 import logging
@@ -385,5 +378,4 @@ def get_current_state() -> str:
     return "Current global transit state implementation pending."
 
 if __name__ == "__main__":
-    sys.stdout = _real_stdout  # restore for MCP protocol transport
     mcp.run(transport='stdio')

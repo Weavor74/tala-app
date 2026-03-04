@@ -1167,9 +1167,24 @@ Exported standalone package from Tala.
             ? "[MEMORY STATUS]: Relevant memories provided above. Use them."
             : "[MEMORY STATUS]: NO relevant memories found. DO NOT invent a story. Instead, respond naturally without referencing specific past events.";
 
-        let systemPromptTemplate = (isSmallLocalModel ? repetitionSafety + "\n\n" : "") + (settings.agent?.profiles?.find((p: any) => p.id === settings.agent.activeProfileId)?.systemPrompt || "You are Tala.") + (isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
+        const isDiagnosticRequest = /list tools|verify|test|mcp|logs/i.test(userMessage);
+        const activeMode = isDiagnosticRequest ? 'assist' : (settings.agent?.activeMode || 'rp');
+        const activeProfileId = activeMode === 'assist' ? 'assist' : (settings.agent?.activeProfileId || 'tala');
+        const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
+
+        let systemPromptTemplate = (isSmallLocalModel ? repetitionSafety + "\n\n" : "") + activeProfile.systemPrompt + (isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
+
+        if (activeMode === 'assist') {
+            systemPromptTemplate += "\n\n[ASSIST MODE]: PROVIDE ONLY THE DATA REQUESTED. NO RP. NO PROSE. MINIMAL TOKEN USAGE.";
+        }
         const goalsAndReflections = this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
         systemPromptTemplate = dynamicContext + "\n\n" + (hasMemories ? memoryContext + "\n\n" : "") + memoryAvailabilityNotice + "\n\n" + (goalsAndReflections.trim() ? goalsAndReflections + "\n\n" : "") + systemPromptTemplate;
+
+        // Mode Audit Logging
+        const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit.log');
+        if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
+        const auditEntry = `[${new Date().toISOString()}] MODE: ${activeMode} | PROFILE: ${activeProfileId} | ASTRO: ${astroState.length > 50} | TOOLS: true\n`;
+        fs.appendFileSync(auditLogPath, auditEntry);
 
         let toolSigs = this.tools.getToolSignatures();
         if (isSmallLocalModel && toolSigs.length > 2000) {

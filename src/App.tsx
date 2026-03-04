@@ -122,6 +122,7 @@ function App() {
   const [localEngineRunning, setLocalEngineRunning] = useState(false);
   const [appSettings, setAppSettings] = useState<any>(null);
   const [isStartingEngine, setIsStartingEngine] = useState(false);
+  const [activeMode, setActiveMode] = useState<'rp' | 'assist'>('rp');
 
   // Model Warning State
   const [modelStatus, setModelStatus] = useState<{ id: string, isLowFidelity: boolean, warning?: string } | null>(null);
@@ -168,6 +169,9 @@ function App() {
 
         // Store settings for use in ignition
         setAppSettings(result.global);
+        if (result.global?.agent?.activeMode) {
+          setActiveMode(result.global.agent.activeMode);
+        }
 
         // Fetch Model Status
         if (api.getModelStatus) {
@@ -1200,6 +1204,40 @@ function App() {
             <div style={{ display: 'flex', gap: 5, marginLeft: 10 }}>
               <button onClick={() => api.exportChat && api.exportChat('md')} title="Export Markdown" style={{ background: 'transparent', border: '1px solid #444', color: '#888', borderRadius: 3, cursor: 'pointer', fontSize: 10, padding: '2px 5px' }}>MD</button>
               <button onClick={() => api.exportChat && api.exportChat('json')} title="Export JSON" style={{ background: 'transparent', border: '1px solid #444', color: '#888', borderRadius: 3, cursor: 'pointer', fontSize: 10, padding: '2px 5px' }}>JSON</button>
+              <div className="mode-toggle" style={{ display: 'flex', background: '#252526', borderRadius: 4, padding: 2, border: '1px solid #444', marginLeft: 5 }}>
+                <button
+                  onClick={async () => {
+                    const newMode = 'rp';
+                    setActiveMode(newMode);
+                    if (api?.saveSettings && appSettings) {
+                      const newSettings = { ...appSettings, agent: { ...appSettings.agent, activeMode: newMode } };
+                      await api.saveSettings(newSettings);
+                      setAppSettings(newSettings);
+                    }
+                  }}
+                  style={{
+                    background: activeMode === 'rp' ? '#0e639c' : 'transparent',
+                    color: activeMode === 'rp' ? 'white' : '#888',
+                    border: 'none', padding: '2px 8px', fontSize: 10, cursor: 'pointer', borderRadius: 2
+                  }}
+                >RP</button>
+                <button
+                  onClick={async () => {
+                    const newMode = 'assist';
+                    setActiveMode(newMode);
+                    if (api?.saveSettings && appSettings) {
+                      const newSettings = { ...appSettings, agent: { ...appSettings.agent, activeMode: newMode } };
+                      await api.saveSettings(newSettings);
+                      setAppSettings(newSettings);
+                    }
+                  }}
+                  style={{
+                    background: activeMode === 'assist' ? '#0e639c' : 'transparent',
+                    color: activeMode === 'assist' ? 'white' : '#888',
+                    border: 'none', padding: '2px 8px', fontSize: 10, cursor: 'pointer', borderRadius: 2
+                  }}
+                >Assist</button>
+              </div>
             </div>
           </div>
           <div style={{ marginLeft: 'auto', cursor: 'pointer' }} onClick={() => setIsRightPanelOpen(false)}>×</div>
