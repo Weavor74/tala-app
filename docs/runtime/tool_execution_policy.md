@@ -90,14 +90,36 @@ npx tsx scripts/<name>.ts
 ```
 **Never** `node scripts/*.ts` — Node.js does not natively run TypeScript.
 
+### Duplicate Message Suppression
+
+`AgentService` maintains a `turnSeenHashes` set (per user turn). 
+- An assistant message is only pushed if its content is unique for that turn OR it contains tool calls.
+- Identical prose summaries produced after tool execution are suppressed.
+- For coding turns where prose is suppressed, exactly one empty assistant message is allowed to provide a UI anchor for the tool results.
+
+---
+
+## Execution Grounding (Source of Truth)
+
+Every tool execution (planned and actual) is recorded in a `TurnExecutionLog`:
+- `turnId`, `intent`, `toolCallsPlanned[]`, `toolCallsExecuted[]`, `executedToolCount`, `timestamp`.
+- **Planned calls** are captured as soon as the model emits them.
+- **Executed calls** include `argsPreview` and `resultPreview` (max 2KB each).
+- **Grounding Query**: When the user asks "what tools did you use?", the system generates a summary directly from this log instead of relying on LLM memory or hallucination.
+- **Retention**: `lastTurnExecutionLog` is available for immediate queries; `executionLogHistory` caps at 50 turns.
+
 ---
 
 ## Verification Scripts
 
-```
+```bash
 npx tsx scripts/health_probe.ts       # App info, src file count, lint exit code
-npx tsx scripts/verify_tool_gates.ts  # 8-test gate verification (exit 0 = all pass)
-npx tsx scripts/verify_tools_only_render.ts  # 10-case envelope + suppression tests
+npx tsx scripts/verify_tool_gates.ts  # 8-test gate verification
+npx tsx scripts/verify_tools_only_render.ts  # envelope + suppression tests
+npx tsx scripts/verify_no_duplicate_assistant.ts # Duplicate & stabilization tests
+npx tsx scripts/verify_execution_grounding.ts   # Log & summary tests
+npx tsx scripts/verify_runtime_regressions_tools_only.ts # Intent + Grounding fix verification
+npx tsx scripts/simulate_turn_fs_write_text.ts # explicit tool intent check
 ```
 
 ---

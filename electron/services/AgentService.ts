@@ -70,6 +70,27 @@ type SystemInfoLike = {
     systemService?: any;
 };
 
+type ExecutedToolCall = {
+    name: string;
+    arguments: any;
+    argsPreview?: string; // <= 2KB
+    ok: boolean;
+    error?: string;
+    resultPreview?: string; // <= 2KB
+    startedAt: number;
+    endedAt: number;
+};
+
+type TurnExecutionLog = {
+    turnId: string;           // use existing turn/session id
+    intent: string;           // "coding" | "memory" | ...
+    usedEnvelope: boolean;    // true if extracted from JSON envelope
+    toolCallsPlanned: Array<{ name: string, arguments: any }>;
+    toolCalls: ExecutedToolCall[];
+    executedToolCount: number;
+    timestamp: number;
+};
+
 /**
  * AgentService
  *
@@ -113,6 +134,8 @@ export class AgentService {
     private codeControl: any = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
     private MAX_TOOL_CALLS_PER_TURN = 8;
+    private lastTurnExecutionLog?: TurnExecutionLog;
+    private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -999,7 +1022,10 @@ Exported standalone package from Tala.
 
         // 1. FILE_PATH_PATTERN (Explicit files/exts) -> ALWAYS coding
         const FILE_PATH_PATTERN = /\b[a-zA-Z0-9_\-/]+\.(ts|js|json|txt|md|py|tsx|jsx|yml|yaml|sh|css|html|env|toml|ini)\b/i;
-        if (FILE_PATH_PATTERN.test(userMessage)) {
+        // Also explicit tool names
+        const TOOL_TOKEN_PATTERN = /\b(fs_write_text|fs_read_text|fs_list|shell_run|write_file|read_file|list_files|terminal_run|execute_command)\b/i;
+
+        if (FILE_PATH_PATTERN.test(userMessage) || TOOL_TOKEN_PATTERN.test(userMessage)) {
             return 'coding';
         }
 
@@ -1553,6 +1579,27 @@ Exported standalone package from Tala.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
+        const executionLog: TurnExecutionLog = {
+            turnId: `${this.activeSessionId}_${Date.now()}`,
+            intent: toolCategory,
+            usedEnvelope: false,
+            toolCallsPlanned: [],
+            toolCalls: [],
+            executedToolCount: 0,
+            timestamp: Date.now()
+        };
+        const turnSeenHashes = new Set<string>();
+
+        // Grounded "what tools used" response path
+        const isGroundingQuery = /\b(what tools (did you use|were used)|which tools (did you use|were used)|explain what (you did|tools were used)|what did you execute|show tool calls)\b/i.test(userMessage);
+        if (isGroundingQuery) {
+            const summary = this.getGroundedExecutionSummary();
+            finalResponse = summary;
+            const groundingMsg: ChatMessage = { role: 'assistant', content: summary };
+            this.commitAssistantMessage(transientMessages, groundingMsg, toolCategory, 0, turnSeenHashes);
+            turn = AgentService.MAX_AGENT_ITERATIONS; // End turn
+        }
+
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
             turn++;
@@ -1620,8 +1667,8 @@ Failure to provide a tool call will result in system termination.`;
                                     console.log(`[AgentService] toolsOnlyStrict violation: non-json output suppressed (len=${nonJsonLen})`);
                                 }
                             }
-
                             // --- ENVELOPE VALIDATION ---
+                            executionLog.usedEnvelope = true;
                             if (parsed.tool_calls.length > this.MAX_TOOL_CALLS_PER_TURN) {
                                 console.warn(`[AgentService] Envelope: tool_calls array too long (${parsed.tool_calls.length} > ${this.MAX_TOOL_CALLS_PER_TURN}). HardFail.`);
                                 finalResponse = `Tool envelope invalid: too many tool_calls (${parsed.tool_calls.length}). Max is ${this.MAX_TOOL_CALLS_PER_TURN}.`;
@@ -1661,20 +1708,10 @@ Failure to provide a tool call will result in system termination.`;
                     }
                 }
 
-                // --- TOOLS-ONLY RENDER SUPPRESSION ---
-                // For coding intent: if tool calls exist, the assistant prose must not reach the UI.
-                // The model often outputs narration alongside or before the JSON envelope;
-                // both paths (native toolCalls + envelope) are covered here.
-                if (toolCategory === 'coding' && calls.length > 0) {
-                    if (assistantMsg.content && assistantMsg.content.trim().length > 0) {
-                        console.log(`[AgentService] toolsOnly: suppressing ${assistantMsg.content.length}B of assistant prose for coding turn`);
-                    }
-                    assistantMsg.content = ''; // suppress prose from reaching the UI
-                }
 
                 if (calls.length === 0) {
                     finalResponse = response.content || "";
-                    transientMessages.push(assistantMsg);
+                    this.commitAssistantMessage(transientMessages, assistantMsg, toolCategory, executionLog.toolCalls.length, turnSeenHashes);
                     break;
                 }
 
@@ -1684,8 +1721,16 @@ Failure to provide a tool call will result in system termination.`;
                     calls = calls.slice(0, this.MAX_TOOL_CALLS_PER_TURN);
                 }
 
+                // Record planned tool calls for grounding Source of Truth
+                if (calls.length > 0) {
+                    executionLog.toolCallsPlanned.push(...calls.map((c: any) => ({
+                        name: c.function?.name || (c as any).name,
+                        arguments: c.function?.arguments || (c as any).arguments
+                    })));
+                }
+
                 assistantMsg.tool_calls = calls;
-                transientMessages.push(assistantMsg);
+                this.commitAssistantMessage(transientMessages, assistantMsg, toolCategory, executionLog.toolCalls.length, turnSeenHashes);
 
                 // --- HARDENED Tool Execution with Timeouts + Execution-Time Gate ---
                 for (const call of calls) {
@@ -1719,13 +1764,63 @@ Failure to provide a tool call will result in system termination.`;
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
 
                         const result = await Promise.race([executePromise, timeoutPromise]);
+                        const endTime = Date.now();
+
+                        // Record successful execution
+                        let resultPreview = "";
+                        let argsPreview = "";
+                        try {
+                            const resStr = typeof result === 'string' ? result : JSON.stringify(result);
+                            resultPreview = resStr.length > 2048 ? resStr.substring(0, 2048) + "..." : resStr;
+                            const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
+                            argsPreview = aStr.length > 2048 ? aStr.substring(0, 2048) + "..." : aStr;
+                        } catch (e) { resultPreview = "[Circular or non-stringifiable result]"; }
+
+                        executionLog.toolCalls.push({
+                            name: toolName,
+                            arguments: toolArgs,
+                            argsPreview,
+                            ok: true,
+                            resultPreview,
+                            startedAt: startTime,
+                            endedAt: endTime
+                        });
+
                         transientMessages.push({ role: 'tool', content: String(result), tool_call_id: call.id, name: toolName });
                     } catch (e: any) {
+                        const endTime = Date.now();
                         console.error(`[AgentService] tool error (${toolName}):`, e.message);
+
+                        let argsPreview = "";
+                        try {
+                            const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
+                            argsPreview = aStr.length > 1024 ? aStr.substring(0, 1024) + "..." : aStr;
+                        } catch (e) { }
+
+                        executionLog.toolCalls.push({
+                            name: toolName,
+                            arguments: toolArgs,
+                            argsPreview,
+                            ok: false,
+                            error: e.message,
+                            startedAt: startTime,
+                            endedAt: endTime
+                        });
+
                         transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
                     }
                 }
             } catch (e) { break; }
+        }
+
+        // --- Finalize turn execution log ---
+        if (executionLog.toolCallsPlanned.length > 0 || executionLog.toolCalls.length > 0) {
+            executionLog.executedToolCount = executionLog.toolCalls.length;
+            this.lastTurnExecutionLog = executionLog;
+            this.executionLogHistory.push(executionLog);
+            if (this.executionLogHistory.length > 50) {
+                this.executionLogHistory.shift();
+            }
         }
 
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
@@ -1769,9 +1864,8 @@ Failure to provide a tool call will result in system termination.`;
         }
 
         // --- FINAL UI BOUNDARY GUARD (Last Line of Defense) ---
-        // Ensure that for coding intent, if any tool calls were executed, no assistant prose remains.
-        const finalCalls = transientMessages.filter(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0);
-        if (toolCategory === 'coding' && finalCalls.length > 0) {
+        // Ensure that for coding intent, if any tools were executed or calls were made, no assistant prose remains.
+        if (toolCategory === 'coding' && (executionLog.toolCalls.length > 0 || transientMessages.some(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0))) {
             for (const msg of transientMessages) {
                 if (msg.role === 'assistant' && msg.content && msg.content.trim().length > 0) {
                     console.warn(`[AgentService] FINAL GUARD TRIGGERED: Suppressing leaked prose for coding turn. Session: ${this.activeSessionId || 'unknown'}`);
@@ -1783,6 +1877,49 @@ Failure to provide a tool call will result in system termination.`;
 
         this.chatHistory.push(...transientMessages);
         this.saveSession();
+    }
+
+    private finalizeAssistantContent(intent: string, raw: string, executedToolCount: number, hasPendingCalls: boolean): string {
+        if (intent === 'coding' && (executedToolCount > 0 || hasPendingCalls)) {
+            return '';
+        }
+        return raw || '';
+    }
+
+    private commitAssistantMessage(
+        transientMessages: ChatMessage[],
+        msg: ChatMessage,
+        intent: string,
+        executedToolCount: number,
+        turnSeenHashes: Set<string>
+    ): void {
+        const hasPendingCalls = (msg.tool_calls?.length || 0) > 0;
+        const finalized = this.finalizeAssistantContent(intent, msg.content, executedToolCount, hasPendingCalls);
+
+        // Use content-based hash to suppress duplicate prose
+        // Normalize: trim + collapse whitespace to single spaces
+        const normalized = finalized.trim().replace(/\s+/g, ' ');
+        const hash = `assistant|${normalized}`;
+        const isDuplicateProse = turnSeenHashes.has(hash) && normalized.length > 0;
+
+        if (isDuplicateProse && !hasPendingCalls) {
+            console.log(`[AgentService] duplicate assistant message suppressed (len=${finalized.length}, intent=${intent})`);
+            return;
+        }
+
+        // Push if:
+        // 1. Has non-duplicate finalized content
+        // 2. Has tool calls (always push these as they are actions)
+        // 3. Or it's a coding turn and we want at least one assistant message (one per turn due to hash check).
+        const shouldPush = (finalized.trim().length > 0 && !isDuplicateProse) ||
+            hasPendingCalls ||
+            (intent === 'coding' && (executedToolCount > 0 || hasPendingCalls) && !turnSeenHashes.has(hash));
+
+        if (shouldPush) {
+            msg.content = finalized;
+            transientMessages.push(msg);
+            turnSeenHashes.add(hash);
+        }
     }
 
     private scrubSecrets(text: string): string {
@@ -1841,6 +1978,39 @@ Failure to provide a tool call will result in system termination.`;
             console.error("[AgentService] Firewall error:", e);
             return text;
         }
+    }
+
+    private getGroundedExecutionSummary(): string {
+        if (!this.lastTurnExecutionLog) {
+            return "No previous execution log found.";
+        }
+
+        const log = this.lastTurnExecutionLog;
+        if (log.toolCallsPlanned.length === 0 && log.toolCalls.length === 0) {
+            return "No tools were executed (or planned) in the last turn.";
+        }
+
+        let summary = "### [Grounded Tool Execution Log]\n\n";
+        summary += `**Turn ID**: \`${log.turnId}\` | **Intent**: \`${log.intent}\` | **Planned**: ${log.toolCallsPlanned.length} | **Executed**: ${log.executedToolCount}\n\n`;
+
+        if (log.toolCalls.length > 0) {
+            log.toolCalls.forEach((tc, i) => {
+                const status = tc.ok ? "✅ Succeeded" : "❌ Failed";
+                summary += `${i + 1}. **${tc.name}** — ${status}\n`;
+                if (tc.argsPreview) {
+                    summary += `   - **Arguments**: \`${tc.argsPreview}\`\n`;
+                }
+                if (!tc.ok && tc.error) {
+                    summary += `   - **Error**: ${tc.error}\n`;
+                } else if (tc.resultPreview) {
+                    summary += `   - **Result**: ${tc.resultPreview}\n`;
+                }
+                summary += "\n";
+            });
+        } else {
+            summary += "_No tools actually reached execution (stopped before execution loop)._";
+        }
+        return summary.trim();
     }
 
     private streamWithBrain(brain: IBrain, messages: any[], systemPrompt: string, onChunk: (token: string) => void, signal: AbortSignal | undefined, tools: any[], options: any) {
@@ -1966,6 +2136,7 @@ Failure to provide a tool call will result in system termination.`;
     }
 
     public getAllTools() { return this.tools.getAllTools(); }
+
 
     private extractToolCallsFromText(text: string): any[] {
         const toolCalls: any[] = [];
