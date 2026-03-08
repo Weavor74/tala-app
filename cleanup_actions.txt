@@ -1,0 +1,108 @@
+﻿================================================================================
+PROJECT CLEANUP TRIAGE REPORT -- tala-app
+================================================================================
+Workspace    : d:\src\client1\tala-app
+Cleanup Time : 2026-03-08T08:40:05-05:00
+Mode         : conservative (safe-delete + archive only)
+================================================================================
+
+SUMMARY
+----------------------------------------
+Deleted         : 19
+Archived        : 26
+Review-only     : 17  (not touched)
+Missing (skipped): 0
+
+================================================================================
+DELETED FILES
+================================================================================
+
+  [DELETED]  test_input.txt
+  [DELETED]  test_out.txt
+  [DELETED]  test_out_retrieval.txt
+  [DELETED]  test_out_integration.txt
+  [DELETED]  final_test_out.txt
+  [DELETED]  diagnostic.log
+  [DELETED]  diagnostic_report.txt
+  [DELETED]  lint_output.txt
+  [DELETED]  lint_results.txt
+  [DELETED]  lint_full.txt
+  [DELETED]  verify_tool_args_logs.txt
+  [DELETED]  verify_structural_final_logs.txt
+  [DELETED]  tmp_gate_out.txt
+  [DELETED]  tmp_gates.txt
+  [DELETED]  tmp_probe.txt
+  [DELETED]  tmp_render.txt
+  [DELETED]  tmp_render_u8.txt
+  [DELETED]  debug_output.txt
+  [DELETED]  astro_verify.log
+
+================================================================================
+ARCHIVED FILES
+================================================================================
+
+  [ARCHIVED] fix_ids.py  -->  archive\manual-dev-tools\fix_ids.py
+  [ARCHIVED] diagnostic.py  -->  archive\manual-dev-tools\diagnostic.py
+  [ARCHIVED] testToolService.js  -->  archive\manual-dev-tools\testToolService.js
+  [ARCHIVED] test_schemas.js  -->  archive\manual-dev-tools\test_schemas.js
+  [ARCHIVED] test_ipc.js  -->  archive\manual-dev-tools\test_ipc.js
+  [ARCHIVED] test_ollama.js  -->  archive\manual-dev-tools\test_ollama.js
+  [ARCHIVED] temp_scripts\verify_runtime.js  -->  archive\manual-dev-tools\verify_runtime.js
+  [ARCHIVED] verify_persistence.ts  -->  archive\manual-dev-tools\verify_persistence.ts
+  [ARCHIVED] verify_persistence.js  -->  archive\manual-dev-tools\verify_persistence.js
+  [ARCHIVED] verify_authoritative_mode.js  -->  archive\manual-dev-tools\verify_authoritative_mode.js
+  [ARCHIVED] verify_intents.ts  -->  archive\manual-dev-tools\verify_intents.ts
+  [ARCHIVED] verify_assembler.ts  -->  archive\manual-dev-tools\verify_assembler.ts
+  [ARCHIVED] verify_gating.ts  -->  archive\manual-dev-tools\verify_gating.ts
+  [ARCHIVED] verify_intents_v2.ts  -->  archive\manual-dev-tools\verify_intents_v2.ts
+  [ARCHIVED] verify_normalization_v2.ts  -->  archive\manual-dev-tools\verify_normalization_v2.ts
+  [ARCHIVED] verify_assembler_v2.ts  -->  archive\manual-dev-tools\verify_assembler_v2.ts
+  [ARCHIVED] verify_gating_v2.ts  -->  archive\manual-dev-tools\verify_gating_v2.ts
+  [ARCHIVED] verify_persistence_v2.ts  -->  archive\manual-dev-tools\verify_persistence_v2.ts
+  [ARCHIVED] electron\__tests__\router\verify_regression.js  -->  archive\manual-dev-tools\verify_regression.js
+  [ARCHIVED] electron\__tests__\router\verify_regression.ts  -->  archive\manual-dev-tools\verify_regression.ts
+  [ARCHIVED] manual_test.db  -->  archive\manual-databases\manual_test.db
+  [ARCHIVED] manual_retrieval.db  -->  archive\manual-databases\manual_retrieval.db
+  [ARCHIVED] manual_integration.db  -->  archive\manual-databases\manual_integration.db
+  [ARCHIVED] integration_test.db  -->  archive\manual-databases\integration_test.db
+  [ARCHIVED] test_memory.db  -->  archive\manual-databases\test_memory.db
+  [ARCHIVED] test_retrieval.db  -->  archive\manual-databases\test_retrieval.db
+
+================================================================================
+REVIEW-ONLY FILES (left untouched)
+================================================================================
+
+  [REVIEW]   agent_profiles.json
+  [REVIEW]   .agent_response_marker
+  [REVIEW]   memory_audit.jsonl
+  [REVIEW]   tala_memory_v1.db
+  [REVIEW]   tests\reflection\ArtifactStore.test.ts
+  [REVIEW]   tests\reflection\RiskEngine.test.ts
+  [REVIEW]   tests\reflection\ProposalEngine.test.ts
+  [REVIEW]   tests\reflection\ReflectionEngine.test.ts
+  [REVIEW]   tests\AssistMode.test.ts
+  [REVIEW]   tests\verify_logging.js
+  [REVIEW]   tests\MemoryIdentity.test.ts
+  [REVIEW]   llama_help.txt
+  [REVIEW]   documentation\federal_level_repository_docs.md
+  [REVIEW]   tala_project\docs\memory_graph.md
+  [REVIEW]   docs\identity_from_userprofile.md
+  [REVIEW]   docs\code_access_policy.md
+  [REVIEW]   docs\runtime\tool_execution_policy.md
+
+================================================================================
+MISSING / SKIPPED FILES
+================================================================================
+
+  (none)
+
+================================================================================
+ARCHIVE DESTINATIONS
+================================================================================
+
+  archive\manual-dev-tools\  -- manual developer scripts and verify tools
+  archive\manual-databases\  -- test and integration SQLite databases
+
+================================================================================
+END OF REPORT
+================================================================================

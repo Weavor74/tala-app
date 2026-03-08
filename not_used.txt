@@ -1,0 +1,429 @@
+﻿================================================================================
+PROJECT UNUSED FILE AUDIT -- tala-app
+================================================================================
+Workspace    : d:\src\client1\tala-app
+Audit Time   : 2026-03-08T00:13:00-06:00
+Cutoff Date  : 2026-03-05 (files unmodified since then are candidates)
+
+Rules:
+  Inactivity threshold = 3 days
+  Mode                 = report-only (no files modified or deleted)
+  Uncertain files      = listed separately from likely unused
+
+Hard Exclusions (not scanned):
+  node_modules, .git, dist, dist-electron, build, out, coverage,
+  __pycache__, .pytest_cache, venv, .venv, env, site-packages,
+  Lib, Include, lib, bin, Scripts, models, data, memory,
+  tmp_userdata, local-inference, patches, .tala,
+  TEST_RUNS, REFLECTION_SYSTEM, DOCS_TODAY
+================================================================================
+
+SUMMARY
+----------------------------------------
+Total files collected : 257
+Files skipped (infra) : 195
+Likely unused count   : 46
+Uncertain count       : 16
+
+================================================================================
+SECTION 1 -- LIKELY UNUSED FILES  (oldest first)
+================================================================================
+
+  Path          : agent_profiles.json
+  Last Modified : 2026-01-24 13:02:00
+  Last Accessed : not available
+  Size          : 258 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : .agent_response_marker
+  Last Modified : 2026-01-25 15:47:59
+  Last Accessed : not available
+  Size          : 0 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\reflection\ArtifactStore.test.ts
+  Last Modified : 2026-02-22 19:07:31
+  Last Accessed : not available
+  Size          : 5872 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\reflection\RiskEngine.test.ts
+  Last Modified : 2026-02-22 19:08:03
+  Last Accessed : not available
+  Size          : 3095 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\reflection\ProposalEngine.test.ts
+  Last Modified : 2026-02-22 19:08:06
+  Last Accessed : not available
+  Size          : 6193 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\reflection\ReflectionEngine.test.ts
+  Last Modified : 2026-02-22 19:10:04
+  Last Accessed : not available
+  Size          : 5470 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : llama_help.txt
+  Last Modified : 2026-02-25 09:50:10
+  Last Accessed : not available
+  Size          : 41850 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : testToolService.js
+  Last Modified : 2026-02-27 19:26:08
+  Last Accessed : not available
+  Size          : 66396 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_schemas.js
+  Last Modified : 2026-02-27 19:26:16
+  Last Accessed : not available
+  Size          : 710 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_input.txt
+  Last Modified : 2026-02-27 19:27:49
+  Last Accessed : not available
+  Size          : 94 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_ipc.js
+  Last Modified : 2026-02-27 19:28:24
+  Last Accessed : not available
+  Size          : 597 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : documentation\federal_level_repository_docs.md
+  Last Modified : 2026-02-27 22:13:51
+  Last Accessed : not available
+  Size          : 1051 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_ollama.js
+  Last Modified : 2026-02-27 23:52:43
+  Last Accessed : not available
+  Size          : 1486 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_out.txt
+  Last Modified : 2026-03-01 07:46:45
+  Last Accessed : not available
+  Size          : 6890 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : manual_test.db
+  Last Modified : 2026-03-01 07:47:01
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_out_retrieval.txt
+  Last Modified : 2026-03-01 07:49:30
+  Last Accessed : not available
+  Size          : 8066 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : manual_retrieval.db
+  Last Modified : 2026-03-01 07:51:08
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_out_integration.txt
+  Last Modified : 2026-03-01 07:52:00
+  Last Accessed : not available
+  Size          : 11548 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : manual_integration.db
+  Last Modified : 2026-03-01 07:53:50
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tala_project\docs\memory_graph.md
+  Last Modified : 2026-03-01 07:54:04
+  Last Accessed : not available
+  Size          : 2715 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : integration_test.db
+  Last Modified : 2026-03-01 07:55:18
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_memory.db
+  Last Modified : 2026-03-01 07:55:18
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : final_test_out.txt
+  Last Modified : 2026-03-01 07:55:19
+  Last Accessed : not available
+  Size          : 15636 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : test_retrieval.db
+  Last Modified : 2026-03-01 07:55:19
+  Last Accessed : not available
+  Size          : 32768 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : diagnostic.log
+  Last Modified : 2026-03-02 12:33:19
+  Last Accessed : not available
+  Size          : 992 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : fix_ids.py
+  Last Modified : 2026-03-02 12:53:38
+  Last Accessed : not available
+  Size          : 1101 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : diagnostic_report.txt
+  Last Modified : 2026-03-02 16:28:18
+  Last Accessed : not available
+  Size          : 1562 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\AssistMode.test.ts
+  Last Modified : 2026-03-03 01:05:44
+  Last Accessed : not available
+  Size          : 3176 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\verify_logging.js
+  Last Modified : 2026-03-03 01:06:12
+  Last Accessed : not available
+  Size          : 1296 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tests\MemoryIdentity.test.ts
+  Last Modified : 2026-03-03 20:46:41
+  Last Accessed : not available
+  Size          : 2049 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : docs\identity_from_userprofile.md
+  Last Modified : 2026-03-03 20:48:31
+  Last Accessed : not available
+  Size          : 2922 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : diagnostic.py
+  Last Modified : 2026-03-03 21:06:19
+  Last Accessed : not available
+  Size          : 3976 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : docs\code_access_policy.md
+  Last Modified : 2026-03-03 21:38:01
+  Last Accessed : not available
+  Size          : 2083 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : lint_output.txt
+  Last Modified : 2026-03-04 06:35:40
+  Last Accessed : not available
+  Size          : 9982 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : verify_tool_args_logs.txt
+  Last Modified : 2026-03-04 08:03:53
+  Last Accessed : not available
+  Size          : 809 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : verify_structural_final_logs.txt
+  Last Modified : 2026-03-04 08:07:13
+  Last Accessed : not available
+  Size          : 1199 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : temp_scripts\verify_runtime.js
+  Last Modified : 2026-03-04 09:58:39
+  Last Accessed : not available
+  Size          : 1359 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : lint_results.txt
+  Last Modified : 2026-03-04 10:00:02
+  Last Accessed : not available
+  Size          : 372000 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : lint_full.txt
+  Last Modified : 2026-03-04 10:00:53
+  Last Accessed : not available
+  Size          : 371742 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tmp_gate_out.txt
+  Last Modified : 2026-03-04 10:51:55
+  Last Accessed : not available
+  Size          : 2610 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tmp_gates.txt
+  Last Modified : 2026-03-04 10:58:26
+  Last Accessed : not available
+  Size          : 2878 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tmp_probe.txt
+  Last Modified : 2026-03-04 10:59:35
+  Last Accessed : not available
+  Size          : 2068 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tmp_render.txt
+  Last Modified : 2026-03-04 11:57:12
+  Last Accessed : not available
+  Size          : 3932 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : tmp_render_u8.txt
+  Last Modified : 2026-03-04 11:59:18
+  Last Accessed : not available
+  Size          : 2061 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : debug_output.txt
+  Last Modified : 2026-03-04 13:29:48
+  Last Accessed : not available
+  Size          : 1682 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+  Path          : docs\runtime\tool_execution_policy.md
+  Last Modified : 2026-03-04 14:47:26
+  Last Accessed : not available
+  Size          : 6400 bytes
+  Reason        : Not modified in 3+ days; no project reference found; not config/entry/critical
+
+================================================================================
+SECTION 2 -- UNCERTAIN FILES  (recently modified, no static import found)
+================================================================================
+
+  Path          : astro_verify.log
+  Last Modified : 2026-03-05 19:06:26
+  Last Accessed : not available
+  Size          : 3994 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_persistence.ts
+  Last Modified : 2026-03-06 20:18:43
+  Last Accessed : not available
+  Size          : 2383 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_persistence.js
+  Last Modified : 2026-03-06 20:19:00
+  Last Accessed : not available
+  Size          : 2438 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_authoritative_mode.js
+  Last Modified : 2026-03-06 21:40:39
+  Last Accessed : not available
+  Size          : 2801 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : memory_audit.jsonl
+  Last Modified : 2026-03-07 10:01:40
+  Last Accessed : not available
+  Size          : 3319 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : tala_memory_v1.db
+  Last Modified : 2026-03-07 10:01:40
+  Last Accessed : not available
+  Size          : 61440 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_intents.ts
+  Last Modified : 2026-03-07 10:11:29
+  Last Accessed : not available
+  Size          : 1153 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_assembler.ts
+  Last Modified : 2026-03-07 10:12:31
+  Last Accessed : not available
+  Size          : 1695 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_gating.ts
+  Last Modified : 2026-03-07 10:12:52
+  Last Accessed : not available
+  Size          : 766 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_intents_v2.ts
+  Last Modified : 2026-03-07 10:30:20
+  Last Accessed : not available
+  Size          : 1413 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_normalization_v2.ts
+  Last Modified : 2026-03-07 10:30:36
+  Last Accessed : not available
+  Size          : 1426 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_assembler_v2.ts
+  Last Modified : 2026-03-07 10:30:57
+  Last Accessed : not available
+  Size          : 1415 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_gating_v2.ts
+  Last Modified : 2026-03-07 10:31:39
+  Last Accessed : not available
+  Size          : 2907 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : verify_persistence_v2.ts
+  Last Modified : 2026-03-07 10:32:17
+  Last Accessed : not available
+  Size          : 3127 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : electron\__tests__\router\verify_regression.js
+  Last Modified : 2026-03-07 10:47:22
+  Last Accessed : not available
+  Size          : 7913 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+  Path          : electron\__tests__\router\verify_regression.ts
+  Last Modified : 2026-03-07 11:02:32
+  Last Accessed : not available
+  Size          : 4212 bytes
+  Reason        : Modified within 3 days but no static import reference found
+
+================================================================================
+NOTES
+================================================================================
+
+  1. Absence of a static import reference does NOT guarantee safe removal.
+     Files may be loaded via dynamic import(), fs.readFile(), spawn/exec,
+     runtime config, reflection, or external tooling.
+
+  2. Manual developer scripts (verify_*.ts, diagnostic.py, fix_ids.py, etc.)
+     are run by hand and will not appear in static scans. Review before removing.
+
+  3. MCP server Python files and shell startup scripts may be launched via
+     spawn/exec and are conservatively listed as uncertain.
+
+  4. Database (*.db), log (*.log), and generated text output files are runtime
+     artifacts. Evaluate separately before any cleanup action.
+
+  5. This audit was produced in READ-ONLY mode. No files were modified.
+
+================================================================================
+END OF REPORT
+================================================================================
