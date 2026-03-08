@@ -7,6 +7,7 @@ import fs from 'fs';
 import https from 'https';
 import { app } from 'electron';
 import { OllamaBrain } from '../brains/OllamaBrain';
+import { promptAuditService, type PromptAuditRecord } from './PromptAuditService';
 import { CloudBrain } from '../brains/CloudBrain';
 import { BackupService } from './BackupService';
 import type { IBrain, ChatMessage } from '../brains/IBrain';
@@ -19,6 +20,7 @@ import { TerminalService } from './TerminalService';
 import { FunctionService } from './FunctionService';
 import { OrchestratorService } from './OrchestratorService';
 import { loadSettings } from './SettingsManager';
+import { LogViewerService } from './LogViewerService';
 
 // @tala:priority Always verify brain settings before proceeding with multi-turn loops.
 // @tala:warn Never remove the exponential backoff from streamWithRetry.
@@ -143,10 +145,12 @@ export class AgentService {
     private router: SmartRouterService | null = null;
     private talaRouter: TalaContextRouter;
     private codeControl: any = null;
+    private logViewerService: LogViewerService | null = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
     private MAX_TOOL_CALLS_PER_TURN = 8;
     private lastTurnExecutionLog?: TurnExecutionLog;
     private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
+    private currentTurnAuditRecord?: PromptAuditRecord;
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -453,6 +457,12 @@ export class AgentService {
                 }
             }
         });
+    }
+
+    public setLogViewerService(lvs: LogViewerService) {
+        this.logViewerService = lvs;
+        this.rag.setLogViewerService(lvs);
+        this.ingestion.setLogViewerService(lvs);
     }
 
     public setCodeControl(codeControl: any) {
@@ -1501,6 +1511,7 @@ Exported standalone package from Tala.
     }
 
     public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[], capabilitiesOverride?: any) {
+        const assemblyStart = Date.now();
         const correlationId = uuidv4();
         auditLogger.setCorrelationId(correlationId);
         console.log(`[AgentService] ====== CHAT STARTED ======`);
@@ -1599,11 +1610,13 @@ Exported standalone package from Tala.
         }
 
         let toolSigs = "";
+        let filteredTools: any[] = [];
         if (turnObject.blockedCapabilities.includes('all') || activeMode === 'rp') {
             toolSigs = "[NO TOOLS AVAILABLE IN RP MODE]";
+            // filteredTools stays empty — no tools permitted in RP mode
         } else {
             // Re-render strings only based on the strictly resolved Capability Array
-            const finalDefs = this.tools.getToolDefinitions(allowedCapabilities, activeMode);
+            filteredTools = this.tools.getToolDefinitions(allowedCapabilities, activeMode);
 
             // Format fallback JSON signature string equivalent for the schema
             const formatSig = (tool: any) => {
@@ -1614,7 +1627,7 @@ Exported standalone package from Tala.
                 return `### ${tool.function.name}\nDescription: ${tool.function.description}\nSchema: {${props.join(', ')}}\n`;
             };
 
-            toolSigs = "Available Tools:\n" + finalDefs.map(formatSig).join("\n");
+            toolSigs = "Available Tools:\n" + filteredTools.map(formatSig).join("\n");
 
             if (turnObject.retrieval.suppressed) {
                 toolSigs += "\n(Note: Memory-retrieval tools have been explicitly withheld by capability policy for this turn)";
@@ -1656,6 +1669,50 @@ Exported standalone package from Tala.
         const auditFile = path.join(auditDir, `${this.activeSessionId}_${Date.now()}.log`);
         fs.writeFileSync(auditFile, `SYSTEM PROMPT:\n${systemPrompt}\n\nUSER:${userMessage}`);
 
+        // --- POST-ASSEMBLY PROMPT AUDIT ---
+        // Capture what was actually assembled and included in the final prompt.
+        // This record is enriched with pre-flight data by OllamaBrain before emission.
+        try {
+            const auditCfg = settings.promptAudit || {};
+            promptAuditService.updateConfig(auditCfg);
+
+            const turnId = `${this.activeSessionId}_${Date.now()}`;
+            const memoryExcludedReason = isGreeting
+                ? 'greeting_intent_suppression'
+                : turnObject?.retrieval?.suppressed
+                    ? 'retrieval_policy_suppressed'
+                    : !hasMemories ? 'no_approved_memories' : undefined;
+
+            const toolsBlocked = turnObject?.blockedCapabilities?.includes('all') || activeMode === 'rp';
+            const toolsExcludedReason = toolsBlocked
+                ? (activeMode === 'rp' ? 'rp_mode_block_all' : 'capability_policy_block_all')
+                : undefined;
+
+            const auditRecord = promptAuditService.buildRecord({
+                sessionId: this.activeSessionId || undefined,
+                turnId,
+                mode: activeMode,
+                intent: turnObject?.intent?.class || 'unknown',
+                isGreeting,
+                hasMemories,
+                memoryContext,
+                systemPrompt,
+                userMessage,
+                astroState,
+                hasAstro: !!astroState && astroState.length > 0,
+                hasImages: !!(images && images.length > 0),
+                hasWorld: false, // WorldService not currently wired into prompts
+                toolsIncluded: !toolsBlocked,
+                toolsExcludedReason,
+                memoryExcludedReason,
+                goalsAndReflections: goalsAndReflections || '',
+                messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }]
+            });
+            // Store on instance so OllamaBrain can enrich with pre-flight data
+            this.currentTurnAuditRecord = auditRecord;
+        } catch (auditErr) {
+            console.warn('[PromptAudit] non-fatal logging failure (post-assembly):', auditErr);
+        }
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
 
@@ -1668,16 +1725,15 @@ Exported standalone package from Tala.
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        // Redundant: toolCategory already computed at top of chat()
-        const filteredTools = this.tools.getToolDefinitions(toolCategory);
         // Build the set of allowed tool names for this turn — used for execution-time gating.
+        // filteredTools was computed above from the capability-resolved allowedCapabilities array.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
         const executionLog: TurnExecutionLog = {
             turnId: `${this.activeSessionId}_${Date.now()}`,
             mode: activeMode,
-            intent: toolCategory,
+            intent: turnObject.intent.class,
             usedEnvelope: false,
             toolCallsPlanned: [],
             toolCalls: [],
@@ -1693,7 +1749,7 @@ Exported standalone package from Tala.
             const summary = this.getGroundedExecutionSummary();
             finalResponse = summary;
             const groundingMsg: ChatMessage = { role: 'assistant', content: summary };
-            this.commitAssistantMessage(transientMessages, groundingMsg, toolCategory, 0, turnSeenHashes, activeMode);
+            this.commitAssistantMessage(transientMessages, groundingMsg, turnObject.intent.class, 0, turnSeenHashes, activeMode);
             turn = AgentService.MAX_AGENT_ITERATIONS; // End turn
         }
 
@@ -1703,7 +1759,7 @@ Exported standalone package from Tala.
             const truncated = this.truncateHistory([...this.chatHistory, ...transientMessages], messageBudget);
 
             try {
-                const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15 };
+                const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
                 let toolsToSend = filteredTools; // Re-declare toolsToSend
                 if (activeMode === 'rp') {
                     toolsToSend = [];
@@ -1732,7 +1788,75 @@ Exported standalone package from Tala.
                     console.error(`[AgentService] INVARIANT VIOLATED: ${errMsg}`);
                     throw new Error(errMsg);
                 }
+                const assemblyTime = Date.now() - assemblyStart;
+                const promptPayload = JSON.stringify(truncated).length;
+                const messageCount = truncated.length;
+
+                this.logViewerService?.logPerformanceMetric({
+                    timestamp: new Date().toISOString(),
+                    source: 'AgentService',
+                    subsystem: 'chat',
+                    metricType: 'latency',
+                    name: 'prompt_assembly_time_ms',
+                    value: assemblyTime,
+                    unit: 'ms',
+                    sessionId: this.activeSessionId,
+                    turnId: executionLog.turnId
+                });
+
+                this.logViewerService?.logPerformanceMetric({
+                    timestamp: new Date().toISOString(),
+                    source: 'AgentService',
+                    subsystem: 'chat',
+                    metricType: 'size',
+                    name: 'prompt_payload_chars',
+                    value: promptPayload,
+                    unit: 'chars',
+                    sessionId: this.activeSessionId,
+                    turnId: executionLog.turnId
+                });
+
+                this.logViewerService?.logPerformanceMetric({
+                    timestamp: new Date().toISOString(),
+                    source: 'AgentService',
+                    subsystem: 'chat',
+                    metricType: 'counter',
+                    name: 'prompt_message_count',
+                    value: messageCount,
+                    unit: 'count',
+                    sessionId: this.activeSessionId,
+                    turnId: executionLog.turnId
+                });
+
+                const requestStart = Date.now();
                 const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, toolsToSend, brainOptions);
+                const requestLatency = Date.now() - requestStart;
+
+                this.logViewerService?.logPerformanceMetric({
+                    timestamp: new Date().toISOString(),
+                    source: 'AgentService',
+                    subsystem: 'inference',
+                    metricType: 'latency',
+                    name: 'ollama_request_latency_ms',
+                    value: requestLatency,
+                    unit: 'ms',
+                    sessionId: this.activeSessionId,
+                    turnId: executionLog.turnId
+                });
+
+                if (response.metadata?.usage?.total_tokens) {
+                    this.logViewerService?.logPerformanceMetric({
+                        timestamp: new Date().toISOString(),
+                        source: 'AgentService',
+                        subsystem: 'inference',
+                        metricType: 'counter',
+                        name: 'token_usage_total',
+                        value: response.metadata.usage.total_tokens,
+                        unit: 'tokens',
+                        sessionId: this.activeSessionId,
+                        turnId: executionLog.turnId
+                    });
+                }
 
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens;
@@ -1836,7 +1960,7 @@ Failure to provide a tool call will result in system termination.`;
                     }
 
                     if (calls.length === 0) {
-                        if (toolCategory === 'coding') {
+                        if (turnObject.intent.class === 'coding') {
                             console.log(`[AgentService] HardFail: intent=coding but no tool calls after retry`);
                             finalResponse = "Tool call required for this task. The model did not emit tool calls.";
                         } else {
@@ -2035,7 +2159,7 @@ Failure to provide a tool call will result in system termination.`;
 
         // --- FINAL UI BOUNDARY GUARD (Last Line of Defense) ---
         // Ensure that for coding intent, if any tools were executed or calls were made, no assistant prose remains.
-        if (toolCategory === 'coding' && (executionLog.toolCalls.length > 0 || transientMessages.some(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0))) {
+        if (turnObject.intent.class === 'coding' && (executionLog.toolCalls.length > 0 || transientMessages.some(m => m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0))) {
             for (const msg of transientMessages) {
                 if (msg.role === 'assistant' && msg.content && msg.content.trim().length > 0) {
                     console.warn(`[AgentService] FINAL GUARD TRIGGERED: Suppressing leaked prose for coding turn. Session: ${this.activeSessionId || 'unknown'}`);

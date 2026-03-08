@@ -2,6 +2,7 @@ import { fetch, Agent } from 'undici';
 import path from 'path';
 import fs from 'fs';
 import type { IBrain, ChatMessage, BrainResponse, BrainOptions } from './IBrain';
+import { promptAuditService } from '../services/PromptAuditService';
 
 /**
  * OllamaBrain
@@ -159,6 +160,21 @@ export class OllamaBrain implements IBrain {
 
         try {
             console.log(`[OllamaBrain] POST ${this.baseUrl}/api/chat (model: ${this.model})`);
+
+            // --- PRE-FLIGHT PROMPT AUDIT ---
+            if (options?.auditRecord) {
+                promptAuditService.enrichWithPreFlight(options.auditRecord, {
+                    model: this.model,
+                    messages: body.messages,
+                    toolsFieldPresent: !!body.tools,
+                    toolChoiceFieldPresent: !!body.tool_choice,
+                    stream: false,
+                    optionsPresent: Object.keys(ollamaOptions).length > 0,
+                    requestBody: { ...body, options: ollamaOptions }
+                });
+                promptAuditService.emit(options.auditRecord);
+            }
+
             const response = await fetch(`${this.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -327,6 +343,21 @@ export class OllamaBrain implements IBrain {
             console.log(`[OllamaBrain] JSON.stringify successful. Length: ${Math.round(bodyString.length / 1024)} KB`);
 
             console.log(`[OllamaBrain] Calling fetch() to ${this.baseUrl}/api/chat...`);
+
+            // --- PRE-FLIGHT PROMPT AUDIT ---
+            if (options?.auditRecord) {
+                promptAuditService.enrichWithPreFlight(options.auditRecord, {
+                    model: this.model,
+                    messages: bodyObj.messages,
+                    toolsFieldPresent: !!bodyObj.tools,
+                    toolChoiceFieldPresent: !!bodyObj.tool_choice,
+                    stream: true,
+                    optionsPresent: Object.keys(ollamaOptions).length > 0,
+                    requestBody: bodyObj
+                });
+                promptAuditService.emit(options.auditRecord);
+            }
+
             const response = await fetch(`${this.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

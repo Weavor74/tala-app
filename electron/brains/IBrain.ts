@@ -84,6 +84,10 @@ export interface BrainOptions {
      * - 'none': model must NOT call any tools
      */
     tool_choice?: 'auto' | 'required' | 'none';
+    /** 
+     * Optional prompt audit record for telemetry and debugging. 
+     */
+    auditRecord?: any;
     /** Any other model-specific options. */
     [key: string]: any;
 }

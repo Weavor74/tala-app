@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LogViewerService } from './LogViewerService';
 
 /**
  * RagService
@@ -36,6 +37,7 @@ export class RagService {
     private client: Client | null = null;
     /** Whether the MCP client is connected and has been verified with `listTools()`. */
     private isReady = false;
+    private logViewerService: LogViewerService | null = null;
 
     /**
      * Spawns the Tala Core RAG MCP server and connects to it via stdio transport.
@@ -114,6 +116,10 @@ export class RagService {
         await Promise.race([connectPromise(), timeoutPromise]);
     }
 
+    public setLogViewerService(lvs: LogViewerService) {
+        this.logViewerService = lvs;
+    }
+
     /**
      * Searches the long-term narrative memory for content relevant to the query.
      * 
@@ -136,9 +142,21 @@ export class RagService {
 
             console.log(`[RagService] Searching: "${query}" with filter: ${args.filter_json || 'none'}`);
 
+            const start = Date.now();
             const result = await this.client.callTool({
                 name: 'search_memory',
                 arguments: args
+            });
+            const latency = Date.now() - start;
+
+            this.logViewerService?.logPerformanceMetric({
+                timestamp: new Date().toISOString(),
+                source: 'RagService',
+                subsystem: 'rag',
+                metricType: 'latency',
+                name: 'rag_query_time_ms',
+                value: latency,
+                unit: 'ms'
             });
 
             console.log(`[RagService] Raw result content length: ${(result.content as unknown[])?.length || 0}`);

@@ -1,0 +1,205 @@
+================================================================================
+MISSING SYMBOL RECOVERY AUDIT
+================================================================================
+Workspace    : d:\src\client1\tala-app
+Archive Root : d:\src\client1\tala-app\archive
+Audit Time   : 2026-03-08T09:08:22-05:00
+Symbols      : toolCategory, ContextHandoff
+Mode         : read-only investigation — no files modified
+================================================================================
+
+EXECUTIVE SUMMARY
+--------------------------------------------------------------------------------
+Total reference sites found         : 7  (toolCategory=5, ContextHandoff=2)
+Active definitions found            : 0  (neither symbol is defined anywhere)
+Archived candidate definitions      : 0  (neither symbol exists in archive/)
+Likely stale references             : 7  (all reference sites are stale)
+Recommended restores                : 0
+Recommended recreate-from-scratch   : 0
+Recommended refactor-active-code    : 2  (one recommendation per symbol)
+
+ROOT CAUSE SUMMARY
+Both broken symbols are artifacts of the TurnContext hardening refactor
+(completed session 47c273d7-a8d4-4e35-8d7a-9a14c60136fb).
+
+  - ContextHandoff: the interface was deleted from ContextAssembler.ts when
+    TurnContext was added, but the assemble() method signature and local
+    variable still reference the deleted type name. The method still structurally
+    works because ContextAssembler.assemble() is only called internally by
+    TalaContextRouter, which ignores the return type — but it will fail to compile.
+
+  - toolCategory: was a pre-hardening local variable declared in AgentService.chat()
+    that held the classified intent category (e.g. 'coding', 'technical'). During
+    the hardening refactor the variable declaration was removed (replaced by
+    turnObject.intent.class) but 5 usage sites were left pointing to the now-
+    undefined identifier.
+
+================================================================================
+SECTION 3 -- SYMBOL ANALYSIS: ContextHandoff
+================================================================================
+
+REFERENCE LOCATIONS:
+  File   : electron\services\router\ContextAssembler.ts
+  Line 45: public static assemble(...): ContextHandoff {
+  Usage  : return type annotation
+
+  File   : electron\services\router\ContextAssembler.ts
+  Line 78: const handoff: ContextHandoff = {
+  Usage  : local variable type annotation
+
+ACTIVE DEFINITION: NONE
+  grep for "ContextHandoff" across all .ts/.js files returned only the two
+  usage sites above. The interface is not declared anywhere in the workspace.
+
+  NOTE: ContextAssembler.ts lines 14-39 show the TurnContext interface and
+  ToolCapability type were added, but the ContextHandoff interface that previously
+  lived in the same file (it was defined inline inside the same file before the
+  refactor) was deleted without updating the assemble() return type and body.
+
+ARCHIVED CANDIDATES: NONE
+  grep for "ContextHandoff" across archive\manual-dev-tools\ returned zero results.
+  The archived files are all verify/diagnostic scripts that never imported or
+  defined ContextHandoff.
+
+PROBABLE ROOT CAUSE:
+  The TurnContext hardening refactor replaced ContextHandoff with TurnContext
+  (lines 14-39 of ContextAssembler.ts) but did not update the assemble() method
+  signature or the local variable on line 78. This is a pure incomplete-refactor
+  error — the old type name was used as the method return type but its definition
+  was deleted from the same file.
+
+  Additional evidence: TalaContextRouter.ts (line 52) calls:
+      ContextAssembler.assemble(...).blocks
+  meaning it discards the return type entirely — it only needs .blocks, which
+  is a property available on both ContextHandoff and the current ad-hoc object
+  returned. TypeScript will error on the type annotation even though the runtime
+  behavior is unaffected.
+
+CONFIDENCE: high
+
+RECOMMENDATION: refactor-active-code
+
+RATIONALE:
+  The fix is a 3-line change in ContextAssembler.ts:
+    1. Change the assemble() return type from ContextHandoff to an inline
+       object type or a new local interface { blocks: ContextBlock[]; ... }
+    2. Change the local variable type annotation from ContextHandoff to the
+       same inline type.
+  Do NOT restore any archived file — ContextHandoff had no shared dependents
+  outside of ContextAssembler itself. The architecture has successfully moved
+  to TurnContext. The assemble() method is an internal helper; its return type
+  only needs to satisfy the caller (TalaContextRouter line 52 uses .blocks).
+
+================================================================================
+SECTION 4 -- SYMBOL ANALYSIS: toolCategory
+================================================================================
+
+REFERENCE LOCATIONS:
+  File        : electron\services\AgentService.ts
+
+  Line 1671:  // Redundant: toolCategory already computed at top of chat()
+              const filteredTools = this.tools.getToolDefinitions(toolCategory);
+  Usage       : argument to getToolDefinitions() — capability/category gating
+
+  Line 1680:  intent: toolCategory,
+  Usage       : property assignment in TurnExecutionLog struct
+
+  Line 1696:  this.commitAssistantMessage(... toolCategory ... )
+  Usage       : argument to commitAssistantMessage()
+
+  Line 1839:  if (toolCategory === 'coding') {
+  Usage       : control flow / hard-fail guard for coding intent
+
+  Line 2038:  if (toolCategory === 'coding' && executionLog.toolCalls.length > 0...)
+  Usage       : final UI boundary guard — prose suppression for coding turns
+
+ACTIVE DEFINITION: NONE
+  No const/let/var declaration for toolCategory exists anywhere in the
+  active workspace. The variable was removed without updating usage sites.
+
+WHAT toolCategory WAS:
+  Before the hardening refactor, toolCategory was a local variable in
+  AgentService.chat() that held a string representing the classified intent
+  class for the current turn (e.g. 'coding', 'technical', 'roleplay').
+  It was computed from the classified intent before TurnContext existed.
+
+CURRENT REPLACEMENT:
+  After the refactor, turnObject (TurnContext) at line 1517 contains:
+      turnObject.intent.class  // equivalent to the old toolCategory value
+  Line 1852 already uses turnObject.intent.class correctly:
+      this.commitAssistantMessage(... turnObject.intent.class ...)
+  Lines 1871 also uses turnObject.intent.class correctly.
+  The 5 remaining sites still reference the deleted toolCategory identifier.
+
+  Additionally, line 1606 correctly uses allowedCapabilities (the new gating
+  mechanism) to call this.tools.getToolDefinitions(). Line 1672 is a redundant
+  second call that still references toolCategory and should be eliminated.
+
+ARCHIVED CANDIDATES: NONE
+  grep for "toolCategory" across archive\ returned zero results.
+  The archived verify/diagnostic scripts never defined or used toolCategory.
+
+PROBABLE ROOT CAUSE:
+  During the TurnContext hardening refactor, the toolCategory variable
+  declaration was removed from AgentService.chat() (it was near line 1515-1520),
+  but 5 downstream usage sites within the same function body were not updated
+  to use turnObject.intent.class (the canonical replacement).
+  The comment on line 1671 ("Redundant: toolCategory already computed...") is
+  itself a relic — it references a variable that no longer exists.
+
+CONFIDENCE: high
+
+RECOMMENDATION: refactor-active-code
+
+RATIONALE:
+  Replace each occurrence of toolCategory with turnObject.intent.class.
+  Line 1672 is a redundant second getToolDefinitions() call that should be
+  eliminated entirely (the first call is on line 1606 storing results in
+  finalDefs, and this block re-calls it needlessly). The execution log on
+  line 1680 and commitAssistantMessage on line 1696 should mirror lines 1852
+  and 1871 which already use turnObject.intent.class correctly.
+
+================================================================================
+SECTION 5 -- CANDIDATE ARCHIVED FILES
+================================================================================
+
+No archived files in archive\manual-dev-tools\ or archive\manual-databases\
+contain definitions for either ContextHandoff or toolCategory.
+
+All archived files are verify/diagnostic scripts (standalone manual tools with
+no shared type exports). None are active import targets. Restore suitability
+for all archived files: POOR (irrelevant to missing symbols).
+
+================================================================================
+SECTION 6 -- RECOMMENDED NEXT ACTIONS
+================================================================================
+
+Priority 1: Fix ContextHandoff in ContextAssembler.ts (2 lines)
+  - Line 45: Change return type from ContextHandoff to { blocks: ContextBlock[] }
+    (or define a small local interface AssemblyResult if preferred for clarity)
+  - Line 78: Change variable type to match — { blocks: ContextBlock[]; ... }
+  - No other files need to change. TalaContextRouter.ts consumes .blocks only.
+
+Priority 2: Fix toolCategory in AgentService.ts (5 sites)
+  - Line 1671-1672: Remove the entire redundant filteredTools re-declaration.
+    filteredTools was already built at line ~1606 as finalDefs. The second call
+    on line 1672 is both redundant and references undefined toolCategory.
+    Rename finalDefs to filteredTools at line 1606 OR reference finalDefs at 1672.
+  - Line 1680: intent: turnObject.intent.class
+  - Line 1696: Replace toolCategory with turnObject.intent.class
+  - Line 1839: Replace toolCategory === 'coding' with turnObject.intent.class === 'coding'
+  - Line 2038: Replace toolCategory === 'coding' with turnObject.intent.class === 'coding'
+
+Priority 3: Rerun TypeScript compile
+  tsc --noEmit (or build via vite) to confirm zero remaining type errors.
+
+Priority 4: Rerun the golden regression pack
+  npx tsx electron/__tests__/router/verify_regression.ts
+
+Priority 5: Manual smoke test
+  Launch app, issue a coding task, verify tools execute and prose suppression
+  guard triggers correctly (previously gated on toolCategory === 'coding').
+
+================================================================================
+END OF REPORT
+================================================================================

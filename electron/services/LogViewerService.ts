@@ -1,0 +1,622 @@
+import fs from 'fs';
+import path from 'path';
+import { app } from 'electron';
+import {
+    LogViewerEntry,
+    LogSourceInfo,
+    LogReadResult,
+    LogSeverity,
+    LogHealthSnapshot,
+    RuntimeErrorRecord,
+    PerformanceMetricRecord,
+    PerformanceSummary,
+    SystemHealth
+} from '../../src/renderer/logTypes';
+
+export interface ArchiveFileResult {
+    source: string;
+    filename: string;
+    existsAtArchiveTime: boolean;
+    copied: boolean;
+    sizeBytes: number;
+}
+
+export interface ArchiveResult {
+    success: boolean;
+    mode: 'single_source' | 'all_sources';
+    source: string | 'all';
+    archiveFolder: string | null;
+    copiedFiles: ArchiveFileResult[];
+    missingSources: string[];
+    error?: string;
+}
+
+export class LogViewerService {
+    private logsDir: string;
+    private mcpStatus: 'online' | 'degraded' | 'offline' | 'unknown' = 'unknown';
+
+    constructor() {
+        // Centralized log path resolution - using userData/logs
+        this.logsDir = path.join(app.getPath('userData'), 'logs');
+        if (!fs.existsSync(this.logsDir)) {
+            try {
+                fs.mkdirSync(this.logsDir, { recursive: true });
+            } catch (e) {
+                console.error(`[LogViewerService] CRITICAL: Failed to create logs directory at ${this.logsDir}`, e);
+            }
+        }
+        this.emitDiagnostics();
+    }
+
+    private emitDiagnostics() {
+        console.log(`[LogViewerService] Diagnostic Logging Initialized:`);
+        console.log(` - Logs Root: ${this.logsDir}`);
+        const sources = [
+            { id: 'audit', file: 'audit-log.jsonl' },
+            { id: 'prompt', file: 'prompt-audit.jsonl' },
+            { id: 'runtime-errors', file: 'runtime-errors.jsonl' },
+            { id: 'performance', file: 'performance-metrics.jsonl' }
+        ];
+
+        sources.forEach(s => {
+            const fullPath = path.join(this.logsDir, s.file);
+            const exists = fs.existsSync(fullPath);
+            console.log(` - Registered Source: ${s.id} (Exists: ${exists})`);
+            if (exists) console.log(`   Path: ${fullPath}`);
+        });
+    }
+
+    /**
+     * Shared JSONL append utility.
+     * Ensures directory exists, appends record, and handles errors without crashing.
+     */
+    private appendJsonl(fileName: string, record: any, diagnosticTag: string): void {
+        try {
+            if (!this.logsDir) return;
+            const filePath = path.join(this.logsDir, fileName);
+
+            // Ensure parent exists
+            if (!fs.existsSync(this.logsDir)) {
+                fs.mkdirSync(this.logsDir, { recursive: true });
+            }
+
+            const line = JSON.stringify(record) + '\n';
+            fs.appendFileSync(filePath, line, 'utf-8');
+
+            // Mandatory success diagnostic for proof of writer functionality
+            console.log(`[${diagnosticTag}] append success: ${fileName}`);
+        } catch (e: any) {
+            console.warn(`[${diagnosticTag}] append failed to ${fileName}: ${e.message}`);
+        }
+    }
+
+    public setSubsystemStatus(subsystem: string, status: 'online' | 'degraded' | 'offline' | 'unknown') {
+        if (subsystem === 'mcp') {
+            this.mcpStatus = status;
+        }
+    }
+
+    public async listSources(): Promise<LogSourceInfo[]> {
+        return [
+            { id: 'audit', label: 'Audit Log', filePath: path.join(this.logsDir, 'audit-log.jsonl'), type: 'jsonl' },
+            { id: 'prompt', label: 'Prompt Audit Log', filePath: path.join(this.logsDir, 'prompt-audit.jsonl'), type: 'jsonl' },
+            { id: 'runtime-errors', label: 'Runtime Errors', filePath: path.join(this.logsDir, 'runtime-errors.jsonl'), type: 'jsonl' },
+            { id: 'performance', label: 'Performance Metrics', filePath: path.join(this.logsDir, 'performance-metrics.jsonl'), type: 'jsonl' },
+        ];
+    }
+
+    public async clearSource(sourceId: string): Promise<void> {
+        const sources = await this.listSources();
+        const source = sources.find(s => s.id === sourceId);
+        if (!source) throw new Error(`Cannot clear unknown source: ${sourceId}`);
+
+        try {
+            if (fs.existsSync(source.filePath)) {
+                fs.truncateSync(source.filePath, 0);
+            } else {
+                // Ensure parent and create empty
+                const dir = path.dirname(source.filePath);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(source.filePath, '');
+            }
+
+            // Audit the action
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp: new Date().toISOString(),
+                event: 'log_clear',
+                source: sourceId,
+                result: 'success',
+                mode: 'single_source'
+            }, 'AuditLog');
+
+            console.log(`[LogViewerService] Cleared source: ${sourceId}`);
+        } catch (e: any) {
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp: new Date().toISOString(),
+                event: 'log_clear',
+                source: sourceId,
+                result: 'failure',
+                error: e.message,
+                mode: 'single_source'
+            }, 'AuditLog');
+            throw e;
+        }
+    }
+
+    public async clearAll(): Promise<{ count: number }> {
+        const sources = await this.listSources();
+        let clearedCount = 0;
+
+        for (const source of sources) {
+            try {
+                await this.clearSource(source.id);
+                clearedCount++;
+            } catch (e) {
+                console.error(`[LogViewerService] Failed to clear ${source.id}:`, e);
+            }
+        }
+
+        // Final audit for the mass clear
+        this.appendJsonl('audit-log.jsonl', {
+            timestamp: new Date().toISOString(),
+            event: 'log_clear',
+            source: 'all',
+            result: 'completed',
+            clearedCount,
+            mode: 'all_sources'
+        }, 'AuditLog');
+
+        return { count: clearedCount };
+    }
+
+    private createArchiveFolder(timestamp: string): string {
+        const safeTimestamp = timestamp.replace(/:/g, '-').replace(/\./g, '-');
+        const archiveDir = path.join(this.logsDir, 'archive', safeTimestamp);
+        if (!fs.existsSync(archiveDir)) {
+            fs.mkdirSync(archiveDir, { recursive: true });
+        }
+        return archiveDir;
+    }
+
+    private writeArchiveManifest(archiveDir: string, manifestData: any) {
+        fs.writeFileSync(
+            path.join(archiveDir, 'archive-manifest.json'),
+            JSON.stringify(manifestData, null, 2),
+            'utf-8'
+        );
+    }
+
+    public async archiveSource(sourceId: string): Promise<ArchiveResult> {
+        const timestamp = new Date().toISOString();
+        const sources = await this.listSources();
+        const source = sources.find(s => s.id === sourceId);
+
+        if (!source) throw new Error(`Cannot archive unknown source: ${sourceId}`);
+
+        const result: ArchiveResult = {
+            success: false,
+            mode: 'single_source',
+            source: sourceId,
+            archiveFolder: null,
+            copiedFiles: [],
+            missingSources: []
+        };
+
+        try {
+            const archiveDir = this.createArchiveFolder(timestamp);
+            result.archiveFolder = archiveDir;
+
+            const filename = path.basename(source.filePath);
+            const exists = fs.existsSync(source.filePath);
+            const sizeBytes = exists ? fs.statSync(source.filePath).size : 0;
+            const destPath = path.join(archiveDir, filename);
+
+            let copied = false;
+            if (exists) {
+                fs.copyFileSync(source.filePath, destPath);
+                copied = true;
+            } else {
+                result.missingSources.push(sourceId);
+            }
+
+            const fileResult: ArchiveFileResult = {
+                source: sourceId,
+                filename,
+                existsAtArchiveTime: exists,
+                copied,
+                sizeBytes
+            };
+            result.copiedFiles.push(fileResult);
+            result.success = true;
+
+            this.writeArchiveManifest(archiveDir, {
+                timestamp,
+                mode: result.mode,
+                requestedSource: result.source,
+                archiveFolder: archiveDir,
+                files: result.copiedFiles
+            });
+
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp,
+                event: 'log_archive',
+                source: sourceId,
+                mode: result.mode,
+                result: 'success',
+                archiveFolder: archiveDir
+            }, 'AuditLog');
+
+            return result;
+        } catch (e: any) {
+            result.error = e.message;
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp,
+                event: 'log_archive',
+                source: sourceId,
+                mode: result.mode,
+                result: 'failure',
+                error: e.message
+            }, 'AuditLog');
+            throw e;
+        }
+    }
+
+    public async archiveAll(): Promise<ArchiveResult> {
+        const timestamp = new Date().toISOString();
+        const sources = await this.listSources();
+
+        const result: ArchiveResult = {
+            success: false,
+            mode: 'all_sources',
+            source: 'all',
+            archiveFolder: null,
+            copiedFiles: [],
+            missingSources: []
+        };
+
+        try {
+            const archiveDir = this.createArchiveFolder(timestamp);
+            result.archiveFolder = archiveDir;
+
+            for (const source of sources) {
+                const filename = path.basename(source.filePath);
+                const exists = fs.existsSync(source.filePath);
+                const sizeBytes = exists ? fs.statSync(source.filePath).size : 0;
+                const destPath = path.join(archiveDir, filename);
+
+                let copied = false;
+                if (exists) {
+                    fs.copyFileSync(source.filePath, destPath);
+                    copied = true;
+                } else {
+                    result.missingSources.push(source.id);
+                }
+
+                result.copiedFiles.push({
+                    source: source.id,
+                    filename,
+                    existsAtArchiveTime: exists,
+                    copied,
+                    sizeBytes
+                });
+            }
+
+            result.success = true;
+
+            this.writeArchiveManifest(archiveDir, {
+                timestamp,
+                mode: result.mode,
+                requestedSource: null,
+                archiveFolder: archiveDir,
+                files: result.copiedFiles
+            });
+
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp,
+                event: 'log_archive',
+                source: 'all',
+                mode: result.mode,
+                result: 'success',
+                archivedCount: result.copiedFiles.filter(f => f.copied).length,
+                missingCount: result.missingSources.length,
+                archiveFolder: archiveDir
+            }, 'AuditLog');
+
+            return result;
+        } catch (e: any) {
+            result.error = e.message;
+            this.appendJsonl('audit-log.jsonl', {
+                timestamp,
+                event: 'log_archive',
+                source: 'all',
+                mode: result.mode,
+                result: 'failure',
+                error: e.message
+            }, 'AuditLog');
+            throw e;
+        }
+    }
+
+    public async readEntries(sourceId: string, options: { limit?: number, offset?: number } = {}): Promise<LogReadResult> {
+        const sources = await this.listSources();
+        const source = sources.find(s => s.id === sourceId);
+
+        if (!source) {
+            throw new Error(`Log source not found: ${sourceId}`);
+        }
+
+        const limit = options.limit || 500;
+        const offset = options.offset || 0;
+
+        if (source.type === 'jsonl') {
+            return this.readJsonlTail(source.filePath, limit, offset, sourceId);
+        }
+
+        return { entries: [], skippedCount: 0, totalSize: 0, hasMore: false };
+    }
+
+    private async readJsonlTail(filePath: string, limit: number, offset: number, sourceId: string): Promise<LogReadResult> {
+        try {
+            if (!fs.existsSync(filePath)) {
+                return { entries: [], skippedCount: 0, totalSize: 0, hasMore: false };
+            }
+
+            const stats = fs.statSync(filePath);
+            const fileSize = stats.size;
+            if (fileSize === 0) {
+                return { entries: [], skippedCount: 0, totalSize: 0, hasMore: false };
+            }
+
+            const CHUNK_SIZE = 16 * 1024;
+            const fd = fs.openSync(filePath, 'r');
+
+            let pos = fileSize;
+            let lines: string[] = [];
+            let leftover = '';
+            let skippedCount = 0;
+
+            while (pos > 0 && lines.length < (offset + limit)) {
+                const readLen = Math.min(pos, CHUNK_SIZE);
+                pos -= readLen;
+
+                const buffer = Buffer.alloc(readLen);
+                fs.readSync(fd, buffer, 0, readLen, pos);
+
+                const content = buffer.toString('utf-8') + leftover;
+                const split = content.split(/\r?\n/);
+
+                leftover = split.shift() || '';
+                lines = [...split.reverse(), ...lines];
+            }
+            fs.closeSync(fd);
+
+            if (pos === 0 && leftover.trim()) {
+                lines.push(leftover);
+            }
+
+            const slice = lines.slice(offset, offset + limit);
+            const entries: LogViewerEntry[] = [];
+
+            for (const line of slice) {
+                if (!line.trim()) continue;
+                try {
+                    const parsed = JSON.parse(line);
+                    entries.push(this.normalizeEntry(parsed, sourceId));
+                } catch (e) {
+                    skippedCount++;
+                }
+            }
+
+            return {
+                entries,
+                skippedCount,
+                totalSize: lines.length,
+                hasMore: lines.length >= (offset + limit)
+            };
+        } catch (e) {
+            console.error(`[LogViewerService] Failed to read log file: ${filePath}`, e);
+            return { entries: [], skippedCount: 0, totalSize: 0, hasMore: false };
+        }
+    }
+
+    public async getHealthSnapshot(): Promise<LogHealthSnapshot> {
+        const snapshot: LogHealthSnapshot = {
+            memory: { status: 'online' },
+            rag: { status: 'online' },
+            astro: { status: 'online' },
+            mcp: { status: this.mcpStatus },
+            ollama: { status: 'online' },
+            app: { status: 'online' }
+        };
+
+        try {
+            const audit = await this.readEntries('audit', { limit: 100 });
+            const prompt = await this.readEntries('prompt', { limit: 50 });
+            const errors = await this.readEntries('runtime-errors', { limit: 50 });
+
+            const all = [...audit.entries, ...prompt.entries, ...errors.entries]
+                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+            for (const entry of all) {
+                const sub = entry.subsystem || 'app';
+                if (snapshot[sub]) {
+                    const isNewer = !snapshot[sub].latestTimestamp || new Date(entry.timestamp) > new Date(snapshot[sub].latestTimestamp!);
+                    if (isNewer || (entry.level === 'error' && snapshot[sub].status !== 'degraded')) {
+                        snapshot[sub].status = entry.level === 'error' ? 'degraded' : snapshot[sub].status;
+                        snapshot[sub].latestTimestamp = entry.timestamp;
+                        snapshot[sub].lastMessage = entry.message;
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('[LogViewerService] Health snapshot failed', e);
+        }
+
+        return snapshot;
+    }
+
+    public async getCorrelationEntries(sessionId?: string, turnId?: string): Promise<LogViewerEntry[]> {
+        if (!sessionId && !turnId) return [];
+
+        const sources = await this.listSources();
+        let allEntries: LogViewerEntry[] = [];
+
+        for (const source of sources) {
+            const res = await this.readEntries(source.id, { limit: 1000 });
+            const filtered = res.entries.filter(e =>
+                (sessionId && e.sessionId === sessionId) ||
+                (turnId && e.turnId === turnId)
+            );
+            allEntries = allEntries.concat(filtered);
+        }
+
+        return allEntries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    }
+
+    public async getTimelineEntries(turnId: string): Promise<LogViewerEntry[]> {
+        return this.getCorrelationEntries(undefined, turnId);
+    }
+
+    public async getPerformanceSummary(): Promise<PerformanceSummary> {
+        const summary: PerformanceSummary = {
+            avgOllamaLatency: 0,
+            avgPromptAssemblyTime: 0,
+            avgRagQueryTime: 0,
+            latestPromptChars: 0,
+            latestModelMessageCount: 0
+        };
+
+        try {
+            const res = await this.readEntries('performance', { limit: 200 });
+            const entries = res.entries.map(e => e.raw as PerformanceMetricRecord);
+
+            const getAvg = (name: string) => {
+                const matches = entries.filter(e => e.name === name);
+                if (matches.length === 0) return 0;
+                return matches.reduce((acc, curr) => acc + curr.value, 0) / matches.length;
+            };
+
+            summary.avgOllamaLatency = getAvg('ollama_request_latency_ms');
+            summary.avgPromptAssemblyTime = getAvg('prompt_assembly_time_ms');
+            summary.avgRagQueryTime = getAvg('rag_query_time_ms');
+
+            const latestPrompt = entries.find(e => e.name === 'prompt_payload_chars');
+            if (latestPrompt) summary.latestPromptChars = latestPrompt.value;
+
+            const latestCount = entries.find(e => e.name === 'prompt_message_count');
+            if (latestCount) summary.latestModelMessageCount = latestCount.value;
+
+        } catch (e) {
+            console.error('[LogViewerService] Performance summary failed', e);
+        }
+
+        return summary;
+    }
+
+    public async logRuntimeError(error: any, context?: Partial<RuntimeErrorRecord>): Promise<void> {
+        const entry: RuntimeErrorRecord = {
+            timestamp: new Date().toISOString(),
+            level: 'error',
+            source: context?.source || 'runtime',
+            subsystem: context?.subsystem || 'app',
+            eventType: context?.eventType || 'unknownRuntimeError',
+            message: error?.message || String(error),
+            stack: error?.stack,
+            sessionId: context?.sessionId,
+            turnId: context?.turnId,
+            processType: context?.processType || 'main',
+            metadata: context?.metadata as any
+        };
+
+        if (entry.message) entry.message = this.redactSecrets(entry.message);
+        if (entry.stack) entry.stack = this.redactSecrets(entry.stack);
+
+        this.appendJsonl('runtime-errors.jsonl', entry, 'RuntimeErrorLog');
+    }
+
+    public async logPerformanceMetric(metric: Partial<PerformanceMetricRecord>): Promise<void> {
+        const fullMetric: PerformanceMetricRecord = {
+            timestamp: metric.timestamp || new Date().toISOString(),
+            source: metric.source || 'main',
+            subsystem: metric.subsystem || 'unknown',
+            metricType: metric.metricType || 'generic',
+            name: metric.name || 'unknown',
+            value: metric.value ?? 0,
+            unit: metric.unit || 'ms',
+            ...metric
+        } as PerformanceMetricRecord;
+
+        this.appendJsonl('performance-metrics.jsonl', fullMetric, 'PerformanceMetrics');
+    }
+
+    /**
+     * Logs a prompt audit record.
+     */
+    public async logPromptAudit(record: any): Promise<void> {
+        this.appendJsonl('prompt-audit.jsonl', record, 'PromptAudit');
+    }
+
+    public async getEntryDetails(_sourceId: string, _entryId: string): Promise<any> {
+        return null;
+    }
+
+    private normalizeEntry(raw: any, sourceId: string): LogViewerEntry {
+        const id = raw.id || Math.random().toString(36).substr(2, 9);
+        const timestamp = raw.timestamp || new Date().toISOString();
+        const level = this.normalizeSeverity(raw.level || raw.severity);
+        const source = raw.source || sourceId;
+        const eventType = raw.eventType || raw.type || raw.event || 'general';
+        const sessionId = raw.sessionId;
+        const turnId = raw.turnId;
+
+        let message = raw.message || raw.summary || '';
+        let subsystem = raw.subsystem || 'app';
+
+        if (sourceId === 'prompt') {
+            const mode = raw.mode || 'assistant';
+            const intent = raw.intent || 'unknown';
+            message = `Prompt audit | mode=${mode} intent=${intent}`;
+            subsystem = 'prompt_audit';
+        } else if (sourceId === 'runtime-errors') {
+            subsystem = raw.subsystem || 'app';
+        } else if (sourceId === 'performance') {
+            const name = raw.name || 'unknown';
+            const val = raw.value ?? 0;
+            const unit = raw.unit || '';
+            message = `Metric | ${name}=${val} ${unit}`;
+            subsystem = raw.subsystem || 'app';
+        } else if (subsystem === 'app') {
+            const searchStr = (eventType + ' ' + message + ' ' + sourceId).toLowerCase();
+            if (searchStr.includes('ollama')) subsystem = 'ollama';
+            else if (searchStr.includes('rag')) subsystem = 'rag';
+            else if (searchStr.includes('mcp')) subsystem = 'mcp';
+        }
+
+        return {
+            id,
+            timestamp,
+            level,
+            source,
+            subsystem,
+            eventType,
+            message,
+            sessionId,
+            turnId,
+            raw,
+            rawText: JSON.stringify(raw, null, 2)
+        };
+    }
+
+    private normalizeSeverity(val: any): LogSeverity {
+        if (!val) return 'info';
+        const s = String(val).toLowerCase();
+        if (s.includes('error') || s.includes('fatal')) return 'error';
+        if (s.includes('warn')) return 'warn';
+        if (s.includes('debug')) return 'debug';
+        return 'info';
+    }
+
+    private redactSecrets(text: string): string {
+        return text.replace(/(key|token|auth|secret|password|passwd)([\s]*[=:][\s]*)([^\s,;]+)/gi, '$1$2[REDACTED]');
+    }
+}

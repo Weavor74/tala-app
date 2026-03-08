@@ -25,6 +25,7 @@ import { SoulService } from './services/soul/SoulService';
 import { UserProfileService } from './services/UserProfileService';
 import { CodeAccessPolicy } from './services/CodeAccessPolicy';
 import { CodeControlService } from './services/CodeControlService';
+import { LogViewerService } from './services/LogViewerService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -75,6 +76,7 @@ const workflowEngine = new WorkflowEngine(functionService, agent);
 const guardrailService = new GuardrailService();
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
+const logViewerService = new LogViewerService();
 
 // Initialize Code Access Policy and Control Service
 const codePolicy = new CodeAccessPolicy({
@@ -88,16 +90,47 @@ soulService.registerIpcHandlers();
 reflectionService.registerIpcHandlers();
 reflectionService.start();
 
+// ═══════════════════════════════════════════════════════════════════════
+// GLOBAL ERROR LOGGING
+// ═══════════════════════════════════════════════════════════════════════
+
+process.on('uncaughtException', (error) => {
+  console.error('[Main] Uncaught Exception:', error);
+  logViewerService.logRuntimeError(error, {
+    source: 'runtime_error_main',
+    subsystem: 'app',
+    eventType: 'uncaughtException',
+    processType: 'main'
+  });
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logViewerService.logRuntimeError(error, {
+    source: 'runtime_error_main',
+    subsystem: 'app',
+    eventType: 'unhandledRejection',
+    processType: 'main',
+    metadata: { reason: String(reason) }
+  });
+});
+
 ipcMain.handle('voice:transcribe', async (_e, audioPath: string) => voiceService.transcribe(audioPath));
 ipcMain.handle('voice:synthesize', async (_e, text: string) => voiceService.synthesize(text));
 ipcMain.handle('voice:transcribe-buffer', async (_e, audioBuffer: Buffer, format: string) => voiceService.transcribeBuffer(audioBuffer, format));
 ipcMain.handle('voice:status', async () => voiceService.getStatus());
 
 // Wire Dependencies
+agent.setLogViewerService(logViewerService);
 agent.setMcpService(mcpService);
 agent.setGitService(gitService);
 agent.setReflectionService(reflectionService);
 agent.setCodeControl(codeControlService);
+
+// Initialize MCP Status (inferred as online if service exists)
+logViewerService.setSubsystemStatus('mcp', 'online');
+
 guardrailService.setInferenceFn((prompt: string) => agent.headlessInference(prompt));
 
 // Initialize Workflow Scheduler
@@ -241,7 +274,8 @@ const ipcRouter = new IpcRouter({
   PORTABLE_SETTINGS_PATH: path.join(app.getAppPath(), 'app_settings.json'),
   SYSTEM_SETTINGS_PATH,
   TEMP_SYSTEM_PATH,
-  codeControlService
+  codeControlService,
+  logViewerService
 });
 ipcRouter.registerAll();
 

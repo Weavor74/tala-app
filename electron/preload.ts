@@ -427,4 +427,16 @@ contextBridge.exposeInMainWorld('tala', {
         ipcRenderer.invoke('soul:resolve-hypothesis', id, status),
     /** Gets a cross-engine summary of Tala's state. */
     getSoulSummary: () => ipcRenderer.invoke('soul:get-summary'),
+
+    // ─── Log Viewer ───────────────────────────────────────────────
+    logs: {
+        listSources: () => ipcRenderer.invoke('logs:listSources'),
+        readEntries: (args: { sourceId: string, limit?: number, offset?: number }) =>
+            ipcRenderer.invoke('logs:readEntries', args),
+        getEntryDetails: (args: { sourceId: string, entryId: string }) =>
+            ipcRenderer.invoke('logs:getEntryDetails', args),
+        getHealthSnapshot: () => ipcRenderer.invoke('logs:getHealthSnapshot'),
+        getCorrelationEntries: (args: { sessionId?: string, turnId?: string }) =>
+            ipcRenderer.invoke('logs:getCorrelationEntries', args),
+    },
 });

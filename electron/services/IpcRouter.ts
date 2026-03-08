@@ -16,6 +16,7 @@ import { InferenceService } from './InferenceService';
 import { loadSettings, saveSettings, deepMerge, setActiveMode, getActiveMode } from './SettingsManager';
 import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
+import { LogViewerService } from './LogViewerService';
 
 export interface IpcRouterContext {
   app: any;
@@ -34,6 +35,7 @@ export interface IpcRouterContext {
   inferenceService: InferenceService;
   userProfileService: UserProfileService;
   codeControlService: CodeControlService;
+  logViewerService: LogViewerService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -48,7 +50,7 @@ export class IpcRouter {
   constructor(private ctx: IpcRouterContext) { }
 
   public registerAll() {
-    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
+    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, logViewerService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
 
     // Helper to simulate mutable let from main.ts
     const getSettingsPath = () => this.ctx.getSettingsPath();
@@ -635,6 +637,101 @@ export class IpcRouter {
     /** Detects and returns the system environment info (OS, Python, Node paths). */
     ipcMain.handle('get-system-info', async () => {
       return await systemService.detectEnv(fileService.getRoot());
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — LOG VIEWER
+    // ═══════════════════════════════════════════════════════════════════════
+
+    ipcMain.handle('logs:listSources', async () => {
+      return await logViewerService.listSources();
+    });
+
+    ipcMain.handle('logs:readEntries', async (_e, { sourceId, limit, offset }) => {
+      return await logViewerService.readEntries(sourceId, { limit, offset });
+    });
+
+    ipcMain.handle('logs:getEntryDetails', async (_e, { sourceId, entryId }) => {
+      return await logViewerService.getEntryDetails(sourceId, entryId);
+    });
+
+    ipcMain.handle('logs:getHealthSnapshot', async () => {
+      return await logViewerService.getHealthSnapshot();
+    });
+
+    ipcMain.handle('logs:getCorrelationEntries', async (_e, { sessionId, turnId }) => {
+      return await logViewerService.getCorrelationEntries(sessionId, turnId);
+    });
+
+    ipcMain.handle('logs:getTimelineEntries', async (_e, { turnId }) => {
+      return await logViewerService.getTimelineEntries(turnId);
+    });
+
+    ipcMain.handle('logs:getPerformanceSummary', async () => {
+      return await logViewerService.getPerformanceSummary();
+    });
+
+    ipcMain.handle('logs:clearSource', async (_e, sourceId) => {
+      return await logViewerService.clearSource(sourceId);
+    });
+
+    ipcMain.handle('logs:clearAll', async () => {
+      return await logViewerService.clearAll();
+    });
+
+    ipcMain.handle('logs:archiveSource', async (_e, sourceId) => {
+      return await logViewerService.archiveSource(sourceId);
+    });
+
+    ipcMain.handle('logs:archiveAll', async () => {
+      return await logViewerService.archiveAll();
+    });
+
+    ipcMain.handle('logs:reportRendererError', async (_e, { error, context }) => {
+      return await logViewerService.logRuntimeError(error, {
+        ...context,
+        source: 'runtime_error_renderer',
+        processType: 'renderer'
+      });
+    });
+
+    // --- Validation Hooks (Debug Only) ---
+    ipcMain.handle('logs:testError', async () => {
+      return await logViewerService.logRuntimeError(new Error('Diagnostic Test Error'), {
+        source: 'diag_test',
+        subsystem: 'validation',
+        eventType: 'unknownRuntimeError'
+      });
+    });
+
+    ipcMain.handle('logs:testMetric', async () => {
+      return await logViewerService.logPerformanceMetric({
+        source: 'diag_test',
+        subsystem: 'validation',
+        metricType: 'test',
+        name: 'manual_validation_metric',
+        value: Math.floor(Math.random() * 100),
+        unit: 'count'
+      });
+    });
+
+    ipcMain.handle('logs:testPromptAudit', async () => {
+      const { promptAuditService } = await import('./PromptAuditService');
+      const dummyRecord = promptAuditService.buildRecord({
+        mode: 'test',
+        intent: 'validation',
+        isGreeting: false,
+        hasMemories: false,
+        memoryContext: '',
+        systemPrompt: 'System test prompt',
+        userMessage: 'User test message',
+        astroState: '',
+        hasAstro: false,
+        hasImages: false,
+        hasWorld: false,
+        toolsIncluded: false
+      });
+      return await logViewerService.logPromptAudit(dummyRecord);
     });
 
     // ═══════════════════════════════════════════════════════════════════════

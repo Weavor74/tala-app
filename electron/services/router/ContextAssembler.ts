@@ -38,11 +38,18 @@ export interface TurnContext {
     persistedMode: string;
 }
 
+interface AssemblyResult {
+    mode: string;
+    intent: string;
+    blocks: ContextBlock[];
+    retrievalSuppressed: boolean;
+}
+
 export class ContextAssembler {
     /**
      * Assembles sanitized, structured prompt blocks for the Prompt Builder.
      */
-    public static assemble(memories: MemoryItem[], mode: string, intent: string, retrievalSuppressed: boolean): ContextHandoff {
+    public static assemble(memories: MemoryItem[], mode: string, intent: string, retrievalSuppressed: boolean): AssemblyResult {
         const blocks: ContextBlock[] = [];
 
         // 1. Memory Block
@@ -75,7 +82,7 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
             });
         }
 
-        const handoff: ContextHandoff = {
+        const handoff: AssemblyResult = {
             mode,
             intent,
             blocks: this.sanitize(blocks),

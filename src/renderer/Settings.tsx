@@ -14,10 +14,14 @@
  * - **Server** — Runtime configuration (Node/Python), remote SSH deployment.
  * - **Agent** — Create/edit agent personality profiles (system prompt, temperature,
  *   astro birth data, rules, workflow paths, MCP server assignments, guardrails).
- * - **Source Control** — Git provider credentials (GitHub, GitLab, Bitbucket, generic).
- * - **System** — Custom environment variables for the `system.env` block.
- * - **MCP Servers** — Add/edit/remove Model Context Protocol server definitions.
- * - **Functions** — CRUD for user-defined custom tool/function definitions.
+ * - [x] Create `electron/services/LogViewerService.ts` with log parsing logic
+- [x] Register IPC handlers in `electron/services/IpcRouter.ts`
+- [x] Update `main.ts` to instantiate the service and add it to context
+- [x] Expose logs API in `preload.ts`
+- [ ] Implement `src/renderer/components/LogViewerPanel.tsx` (In Progress)
+- [ ] Integrate `LogViewerPanel` into `Settings.tsx` (Fixing structural issues)
+- [ ] Verify tab functionality and log source selection
+ed custom tool/function definitions.
  * - **Guardrails** — Create/edit content safety rules with scope (global/agent/session).
  * - **Workflows** — Visual workflow editor integration (opens `WorkflowEditor`).
  *
@@ -32,6 +36,7 @@ import 'xterm/css/xterm.css';
 import { WorkflowEditor } from './components/WorkflowEditor';
 import { GitView } from './components/GitView';
 import { WORKFLOW_TEMPLATES } from './catalog/WorkflowTemplates';
+import { LogViewerPanel } from './components/LogViewerPanel';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -119,7 +124,7 @@ export const Settings = () => {
     const [workspaceSettings, setWorkspaceSettings] = useState<Partial<AppSettings>>({});
     const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS); // Interactive view
 
-    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about' | 'firewall'>('inference');
+    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about' | 'firewall' | 'logging'>('inference');
     const [workflowSubTab, setWorkflowSubTab] = useState<'workflow' | 'mcp' | 'function'>('workflow');
     const [status, setStatus] = useState('');
     const [downloading, setDownloading] = useState(false);
@@ -469,6 +474,7 @@ export const Settings = () => {
                     { id: 'server', label: 'Runtime' },
                     { id: 'auth', label: 'Auth' },
                     { id: 'firewall', label: 'Firewall' },
+                    { id: 'logging', label: 'Logging' },
                     { id: 'about', label: 'About' }
                 ].map(tab => (
                     <div
@@ -1413,30 +1419,22 @@ export const Settings = () => {
                                                         )}
                                                     </div>
                                                 )}
-
-                                                {/* Fallback Input if they selected Custom or list is empty/missing logic handles empty above */}
-                                                {/* If they selected __custom__, we should probably flip a state to show input, but for now let's keep it simple. 
-                                                    Actually, if they pick __custom__, we can momentarily swap to input. 
-                                                    But simpler: Just show input IF model is not in list? No. 
-                                                    Strategy: If select is shown, selecting __custom__ sets model to empty string? 
-                                                */}
                                             </div>
-
-                                            {/* PRIORITY */}
-                                            <div>
-                                                <label style={labelStyle}>PRIORITY (0=High)</label>
-                                                <input
-                                                    type="number"
-                                                    style={{ ...inputStyle, marginBottom: 5 }}
-                                                    value={inst.priority}
-                                                    onChange={e => {
-                                                        const list = [...settings.inference.instances];
-                                                        const t = list.find(i => i.id === inst.id);
-                                                        if (t) t.priority = Number(e.target.value);
-                                                        update('inference', 'instances', list);
-                                                    }}
-                                                />
-                                            </div>
+                                        </div>
+                                        {/* PRIORITY COLUMN */}
+                                        <div>
+                                            <label style={labelStyle}>PRIORITY</label>
+                                            <input
+                                                type="number"
+                                                style={{ ...inputStyle, marginBottom: 5 }}
+                                                value={inst.priority}
+                                                onChange={e => {
+                                                    const list = [...settings.inference.instances];
+                                                    const t = list.find(i => i.id === inst.id);
+                                                    if (t) t.priority = Number(e.target.value);
+                                                    update('inference', 'instances', list);
+                                                }}
+                                            />
                                         </div>
 
                                         {/* DETAILS ROW */}
@@ -1454,25 +1452,25 @@ export const Settings = () => {
                                                     }}
                                                 />
                                             </div>
-                                            {inst.source === 'cloud' && (
-                                                <div style={{ flex: 1 }}>
-                                                    <label style={labelStyle}>API KEY</label>
-                                                    <input
-                                                        type="password"
-                                                        style={{ ...inputStyle, marginBottom: 0 }}
-                                                        value={inst.apiKey || ''}
-                                                        onChange={e => {
-                                                            const list = [...settings.inference.instances];
-                                                            const t = list.find(i => i.id === inst.id);
-                                                            if (t) t.apiKey = e.target.value;
-                                                            update('inference', 'instances', list);
-                                                        }}
-                                                        placeholder="Stored Securely"
-                                                    />
-                                                </div>
-                                            )}
+                                            {
+                                                inst.source === 'cloud' && (
+                                                    <div style={{ flex: 1 }}>
+                                                        <label style={labelStyle}>API KEY</label>
+                                                        <input
+                                                            type="password"
+                                                            style={{ ...inputStyle, marginBottom: 0 }}
+                                                            value={inst.apiKey || ''}
+                                                            onChange={e => {
+                                                                const list = [...settings.inference.instances];
+                                                                const t = list.find(i => i.id === inst.id);
+                                                                if (t) t.apiKey = e.target.value;
+                                                                update('inference', 'instances', list);
+                                                            }}
+                                                            placeholder="Stored Securely"
+                                                        />
+                                                    </div>
+                                                )}
                                         </div>
-
                                     </div>
                                 ))}
                         </div>
@@ -1530,204 +1528,205 @@ export const Settings = () => {
                             </button>
                         </div>
                     </div>
-                )}
+                )
+                }
 
                 {/* SYSTEM TAB */}
-                {activeTab === ('system' as any) && (
-                    <div style={sectionStyle}>
-                        <div style={{ display: 'flex', borderBottom: '1px solid #333', marginBottom: 20 }}>
-                            {['env', 'guardrails'].map(sub => (
-                                <div
-                                    key={sub}
-                                    style={{
-                                        padding: '5px 15px',
-                                        cursor: 'pointer',
-                                        color: systemSubTab === sub ? '#fff' : '#666',
-                                        borderBottom: systemSubTab === sub ? '2px solid #007acc' : '2px solid transparent',
-                                        fontSize: 12,
-                                        fontWeight: 'bold',
-                                        textTransform: 'uppercase'
-                                    }}
-                                    onClick={() => setSystemSubTab(sub as any)}
-                                >
-                                    {sub === 'env' ? 'Environment' : 'Guardrails'}
-                                </div>
-                            ))}
-                        </div>
-
-                        {systemSubTab === 'env' && (
-                            <>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                                    <div>
-                                        <h3 style={{ margin: 0, color: '#dcdcaa' }}>SYSTEM ENVIRONMENT</h3>
-                                        <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Manage runtime paths and variables.</p>
-                                    </div>
-                                    <button
-                                        onClick={async () => {
-                                            setSystemInfo(null);
-                                            const info = await api.getSystemInfo();
-                                            setSystemInfo(info);
+                {
+                    activeTab === 'system' && (
+                        <div style={sectionStyle}>
+                            <div style={{ display: 'flex', borderBottom: '1px solid #333', marginBottom: 20 }}>
+                                {['env', 'guardrails'].map(sub => (
+                                    <div
+                                        key={sub}
+                                        style={{
+                                            padding: '5px 15px',
+                                            cursor: 'pointer',
+                                            color: systemSubTab === sub ? '#fff' : '#666',
+                                            borderBottom: systemSubTab === sub ? '2px solid #007acc' : '2px solid transparent',
+                                            fontSize: 12,
+                                            fontWeight: 'bold',
+                                            textTransform: 'uppercase'
                                         }}
-                                        style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
+                                        onClick={() => setSystemSubTab(sub as any)}
                                     >
-                                        ⟳ RESCAN
-                                    </button>
-                                </div>
+                                        {sub === 'env' ? 'Environment' : 'Guardrails'}
+                                    </div>
+                                ))}
+                            </div>
 
-                                {systemInfo ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '10px 20px', alignItems: 'center' }}>
-                                            <div style={{ ...labelStyle, marginBottom: 0 }}>OPERATING SYSTEM</div>
-                                            <div style={{ fontSize: 13, color: '#fff' }}>{systemInfo.os} ({systemInfo.platform})</div>
+                            {systemSubTab === 'env' && (
+                                <>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                                        <div>
+                                            <h3 style={{ margin: 0, color: '#dcdcaa' }}>SYSTEM ENVIRONMENT</h3>
+                                            <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Manage runtime paths and variables.</p>
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                setSystemInfo(null);
+                                                const info = await api.getSystemInfo();
+                                                setSystemInfo(info);
+                                            }}
+                                            style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
+                                        >
+                                            ⟳ RESCAN
+                                        </button>
+                                    </div>
 
-                                            <div style={{ ...labelStyle, marginBottom: 0 }}>NODE RUNTIME</div>
-                                            <div style={{ fontSize: 13, color: '#fff' }}>
-                                                <code>{systemInfo.nodePath}</code>
-                                                <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Version: {systemInfo.nodeVersion}</div>
-                                            </div>
+                                    {systemInfo ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '10px 20px', alignItems: 'center' }}>
+                                                <div style={{ ...labelStyle, marginBottom: 0 }}>OPERATING SYSTEM</div>
+                                                <div style={{ fontSize: 13, color: '#fff' }}>{systemInfo.os} ({systemInfo.platform})</div>
 
-                                            <div style={{ ...labelStyle, marginBottom: 0 }}>PYTHON RUNTIME</div>
-                                            <div style={{ fontSize: 13, color: '#fff' }}>
-                                                <code>{systemInfo.pythonPath}</code>
-                                                <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Version: {systemInfo.pythonVersion}</div>
-                                            </div>
+                                                <div style={{ ...labelStyle, marginBottom: 0 }}>NODE RUNTIME</div>
+                                                <div style={{ fontSize: 13, color: '#fff' }}>
+                                                    <code>{systemInfo.nodePath}</code>
+                                                    <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Version: {systemInfo.nodeVersion}</div>
+                                                </div>
 
-                                            <div style={{ ...labelStyle, marginBottom: 0 }}>PYTHON VIRTUAL ENV</div>
-                                            <div style={{ fontSize: 13, color: systemInfo.pythonEnvPath ? '#fff' : '#666' }}>
-                                                {systemInfo.pythonEnvPath ? (
-                                                    <code>{systemInfo.pythonEnvPath}</code>
-                                                ) : (
-                                                    "None detected in workspace"
-                                                )}
-                                            </div>
+                                                <div style={{ ...labelStyle, marginBottom: 0 }}>PYTHON RUNTIME</div>
+                                                <div style={{ fontSize: 13, color: '#fff' }}>
+                                                    <code>{systemInfo.pythonPath}</code>
+                                                    <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Version: {systemInfo.pythonVersion}</div>
+                                                </div>
 
-                                            {/* DETECTED ENV VARS ACCORDION */}
-                                            <div style={{ gridColumn: 'span 2', marginTop: 10 }}>
-                                                <div style={{ ...labelStyle, marginBottom: 10 }}>DETECTED VARIABLES ({systemInfo.envVariables ? Object.keys(systemInfo.envVariables).length : 0})</div>
-                                                <div style={{ background: '#1e1e1e', padding: 10, borderRadius: 4, maxHeight: 200, overflowY: 'auto', border: '1px solid #3e3e42' }}>
-                                                    {systemInfo.envVariables ? (
-                                                        Object.entries(systemInfo.envVariables).map(([k, v]) => (
-                                                            <div key={k} style={{ display: 'flex', gap: 10, fontSize: 11, fontFamily: 'Consolas', marginBottom: 4 }}>
-                                                                <span style={{ color: '#569cd6', minWidth: 200, flexShrink: 0 }}>{k}</span>
-                                                                <span style={{ color: '#ce9178', wordBreak: 'break-all' }}>{String(v)}</span>
-                                                            </div>
-                                                        ))
+                                                <div style={{ ...labelStyle, marginBottom: 0 }}>PYTHON VIRTUAL ENV</div>
+                                                <div style={{ fontSize: 13, color: systemInfo.pythonEnvPath ? '#fff' : '#666' }}>
+                                                    {systemInfo.pythonEnvPath ? (
+                                                        <code>{systemInfo.pythonEnvPath}</code>
                                                     ) : (
-                                                        <div style={{ color: '#666', fontSize: 11 }}>No variables detected</div>
+                                                        "None detected in workspace"
+                                                    )}
+                                                </div>
+
+                                                {/* DETECTED ENV VARS ACCORDION */}
+                                                <div style={{ gridColumn: 'span 2', marginTop: 10 }}>
+                                                    <div style={{ ...labelStyle, marginBottom: 10 }}>DETECTED VARIABLES ({systemInfo.envVariables ? Object.keys(systemInfo.envVariables).length : 0})</div>
+                                                    <div style={{ background: '#1e1e1e', padding: 10, borderRadius: 4, maxHeight: 200, overflowY: 'auto', border: '1px solid #3e3e42' }}>
+                                                        {systemInfo.envVariables ? (
+                                                            Object.entries(systemInfo.envVariables).map(([k, v]) => (
+                                                                <div key={k} style={{ display: 'flex', gap: 10, fontSize: 11, fontFamily: 'Consolas', marginBottom: 4 }}>
+                                                                    <span style={{ color: '#569cd6', minWidth: 200, flexShrink: 0 }}>{k}</span>
+                                                                    <span style={{ color: '#ce9178', wordBreak: 'break-all' }}>{String(v)}</span>
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <div style={{ color: '#666', fontSize: 11 }}>No variables detected</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* CUSTOM ENV VARS */}
+                                            <div style={{ borderTop: '1px solid #3e3e42', paddingTop: 20 }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                                    <label style={labelStyle}>CUSTOM VARIABLES / OVERRIDES</label>
+                                                    <button
+                                                        onClick={() => {
+                                                            const current = { ...(settings.system?.env || {}) };
+                                                            let i = 1;
+                                                            while (current[`NEW_VAR_${i}`]) i++;
+                                                            current[`NEW_VAR_${i}`] = '';
+                                                            update('system', 'env', current);
+                                                        }}
+                                                        style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '4px 8px', fontSize: 10, cursor: 'pointer' }}
+                                                    >
+                                                        + ADD VARIABLE
+                                                    </button>
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                                    {settings.system?.env && Object.entries(settings.system.env).map(([k, v]) => (
+                                                        <div key={k} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                                            <input
+                                                                value={k}
+                                                                onChange={e => {
+                                                                    const newKey = e.target.value;
+                                                                    if (newKey !== k) {
+                                                                        const current = { ...settings.system.env };
+                                                                        current[newKey] = v;
+                                                                        delete current[k];
+                                                                        update('system', 'env', current);
+                                                                    }
+                                                                }}
+                                                                placeholder="KEY"
+                                                                style={{ ...inputStyle, flex: 1, fontFamily: 'Consolas', marginBottom: 0 }}
+                                                            />
+                                                            <input
+                                                                value={String(v)}
+                                                                onChange={e => {
+                                                                    const current = { ...settings.system.env };
+                                                                    current[k] = e.target.value;
+                                                                    update('system', 'env', current);
+                                                                }}
+                                                                placeholder="VALUE"
+                                                                style={{ ...inputStyle, flex: 2, fontFamily: 'Consolas', marginBottom: 0 }}
+                                                            />
+                                                            <button
+                                                                onClick={() => {
+                                                                    const current = { ...settings.system.env };
+                                                                    delete current[k];
+                                                                    update('system', 'env', current);
+                                                                }}
+                                                                style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                    {(!settings.system?.env || Object.keys(settings.system.env).length === 0) && (
+                                                        <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>No custom variables defined.</div>
                                                     )}
                                                 </div>
                                             </div>
                                         </div>
+                                    ) : (
+                                        <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>
+                                            SCANNING SYSTEM ENVIRONMENT...
+                                        </div>
+                                    )}
+                                </>
+                            )}
 
-                                        {/* CUSTOM ENV VARS */}
-                                        <div style={{ borderTop: '1px solid #3e3e42', paddingTop: 20 }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                                                <label style={labelStyle}>CUSTOM VARIABLES / OVERRIDES</label>
-                                                <button
-                                                    onClick={() => {
-                                                        const current = { ...(settings.system?.env || {}) };
-                                                        let i = 1;
-                                                        while (current[`NEW_VAR_${i}`]) i++;
-                                                        current[`NEW_VAR_${i}`] = '';
-                                                        update('system', 'env', current);
-                                                    }}
-                                                    style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '4px 8px', fontSize: 10, cursor: 'pointer' }}
-                                                >
-                                                    + ADD VARIABLE
-                                                </button>
-                                            </div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                                {settings.system?.env && Object.entries(settings.system.env).map(([k, v]) => (
-                                                    <div key={k} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                                                        <input
-                                                            value={k}
-                                                            onChange={e => {
-                                                                const newKey = e.target.value;
-                                                                if (newKey !== k) {
-                                                                    const current = { ...settings.system.env };
-                                                                    current[newKey] = v;
-                                                                    delete current[k];
-                                                                    update('system', 'env', current);
-                                                                }
-                                                            }}
-                                                            placeholder="KEY"
-                                                            style={{ ...inputStyle, flex: 1, fontFamily: 'Consolas', marginBottom: 0 }}
-                                                        />
-                                                        <input
-                                                            value={String(v)}
-                                                            onChange={e => {
-                                                                const current = { ...settings.system.env };
-                                                                current[k] = e.target.value;
-                                                                update('system', 'env', current);
-                                                            }}
-                                                            placeholder="VALUE"
-                                                            style={{ ...inputStyle, flex: 2, fontFamily: 'Consolas', marginBottom: 0 }}
-                                                        />
-                                                        <button
-                                                            onClick={() => {
-                                                                const current = { ...settings.system.env };
-                                                                delete current[k];
-                                                                update('system', 'env', current);
-                                                            }}
-                                                            style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                                                        >
-                                                            ×
-                                                        </button>
-                                                    </div>
+                            {systemSubTab === 'guardrails' && (
+                                <div>
+                                    <h3 style={{ color: '#dcdcaa' }}>SAFETY GUARDRAILS</h3>
+                                    <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 20 }}>Define safety boundaries and confirmation thresholds.</p>
+
+                                    <div style={{ marginBottom: 20 }}>
+                                        <label style={labelStyle}>SENSITIVE TOPIC FILTERING</label>
+                                        <div style={{ background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #3e3e42' }}>
+                                            <p style={{ fontSize: 12, marginTop: 0 }}>Select topics that require explicit user confirmation:</p>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                                {['Financial Transactions', 'File Deletion', 'System Configuration', 'External API Calls', 'Shell Commands'].map(topic => (
+                                                    <label key={topic} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer' }}>
+                                                        <input type="checkbox" defaultChecked={['File Deletion', 'Shell Commands'].includes(topic)} />
+                                                        {topic}
+                                                    </label>
                                                 ))}
-                                                {(!settings.system?.env || Object.keys(settings.system.env).length === 0) && (
-                                                    <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>No custom variables defined.</div>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
-                                ) : (
-                                    <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>
-                                        SCANNING SYSTEM ENVIRONMENT...
-                                    </div>
-                                )}
-                            </>
-                        )}
 
-                        {systemSubTab === 'guardrails' && (
-                            <div>
-                                <h3 style={{ color: '#dcdcaa' }}>SAFETY GUARDRAILS</h3>
-                                <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 20 }}>Define safety boundaries and confirmation thresholds.</p>
-
-                                <div style={{ marginBottom: 20 }}>
-                                    <label style={labelStyle}>SENSITIVE TOPIC FILTERING</label>
-                                    <div style={{ background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #3e3e42' }}>
-                                        <p style={{ fontSize: 12, marginTop: 0 }}>Select topics that require explicit user confirmation:</p>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                                            {['Financial Transactions', 'File Deletion', 'System Configuration', 'External API Calls', 'Shell Commands'].map(topic => (
-                                                <label key={topic} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer' }}>
-                                                    <input type="checkbox" defaultChecked={['File Deletion', 'Shell Commands'].includes(topic)} />
-                                                    {topic}
-                                                </label>
-                                            ))}
+                                    <div style={{ marginBottom: 20 }}>
+                                        <label style={labelStyle}>MAXIMUM APPROVAL THRESHOLD</label>
+                                        <div style={{ display: 'flex', gap: 10 }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontSize: 11, marginBottom: 5 }}>AUTO-APPROVE ACTIONS UNDER:</div>
+                                                <select style={{ ...selectStyle, width: '100%' }}>
+                                                    <option>Low Risk (Read-only)</option>
+                                                    <option>Medium Risk (Edits)</option>
+                                                    <option>High Risk (Deletes/Exec)</option>
+                                                    <option>Never Auto-approve</option>
+                                                </select>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-
-                                <div style={{ marginBottom: 20 }}>
-                                    <label style={labelStyle}>MAXIMUM APPROVAL THRESHOLD</label>
-                                    <div style={{ display: 'flex', gap: 10 }}>
-                                        <div style={{ flex: 1 }}>
-                                            <div style={{ fontSize: 11, marginBottom: 5 }}>AUTO-APPROVE ACTIONS UNDER:</div>
-                                            <select style={{ ...selectStyle, width: '100%' }}>
-                                                <option>Low Risk (Read-only)</option>
-                                                <option>Medium Risk (Edits)</option>
-                                                <option>High Risk (Deletes/Exec)</option>
-                                                <option>Never Auto-approve</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )
-                }
+                            )}
+                        </div>
+                    )}
 
                 {/* SOURCE CONTROL TAB */}
                 {
@@ -1907,143 +1906,144 @@ export const Settings = () => {
                                 </div>
                             )}
                         </div>
-                    )
-                }
+                    )}
 
                 {/* SEARCH TAB */}
-                {activeTab === 'search' && settings.search && (
-                    <div style={sectionStyle}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                            <div>
-                                <h3 style={{ margin: 0, color: '#dcdcaa' }}>SEARCH PROVIDERS</h3>
-                                <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Credentials for external information retrieval.</p>
+                {
+                    activeTab === 'search' && settings.search && (
+                        <div style={sectionStyle}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                                <div>
+                                    <h3 style={{ margin: 0, color: '#dcdcaa' }}>SEARCH PROVIDERS</h3>
+                                    <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Credentials for external information retrieval.</p>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const newProv = {
+                                            id: `search-${Math.random().toString(36).substr(2, 5)}`,
+                                            name: 'New Provider',
+                                            type: 'rest',
+                                            enabled: false
+                                        };
+                                        update('search', 'providers', [...settings.search.providers, newProv]);
+                                    }}
+                                    style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
+                                >
+                                    + ADD PROVIDER
+                                </button>
                             </div>
-                            <button
-                                onClick={() => {
-                                    const newProv = {
-                                        id: `search-${Math.random().toString(36).substr(2, 5)}`,
-                                        name: 'New Provider',
-                                        type: 'rest',
-                                        enabled: false
-                                    };
-                                    update('search', 'providers', [...settings.search.providers, newProv]);
-                                }}
-                                style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
-                            >
-                                + ADD PROVIDER
-                            </button>
-                        </div>
 
-                        <div style={{ marginBottom: 20, background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #007acc' }}>
-                            <label style={labelStyle}>ACTIVE SEARCH PROVIDER</label>
-                            <select
-                                style={{ ...selectStyle, marginBottom: 0 }}
-                                value={settings.search.activeProviderId}
-                                onChange={e => update('search', 'activeProviderId', e.target.value)}
-                            >
-                                {(settings.search.providers || []).map((p: any) => (
-                                    <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
-                                ))}
-                            </select>
-                        </div>
+                            <div style={{ marginBottom: 20, background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #007acc' }}>
+                                <label style={labelStyle}>ACTIVE SEARCH PROVIDER</label>
+                                <select
+                                    style={{ ...selectStyle, marginBottom: 0 }}
+                                    value={settings.search.activeProviderId}
+                                    onChange={e => update('search', 'activeProviderId', e.target.value)}
+                                >
+                                    {(settings.search.providers || []).map((p: any) => (
+                                        <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
+                                    ))}
+                                </select>
+                            </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                            {(settings.search.providers || []).map((p: any, idx: number) => (
-                                <div key={p.id} style={{ background: '#252526', border: '1px solid #3e3e42', padding: 20, borderRadius: 4 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
-                                        <div style={{ flex: 1, marginRight: 20 }}>
-                                            <input
-                                                value={p.name}
-                                                onChange={e => {
-                                                    const list = [...settings.search.providers];
-                                                    list[idx].name = e.target.value;
-                                                    update('search', 'providers', list);
-                                                }}
-                                                style={{ ...inputStyle, marginBottom: 5, fontWeight: 'bold' }}
-                                                placeholder="Provider Name (e.g. Google REST API)"
-                                            />
-                                        </div>
-                                        <button
-                                            onClick={() => {
-                                                const list = settings.search.providers.filter((x: any) => x.id !== p.id);
-                                                update('search', 'providers', list);
-                                            }}
-                                            style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18 }}
-                                        >
-                                            ×
-                                        </button>
-                                    </div>
-
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
-                                        <div>
-                                            <label style={labelStyle}>TYPE</label>
-                                            <select
-                                                style={selectStyle}
-                                                value={p.type}
-                                                onChange={e => {
-                                                    const list = [...settings.search.providers];
-                                                    list[idx].type = e.target.value as any;
-                                                    update('search', 'providers', list);
-                                                }}
-                                            >
-                                                <option value="google">Google API</option>
-                                                <option value="brave">Brave Search</option>
-                                                <option value="serper">Serper.dev</option>
-                                                <option value="tavily">Tavily AI</option>
-                                                <option value="rest">Generic REST Endpoint</option>
-                                                <option value="custom">Custom Implementation</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label style={labelStyle}>STATUS</label>
-                                            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', height: 40 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                                {(settings.search.providers || []).map((p: any, idx: number) => (
+                                    <div key={p.id} style={{ background: '#252526', border: '1px solid #3e3e42', padding: 20, borderRadius: 4 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
+                                            <div style={{ flex: 1, marginRight: 20 }}>
                                                 <input
-                                                    type="checkbox"
-                                                    checked={p.enabled}
+                                                    value={p.name}
                                                     onChange={e => {
                                                         const list = [...settings.search.providers];
-                                                        list[idx].enabled = e.target.checked;
+                                                        list[idx].name = e.target.value;
                                                         update('search', 'providers', list);
                                                     }}
+                                                    style={{ ...inputStyle, marginBottom: 5, fontWeight: 'bold' }}
+                                                    placeholder="Provider Name (e.g. Google REST API)"
                                                 />
-                                                <span style={{ fontSize: 12 }}>Enabled</span>
-                                            </label>
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    const list = settings.search.providers.filter((x: any) => x.id !== p.id);
+                                                    update('search', 'providers', list);
+                                                }}
+                                                style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 18 }}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+                                            <div>
+                                                <label style={labelStyle}>TYPE</label>
+                                                <select
+                                                    style={selectStyle}
+                                                    value={p.type}
+                                                    onChange={e => {
+                                                        const list = [...settings.search.providers];
+                                                        list[idx].type = e.target.value as any;
+                                                        update('search', 'providers', list);
+                                                    }}
+                                                >
+                                                    <option value="google">Google API</option>
+                                                    <option value="brave">Brave Search</option>
+                                                    <option value="serper">Serper.dev</option>
+                                                    <option value="tavily">Tavily AI</option>
+                                                    <option value="rest">Generic REST Endpoint</option>
+                                                    <option value="custom">Custom Implementation</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={labelStyle}>STATUS</label>
+                                                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', height: 40 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={p.enabled}
+                                                        onChange={e => {
+                                                            const list = [...settings.search.providers];
+                                                            list[idx].enabled = e.target.checked;
+                                                            update('search', 'providers', list);
+                                                        }}
+                                                    />
+                                                    <span style={{ fontSize: 12 }}>Enabled</span>
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <div style={{ marginTop: 15 }}>
+                                            <label style={labelStyle}>REST ENDPOINT / URL</label>
+                                            <input
+                                                style={inputStyle}
+                                                value={p.endpoint || ''}
+                                                onChange={e => {
+                                                    const list = [...settings.search.providers];
+                                                    list[idx].endpoint = e.target.value;
+                                                    update('search', 'providers', list);
+                                                }}
+                                                placeholder="https://api.custom-search.com/v1/query"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label style={labelStyle}>API KEY / CREDENTIALS</label>
+                                            <input
+                                                type="password"
+                                                style={inputStyle}
+                                                value={p.apiKey || ''}
+                                                onChange={e => {
+                                                    const list = [...settings.search.providers];
+                                                    list[idx].apiKey = e.target.value;
+                                                    update('search', 'providers', list);
+                                                }}
+                                                placeholder="Enter sensitive token here..."
+                                            />
                                         </div>
                                     </div>
-
-                                    <div style={{ marginTop: 15 }}>
-                                        <label style={labelStyle}>REST ENDPOINT / URL</label>
-                                        <input
-                                            style={inputStyle}
-                                            value={p.endpoint || ''}
-                                            onChange={e => {
-                                                const list = [...settings.search.providers];
-                                                list[idx].endpoint = e.target.value;
-                                                update('search', 'providers', list);
-                                            }}
-                                            placeholder="https://api.custom-search.com/v1/query"
-                                        />
-                                    </div>
-
-                                    <div>
-                                        <label style={labelStyle}>API KEY / CREDENTIALS</label>
-                                        <input
-                                            type="password"
-                                            style={inputStyle}
-                                            value={p.apiKey || ''}
-                                            onChange={e => {
-                                                const list = [...settings.search.providers];
-                                                list[idx].apiKey = e.target.value;
-                                                update('search', 'providers', list);
-                                            }}
-                                            placeholder="Enter sensitive token here..."
-                                        />
-                                    </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )
+                }
 
                 {/* STORAGE TAB */}
                 {
@@ -2683,128 +2683,130 @@ export const Settings = () => {
                 }
 
                 {/* FIREWALL TAB */}
-                {activeTab === 'firewall' && (
-                    <div style={sectionStyle}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 15, marginBottom: 20 }}>
-                            <div style={{ fontSize: 32 }}>🛡️</div>
-                            <div>
-                                <h3 style={{ margin: 0, color: '#00ffff', letterSpacing: '1px' }}>QUANTUM FIREWALL</h3>
-                                <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Cryptographic secret scrubbing & data loss prevention.</p>
-                            </div>
-                        </div>
-
-                        <div style={{ background: 'rgba(0, 255, 255, 0.05)', border: '1px solid rgba(0, 255, 255, 0.2)', padding: 20, borderRadius: 8, marginBottom: 30 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                {
+                    activeTab === 'firewall' && (
+                        <div style={sectionStyle}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 15, marginBottom: 20 }}>
+                                <div style={{ fontSize: 32 }}>🛡️</div>
                                 <div>
-                                    <h4 style={{ margin: 0, color: '#fff' }}>SYSTEM STATUS</h4>
-                                    <div style={{ fontSize: 10, color: settings.firewall?.enabled ? '#00ff00' : '#ff4444', fontWeight: 'bold', marginTop: 4 }}>
-                                        {settings.firewall?.enabled ? '● ACTIVE & MONITORING' : '○ DEACTIVATED'}
-                                    </div>
+                                    <h3 style={{ margin: 0, color: '#00ffff', letterSpacing: '1px' }}>QUANTUM FIREWALL</h3>
+                                    <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Cryptographic secret scrubbing & data loss prevention.</p>
                                 </div>
-                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 10, background: '#121212', padding: '8px 16px', borderRadius: 20, border: '1px solid #333' }}>
-                                    <span style={{ fontSize: 10, fontWeight: 'bold' }}>{settings.firewall?.enabled ? 'DISABLE' : 'ENABLE'}</span>
-                                    <input
-                                        type="checkbox"
-                                        checked={settings.firewall?.enabled}
-                                        onChange={e => update('firewall', 'enabled', e.target.checked)}
-                                        style={{ width: 18, height: 18 }}
-                                    />
-                                </label>
                             </div>
 
-                            <p style={{ fontSize: 11, color: '#aaa', lineHeight: '1.6' }}>
-                                The Quantum Firewall automatically detects and redacts sensitive patterns (API keys, security tokens, UUIDs)
-                                from internal logs and context. This prevents accidental leakage of credentials into long-term memory
-                                or external API calls.
-                            </p>
-                        </div>
-
-                        {settings.firewall?.enabled && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 25 }}>
-                                <div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                                        <label style={labelStyle}>SENSITIVITY THRESHOLD</label>
-                                        <span style={{ fontSize: 11, color: '#00ffff', fontWeight: 'bold' }}>{Math.round((settings.firewall?.sensitivity ?? 0.5) * 100)}%</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        style={{ width: '100%', cursor: 'pointer', accentColor: '#00ffff' }}
-                                        value={settings.firewall?.sensitivity ?? 0.5}
-                                        onChange={e => update('firewall', 'sensitivity', parseFloat(e.target.value))}
-                                    />
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 9, color: '#555' }}>
-                                        <span>PERMISSIVE (OFF)</span>
-                                        <span>BALANCED</span>
-                                        <span>PARANOID (STRICT)</span>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label style={labelStyle}>TARGET REDACTION PATTERNS (REGEX)</label>
-                                    <div style={{ background: '#121212', border: '1px solid #333', borderRadius: 4, padding: 8 }}>
-                                        {(settings.firewall?.targetPatterns || []).map((pattern: string, idx: number) => (
-                                            <div key={idx} style={{ display: 'flex', gap: 5, marginBottom: 5 }}>
-                                                <input
-                                                    style={{ ...inputStyle, marginBottom: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }}
-                                                    value={pattern}
-                                                    onChange={e => {
-                                                        const p = [...(settings.firewall?.targetPatterns || [])];
-                                                        p[idx] = e.target.value;
-                                                        update('firewall', 'targetPatterns', p);
-                                                    }}
-                                                />
-                                                <button
-                                                    onClick={() => {
-                                                        const p = (settings.firewall?.targetPatterns || []).filter((_: any, i: number) => i !== idx);
-                                                        update('firewall', 'targetPatterns', p);
-                                                    }}
-                                                    style={{ background: 'transparent', border: 'none', color: '#ff4444', cursor: 'pointer', padding: '0 10px' }}
-                                                >
-                                                    ✕
-                                                </button>
-                                            </div>
-                                        ))}
-                                        <button
-                                            onClick={() => {
-                                                const p = [...(settings.firewall?.targetPatterns || []), ""];
-                                                update('firewall', 'targetPatterns', p);
-                                            }}
-                                            style={{ background: 'transparent', border: '1px dashed #444', color: '#888', padding: '8px', cursor: 'pointer', width: '100%', fontSize: 10, marginTop: 5 }}
-                                        >
-                                            + ADD PATTERN
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                            <div style={{ background: 'rgba(0, 255, 255, 0.05)', border: '1px solid rgba(0, 255, 255, 0.2)', padding: 20, borderRadius: 8, marginBottom: 30 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                                     <div>
-                                        <label style={labelStyle}>REPLACEMENT ANCHOR TEXT</label>
-                                        <input
-                                            style={inputStyle}
-                                            value={settings.firewall?.replacementText || '[REDACTED BY QUANTUM FIREWALL]'}
-                                            onChange={e => update('firewall', 'replacementText', e.target.value)}
-                                            placeholder="[REDACTED]"
-                                        />
+                                        <h4 style={{ margin: 0, color: '#fff' }}>SYSTEM STATUS</h4>
+                                        <div style={{ fontSize: 10, color: settings.firewall?.enabled ? '#00ff00' : '#ff4444', fontWeight: 'bold', marginTop: 4 }}>
+                                            {settings.firewall?.enabled ? '● ACTIVE & MONITORING' : '○ DEACTIVATED'}
+                                        </div>
                                     </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                        <label style={labelStyle}>AUDIT OPTIONS</label>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', color: '#ccc' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 10, background: '#121212', padding: '8px 16px', borderRadius: 20, border: '1px solid #333' }}>
+                                        <span style={{ fontSize: 10, fontWeight: 'bold' }}>{settings.firewall?.enabled ? 'DISABLE' : 'ENABLE'}</span>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.firewall?.enabled}
+                                            onChange={e => update('firewall', 'enabled', e.target.checked)}
+                                            style={{ width: 18, height: 18 }}
+                                        />
+                                    </label>
+                                </div>
+
+                                <p style={{ fontSize: 11, color: '#aaa', lineHeight: '1.6' }}>
+                                    The Quantum Firewall automatically detects and redacts sensitive patterns (API keys, security tokens, UUIDs)
+                                    from internal logs and context. This prevents accidental leakage of credentials into long-term memory
+                                    or external API calls.
+                                </p>
+                            </div>
+
+                            {settings.firewall?.enabled && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 25 }}>
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                                            <label style={labelStyle}>SENSITIVITY THRESHOLD</label>
+                                            <span style={{ fontSize: 11, color: '#00ffff', fontWeight: 'bold' }}>{Math.round((settings.firewall?.sensitivity ?? 0.5) * 100)}%</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.05"
+                                            style={{ width: '100%', cursor: 'pointer', accentColor: '#00ffff' }}
+                                            value={settings.firewall?.sensitivity ?? 0.5}
+                                            onChange={e => update('firewall', 'sensitivity', parseFloat(e.target.value))}
+                                        />
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 9, color: '#555' }}>
+                                            <span>PERMISSIVE (OFF)</span>
+                                            <span>BALANCED</span>
+                                            <span>PARANOID (STRICT)</span>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label style={labelStyle}>TARGET REDACTION PATTERNS (REGEX)</label>
+                                        <div style={{ background: '#121212', border: '1px solid #333', borderRadius: 4, padding: 8 }}>
+                                            {(settings.firewall?.targetPatterns || []).map((pattern: string, idx: number) => (
+                                                <div key={idx} style={{ display: 'flex', gap: 5, marginBottom: 5 }}>
+                                                    <input
+                                                        style={{ ...inputStyle, marginBottom: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }}
+                                                        value={pattern}
+                                                        onChange={e => {
+                                                            const p = [...(settings.firewall?.targetPatterns || [])];
+                                                            p[idx] = e.target.value;
+                                                            update('firewall', 'targetPatterns', p);
+                                                        }}
+                                                    />
+                                                    <button
+                                                        onClick={() => {
+                                                            const p = (settings.firewall?.targetPatterns || []).filter((_: any, i: number) => i !== idx);
+                                                            update('firewall', 'targetPatterns', p);
+                                                        }}
+                                                        style={{ background: 'transparent', border: 'none', color: '#ff4444', cursor: 'pointer', padding: '0 10px' }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => {
+                                                    const p = [...(settings.firewall?.targetPatterns || []), ""];
+                                                    update('firewall', 'targetPatterns', p);
+                                                }}
+                                                style={{ background: 'transparent', border: '1px dashed #444', color: '#888', padding: '8px', cursor: 'pointer', width: '100%', fontSize: 10, marginTop: 5 }}
+                                            >
+                                                + ADD PATTERN
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                                        <div>
+                                            <label style={labelStyle}>REPLACEMENT ANCHOR TEXT</label>
                                             <input
-                                                type="checkbox"
-                                                checked={settings.firewall?.logRedactions !== false}
-                                                onChange={e => update('firewall', 'logRedactions', e.target.checked)}
+                                                style={inputStyle}
+                                                value={settings.firewall?.replacementText || '[REDACTED BY QUANTUM FIREWALL]'}
+                                                onChange={e => update('firewall', 'replacementText', e.target.value)}
+                                                placeholder="[REDACTED]"
                                             />
-                                            <span>Log redaction events to audit-log.jsonl</span>
-                                        </label>
+                                        </div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                            <label style={labelStyle}>AUDIT OPTIONS</label>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, cursor: 'pointer', color: '#ccc' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settings.firewall?.logRedactions !== false}
+                                                    onChange={e => update('firewall', 'logRedactions', e.target.checked)}
+                                                />
+                                                <span>Log redaction events to audit-log.jsonl</span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            )}
+                        </div>
+                    )
+                }
 
                 {/* SERVER TAB */}
                 {
@@ -3066,9 +3068,7 @@ Tone: Minimalist, calm, practical.
                                 );
                             })()}
                         </div>
-                    )
-                }
-
+                    )}
 
                 {/* WORKFLOWS TAB */}
                 {
@@ -3686,15 +3686,21 @@ Tone: Minimalist, calm, practical.
                     )
                 }
 
+                {
+                    activeTab === 'logging' && (
+                        <LogViewerPanel api={api} />
+                    )
+                }
+
                 {/* GUARDRAILS TAB — GuardrailsAI-compatible Guard Builder + Validator Builder */}
                 {activeTab === 'guardrails' && <GuardrailsTab settings={settings} api={api} />}
 
                 {/* ABOUT TAB */}
                 {activeTab === 'about' && <AboutPanel />}
+            </div >
 
-            </div>
             {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}
-        </div>
+        </div >
     );
 };
 

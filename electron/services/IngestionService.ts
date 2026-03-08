@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { RagService } from './RagService';
+import { LogViewerService } from './LogViewerService';
 
 /**
  * IngestionService
@@ -13,12 +14,16 @@ export class IngestionService {
     private isScanning = false;
     private isStructuredMode = false;
     private memoryDirPath: string;
-
     private processedDirPath: string;
+    private logViewerService: LogViewerService | null = null;
 
     constructor(private rag: RagService, workspaceRoot: string) {
         this.memoryDirPath = path.join(workspaceRoot, 'memory');
         this.processedDirPath = path.join(this.memoryDirPath, 'processed');
+    }
+
+    public setLogViewerService(service: LogViewerService): void {
+        this.logViewerService = service;
     }
 
     /**
@@ -129,8 +134,26 @@ export class IngestionService {
 
                             // Ingest
                             console.log(`[Ingestion] Indexing ${folder.category} file: ${file}`);
-                            // Pass category
+
+                            const start = Date.now();
                             await this.rag.ingestFile(destPath, folder.category);
+                            const duration = Date.now() - start;
+
+                            if (this.logViewerService) {
+                                this.logViewerService.logPerformanceMetric({
+                                    metricType: 'ingestion_time',
+                                    name: 'ingestion_time_ms',
+                                    value: duration,
+                                    unit: 'ms',
+                                    subsystem: 'ingestion',
+                                    metadata: {
+                                        fileName: file,
+                                        category: folder.category,
+                                        sizeBytes: stat.size
+                                    }
+                                });
+                            }
+
                             results.ingested++;
 
                         } catch (e: any) {

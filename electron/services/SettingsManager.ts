@@ -130,6 +130,14 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         targetPatterns: ["sk-", "ant-api-", "[0-9a-f]{32,}", "AIza", "xoxp-", "xoxb-"],
         replacementText: "[REDACTED BY QUANTUM FIREWALL]",
         logRedactions: true
+    },
+    promptAudit: {
+        enabled: true,
+        level: 'summary',
+        logToConsole: true,
+        logToFile: true,
+        previewChars: 1200,
+        maxFullInlineChars: 12000
     }
 };
 
