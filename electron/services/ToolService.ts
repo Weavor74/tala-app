@@ -73,6 +73,9 @@ export class ToolService {
     private goalManager: any = null;
     /** Reference to the ReflectionService for tool-based cleanup. */
     private reflectionService: any = null;
+    private toolRegistryVersion: number = 0;
+    private definitionCache: Map<string, { timestamp: number, definitions: any[] }> = new Map();
+    private static readonly CACHE_TTL_MS = 60000;
 
     /**
      * Legacy tool names that are registered internally but MUST NOT be callable
@@ -1134,6 +1137,7 @@ export class ToolService {
      */
     public register(tool: ToolDefinition) {
         this.tools.set(tool.name, tool);
+        this.invalidateCache();
     }
 
     /**
@@ -1160,6 +1164,7 @@ export class ToolService {
 
         console.log('[ToolService] Refreshing MCP Tools...');
         this.mcpTools.clear();
+        this.invalidateCache();
 
         const serverIds = this.mcpService.getActiveConnections();
         for (const serverId of serverIds) {
@@ -1179,9 +1184,20 @@ export class ToolService {
                     }
                 }
             } catch (e) {
-                console.error(`[ToolService] Failed to load tools from ${serverId}:`, e);
+                console.error(`[ToolService] Failed to refresh MCP tools for ${serverId}:`, e);
             }
         }
+        this.invalidateCache();
+    }
+
+    public getRegistryVersion(): number {
+        return this.toolRegistryVersion;
+    }
+
+    private invalidateCache() {
+        this.toolRegistryVersion++;
+        this.definitionCache.clear();
+        console.log(`[ToolService] Registry invalidated. New version: ${this.toolRegistryVersion}`);
     }
 
     /**
@@ -1309,15 +1325,19 @@ export class ToolService {
 
     /**
      * Returns tool definitions in the format expected by OpenAI/Ollama APIs.
+     * Supports grouping based on TurnContext allowedCapabilities array.
+     * @param {string[]} [allowedCapabilities] - Optional list: ['memory_retrieval', 'memory_write', 'system_core', 'diagnostic', 'all']
      * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any, strict?: boolean } }>}
      */
-    /**
-     * Returns tool definitions in the format expected by OpenAI/Ollama APIs.
-     * Supports grouping to reduce tool count per turn.
-     * @param {string} [category] - Optional category: 'coding', 'memory', 'management'
-     * @returns {Array<{ type: 'function', function: { name: string, description: string, parameters: any, strict?: boolean } }>}
-     */
-    public getToolDefinitions(category?: string) {
+    public getToolDefinitions(allowedCapabilities?: string[], mode: string = 'assistant') {
+        const cacheKey = `${mode}:${allowedCapabilities ? allowedCapabilities.join(',') : 'all'}:${this.toolRegistryVersion}`;
+        const now = Date.now();
+        const cached = this.definitionCache.get(cacheKey);
+
+        if (cached && (now - cached.timestamp) < ToolService.CACHE_TTL_MS) {
+            return cached.definitions;
+        }
+
         const definitions: any[] = [];
         const legacyTools = [
             'write_file', 'read_file', 'list_files', 'delete_file',
@@ -1325,19 +1345,28 @@ export class ToolService {
             'terminal_run', 'execute_command', 'execute_script'
         ];
 
-        // Define Tool Groups (Strict Minimal Sets)
-        const groups: Record<string, string[]> = {
-            coding: ['fs_read_text', 'fs_write_text', 'fs_list', 'shell_run'],
-            memory: ['mem0_search', 'mem0_add', 'retrieve_context', 'query_graph'],
-            management: ['self_audit', 'reflection_clean', 'manage_goals']
+        // Define Capability Maps - mapping ToolCapabilities directly to physical tool objects
+        const capabilityMap: Record<string, string[]> = {
+            memory_retrieval: ['mem0_search', 'retrieve_context', 'query_graph'],
+            memory_write: ['mem0_add', 'manage_goals', 'task_plan'],
+            system_core: ['fs_read_text', 'fs_write_text', 'fs_list', 'shell_run'],
+            diagnostic: ['self_audit', 'reflection_clean', 'system_diagnose']
         };
 
-        const allowedTools = category && groups[category] ? groups[category] : null;
+        const allowAll = !allowedCapabilities || allowedCapabilities.includes('all');
+
+        let allowedToolNames = new Set<string>();
+        if (!allowAll && allowedCapabilities) {
+            for (const cap of allowedCapabilities) {
+                const toolsForCap = capabilityMap[cap] || [];
+                toolsForCap.forEach(t => allowedToolNames.add(t));
+            }
+        }
 
         // Core Tools
         this.tools.forEach(tool => {
             if (legacyTools.includes(tool.name)) return;
-            if (allowedTools && !allowedTools.includes(tool.name)) return;
+            if (!allowAll && !allowedToolNames.has(tool.name)) return;
 
             definitions.push({
                 type: 'function',
@@ -1350,10 +1379,10 @@ export class ToolService {
             });
         });
 
-        // MCP Tools
+        // MCP Tools (Treated as 'all' or explicit if mapped in future)
         this.mcpTools.forEach((entry, name) => {
             const tool = entry.def;
-            if (allowedTools && !allowedTools.includes(name)) return;
+            if (!allowAll && !allowedToolNames.has(name)) return;
 
             definitions.push({
                 type: 'function',
@@ -1366,6 +1395,7 @@ export class ToolService {
             });
         });
 
+        this.definitionCache.set(cacheKey, { timestamp: now, definitions });
         return definitions;
     }
 

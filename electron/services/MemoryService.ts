@@ -5,11 +5,21 @@ import fs from 'fs';
 import path from 'path';
 
 /**
+ * Association
+ * Represents a link between two memory items.
+ */
+export interface MemoryAssociation {
+    target_id: string;
+    type: 'related_to' | 'contradicts' | 'supersedes';
+    weight: number;
+}
+
+/**
  * Represents a single memory entry stored locally or retrieved from the MCP server.
  * Memories are short-term conversational context pieces (facts, preferences,
  * decisions) that the agent can recall during interactions.
  */
-interface MemoryItem {
+export interface MemoryItem {
     /** Unique identifier — timestamp string for local items, 'remote' for MCP-sourced items. */
     id: string;
     /** The text content of the memory (e.g., "User prefers dark themes"). */
@@ -18,8 +28,20 @@ interface MemoryItem {
     metadata?: any;
     /** Relevance score from search operations (0–N where higher = more relevant). */
     score?: number;
+    /** Final composite score after reranking. */
+    compositeScore?: number;
     /** Unix timestamp (ms) of when the memory was created. */
     timestamp: number;
+
+    // --- ENRICHED METADATA (PHASE 1) ---
+    salience: number;           // 0.0 - 1.0 (importance)
+    confidence: number;         // 0.0 - 1.0 (trustworthiness)
+    created_at: number;         // Unix timestamp
+    last_accessed_at: number | null;
+    last_reinforced_at: number | null;
+    access_count: number;
+    associations: MemoryAssociation[];
+    status: 'active' | 'contested' | 'superseded' | 'archived';
 }
 
 /**
@@ -57,6 +79,14 @@ export class MemoryService {
     /** In-memory array of all locally stored memories, loaded from disk at startup. */
     private localMemories: MemoryItem[] = [];
 
+    // --- SCORING CONSTANTS (PHASE 2) ---
+    private static readonly WEIGHT_SEMANTIC = 0.35;
+    private static readonly WEIGHT_SALIENCE = 0.25;
+    private static readonly WEIGHT_RECENCY = 0.15;
+    private static readonly WEIGHT_CONFIDENCE = 0.15;
+    private static readonly WEIGHT_ASSOCIATION = 0.10;
+    private static readonly RECENCY_DECAY_LAMBDA = 0.05; // ~14 day half-life
+
     /**
      * Creates a new MemoryService instance.
      * 
@@ -84,11 +114,52 @@ export class MemoryService {
     private loadLocal() {
         if (fs.existsSync(this.localPath)) {
             try {
-                this.localMemories = JSON.parse(fs.readFileSync(this.localPath, 'utf-8'));
+                const raw = JSON.parse(fs.readFileSync(this.localPath, 'utf-8'));
+                if (Array.isArray(raw)) {
+                    this.localMemories = raw.map(m => this.normalizeMemory(m));
+                }
             } catch (e) {
+                console.error("[Memory] Failed to load local memories", e);
                 this.localMemories = [];
             }
         }
+    }
+
+    /**
+     * Normalizes a memory item to ensure it has all required metadata fields.
+     * This handles migration of legacy memories.
+     */
+    private normalizeMemory(m: any): MemoryItem {
+        const metadata = m.metadata || {};
+
+        // 1. Canonical Source Normalization
+        let source = metadata.source || 'explicit';
+        if (source === 'conversation' || source === 'chat') source = 'explicit';
+        if (!['rag', 'mem0', 'explicit', 'astro', 'graph', 'core'].includes(source)) {
+            source = 'explicit';
+        }
+
+        // 2. Canonical Role/Scope Normalization
+        let role = metadata.role || 'core';
+        if (role === 'system') role = 'core';
+
+        const finalMetadata = { ...metadata, source, role };
+
+        return {
+            id: m.id || Date.now().toString(),
+            text: m.text || "",
+            metadata: finalMetadata,
+            score: m.score,
+            timestamp: m.timestamp || Date.now(),
+            salience: m.salience ?? 0.5,
+            confidence: m.confidence ?? (finalMetadata.source === 'explicit' ? 0.9 : 0.7),
+            created_at: m.created_at || m.timestamp || Date.now(),
+            last_accessed_at: m.last_accessed_at ?? null,
+            last_reinforced_at: m.last_reinforced_at ?? (m.created_at || m.timestamp || Date.now()),
+            access_count: m.access_count ?? 0,
+            associations: Array.isArray(m.associations) ? m.associations : [],
+            status: m.status || 'active'
+        };
     }
 
     /**
@@ -237,13 +308,17 @@ export class MemoryService {
      * @returns {Promise<MemoryItem[]>} Array of matching memories, ordered by relevance.
      *   Returns an empty array if no memories exist and no matches are found.
      */
-    async search(query: string, limit = 5): Promise<MemoryItem[]> {
+    async search(query: string, limit = 5, mode: string = 'assistant'): Promise<MemoryItem[]> {
         // Preferred: MCP
         if (this.client) {
             try {
+                // If not RP mode, we might want to exclude RP memories
+                // If Mem0 server supports metadata filtering, we should use it here.
+                // For now, we'll filter locally after retrieval if needed, 
+                // but we can pass mode to the prompt for future server-side filtering.
                 const result = await this.client.callTool({
                     name: "mem0_search",
-                    arguments: { query, limit }
+                    arguments: { query, limit, filters: mode === 'rp' ? { role: 'rp' } : { role: 'core' } }
                 });
                 // Parse JSON response from the server
                 if (result && result.content && Array.isArray(result.content)) {
@@ -252,10 +327,11 @@ export class MemoryService {
                         try {
                             const memories = JSON.parse(textContent.text);
                             if (Array.isArray(memories)) {
-                                return memories.map((m: any) => ({
-                                    id: 'remote',
+                                return memories.map((m: any) => this.normalizeMemory({
+                                    id: m.id || 'remote',
                                     text: m.text || String(m),
-                                    timestamp: Date.now()
+                                    timestamp: Date.now(),
+                                    metadata: m.metadata || {}
                                 }));
                             }
                         } catch (parseError) {
@@ -269,21 +345,125 @@ export class MemoryService {
         }
 
         // Fallback: Local Keyword Search (Simple)
-        const terms = query.toLowerCase().split(' ').filter(t => t.length > 3);
-        if (terms.length === 0) return this.localMemories.slice(-limit).reverse(); // Return latest if no terms
+        let filteredMemories = this.localMemories;
+        if (mode === 'rp') {
+            filteredMemories = filteredMemories.filter(m => m.metadata?.role === 'rp');
+        } else {
+            // Core modes (assistant/hybrid) only see core memories
+            filteredMemories = filteredMemories.filter(m => m.metadata?.role !== 'rp');
+        }
 
-        const scored = this.localMemories.map(m => {
-            let score = 0;
+        const terms = query.toLowerCase().split(' ').filter(t => t.length > 3);
+        if (terms.length === 0) return filteredMemories.slice(-limit).reverse(); // Return latest if no terms
+
+        const scored = filteredMemories.map(m => {
+            let semanticScore = 0;
             terms.forEach(t => {
-                if (m.text.toLowerCase().includes(t)) score += 1;
+                if (m.text.toLowerCase().includes(t)) semanticScore += 1;
             });
-            return { ...m, score };
+            const normalizedSemantic = Math.min(semanticScore / terms.length, 1.0);
+            return { m, normalizedSemantic };
         });
 
-        return scored
-            .filter(m => m.score && m.score > 0)
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
+        // Get top direct hits
+        const topDirect = scored
+            .sort((a, b) => b.normalizedSemantic - a.normalizedSemantic)
+            .slice(0, 5);
+
+        // Expand associations
+        const expanded = this.expandAssociations(topDirect.map(d => d.m));
+
+        // Combine and dedup
+        const combined = [...topDirect.map(d => ({ item: d.m, semantic: d.normalizedSemantic, boost: 0 }))];
+        expanded.forEach(e => {
+            if (!combined.find(c => c.item.id === e.item.id)) {
+                combined.push({ item: e.item, semantic: 0, boost: e.weight });
+            }
+        });
+
+        const reranked = combined.map(c => {
+            const compositeResult = this.calculateCompositeScore(c.item, c.semantic, c.boost);
+            return {
+                ...c.item,
+                compositeScore: compositeResult.final_score,
+                audit: compositeResult
+            };
+        });
+
+        const results = reranked
+            .filter(m => m.compositeScore && m.compositeScore > 0.1)
+            .sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0))
             .slice(0, limit);
+
+        // Update Access Metadata
+        results.forEach(m => {
+            m.last_accessed_at = Date.now();
+            m.access_count++;
+            console.log(`[MemoryAudit] id=${m.id} text="${m.text.substring(0, 30)}..." score=${m.compositeScore?.toFixed(3)} (sem:${m.audit?.semantic_similarity.toFixed(2)} sal:${m.audit?.salience_component.toFixed(2)} rec:${m.audit?.recency_component.toFixed(2)} conf:${m.audit?.confidence_component.toFixed(2)} assoc:${m.audit?.association_component.toFixed(2)})`);
+        });
+
+        return results;
+    }
+
+    /**
+     * Expands a set of memories by one-hop associations.
+     */
+    private expandAssociations(seeds: MemoryItem[]): { item: MemoryItem, weight: number }[] {
+        const expanded: { item: MemoryItem, weight: number }[] = [];
+        const THRESHOLD = 0.3;
+
+        seeds.forEach(seed => {
+            seed.associations.forEach(assoc => {
+                if (assoc.weight >= THRESHOLD) {
+                    const target = this.localMemories.find(m => m.id === assoc.target_id);
+                    if (target) {
+                        expanded.push({ item: target, weight: assoc.weight });
+                    }
+                }
+            });
+        });
+        return expanded;
+    }
+
+    private calculateCompositeScore(item: MemoryItem, semanticSimilarity: number, associationBoost: number = 0) {
+        const salienceComp = item.salience * MemoryService.WEIGHT_SALIENCE;
+        const confidenceComp = item.confidence * MemoryService.WEIGHT_CONFIDENCE;
+
+        const recencyScore = this.calculateRecencyScore(item);
+        const recencyComp = recencyScore * MemoryService.WEIGHT_RECENCY;
+
+        const associationComp = associationBoost * MemoryService.WEIGHT_ASSOCIATION;
+
+        const semanticComp = semanticSimilarity * MemoryService.WEIGHT_SEMANTIC;
+
+        let finalScore = semanticComp + salienceComp + recencyComp + confidenceComp + associationComp;
+
+        // Status Penalties
+        let statusPenalty = 0;
+        if (item.status === 'contested') statusPenalty = 0.3;
+        if (item.status === 'superseded' || item.status === 'archived') statusPenalty = 0.8;
+
+        finalScore = Math.max(0, finalScore - statusPenalty);
+
+        return {
+            semantic_similarity: semanticSimilarity,
+            salience_component: salienceComp,
+            recency_component: recencyComp,
+            confidence_component: confidenceComp,
+            association_component: associationComp,
+            status_penalty: statusPenalty,
+            final_score: finalScore
+        };
+    }
+
+    /**
+     * Calculates recency score using exponential decay.
+     */
+    private calculateRecencyScore(item: MemoryItem): number {
+        const now = Date.now();
+        const referenceTime = item.last_reinforced_at || item.last_accessed_at || item.created_at;
+        const diffDays = (now - referenceTime) / (1000 * 60 * 60 * 24);
+        return Math.exp(-MemoryService.RECENCY_DECAY_LAMBDA * diffDays);
     }
 
     /**
@@ -303,22 +483,35 @@ export class MemoryService {
      *   the tool arguments alongside the text.
      * @returns {Promise<boolean>} Always returns `true` (local write never fails fatally).
      */
-    async add(text: string, metadata?: any): Promise<boolean> {
+    async add(text: string, metadata: any = {}, mode: string = 'assistant'): Promise<boolean> {
         // Always save local for redundancy
+        const role = mode === 'rp' ? 'rp' : 'core';
+        const finalMetadata = { ...metadata, role };
+
+        const now = Date.now();
         const newItem: MemoryItem = {
-            id: Date.now().toString(),
+            id: now.toString(),
             text,
-            metadata,
-            timestamp: Date.now()
+            metadata: finalMetadata,
+            timestamp: now,
+            salience: 0.5,
+            confidence: finalMetadata.source === 'explicit' ? 0.9 : 0.7,
+            created_at: now,
+            last_accessed_at: null,
+            last_reinforced_at: now,
+            access_count: 0,
+            associations: [],
+            status: 'active'
         };
         this.localMemories.push(newItem);
+        await this.handleContradiction(newItem);
         this.saveLocal();
 
         if (this.client) {
             try {
                 await this.client.callTool({
                     name: "mem0_add",
-                    arguments: { text, metadata }
+                    arguments: { text, metadata: finalMetadata }
                 });
             } catch (e) {
                 console.warn("[Memory] Remote add failed");
@@ -361,6 +554,7 @@ export class MemoryService {
         if (item) {
             item.text = text;
             item.timestamp = Date.now();
+            item.last_reinforced_at = Date.now();
             this.saveLocal();
             // TODO: Update remote Mem0 when API is available
             return true;
@@ -416,6 +610,39 @@ export class MemoryService {
                 await this.transport.close();
             } catch (e) { /* ignore */ }
             this.transport = null;
+        }
+    }
+
+    /**
+     * Detects and handles contradictions when a new memory is added.
+     */
+    private async handleContradiction(newItem: MemoryItem) {
+        // Simple heuristic: find memories with high keyword overlap
+        const terms = newItem.text.toLowerCase().split(' ').filter(t => t.length > 3);
+        if (terms.length < 2) return;
+
+        const candidates = this.localMemories.filter(m => m.id !== newItem.id && m.status === 'active');
+
+        for (const candidate of candidates) {
+            let overlap = 0;
+            terms.forEach(t => {
+                if (candidate.text.toLowerCase().includes(t)) overlap++;
+            });
+
+            // If overlap is high (e.g. 70%), assume it might talk about the same subject
+            if (overlap / terms.length >= 0.7) {
+                const newIsExplicit = newItem.metadata?.source === 'explicit';
+                const oldIsExplicit = candidate.metadata?.source === 'explicit';
+
+                if (newIsExplicit && !oldIsExplicit) {
+                    candidate.status = 'superseded';
+                    newItem.associations.push({ target_id: candidate.id, type: 'supersedes', weight: 1.0 });
+                } else {
+                    candidate.status = 'contested';
+                    newItem.associations.push({ target_id: candidate.id, type: 'contradicts', weight: 0.8 });
+                    candidate.associations.push({ target_id: newItem.id, type: 'contradicts', weight: 0.8 });
+                }
+            }
         }
     }
 }

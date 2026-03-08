@@ -13,7 +13,7 @@ import { GuardrailService } from './GuardrailService';
 import { GitService } from './GitService';
 import { BackupService } from './BackupService';
 import { InferenceService } from './InferenceService';
-import { loadSettings, saveSettings } from './SettingsManager';
+import { loadSettings, saveSettings, deepMerge, setActiveMode, getActiveMode } from './SettingsManager';
 import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
 
@@ -116,7 +116,18 @@ export class IpcRouter {
         setSettingsPath(targetPath);
       }
 
-      fs.writeFileSync(targetPath, JSON.stringify(data, null, 2));
+      const currentSettings = loadSettings(targetPath);
+      // Merge but keep backend authoritative for agentModes if frontend is stale
+      const newSettings = deepMerge(currentSettings, data);
+
+      // If the incoming data doesn't have the current active mode, or if we want to force backend authority
+      if (currentSettings.agentModes?.activeMode && newSettings.agentModes) {
+        // We only update agentModes.activeMode via settings:setActiveMode, so preserve it here
+        // unless we are specifically intending to overwrite it (which Settings UI doesn't do)
+        newSettings.agentModes.activeMode = currentSettings.agentModes.activeMode;
+      }
+
+      saveSettings(targetPath, newSettings);
 
       // Update Environment Variables
       if (data.system?.env) {
@@ -159,21 +170,12 @@ export class IpcRouter {
 
     /** Reads and returns the app settings (Global + Workspace) from disk. */
     ipcMain.handle('get-settings', async () => {
-      let globalSettings = {};
-      if (fs.existsSync(getSettingsPath())) {
-        try {
-          globalSettings = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf-8'));
-        } catch (e) { console.error("Failed to parse global settings", e); }
-      }
-
-      let workspaceSettings = {};
+      const globalSettings = loadSettings(getSettingsPath());
       const wsPath = getWorkspaceSettingsPath();
-      if (wsPath && fs.existsSync(wsPath)) {
-        try {
-          workspaceSettings = JSON.parse(fs.readFileSync(wsPath, 'utf-8'));
-        } catch (e) { console.error("Failed to parse workspace settings", e); }
+      let workspaceSettings = {};
+      if (wsPath) {
+        workspaceSettings = loadSettings(wsPath); // Reuse safe loader for workspace too
       }
-
       return { global: globalSettings, workspace: workspaceSettings };
     });
 
@@ -310,6 +312,62 @@ export class IpcRouter {
         console.error('[Main] Session export to file failed:', e);
         return { error: e.message };
       }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — AGENT MODES (RP/Hybrid/Assistant)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Sets the active agent mode (rp, hybrid, assistant). */
+    ipcMain.handle('settings:setActiveMode', async (_e, mode: any) => {
+      console.log(`[Main] settings:setActiveMode received: ${mode}`);
+      const success = setActiveMode(getSettingsPath(), mode);
+      if (success) {
+        agent.reloadConfig();
+      }
+      return success;
+    });
+
+    /** Returns the current active agent mode. */
+    ipcMain.handle('settings:getActiveMode', async () => {
+      return getActiveMode(getSettingsPath());
+    });
+
+    /** Sets the active agent mode (rp, hybrid, assistant). Legacy - redirects to settings:setActiveMode */
+    ipcMain.handle('agent:setMode', async (_e, mode: any) => {
+      console.log(`[Main] settings:setActiveMode received: ${mode} (via legacy handler)`);
+      const success = setActiveMode(getSettingsPath(), mode);
+      if (success) {
+        agent.reloadConfig();
+      }
+      return success;
+    });
+
+    /** Returns the current active agent mode. Legacy - redirects to settings:getActiveMode */
+    ipcMain.handle('agent:getActiveMode', async () => {
+      return getActiveMode(getSettingsPath());
+    });
+
+    /** Gets the configuration for a specific agent mode. */
+    ipcMain.handle('agent:getModeConfig', async (_e, mode: 'rp' | 'hybrid' | 'assistant') => {
+      const s = loadSettings(getSettingsPath());
+      return s.agentModes?.modes[mode];
+    });
+
+    /** Updates the configuration for a specific agent mode with a patch object. */
+    ipcMain.handle('agent:updateModeConfig', async (_e, mode: 'rp' | 'hybrid' | 'assistant', patch: any) => {
+      const s = loadSettings(getSettingsPath());
+      if (!s.agentModes?.modes[mode]) return false;
+      s.agentModes.modes[mode] = { ...s.agentModes.modes[mode], ...patch };
+      saveSettings(getSettingsPath(), s);
+      agent.reloadConfig();
+      return true;
+    });
+
+    /** Returns all agent mode configurations. */
+    ipcMain.handle('agent:getAllModeConfigs', async () => {
+      const s = loadSettings(getSettingsPath());
+      return s.agentModes?.modes;
     });
 
     /** Exports an agent profile as a standalone Python codeset. */
@@ -1033,10 +1091,12 @@ export class IpcRouter {
         }, (type, data) => {
           // Relay custom events to renderer
           event.sender.send('agent-event', { type, data });
-        }, images);
+        }, images, payload.capabilitiesOverride);
         event.sender.send('chat-done');
 
       } catch (e: any) {
+        console.error("[IpcRouter] chat-message error:", e);
+        if (e.stack) console.error(e.stack);
         event.sender.send('chat-error', e.message);
       }
     });

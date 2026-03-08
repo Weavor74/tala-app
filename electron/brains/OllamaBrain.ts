@@ -220,6 +220,7 @@ export class OllamaBrain implements IBrain {
         tools?: any[],
         options?: BrainOptions
     ): Promise<BrainResponse> {
+        const startTime = Date.now();
         try {
             const body: any = {
                 model: this.model,
@@ -252,6 +253,13 @@ export class OllamaBrain implements IBrain {
             if (options?.stop) body.stop.push(...options.stop);
 
             const internalController = new AbortController();
+            const GLOBAL_TIMEOUT_MS = parseInt(process.env.OLLAMA_CHAT_TIMEOUT_MS || '600000');
+
+            const globalTimeoutTimer = setTimeout(() => {
+                const elapsed = Date.now() - startTime;
+                console.warn(`[OllamaBrain] GLOBAL TIMEOUT: Request exceeded ${GLOBAL_TIMEOUT_MS}ms (Elapsed: ${elapsed}ms). Aborting.`);
+                internalController.abort();
+            }, GLOBAL_TIMEOUT_MS);
 
             // --- Per-token heartbeat watchdog ---
             // The old one-shot timeout was cleared the moment HTTP 200 arrived (before
@@ -517,6 +525,7 @@ export class OllamaBrain implements IBrain {
 
             // Clean up watchdog timers
             if (heartbeatTimer) clearTimeout(heartbeatTimer);
+            if (globalTimeoutTimer) clearTimeout(globalTimeoutTimer);
             clearThinkTimer();
 
             const finalResponse: BrainResponse = {
@@ -539,8 +548,9 @@ export class OllamaBrain implements IBrain {
             return finalResponse;
 
         } catch (e: any) {
-            if (e.name === 'AbortError') {
-                console.log('[OllamaBrain] Stream aborted or timed out.');
+            if (e.name === 'AbortError' || e.message === 'The user aborted a request.' || e.name === 'TimeoutError') {
+                const elapsed = Date.now() - startTime;
+                console.log(`[OllamaBrain] Stream aborted or timed out. Elapsed: ${elapsed}ms, Model: ${this.model}, Tools: ${tools?.length || 0}`);
                 return { content: '', metadata: { aborted: true } };
             }
             throw e;

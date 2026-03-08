@@ -131,6 +131,17 @@ contextBridge.exposeInMainWorld('tala', {
     /** Retrieves the last saved session state. */
     getSession: () => ipcRenderer.invoke('get-session'),
 
+    // ─── Settings (Authoritative) ────────────────────────────────
+    settings: {
+        setActiveMode: (mode: string) => {
+            console.log(`[Preload] setActiveMode called with: ${mode}`);
+            return ipcRenderer.invoke('settings:setActiveMode', mode);
+        },
+        getActiveMode: () => {
+            return ipcRenderer.invoke('settings:getActiveMode');
+        }
+    },
+
     /** Returns a list of all registered tools (core + MCP). */
     getAllTools: () => ipcRenderer.invoke('get-all-tools'),
 

@@ -46,6 +46,10 @@ export class AstroService {
     private isReady = false;
     public getReadyStatus(): boolean { return this.isReady; }
 
+    /** In-memory cache for emotional state to prevent redundant expensive planetary calculations. */
+    private stateCache: Map<string, { state: string, timestamp: number }> = new Map();
+    private readonly CACHE_TTL_MS = 5000;
+
     /**
      * Spawns the Astro Emotion Engine as a Python child process and connects
      * the MCP client to it via stdio transport.
@@ -152,6 +156,15 @@ export class AstroService {
      *   and mood label. Returns a fallback string if the engine is offline.
      */
     async getEmotionalState(agentId: string = 'tala', contextPrompt: string = ''): Promise<string> {
+        const now = Date.now();
+        const cacheKey = `${agentId}:${contextPrompt}`;
+        const cached = this.stateCache.get(cacheKey);
+
+        if (cached && (now - cached.timestamp) < this.CACHE_TTL_MS) {
+            console.log(`[AstroService] Returning cached emotional state for ${agentId} (TTL: ${this.CACHE_TTL_MS}ms)`);
+            return cached.state;
+        }
+
         console.log(`[AstroService] getEmotionalState called for ${agentId}. Ready: ${this.isReady}, Client: ${!!this.client}`);
 
         if (!this.isReady || !this.client) {
@@ -178,6 +191,9 @@ export class AstroService {
                     if (content.text.startsWith('❌')) {
                         throw new Error(content.text);
                     }
+
+                    // Update cache
+                    this.stateCache.set(cacheKey, { state: content.text, timestamp: now });
                     return content.text;
                 }
             }

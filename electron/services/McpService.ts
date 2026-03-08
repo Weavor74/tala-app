@@ -6,20 +6,25 @@ import path from 'path';
 import { McpServerConfig } from '../../src/renderer/settingsData';
 import { auditLogger } from './AuditLogger';
 
+export enum ServerState {
+    CONNECTED = 'CONNECTED',
+    DEGRADED = 'DEGRADED',
+    DISABLED = 'DISABLED'
+}
+
 /**
  * Represents an active connection to a single MCP (Model Context Protocol) server.
  * Each connection wraps the MCP SDK `Client` instance along with its transport
  * layer and the original configuration that was used to establish it.
  */
 interface Connection {
-    /** The MCP SDK client instance used to call tools and list resources. */
     client: Client;
-    /** The transport layer — either a stdio pipe to a child process or a WebSocket connection. */
     transport: StdioClientTransport | WebSocketClientTransport;
-    /** The child process handle (only present for stdio connections). */
     process?: ChildProcess;
-    /** The original configuration object that was used to create this connection. */
     config: McpServerConfig;
+    state: ServerState;
+    retryCount: number;
+    lastRetryTime: number;
 }
 
 /**
@@ -52,8 +57,12 @@ export class McpService {
     private connections: Map<string, Connection> = new Map();
     /** The path to the Python executable, used to replace 'python' in stdio commands. */
     private pythonPath: string | null = null;
+    private capabilityCache: Map<string, { tools: any[], resources: any[], timestamp: number }> = new Map();
+    private static readonly CAPABILITY_CACHE_TTL_MS = 600000; // 10 minutes
 
     private systemService: any = null;
+    private healthInterval: ReturnType<typeof setInterval> | null = null;
+    private onRecovery: (() => void) | null = null;
 
     constructor(systemService?: any) {
         this.systemService = systemService;
@@ -62,6 +71,10 @@ export class McpService {
     /** Sets the Python executable path for stdio connections. */
     public setPythonPath(path: string) {
         this.pythonPath = path;
+    }
+
+    public setOnRecovery(callback: () => void) {
+        this.onRecovery = callback;
     }
 
     /**
@@ -162,7 +175,10 @@ export class McpService {
                 client,
                 transport,
                 process: serverProcess,
-                config
+                config,
+                state: ServerState.CONNECTED,
+                retryCount: 0,
+                lastRetryTime: Date.now()
             });
 
             auditLogger.info('mcp_connect_ok', 'McpService', {
@@ -182,6 +198,19 @@ export class McpService {
                 error: e.message
             });
             console.error(`[McpService] Failed to connect to ${config.name}:`, e);
+
+            // Maintain entry in DEGRADED state for backoff logic
+            const existing = this.connections.get(config.id);
+            this.connections.set(config.id, {
+                client: existing?.client || ({} as any),
+                transport: existing?.transport || ({} as any),
+                process: existing?.process,
+                config,
+                state: ServerState.DEGRADED,
+                retryCount: (existing?.retryCount || 0) + 1,
+                lastRetryTime: Date.now()
+            });
+
             return false;
         }
     }
@@ -231,11 +260,24 @@ export class McpService {
      *   - `resources` — Array of resource definitions the server provides.
      *   - `error` — (optional) Error message if the query failed.
      */
-    public async getCapabilities(id: string) {
+    public async getCapabilities(id: string, reason: string = 'manual') {
         const conn = this.connections.get(id);
-        if (!conn) return { tools: [], resources: [] };
+        if (!conn || conn.state === ServerState.DEGRADED) return { tools: [], resources: [] };
 
-        const result: { tools: any[], resources: any[], error?: string } = { tools: [], resources: [] };
+        const now = Date.now();
+        const cached = this.capabilityCache.get(id);
+
+        // Cache hit: must be within TTL AND not a refresh reason (connect/recovery/manual_refresh)
+        if (reason === 'periodic' && cached && (now - cached.timestamp) < McpService.CAPABILITY_CACHE_TTL_MS) {
+            return cached;
+        }
+
+        console.log(`[McpService] list_tools reason=${reason} server=${id}`);
+        const result: { tools: any[], resources: any[], timestamp: number, error?: string } = {
+            tools: [],
+            resources: [],
+            timestamp: now
+        };
 
         try {
             const tools = await conn.client.listTools();
@@ -249,12 +291,14 @@ export class McpService {
             const resources = await conn.client.listResources();
             result.resources = resources.resources;
         } catch (e: any) {
-            // Silence "Method not found" for resources as many servers don't support it
             if (e.code !== -32601) {
                 console.error(`[McpService] Error fetching resources for ${id}:`, e);
             }
         }
 
+        if (!result.error) {
+            this.capabilityCache.set(id, result);
+        }
         return result;
     }
 
@@ -299,41 +343,66 @@ export class McpService {
 
     // ─── Auto-Restart / Health Check ──────────────────────────────
 
-    /** Interval handle for the health check loop. */
-    private healthInterval: ReturnType<typeof setInterval> | null = null;
-
     /**
-     * Starts a periodic health check loop (every 30s).
-     * For each active connection, attempts a lightweight `listTools()` call.
-     * If the call fails, the connection is torn down and re-established
-     * using the stored config.
+     * Starts a periodic health check loop (30s interval).
+     * Implements exponential backoff for reconnection and avoids spamming failed servers.
      */
     public startHealthLoop() {
-        if (this.healthInterval) return; // Already running
-        console.log('[McpService] Starting health check loop (30s interval).');
+        if (this.healthInterval) return;
+        console.log('[McpService] Starting health check loop with backoff management.');
 
         this.healthInterval = setInterval(async () => {
+            const now = Date.now();
             for (const [id, conn] of this.connections) {
+                // Exponential Backoff Logic: 30s, 60s, 120s... up to 1800s (30m)
+                if (conn.state === ServerState.DEGRADED) {
+                    const delaySeconds = Math.min(30 * Math.pow(2, Math.min(conn.retryCount - 1, 6)), 1800);
+                    if (now < conn.lastRetryTime + (delaySeconds * 1000)) {
+                        continue; // Skip until backoff expires
+                    }
+                    console.log(`[McpService] Backoff expired for ${conn.config.name}, retrying (attempt ${conn.retryCount})...`);
+                    const ok = await this.connect(conn.config);
+                    if (ok) {
+                        console.log(`[McpService] Server ${id} RECOVERED.`);
+                        if (this.onRecovery) this.onRecovery();
+                    }
+                    continue;
+                }
+
+                if (conn.state === ServerState.DISABLED) continue;
+
+                // Health check for CONNECTED servers
                 try {
-                    await conn.client.listTools(); // lightweight ping
+                    // Use a minimal request as a ping. listTools is removed from periodic health loop.
+                    // We check if the transport is still responsive.
+                    // If the client has a ping method (some SDK versions) we use it, otherwise a dummy request.
+                    if ((conn.client as any).ping) {
+                        await (conn.client as any).ping();
+                    } else {
+                        // Fallback: check process/transport state or a very lightweight call
+                        if (conn.config.type === 'stdio' && conn.process?.exitCode !== null && conn.process?.exitCode !== undefined) {
+                            throw new Error('Process exited');
+                        }
+                        // We avoid listTools() here to prevent spam. 
+                        // If we must send a request, we'll check the cache timestamp and only refresh if > TTL.
+                        const cached = this.capabilityCache.get(id);
+                        if (!cached || (now - cached.timestamp) > McpService.CAPABILITY_CACHE_TTL_MS) {
+                            await this.getCapabilities(id, 'periodic');
+                        }
+                    }
                 } catch (e) {
-                    console.warn(`[McpService] Health check failed for ${conn.config.name}, reconnecting...`);
+                    console.warn(`[McpService] Health check failed for ${conn.config.name}. Setting to DEGRADED.`);
+                    conn.state = ServerState.DEGRADED;
+                    conn.lastRetryTime = now;
+                    conn.retryCount = 1;
+                    this.capabilityCache.delete(id); // Clear cache on failure
+
                     try {
                         await conn.client.close().catch(() => { });
                     } catch (_) { }
-                    this.connections.delete(id);
-
-                    // Auto-reconnect
-                    auditLogger.info('mcp_reconnect', 'McpService', { serverId: id });
-                    const ok = await this.connect(conn.config);
-                    if (ok) {
-                        console.log(`[McpService] Successfully reconnected ${conn.config.name}.`);
-                    } else {
-                        console.error(`[McpService] Failed to reconnect ${conn.config.name}.`);
-                    }
                 }
             }
-        }, 30_000);
+        }, 10_000); // Check loop runs every 10s to evaluate backoff timers
     }
 
     /** Stops the health check loop. */
@@ -348,7 +417,9 @@ export class McpService {
      * Returns a list of all active connection IDs.
      */
     public getActiveConnections(): string[] {
-        return Array.from(this.connections.keys());
+        return Array.from(this.connections.entries())
+            .filter(([_, conn]) => conn.state === ServerState.CONNECTED)
+            .map(([id, _]) => id);
     }
 
     /**

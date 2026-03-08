@@ -6,19 +6,19 @@ import { app } from 'electron';
  * SettingsManager
  * 
  * Centralized, safe settings loader and writer for `app_settings.json`.
- * Prevents crashes from corrupt JSON by:
- * - Wrapping all reads in try/catch with automatic backup of corrupt files.
- * - Returning sensible defaults when the file is missing or invalid.
- * - Writing atomically (temp file + rename) to avoid partial writes.
- * - Validating required top-level keys before returning.
- * 
- * @example
- * ```typescript
- * const settings = SettingsManager.loadSettings('/path/to/app_settings.json');
- * settings.inference.mode = 'local-only';
- * SettingsManager.saveSettings('/path/to/app_settings.json', settings);
- * ```
+ * Implements a 2000ms in-memory cache to reduce redundant disk I/O,
+ * especially from rapid UI polling or multiple service initializations.
  */
+
+// Module-level cache to collapse bursts of identical reads (e.g. from UI polling)
+let settingsCache: Record<string, any> | null = null;
+let lastCacheUpdate: number = 0;
+const CACHE_TTL_MS = 2000;
+
+function invalidateCache() {
+    settingsCache = null;
+    lastCacheUpdate = 0;
+}
 
 /** Minimal default settings — enough to boot without errors. */
 export const DEFAULT_SETTINGS: Record<string, any> = {
@@ -47,7 +47,6 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         localRuntime: 'node'
     },
     agent: {
-        activeMode: 'rp',
         activeProfileId: 'tala',
         profiles: [{
             id: 'tala',
@@ -95,6 +94,35 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         retentionDays: 30,
         maxProposalsPerDay: 5
     },
+    agentModes: {
+        activeMode: 'assistant',
+        modes: {
+            rp: {
+                rpIntensity: 0.8,
+                loreDensity: 0.6,
+                allowMemoryRecall: true,
+                allowAstro: true
+            },
+            hybrid: {
+                blendRatio: 0.5,
+                noTaskAcknowledgements: false,
+                allowRag: true,
+                allowMem0Search: true,
+                allowAstro: true,
+                allowFsRead: true,
+                allowFsWrite: 'confirm',
+                allowShellRun: false
+            },
+            assistant: {
+                verbosity: 'normal',
+                autoUseTools: true,
+                safeMode: true,
+                memoryWrites: true,
+                toolsOnlyCodingTurns: true,
+                ollamaTimeoutMs: 600000
+            }
+        }
+    },
     notebooks: [],
     firewall: {
         enabled: true,
@@ -106,7 +134,7 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
 };
 
 /** Deep merges two objects. */
-function deepMerge(target: any, source: any): any {
+export function deepMerge(target: any, source: any): any {
     const output = { ...target };
     if (typeof target === 'object' && target !== null && typeof source === 'object' && source !== null) {
         Object.keys(source).forEach(key => {
@@ -134,10 +162,17 @@ function deepMerge(target: any, source: any): any {
  * @returns A valid settings object, guaranteed to have all top-level keys.
  */
 export function loadSettings(settingsPath: string): Record<string, any> {
+    const now = Date.now();
+    if (settingsCache && (now - lastCacheUpdate) < CACHE_TTL_MS) {
+        return JSON.parse(JSON.stringify(settingsCache)); // Return deep copy to prevent mutation
+    }
+
     const defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 
     if (!fs.existsSync(settingsPath)) {
         console.log('[SettingsManager] No settings file found, using defaults.');
+        settingsCache = defaults;
+        lastCacheUpdate = now;
         return defaults;
     }
 
@@ -150,7 +185,16 @@ export function loadSettings(settingsPath: string): Record<string, any> {
         }
 
         // Deep merge with defaults to fill missing keys at any level
-        return deepMerge(defaults, parsed);
+        const result = deepMerge(defaults, parsed);
+
+        // Update cache
+        settingsCache = result;
+        lastCacheUpdate = now;
+
+        if (result.agentModes?.activeMode) {
+            console.log(`[SettingsManager] loadSettings activeMode=${result.agentModes.activeMode} source=disk`);
+        }
+        return JSON.parse(JSON.stringify(result));
 
     } catch (e: any) {
         console.error(`[SettingsManager] Failed to parse settings: ${e.message}`);
@@ -183,8 +227,18 @@ export function saveSettings(settingsPath: string, data: Record<string, any>): b
     try {
         const tmpPath = settingsPath + '.tmp';
         const json = JSON.stringify(data, null, 2);
+
+        if (data.agentModes?.activeMode) {
+            console.log(`[SettingsManager] save activeMode=${data.agentModes.activeMode}`);
+        }
+
         fs.writeFileSync(tmpPath, json, 'utf-8');
         fs.renameSync(tmpPath, settingsPath);
+
+        // Update cache after successful write
+        settingsCache = JSON.parse(json);
+        lastCacheUpdate = Date.now();
+
         return true;
     } catch (e: any) {
         console.error(`[SettingsManager] Failed to save settings: ${e.message}`);
@@ -197,4 +251,45 @@ export function saveSettings(settingsPath: string, data: Record<string, any>): b
             return false;
         }
     }
+}
+/**
+ * Authoritatively sets the active mode in settings.
+ */
+export function setActiveMode(settingsPath: string, mode: 'rp' | 'hybrid' | 'assistant'): boolean {
+    console.log(`[SettingsManager] setActiveMode called with=${mode}`);
+    const validModes = ['rp', 'hybrid', 'assistant'];
+    if (!validModes.includes(mode)) {
+        console.error(`[SettingsManager] REJECTED invalid mode: ${mode}`);
+        return false;
+    }
+
+    const s = loadSettings(settingsPath);
+    if (!s.agentModes) s.agentModes = { activeMode: 'assistant', modes: {} };
+    s.agentModes.activeMode = mode;
+
+    console.log(`[SettingsManager] writing activeMode=${mode} path=${settingsPath}`);
+    const success = saveSettings(settingsPath, s);
+
+    // Verification read
+    const verify = loadSettings(settingsPath);
+    console.log(`[SettingsManager] verify after write activeMode=${verify.agentModes?.activeMode}`);
+
+    return success;
+}
+
+/**
+ * Authoritatively gets the active mode. Uses cache if within TTL.
+ */
+export function getActiveMode(settingsPath: string, caller: string = 'unknown'): string {
+    const now = Date.now();
+    if (settingsCache && (now - lastCacheUpdate) < CACHE_TTL_MS) {
+        const mode = settingsCache.agentModes?.activeMode || 'assistant';
+        console.log(`[SettingsManager] getActiveMode caller=${caller} source=cache value=${mode}`);
+        return mode;
+    }
+
+    const s = loadSettings(settingsPath);
+    const mode = s.agentModes?.activeMode || 'assistant';
+    console.log(`[SettingsManager] getActiveMode caller=${caller} source=disk value=${mode}`);
+    return mode;
 }

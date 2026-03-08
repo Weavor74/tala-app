@@ -28,6 +28,8 @@ import { HybridMemoryManager } from './HybridMemoryManager';
 import { UserProfileService } from './UserProfileService';
 
 import { GuardrailService } from './GuardrailService';
+import { TalaContextRouter } from './router/TalaContextRouter';
+import { runtimeSafety } from './RuntimeSafety';
 import { GoalManager } from './plan/GoalManager';
 import { WorldService } from './WorldService';
 import { StrategyEngine } from './plan/StrategyEngine';
@@ -58,6 +60,7 @@ type McpServiceLike = {
     setPythonPath?: (pythonPath: string) => void;
     connect?: (config: import('../../src/renderer/settingsData').McpServerConfig) => Promise<boolean>;
     callTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<McpToolResult | null | undefined>;
+    setOnRecovery?: (callback: () => void) => void;
 };
 
 type ReflectionServiceLike = {
@@ -83,12 +86,19 @@ type ExecutedToolCall = {
 
 type TurnExecutionLog = {
     turnId: string;           // use existing turn/session id
+    mode: string;             // "assistant" | "rp" | "hybrid"
     intent: string;           // "coding" | "memory" | ...
     usedEnvelope: boolean;    // true if extracted from JSON envelope
     toolCallsPlanned: Array<{ name: string, arguments: any }>;
     toolCalls: ExecutedToolCall[];
     executedToolCount: number;
+    toolsSentCount: number;    // number of tool schemas sent to the LLM
     timestamp: number;
+    usage?: {
+        total_tokens: number;
+        prompt_tokens: number;
+        completion_tokens: number;
+    };
 };
 
 /**
@@ -131,6 +141,7 @@ export class AgentService {
     private mainWindow: unknown = null;
     private astroTelemetryTimer: NodeJS.Timeout | null = null;
     private router: SmartRouterService | null = null;
+    private talaRouter: TalaContextRouter;
     private codeControl: any = null;
     private USE_STRUCTURED_LTMF = true; // Feature flag for migration
     private MAX_TOOL_CALLS_PER_TURN = 8;
@@ -155,6 +166,7 @@ export class AgentService {
         this.systemInfo = null;
 
         this.router = new SmartRouterService(this.brain, this.brain);
+        this.talaRouter = new TalaContextRouter(this.memory);
 
         this.tools.setMemoryService(this.memory);
         this.tools.setGoalManager(this.goals);
@@ -162,6 +174,13 @@ export class AgentService {
             this.mcpService = mcp;
             this.tools.setMcpService(mcp);
             this.hybridMemory = new HybridMemoryManager(this.memory, this.rag, mcp as any);
+
+            if (this.mcpService.setOnRecovery) {
+                this.mcpService.setOnRecovery(() => {
+                    console.log('[AgentService] MCP Recovery detected. Refreshing tools...');
+                    this.refreshMcpTools();
+                });
+            }
         }
 
         if (terminal) this.terminal = terminal;
@@ -175,13 +194,10 @@ export class AgentService {
 
         this.migrateLegacyHistory();
 
-        const sessions = this.listSessions();
-        if (sessions.length > 0) {
-            this.loadSessionById(sessions[0].id);
-        } else {
-            const id = this.newSession();
-            auditLogger.setSessionId(id);
-        }
+        console.log(`[AgentService] Launch policy: fresh session on startup`);
+        const id = this.newSession();
+        auditLogger.setSessionId(id);
+        console.log(`[SessionBoot] policy=fresh_on_launch createdSessionId=${id}`);
 
         this.loadBrainConfig().catch(e => console.error("Initial loadBrainConfig failed", e));
 
@@ -1441,10 +1457,10 @@ Exported standalone package from Tala.
     }
 
 
-    private async getAstroState(): Promise<string> {
+    private async getAstroState(settings?: any): Promise<string> {
         try {
-            const settings = loadSettings(this.settingsPath);
-            const agentId = settings.agent?.activeProfileId || 'tala';
+            const s = settings || loadSettings(this.settingsPath);
+            const agentId = s.agent?.activeProfileId || 'tala';
             const userId = this.userProfile?.getIdentityContext().userId || 'User';
             // Passing the current userId ensures the state is computed for the correct human entity
             return await this.astro.getEmotionalState(agentId, userId);
@@ -1459,7 +1475,32 @@ Exported standalone package from Tala.
         return found;
     }
 
-    public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[]) {
+    private detectGreetingIntent(text: string): { isGreeting: boolean, greetingClass: string } {
+        const normalized = text.toLowerCase()
+            .trim()
+            .replace(/[^\w\s]/gi, '') // Remove all non-alphanumeric/non-space characters
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const baseGreetings = ['hi', 'hello', 'hey', 'morning', 'afternoon', 'evening', 'good morning', 'good afternoon', 'good evening', 'yo', 'tala', 'greetings', 'night'];
+        const suffixes = ['baby', 'babe', 'love', 'sweetheart', 'darling', 'dear', 'my love', 'honey'];
+
+        // 1. Exact match on normalized base
+        if (baseGreetings.includes(normalized)) return { isGreeting: true, greetingClass: 'standard_opening' };
+
+        // 2. Base + suffix matching
+        for (const base of baseGreetings) {
+            for (const suffix of suffixes) {
+                if (normalized === `${base} ${suffix}` || normalized === `${base} my ${suffix}`) {
+                    return { isGreeting: true, greetingClass: 'affectionate_opening' };
+                }
+            }
+        }
+
+        return { isGreeting: false, greetingClass: 'none' };
+    }
+
+    public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[], capabilitiesOverride?: any) {
         const correlationId = uuidv4();
         auditLogger.setCorrelationId(correlationId);
         console.log(`[AgentService] ====== CHAT STARTED ======`);
@@ -1468,31 +1509,24 @@ Exported standalone package from Tala.
         let activeInstance = settings.inference?.instances?.find((i: any) => i.id === settings.inference.activeLocalId) || (settings.inference?.instances?.length > 0 ? settings.inference.instances[0] : null);
         const isSmallLocalModel = (activeInstance?.source === 'local' || activeInstance?.engine === 'ollama') && (activeInstance?.model?.toLowerCase().includes('3b') || activeInstance?.model?.toLowerCase().includes('8b'));
 
+        const activeMode = this.getActiveMode(settings);
+        const astroState = await this.getAstroState(settings);
+
+        // --- TALA CONTEXT ROUTER (UPGRADED PIPELINE) ---
+        // Context routing yields the singular atomic TurnContext representation.
+        const turnObject = await this.talaRouter.process(`${this.activeSessionId}_${Date.now()}`, userMessage, activeMode as any);
+        const memoryContext = turnObject.promptBlocks.map(b => `${b.header}\n${b.content}`).join('\n\n');
+        const hasMemories = turnObject.retrieval.approvedCount > 0;
+        const isGreeting = turnObject.intent.isGreeting;
+
+        console.log(`[PromptAudit] turn_start sessionId=${this.activeSessionId} mode=${activeMode} intent=${turnObject.intent.class} isGreeting=${isGreeting}`);
+        if (isGreeting) {
+            console.log(`[AgentService] Greeting-class input ("${userMessage}") via Router. Retrieval suppressed.`);
+        }
+
         if (userMessage.startsWith('/') && this.functions?.exists(userMessage.substring(1).split(' ')[0])) {
             onToken(await this.functions.executeFunction(userMessage.substring(1).split(' ')[0], userMessage.split(' ').slice(1)));
             return;
-        }
-
-        const astroState = await this.getAstroState();
-        let memoryContext = "";
-        try {
-            if (settings.agent?.capabilities?.memory !== false) {
-                if (this.hybridMemory) {
-                    memoryContext = await this.hybridMemory.getIntegratedContext(userMessage, {
-                        emotion: 'neutral', // Could be derived from astroState
-                        intensity: 0.5,
-                        userIdentity: this.userProfile?.getIdentityContext()
-                    });
-                } else {
-                    // Fallback to legacy behavior if hybridMemory is not available
-                    const memories = await this.memory.search(userMessage);
-                    if (memories.length > 0) {
-                        memoryContext += `[MEMORIES]\n${memories.map(m => m.text).join('\n')}`;
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[AgentService] Memory context retrieval error (partial context may still be used):', e);
         }
 
         const dynamicContext = `[EMOTIONAL STATE]: ${astroState}\n\n[MEMORY RECALL]: The memories below are your lived experiences — parts of who you are. Weave them naturally into your response the way a person would recall something that happened to them. Do not quote them verbatim or announce you are referencing them. If something in the conversation connects to a memory, let it surface organically. If no memory is relevant, simply respond without mentioning memory at all.`;
@@ -1515,37 +1549,91 @@ Exported standalone package from Tala.
             '  • If a tool fails, report the error exactly as received.',
         ].join('\n');
 
-        // Add memory availability notice
-        const hasMemories = memoryContext.trim().length > 50;
-        const memoryAvailabilityNotice = hasMemories
-            ? "[MEMORY STATUS]: Relevant memories provided above. Use them."
-            : "[MEMORY STATUS]: NO relevant memories found. DO NOT invent a story. Instead, respond naturally without referencing specific past events.";
-
+        const agentModes = settings.agentModes || { activeMode: 'assistant', modes: { assistant: { verbosity: 'normal', autoUseTools: true, safeMode: true, memoryWrites: true, toolsOnlyCodingTurns: true, ollamaTimeoutMs: 600000 } } };
         const isDiagnosticRequest = /list tools|verify|test|mcp|logs/i.test(userMessage);
-        const activeMode = isDiagnosticRequest ? 'assist' : (settings.agent?.activeMode || 'rp');
-        const activeProfileId = activeMode === 'assist' ? 'assist' : (settings.agent?.activeProfileId || 'tala');
+        const modeConfig = agentModes.modes?.[activeMode] || {};
+
+        const activeProfileId = settings.agent?.activeProfileId || 'tala';
         const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
 
         let systemPromptTemplate = (isSmallLocalModel ? repetitionSafety + "\n\n" : "") + activeProfile.systemPrompt + (isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
 
-        if (activeMode === 'assist') {
-            systemPromptTemplate += "\n\n[ASSIST MODE]: PROVIDE ONLY THE DATA REQUESTED. NO RP. NO PROSE. MINIMAL TOKEN USAGE.";
-        }
         const goalsAndReflections = this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
-        systemPromptTemplate = dynamicContext + "\n\n" + (hasMemories ? memoryContext + "\n\n" : "") + memoryAvailabilityNotice + "\n\n" + (goalsAndReflections.trim() ? goalsAndReflections + "\n\n" : "") + systemPromptTemplate;
+        systemPromptTemplate = dynamicContext + "\n\n" + (hasMemories ? memoryContext + "\n\n" : "") + (goalsAndReflections.trim() ? goalsAndReflections + "\n\n" : "") + systemPromptTemplate;
 
         // Mode Audit Logging
         const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit.log');
         if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
-        const auditEntry = `[${new Date().toISOString()}] MODE: ${activeMode} | PROFILE: ${activeProfileId} | ASTRO: ${astroState.length > 50} | TOOLS: true\n`;
-        fs.appendFileSync(auditLogPath, auditEntry);
 
-        let toolSigs = this.tools.getToolSignatures();
-        if (isSmallLocalModel && toolSigs.length > 2000) {
-            const essential = ['read_file', 'write_file', 'list_files', 'search_memory', 'manage_goals'];
-            toolSigs = toolSigs.split('\n').filter(l => essential.some(e => l.toLowerCase().includes(e))).join('\n') + "\n... pruned for efficiency.";
+        // --- TURN CONTEXT OBSERVABILITY ---
+        const turnAuditEntry = {
+            timestamp: new Date().toISOString(),
+            turn: turnObject,
+            config: modeConfig
+        };
+        fs.appendFileSync(auditLogPath, JSON.stringify(turnAuditEntry) + "\n");
+
+        // --- CAPABILITY RESOLUTION GATING ---
+        let allowedCapabilities: string[] | undefined = undefined;
+
+        if (activeMode === 'rp') {
+            // Strict RP forbids all external context manipulation tools.
+            turnObject.blockedCapabilities.push('all');
+        } else if (activeMode === 'hybrid') {
+            // Limited visibility for Hybrid
+            turnObject.allowedCapabilities.push('system_core', 'memory_retrieval', 'diagnostic');
+            allowedCapabilities = turnObject.allowedCapabilities;
+        } else {
+            allowedCapabilities = ['all'];
         }
-        systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${toolSigs}\n\n[PROTOCOL]: Output JSON \`{"tool": "name", "args": {}}\` to call a tool.`;
+
+        if (turnObject.retrieval.suppressed) {
+            turnObject.blockedCapabilities.push('memory_retrieval');
+            // Remove 'all' escape hatch if it existed during suppression.
+            if (allowedCapabilities?.includes('all')) {
+                allowedCapabilities = ['system_core', 'diagnostic', 'memory_write'];
+            } else if (allowedCapabilities) {
+                allowedCapabilities = allowedCapabilities.filter(c => c !== 'memory_retrieval' && c !== 'all');
+            }
+            console.log(`[RouterGating] CAPABILITY BYPASS PREVENTION: Active blocked capabilities=`, turnObject.blockedCapabilities);
+        }
+
+        let toolSigs = "";
+        if (turnObject.blockedCapabilities.includes('all') || activeMode === 'rp') {
+            toolSigs = "[NO TOOLS AVAILABLE IN RP MODE]";
+        } else {
+            // Re-render strings only based on the strictly resolved Capability Array
+            const finalDefs = this.tools.getToolDefinitions(allowedCapabilities, activeMode);
+
+            // Format fallback JSON signature string equivalent for the schema
+            const formatSig = (tool: any) => {
+                let props = [];
+                for (const [key, val] of Object.entries(tool.function.parameters.properties) as any) {
+                    props.push(`"${key}": ${val.type || 'any'}`);
+                }
+                return `### ${tool.function.name}\nDescription: ${tool.function.description}\nSchema: {${props.join(', ')}}\n`;
+            };
+
+            toolSigs = "Available Tools:\n" + finalDefs.map(formatSig).join("\n");
+
+            if (turnObject.retrieval.suppressed) {
+                toolSigs += "\n(Note: Memory-retrieval tools have been explicitly withheld by capability policy for this turn)";
+            }
+        }
+
+        if (activeMode !== 'rp') {
+            systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${toolSigs}\n\n[PROTOCOL]: Output JSON \`{"tool": "name", "args": {}}\` to call a tool.`;
+        } else {
+            systemPromptTemplate += `\n\n[USER INTERACTION]\nSpeak naturally as Tala. Do not use JSON or technical formatting.`;
+        }
+
+        systemPromptTemplate += `
+\n### Runtime Safety Rules
+1. If a tool has already been executed recently in the same task, do not execute it again unless the user explicitly requests it.
+2. Do not repeat diagnostics, reflections, or tests automatically.
+3. If the same response would be produced again, stop and request clarification from the user.
+4. Tool results are informational only. Do not call tools again unless the user explicitly requests it.
+`;
 
         // Identity Injection: Load user profile to tell the LLM who the User is
         let userIdentity = "";
@@ -1561,6 +1649,13 @@ Exported standalone package from Tala.
         const systemTokens = this.estimateTokens(systemPrompt);
         let messageBudget = isSmallLocalModel ? 3072 : Math.max(maxTokens - systemTokens - 4000, 2048);
 
+        // --- PROMPT AUDIT LOGGING ---
+        // (Turn start audit already logged above during retrieval step)
+        const auditDir = path.join(app.getPath('userData'), 'data', 'logs', 'prompts');
+        if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
+        const auditFile = path.join(auditDir, `${this.activeSessionId}_${Date.now()}.log`);
+        fs.writeFileSync(auditFile, `SYSTEM PROMPT:\n${systemPrompt}\n\nUSER:${userMessage}`);
+
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
 
@@ -1573,7 +1668,7 @@ Exported standalone package from Tala.
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        const toolCategory = this.detectToolIntent(userMessage);
+        // Redundant: toolCategory already computed at top of chat()
         const filteredTools = this.tools.getToolDefinitions(toolCategory);
         // Build the set of allowed tool names for this turn — used for execution-time gating.
         // This set is computed once from filteredTools and MUST NOT change during retries.
@@ -1581,11 +1676,13 @@ Exported standalone package from Tala.
 
         const executionLog: TurnExecutionLog = {
             turnId: `${this.activeSessionId}_${Date.now()}`,
+            mode: activeMode,
             intent: toolCategory,
             usedEnvelope: false,
             toolCallsPlanned: [],
             toolCalls: [],
             executedToolCount: 0,
+            toolsSentCount: filteredTools.length,
             timestamp: Date.now()
         };
         const turnSeenHashes = new Set<string>();
@@ -1596,7 +1693,7 @@ Exported standalone package from Tala.
             const summary = this.getGroundedExecutionSummary();
             finalResponse = summary;
             const groundingMsg: ChatMessage = { role: 'assistant', content: summary };
-            this.commitAssistantMessage(transientMessages, groundingMsg, toolCategory, 0, turnSeenHashes);
+            this.commitAssistantMessage(transientMessages, groundingMsg, toolCategory, 0, turnSeenHashes, activeMode);
             turn = AgentService.MAX_AGENT_ITERATIONS; // End turn
         }
 
@@ -1607,10 +1704,35 @@ Exported standalone package from Tala.
 
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15 };
-                if (toolCategory === 'coding') brainOptions.tool_choice = 'required';
+                let toolsToSend = filteredTools; // Re-declare toolsToSend
+                if (activeMode === 'rp') {
+                    toolsToSend = [];
+                } else if (activeMode === 'hybrid') {
+                    const allowed = ['fs_read_text', 'mem0_search', 'query_graph', 'manage_goals', 'get_emotion_state'];
+                    if (modeConfig.allowShellRun) allowed.push('shell_run');
+                    toolsToSend = toolsToSend.filter((t: any) => allowed.includes(t.function.name));
+                }
 
-                console.log(`[AgentService] turn=${turn} intent=${toolCategory} tools=${filteredTools.length} names=[${filteredTools.map(t => t.function.name).join(',')}]`);
-                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, filteredTools, brainOptions);
+                if (turnObject.intent.class === 'coding' && activeMode !== 'rp') {
+                    brainOptions.tool_choice = 'required';
+                } else if (turnObject.intent.class === 'conversation' || activeMode === 'rp') {
+                    toolsToSend = [];
+                }
+
+                console.log(`[AgentService] turn=${turn} mode=${activeMode} intent=${turnObject.intent.class} tools_sent=${toolsToSend.length} reason=${(turnObject.intent.class === 'conversation' || activeMode === 'rp') ? 'omitted_by_intent_or_mode' : 'active'}`);
+
+                // --- ROUTING INVARIANTS (Hard Guarantees) ---
+                if (turnObject.intent.class === 'conversation' && toolsToSend.length > 0) {
+                    const errMsg = `Policy Violation: Tools cannot be used in a conversational turn (mode=${activeMode}, tools=${toolsToSend.length}).`;
+                    console.error(`[AgentService] INVARIANT VIOLATED: ${errMsg}`);
+                    throw new Error(errMsg);
+                }
+                if (activeMode === 'rp' && toolsToSend.length > 0) {
+                    const errMsg = `Policy Violation: Tools are disabled in Roleplay mode (intent=${turnObject.intent.class}, tools=${toolsToSend.length}).`;
+                    console.error(`[AgentService] INVARIANT VIOLATED: ${errMsg}`);
+                    throw new Error(errMsg);
+                }
+                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, toolsToSend, brainOptions);
 
                 if (response.metadata?.usage) {
                     cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens;
@@ -1619,7 +1741,23 @@ Exported standalone package from Tala.
                 }
 
                 const assistantMsg: ChatMessage = { role: 'assistant', content: response.content || "" };
-                let calls = response.toolCalls || [];
+
+                // Tools-Only suppression for coding turns in Assistant mode
+                if (activeMode === 'assistant' && modeConfig.toolsOnlyCodingTurns && turnObject.intent.class === 'coding' && (response.toolCalls?.length || executionLog.executedToolCount > 0)) {
+                    assistantMsg.content = "";
+                    console.log(`[AgentService] Suppressing assistant prose for tools-only coding turn.`);
+                }
+
+                // --- LOOP PROTECTION: Response Loop Detection ---
+                if (runtimeSafety.checkResponseLoop(assistantMsg.content)) {
+                    console.warn(`[AgentService] LOOP DETECTED for content hash. Halting turn.`);
+                    finalResponse = "Loop detected. Halting repeated tool execution. Awaiting new user instruction.";
+                    const loopMsg: ChatMessage = { role: 'assistant', content: finalResponse };
+                    this.commitAssistantMessage(transientMessages, loopMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
+                    break;
+                }
+
+                let calls = (activeMode === 'rp') ? [] : (response.toolCalls || []);
 
                 // --- HARDENED ToolRequired Gate ---
                 const intentVerbs = ['create', 'write', 'edit', 'modify', 'delete', 'remove', 'add', 'update', 'patch', 'refactor', 'generate', 'scaffold', 'implement', 'fix', 'run', 'execute', 'lint', 'test', 'build', 'install', 'start'];
@@ -1627,8 +1765,8 @@ Exported standalone package from Tala.
                 const lowerUserMsg = userMessage.toLowerCase();
                 const requiresTool = intentVerbs.some(v => lowerUserMsg.includes(v)) && intentNouns.some(n => lowerUserMsg.includes(n));
 
-                if (requiresTool && calls.length === 0) {
-                    console.log(`[AgentService] retry=ToolRequired intent=${toolCategory} tools=${filteredTools.length}`);
+                if (requiresTool && calls.length === 0 && activeMode !== 'rp') {
+                    console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${filteredTools.length}`);
                     const envelopeSystem = `Tool call required. Critical instruction: You are in a strict execution environment. You MUST NOT narrate or explain. Output ONLY a valid JSON object matching this schema: 
 {
   "tool_calls": [
@@ -1641,7 +1779,7 @@ Exported standalone package from Tala.
 Failure to provide a tool call will result in system termination.`;
 
                     const retryOptions: any = { temperature: 0.1 };
-                    if (toolCategory === 'coding') retryOptions.tool_choice = 'required';
+                    if (turnObject.intent.class === 'coding') retryOptions.tool_choice = 'required';
 
                     const retryResponse = await this.brain.streamResponse(truncated, envelopeSystem + "\n\n" + systemPrompt, onToken, signal, filteredTools, retryOptions);
 
@@ -1654,7 +1792,7 @@ Failure to provide a tool call will result in system termination.`;
                         const parsed = this.extractJsonObjectEnvelope(retryText);
                         if (parsed?.tool_calls && Array.isArray(parsed.tool_calls)) {
                             // --- STRICT MODE: log if there is non-JSON prose surrounding the object ---
-                            const toolsOnlyStrict = toolCategory === 'coding';
+                            const toolsOnlyStrict = turnObject.intent.class === 'coding';
                             if (toolsOnlyStrict) {
                                 // Determine if there is text outside the JSON object
                                 const jsonStr = JSON.stringify(parsed);
@@ -1711,7 +1849,7 @@ Failure to provide a tool call will result in system termination.`;
 
                 if (calls.length === 0) {
                     finalResponse = response.content || "";
-                    this.commitAssistantMessage(transientMessages, assistantMsg, toolCategory, executionLog.toolCalls.length, turnSeenHashes);
+                    this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
                 }
 
@@ -1730,7 +1868,7 @@ Failure to provide a tool call will result in system termination.`;
                 }
 
                 assistantMsg.tool_calls = calls;
-                this.commitAssistantMessage(transientMessages, assistantMsg, toolCategory, executionLog.toolCalls.length, turnSeenHashes);
+                this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
 
                 // --- HARDENED Tool Execution with Timeouts + Execution-Time Gate ---
                 for (const call of calls) {
@@ -1747,6 +1885,18 @@ Failure to provide a tool call will result in system termination.`;
 
                     console.log(`[AgentService] executing tool: ${toolName}`);
 
+                    // --- LOOP PROTECTION: Tool Cooldown ---
+                    if (runtimeSafety.isToolCooldownActive(toolName)) {
+                        console.warn(`[AgentService] TOOL_BLOCKED_COOLDOWN: ${toolName}`);
+                        transientMessages.push({
+                            role: 'tool',
+                            content: `Error: Tool '${toolName}' cooldown active. Do not repeat diagnostics or tests automatically.`,
+                            tool_call_id: call.id,
+                            name: toolName
+                        });
+                        continue;
+                    }
+
                     const timeoutMs = this.getToolTimeout(toolName);
                     const startTime = Date.now();
 
@@ -1757,6 +1907,11 @@ Failure to provide a tool call will result in system termination.`;
 
                             const argStr = JSON.stringify(args);
                             console.log(`[AgentService] args: ${argStr.length > 200 ? argStr.slice(0, 200) + '...' : argStr}`);
+
+                            // --- HYBRID WRITE OVERRIDE ---
+                            if (activeMode === 'hybrid' && toolName === 'fs_write_text' && !capabilitiesOverride?.allowWritesThisTurn) {
+                                throw new Error("Action Blocked: File writes in Hybrid mode require per-turn UI authorization. Please check 'Allow writes' and try again.");
+                            }
 
                             return await this.tools.executeTool(toolName, args, allowedToolNames);
                         })();
@@ -1786,7 +1941,12 @@ Failure to provide a tool call will result in system termination.`;
                             endedAt: endTime
                         });
 
-                        transientMessages.push({ role: 'tool', content: String(result), tool_call_id: call.id, name: toolName });
+                        // Wrap tool results as per safety instructions
+                        const wrappedResult = `[TOOL_RESULT]\n${String(result)}\n[/TOOL_RESULT]\n\nTool results are informational only. Do not call tools again unless the user explicitly requests it.`;
+                        transientMessages.push({ role: 'tool', content: wrappedResult, tool_call_id: call.id, name: toolName });
+
+                        // Record successful execution AFTER check
+                        runtimeSafety.recordToolExecution(toolName);
                     } catch (e: any) {
                         const endTime = Date.now();
                         console.error(`[AgentService] tool error (${toolName}):`, e.message);
@@ -1816,9 +1976,12 @@ Failure to provide a tool call will result in system termination.`;
         // --- Finalize turn execution log ---
         if (executionLog.toolCallsPlanned.length > 0 || executionLog.toolCalls.length > 0) {
             executionLog.executedToolCount = executionLog.toolCalls.length;
+            executionLog.mode = activeMode;
+            executionLog.toolsSentCount = filteredTools.length;
+            executionLog.usage = cumulativeUsage;
             this.lastTurnExecutionLog = executionLog;
             this.executionLogHistory.push(executionLog);
-            if (this.executionLogHistory.length > 50) {
+            if (this.executionLogHistory.length > 25) {
                 this.executionLogHistory.shift();
             }
         }
@@ -1828,11 +1991,18 @@ Failure to provide a tool call will result in system termination.`;
             const storeMemories = async () => {
                 try {
                     // 1. Mem0: store interaction with timestamp + incident anchor for retrieval
-                    const memId = `MEM-${Date.now().toString(36).toUpperCase()}`;
                     const ts = new Date().toISOString().slice(0, 16); // 2026-03-02T08:46
-                    const memEntry = `[${memId}] [${ts}] User said: "${userMessage.slice(0, 200)}" | Tala responded about: "${finalResponse.slice(0, 300)}"`;
-                    await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId });
-                    console.log(`[AgentService] Stored interaction to Mem0 (${memId})`);
+                    const memEntry = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
+
+                    if (runtimeSafety.isDuplicateMemory(memEntry)) {
+                        console.log(`[AgentService] MEMORY_DUPLICATE_SKIPPED: mem0`);
+                    } else {
+                        const memId = `MEM-${Date.now().toString(36).toUpperCase()}`;
+                        // FIX 5: Mode Persistence Writeback Correctness
+                        // We use the activeMode captured at the top of the turn (line 1512)
+                        await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId }, activeMode);
+                        console.log(`[AgentService] Stored interaction to Mem0 (${memId}) under mode: ${activeMode}`);
+                    }
                 } catch (e) {
                     console.warn('[AgentService] Mem0 post-store failed:', e);
                 }
@@ -1879,11 +2049,45 @@ Failure to provide a tool call will result in system termination.`;
         this.saveSession();
     }
 
-    private finalizeAssistantContent(intent: string, raw: string, executedToolCount: number, hasPendingCalls: boolean): string {
+    private finalizeAssistantContent(intent: string, raw: string, executedToolCount: number, hasPendingCalls: boolean, mode: string = 'assistant'): string {
         if (intent === 'coding' && (executedToolCount > 0 || hasPendingCalls)) {
             return '';
         }
-        return raw || '';
+
+        let content = raw || '';
+        // Scrub raw tool JSON leaks, especially in RP mode
+        // In RP mode, we scrub EVERYTHING that looks like JSON.
+        // In other modes, we only scrub if it looks like a tool signature leak.
+        if (mode === 'rp' || content.includes('{"name":') || content.includes('"arguments":') || content.includes('</tool_call>')) {
+            content = this.scrubRawToolJson(content, mode, intent);
+        }
+
+        return content;
+    }
+
+    private scrubRawToolJson(text: string, mode: string = 'assistant', intent: string = 'conversation'): string {
+        if (!text) return text;
+        // Regex to find things that look like raw tool JSON: {"name":"...", "arguments":{...}}
+        const rawJsonRegex = /\{"name"\s*:\s*"[^"]+",\s*"arguments"\s*:\s*\{[\s\S]*?\}\}/g;
+        // Also check for tag fragments that might leak
+        const tagLeakRegex = /<\/tool_call>/g;
+
+        let scrubbed = text;
+        let blocked = false;
+
+        if (rawJsonRegex.test(scrubbed)) {
+            scrubbed = scrubbed.replace(rawJsonRegex, '[TECHNICAL ARTIFACT SUPPRESSED]');
+            blocked = true;
+        }
+        if (tagLeakRegex.test(scrubbed)) {
+            scrubbed = scrubbed.replace(tagLeakRegex, '');
+            blocked = true;
+        }
+
+        if (blocked) {
+            console.log(`[AgentService] RAW_TOOL_JSON_BLOCKED_AT_COMMIT mode=${mode} intent=${intent}`);
+        }
+        return scrubbed;
     }
 
     private commitAssistantMessage(
@@ -1891,10 +2095,11 @@ Failure to provide a tool call will result in system termination.`;
         msg: ChatMessage,
         intent: string,
         executedToolCount: number,
-        turnSeenHashes: Set<string>
+        turnSeenHashes: Set<string>,
+        mode: string = 'assistant'
     ): void {
         const hasPendingCalls = (msg.tool_calls?.length || 0) > 0;
-        const finalized = this.finalizeAssistantContent(intent, msg.content, executedToolCount, hasPendingCalls);
+        const finalized = this.finalizeAssistantContent(intent, msg.content, executedToolCount, hasPendingCalls, mode);
 
         // Use content-based hash to suppress duplicate prose
         // Normalize: trim + collapse whitespace to single spaces
@@ -2309,8 +2514,15 @@ Failure to provide a tool call will result in system termination.`;
         return this.getAstroState();
     }
 
+    private getActiveMode(settings?: any): string {
+        const s = settings || loadSettings(this.settingsPath);
+        const mode = s.agentModes?.activeMode || 'assistant';
+        return mode;
+    }
+
     public async addMemory(text: string) {
-        return this.memory.add(text);
+        const mode = this.getActiveMode();
+        return this.memory.add(text, {}, mode);
     }
 
     public async getAllMemories() {

@@ -47,6 +47,7 @@ import { ConflictEditor } from './renderer/components/ConflictEditor';
 import { StartupSplash } from './renderer/components/StartupSplash';
 import { Notebooks } from './renderer/components/Notebooks';
 import { CoreWorkspace } from './renderer/components/CoreWorkspace';
+import { AgentModeConfigPanel } from './renderer/components/AgentModeConfigPanel';
 
 
 /** A single chat message in the conversation history. */
@@ -87,6 +88,7 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [activeSessionId, setActiveSessionId] = useState<string>('');
+  const [allowWrites, setAllowWrites] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const api = (window as any).tala;
@@ -120,9 +122,9 @@ function App() {
 
   // Engine Status
   const [localEngineRunning, setLocalEngineRunning] = useState(false);
-  const [appSettings, setAppSettings] = useState<any>(null);
   const [isStartingEngine, setIsStartingEngine] = useState(false);
-  const [activeMode, setActiveMode] = useState<'rp' | 'assist'>('rp');
+  const [activeMode, setActiveMode] = useState<'rp' | 'hybrid' | 'assistant'>('assistant');
+  const [showModeSettings, setShowModeSettings] = useState(false);
 
   // Model Warning State
   const [modelStatus, setModelStatus] = useState<{ id: string, isLowFidelity: boolean, warning?: string } | null>(null);
@@ -167,16 +169,18 @@ function App() {
           setLocalEngineRunning(engineStatus.isRunning);
         }
 
-        // Store settings for use in ignition
-        setAppSettings(result.global);
-        if (result.global?.agent?.activeMode) {
-          setActiveMode(result.global.agent.activeMode);
-        }
-
         // Fetch Model Status
         if (api.getModelStatus) {
           const status = await api.getModelStatus();
           if (status) setModelStatus(status);
+        }
+        // Fetch Active Mode
+        if (api.settings?.getActiveMode) {
+          const mode = await api.settings.getActiveMode();
+          if (mode) setActiveMode(mode);
+        } else if (api.getActiveMode) {
+          const mode = await api.getActiveMode();
+          if (mode) setActiveMode(mode);
         }
       } catch (e) {
         console.error("Failed to load status", e);
@@ -672,12 +676,14 @@ function App() {
     setMessages(prev => [...prev, { role: 'user', content: msg, images: imgs }]);
 
     if (api) {
-      if (imgs.length > 0) {
-        api.send('chat-message', { text: msg, images: imgs });
-      } else {
-        api.send('chat-message', msg);
-      }
+      api.send('chat-message', {
+        text: msg,
+        images: imgs,
+        capabilitiesOverride: { allowWritesThisTurn: allowWrites }
+      });
     }
+    // Auto-reset checkbox after sending if it was checked
+    setAllowWrites(false);
   };
 
   const handleEdit = (index: number) => {
@@ -701,7 +707,12 @@ function App() {
     if (api && api.rewindChat) {
       await api.rewindChat(idx);
       setMessages(prev => [...prev, { role: 'user', content: text, images: imgs }]);
-      api.send('chat-message', { text, images: imgs });
+      api.send('chat-message', {
+        text,
+        images: imgs,
+        capabilitiesOverride: { allowWritesThisTurn: allowWrites }
+      });
+      setAllowWrites(false);
     }
   };
 
@@ -779,7 +790,7 @@ function App() {
   };
 
   const handleIgniteEngine = async () => {
-    if (!api || !appSettings) return;
+    if (!api) return;
     if (localEngineRunning) {
       if (confirm("Stop local inference engine?")) {
         await api.stopLocalEngine();
@@ -789,7 +800,8 @@ function App() {
       return;
     }
 
-    const { localEngine } = appSettings.inference || {};
+    const { global } = await api.getSettings();
+    const { localEngine } = global?.inference || {};
     if (!localEngine || !localEngine.modelPath) {
       addToast({ type: 'error', message: 'No local model configured. Go to Settings.' });
       return;
@@ -970,7 +982,7 @@ function App() {
                 <ChatSessions
                   activeId={activeSessionId}
                   onSessionSelect={async (id, msgs) => {
-                    const messages = msgs || await api.loadChatSession(id);
+                    const messages = msgs || await api.loadSession(id);
                     setActiveSessionId(id);
                     setMessages(messages.map((m: any) => ({
                       role: m.role as 'user' | 'assistant',
@@ -1208,11 +1220,17 @@ function App() {
                 <button
                   onClick={async () => {
                     const newMode = 'rp';
-                    setActiveMode(newMode);
-                    if (api?.saveSettings && appSettings) {
-                      const newSettings = { ...appSettings, agent: { ...appSettings.agent, activeMode: newMode } };
-                      await api.saveSettings(newSettings);
-                      setAppSettings(newSettings);
+                    console.log(`[UI] Mode button clicked: ${newMode}`);
+                    if (api?.settings?.setActiveMode) {
+                      await api.settings.setActiveMode(newMode);
+                      const confirmed = await api.settings.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else if (api?.setMode) {
+                      await api.setMode(newMode);
+                      const confirmed = await api.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else {
+                      setActiveMode(newMode);
                     }
                   }}
                   style={{
@@ -1220,28 +1238,84 @@ function App() {
                     color: activeMode === 'rp' ? 'white' : '#888',
                     border: 'none', padding: '2px 8px', fontSize: 10, cursor: 'pointer', borderRadius: 2
                   }}
+                  title="Roleplay Mode"
                 >RP</button>
                 <button
                   onClick={async () => {
-                    const newMode = 'assist';
-                    setActiveMode(newMode);
-                    if (api?.saveSettings && appSettings) {
-                      const newSettings = { ...appSettings, agent: { ...appSettings.agent, activeMode: newMode } };
-                      await api.saveSettings(newSettings);
-                      setAppSettings(newSettings);
+                    const newMode = 'hybrid';
+                    console.log(`[UI] Mode button clicked: ${newMode}`);
+                    if (api?.settings?.setActiveMode) {
+                      await api.settings.setActiveMode(newMode);
+                      const confirmed = await api.settings.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else if (api?.setMode) {
+                      await api.setMode(newMode);
+                      const confirmed = await api.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else {
+                      setActiveMode(newMode);
                     }
                   }}
                   style={{
-                    background: activeMode === 'assist' ? '#0e639c' : 'transparent',
-                    color: activeMode === 'assist' ? 'white' : '#888',
+                    background: activeMode === 'hybrid' ? '#0e639c' : 'transparent',
+                    color: activeMode === 'hybrid' ? 'white' : '#888',
                     border: 'none', padding: '2px 8px', fontSize: 10, cursor: 'pointer', borderRadius: 2
                   }}
-                >Assist</button>
+                  title="Hybrid Mode"
+                >Hyb</button>
+                <button
+                  onClick={async () => {
+                    const newMode = 'assistant';
+                    console.log(`[UI] Mode button clicked: ${newMode}`);
+                    if (api?.settings?.setActiveMode) {
+                      await api.settings.setActiveMode(newMode);
+                      const confirmed = await api.settings.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else if (api?.setMode) {
+                      await api.setMode(newMode);
+                      const confirmed = await api.getActiveMode?.();
+                      if (confirmed) setActiveMode(confirmed);
+                    } else {
+                      setActiveMode(newMode);
+                    }
+                  }}
+                  style={{
+                    background: activeMode === 'assistant' ? '#0e639c' : 'transparent',
+                    color: activeMode === 'assistant' ? 'white' : '#888',
+                    border: 'none', padding: '2px 8px', fontSize: 10, cursor: 'pointer', borderRadius: 2
+                  }}
+                  title="Assistant Mode"
+                >Ast</button>
               </div>
+              <button
+                onClick={() => setShowModeSettings(!showModeSettings)}
+                style={{
+                  background: showModeSettings ? '#333' : 'transparent',
+                  border: '1px solid #444',
+                  color: '#888',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                  fontSize: 10,
+                  padding: '2px 5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title="Mode Settings"
+              >
+                <IconSettings />
+              </button>
             </div>
           </div>
           <div style={{ marginLeft: 'auto', cursor: 'pointer' }} onClick={() => setIsRightPanelOpen(false)}>×</div>
         </div>
+
+        {showModeSettings && (
+          <AgentModeConfigPanel
+            activeMode={activeMode}
+            onClose={() => setShowModeSettings(false)}
+          />
+        )}
 
         <div className="chat-container" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div className="chat-messages">
@@ -1336,6 +1410,18 @@ function App() {
                 onPaste={handlePaste}
                 placeholder="Ask Tala... (Paste images supported)"
               />
+              {activeMode === 'hybrid' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 5px', fontSize: 10, color: '#aaa', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    id="allow-writes-check"
+                    checked={allowWrites}
+                    onChange={e => setAllowWrites(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="allow-writes-check" style={{ cursor: 'pointer' }}>Allow writes</label>
+                </div>
+              )}
               {isStreaming && (
                 <button
                   title="Force Stop"

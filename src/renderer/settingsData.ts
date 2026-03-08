@@ -264,6 +264,42 @@ export interface FirewallConfig {
     logRedactions: boolean;
 }
 
+export interface RPModeConfig {
+    rpIntensity: number; // 0..1
+    loreDensity: number; // 0..1
+    allowMemoryRecall: boolean;
+    allowAstro: boolean;
+}
+
+export interface HybridModeConfig {
+    blendRatio: number; // 0..1
+    noTaskAcknowledgements: boolean;
+    allowRag: boolean;
+    allowMem0Search: boolean;
+    allowAstro: boolean;
+    allowFsRead: boolean;
+    allowFsWrite: 'confirm' | 'off' | 'on';
+    allowShellRun: boolean;
+}
+
+export interface AssistantModeConfig {
+    verbosity: 'concise' | 'normal' | 'detailed';
+    autoUseTools: boolean;
+    safeMode: boolean;
+    memoryWrites: boolean;
+    toolsOnlyCodingTurns: boolean;
+    ollamaTimeoutMs: number;
+}
+
+export interface AgentModesConfig {
+    activeMode: 'rp' | 'hybrid' | 'assistant';
+    modes: {
+        rp: RPModeConfig;
+        hybrid: HybridModeConfig;
+        assistant: AssistantModeConfig;
+    };
+}
+
 export interface AppSettings {
     deploymentMode: 'usb' | 'local' | 'remote';
     inference: InferenceConfig;
@@ -272,6 +308,7 @@ export interface AppSettings {
     auth: AuthConfig;
     server: ServerConfig;
     agent: AgentConfig;
+    agentModes: AgentModesConfig;
     sourceControl: SourceControlConfig;
     system: SystemConfig;
     mcpServers: McpServerConfig[];
@@ -418,6 +455,35 @@ CORE CONSTRAINTS:
     workflows: {
         autoSync: false
     },
+    agentModes: {
+        activeMode: 'assistant',
+        modes: {
+            rp: {
+                rpIntensity: 0.8,
+                loreDensity: 0.6,
+                allowMemoryRecall: true,
+                allowAstro: true
+            },
+            hybrid: {
+                blendRatio: 0.5,
+                noTaskAcknowledgements: false,
+                allowRag: true,
+                allowMem0Search: true,
+                allowAstro: true,
+                allowFsRead: true,
+                allowFsWrite: 'confirm',
+                allowShellRun: false
+            },
+            assistant: {
+                verbosity: 'normal',
+                autoUseTools: true,
+                safeMode: true,
+                memoryWrites: true,
+                toolsOnlyCodingTurns: true,
+                ollamaTimeoutMs: 600000
+            }
+        }
+    },
     notebooks: [],
     firewall: {
         enabled: true,
@@ -550,6 +616,13 @@ export const migrateSettings = (loaded: any): AppSettings => {
     // Migrate Firewall
     if (loaded.firewall) {
         base.firewall = { ...base.firewall, ...loaded.firewall };
+    }
+
+    // Migrate Agent Modes
+    if (loaded.agentModes) {
+        base.agentModes = loaded.agentModes;
+    } else {
+        // New section, use defaults from base
     }
 
     return base;

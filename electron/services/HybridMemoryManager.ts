@@ -32,7 +32,7 @@ export class HybridMemoryManager {
     /**
      * Retrieves an integrated context string from all memory layers.
      */
-    async getIntegratedContext(query: string, options: HybridContextOptions = {}): Promise<string> {
+    async getIntegratedContext(query: string, options: HybridContextOptions = {}, mode: string = 'assistant'): Promise<string> {
         const {
             limitGraphNodes = 5,
             limitGraphEdges = 5,
@@ -57,9 +57,9 @@ export class HybridMemoryManager {
             }
         } catch (e) { console.warn('[HybridMemoryManager] Router failed, defaulting to mem0/rag'); }
 
-        const graphPromise = this.getGraphContext(query, limitGraphNodes, limitGraphEdges, emotion, intensity, options.userIdentity);
-        const mem0Promise = this.memory.search(query, limitMem0);
-        const ragPromise = this.rag.search(query, { limit: limitRag });
+        const graphPromise = this.getGraphContext(query, limitGraphNodes, limitGraphEdges, emotion, intensity, options.userIdentity, mode);
+        const mem0Promise = this.memory.search(query, limitMem0, mode);
+        const ragPromise = this.rag.search(query, { limit: limitRag, filter: { category: mode } });
 
         // If route is graph, prioritize it and wait for it
         if (route === 'graph') {
@@ -102,7 +102,7 @@ export class HybridMemoryManager {
         return context.trim();
     }
 
-    private async getGraphContext(query: string, maxNodes: number, maxEdges: number, emotion: string, intensity: number, identity?: UserIdentityContext): Promise<string> {
+    private async getGraphContext(query: string, maxNodes: number, maxEdges: number, emotion: string, intensity: number, identity?: UserIdentityContext, mode: string = 'assistant'): Promise<string> {
         try {
             const result = await this.mcp.callTool('tala-memory-graph', 'retrieve_context', {
                 query,
@@ -111,7 +111,8 @@ export class HybridMemoryManager {
                 emotion,
                 intensity,
                 user_id: identity?.userId,
-                user_displayName: identity?.displayName
+                user_displayName: identity?.displayName,
+                mode: mode
             });
             if (result?.content) {
                 return result.content.map((c: any) => c.text || '').join('\n').trim();
