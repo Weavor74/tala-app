@@ -31,7 +31,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import type { Tab } from './renderer/types';
+import type { Tab, WorkspaceArtifact } from './renderer/types';
 
 import { UserProfile } from './renderer/UserProfile';
 import { Settings } from './renderer/Settings';
@@ -551,12 +551,14 @@ function App() {
       });
     };
 
-    const handleDone = () => {
+    const handleDone = (payload?: any) => {
       setIsStreaming(false);
       setMessages(prev => {
         const last = prev[prev.length - 1];
-        if (last && last.isStream) {
-          return [...prev.slice(0, -1), { ...last, isStream: false }];
+        if (last && last.role === 'assistant') {
+          // If the payload contains a sanitized/complete message, use it
+          const finalContent = payload?.message || last.content;
+          return [...prev.slice(0, -1), { ...last, content: finalContent, isStream: false }];
         }
         return prev;
       });
@@ -572,7 +574,53 @@ function App() {
     const handleAgentEvent = (event: { type: string, data: any }) => {
       console.log(`[Agent Event] Type: ${event.type}`, event.data);
 
-      // --- BROWSER NAVIGATION ---
+      // --- ARTIFACT OPENING (CANONICAL) ---
+      if (event.type === 'artifact-open') {
+        const artifact = event.data as WorkspaceArtifact;
+
+        // 1. BRIDGE TO REAL EDITOR (for local files)
+        if ((artifact.type === 'editor' || artifact.type === 'code') && artifact.path && !artifact.readOnly) {
+          console.log(`[ArtifactBridge] Redirecting to openFileTab: ${artifact.path}`);
+          openFileTab(artifact.path);
+          return;
+        }
+
+        // 2. BRIDGE TO REAL BROWSER (for URLs)
+        if (artifact.type === 'browser' && artifact.url) {
+          console.log(`[ArtifactBridge] Redirecting to openBrowserTab: ${artifact.url}`);
+          openBrowserTab(artifact.url);
+          return;
+        }
+
+        const tid = artifact.id || ('tab-' + Math.random().toString(36).substr(2, 9));
+
+        setTabs(prev => {
+          const existing = prev.find(t => t.artifact?.id === artifact.id || (t.type === 'file' && t.data?.path === artifact.path));
+          if (existing) {
+            setActiveTabId(existing.id);
+            return prev;
+          }
+          const newTab: Tab = {
+            id: tid,
+            type: 'artifact',
+            title: artifact.title || artifact.path?.split(/[/\\]/).pop() || 'Artifact',
+            active: true,
+            artifact: artifact,
+            data: artifact.content || artifact.url
+          };
+          setActiveTabId(tid);
+          return [...prev, newTab];
+        });
+
+        // Smart view routing for non-bridged artifacts
+        if (artifact.type === 'html' || artifact.type === 'markdown' || artifact.type === 'report') {
+          setActiveView('explorer'); // View pane is usually in explorer/aside
+        }
+        addToast({ type: 'success', message: `Opened ${artifact.title || 'artifact'}` });
+        return;
+      }
+
+      // --- BROWSER NAVIGATION (LEGACY COMPAT) ---
       if (event.type === 'browser-navigate') {
         const browserTab = tabs.find(t => t.type === 'browser');
         if (browserTab) {
@@ -1110,6 +1158,57 @@ function App() {
                   onResolve={handleResolveConflict}
                   onCancel={() => closeTab(tab.id)}
                 />
+              )}
+              {tab.type === 'artifact' && tab.artifact && (
+                <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e', color: '#d4d4d4', overflow: 'hidden' }}>
+                  <div style={{ padding: '8px 15px', background: '#252526', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 'bold', fontSize: '0.9em' }}>{tab.title}</span>
+                    <span style={{ fontSize: '0.8em', opacity: 0.6 }}>{tab.artifact.type.toUpperCase()}</span>
+                  </div>
+                  <div style={{ flex: 1, padding: (tab.artifact.type === 'html' || tab.artifact.type === 'image' || tab.artifact.type === 'pdf') ? 0 : '20px', overflow: 'auto' }}>
+                    {tab.artifact.type === 'diff' && (
+                      <div style={{ fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
+                        {(typeof tab.data === 'string' ? tab.data : '').split('\n').map((line, i) => (
+                          <div key={i} style={{
+                            backgroundColor: line.startsWith('+') ? '#1a3e1a' : line.startsWith('-') ? '#3e1a1a' : 'transparent',
+                            color: line.startsWith('+') ? '#b5f2b5' : line.startsWith('-') ? '#f2b5b5' : 'inherit',
+                            padding: '0 5px',
+                            whiteSpace: 'pre-wrap',
+                            borderLeft: line.startsWith('+') ? '3px solid #0f0' : line.startsWith('-') ? '3px solid #f00' : 'none'
+                          }}>
+                            {line}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {tab.artifact.type === 'markdown' && (
+                      <div className="markdown-body" style={{ color: '#d4d4d4' }}>
+                        <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{tab.data}</pre>
+                      </div>
+                    )}
+                    {tab.artifact.type === 'html' && (
+                      <iframe srcDoc={tab.data} style={{ width: '100%', height: '100%', border: 'none', background: 'white' }} title={tab.title} />
+                    )}
+                    {(tab.artifact.type === 'text' || tab.artifact.type === 'json') && (
+                      <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>{tab.data}</pre>
+                    )}
+                    {(tab.artifact.type === 'editor' || tab.artifact.type === 'code') && (
+                      <textarea
+                        style={{ width: '100%', height: '100%', background: 'transparent', color: 'inherit', border: 'none', resize: 'none', outline: 'none', fontFamily: 'Consolas, monospace', fontSize: '13px' }}
+                        value={tab.data}
+                        readOnly
+                      />
+                    )}
+                    {tab.artifact.type === 'image' && (
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', background: '#000' }}>
+                        <img src={tab.data} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} alt={tab.title} />
+                      </div>
+                    )}
+                    {tab.artifact.type === 'pdf' && (
+                      <iframe src={tab.data} style={{ width: '100%', height: '100%', border: 'none' }} title={tab.title} />
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           ))}

@@ -21,6 +21,7 @@ import { FunctionService } from './FunctionService';
 import { OrchestratorService } from './OrchestratorService';
 import { loadSettings } from './SettingsManager';
 import { LogViewerService } from './LogViewerService';
+import { DocumentationIntelligenceService } from './DocumentationIntelligenceService';
 
 // @tala:priority Always verify brain settings before proceeding with multi-turn loops.
 // @tala:warn Never remove the exponential backoff from streamWithRetry.
@@ -38,6 +39,8 @@ import { StrategyEngine } from './plan/StrategyEngine';
 import { MINION_ROLES } from './plan/MinionRoles';
 import { SmartRouterService } from './SmartRouterService';
 import { auditLogger } from './AuditLogger';
+import { artifactRouter } from './ArtifactRouter';
+import { AgentTurnOutput } from '../types/artifacts';
 import { v4 as uuidv4 } from 'uuid';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
@@ -109,45 +112,83 @@ type TurnExecutionLog = {
  * The central orchestrator that governs the "Mind" of Tala. This service
  * coordinates all AI capabilities: inference (brain), memory, RAG, emotion
  * (astro), tool execution, backup, and browser/terminal interaction.
+ * 
+ * **Core Responsibilities:**
+ * - **Session Management**: Manages chat history, branching, and persistence.
+ * - **Turn Execution**: Orchestrates the multi-turn loop (Thought -> Action -> Observation).
+ * - **Context Assembly**: Gathers data from RAG, Memory, and System state for prompts.
+ * - **Tooling**: Registers and executes local and MCP-based tools.
+ * - **Self-Evolutuon**: Interfaces with ReflectionService for self-improvement goals.
  */
 export class AgentService {
+    /** The active inference engine implementation (Ollama, Cloud, etc.). */
     private brain: IBrain;
+    /** Current context for notebook-style interactions. */
     private activeNotebookContext: { id: string | null, sourcePaths: string[] } = { id: null, sourcePaths: [] };
+    /** Flag indicating if all sub-services are initialized and ready. */
     private isSoulReady = false;
+    /** Interface to the long-term semantic memory and graph database. */
     private memory: MemoryService;
+    /** Astrological emotional engine used for personality and response styling. */
     private astro: AstroService;
+    /** High-level planning engine that computes implementation paths. */
     private strategy: StrategyEngine;
+    /** Workspace analysis service for understanding the user's filesystem. */
     private world: WorldService;
+    /** Retrieval-Augmented Generation service for fetching relevant documents. */
     private rag: RagService;
+    /** Central registry for all executable tools. */
     private tools: ToolService;
+    /** Manages system backups and state snapshots. */
     private backup: BackupService;
+    /** Higher-level inference wrapper for specialized tasks. */
     private inference: InferenceService;
+    /** Processes and indexes user files for RAG. */
     private ingestion: IngestionService;
+    /** Orchestrates complex multi-step loops (Minion mode). */
     private orchestrator!: OrchestratorService;
+    /** Logic for self-modifying source code and system evolution. */
     private reflectionService: ReflectionServiceLike | null = null;
+    /** Interface to the PTY-based terminal emulator. */
     private terminal: TerminalService | null = null;
+    /** Generic function execution service. */
     private functions: FunctionService | null = null;
+    /** Bridge to external Model Context Protocol sidecars. */
     private mcpService: McpServiceLike | null = null;
+    /** Coordinates memory and RAG retrieval into a unified context. */
     private hybridMemory: HybridMemoryManager | null = null;
+    /** Manages user identity and roleplay metadata. */
     private userProfile: UserProfileService | null = null;
+    /** Cached system environment variables and workspace paths. */
     private systemInfo: SystemInfoLike | null = null;
+    /** The current active message stream for the session. */
     private chatHistory: ChatMessage[] = [];
     private settingsPath: string;
     private sessionsDir: string;
     private chatHistoryPath: string;
+    /** The UUID of the current conversation session. */
     private activeSessionId: string = '';
+    /** The ID of the parent session (used for branching/cloning). */
     private activeParentId: string = '';
+    /** The index in the parent session where the current branch started. */
     private activeBranchPoint: number = -1;
     private abortController: AbortController | null = null;
+    /** Hierarchical manager for the agent's long-term objectives. */
     private goals: GoalManager;
     private mainWindow: unknown = null;
     private astroTelemetryTimer: NodeJS.Timeout | null = null;
+    /** Logic for routing tasks between local and cloud brains (Economic Intelligence). */
     private router: SmartRouterService | null = null;
+    /** Internal router for assembling prompt context. */
     private talaRouter: TalaContextRouter;
+    private docIntel: DocumentationIntelligenceService;
     private codeControl: any = null;
     private logViewerService: LogViewerService | null = null;
-    private USE_STRUCTURED_LTMF = true; // Feature flag for migration
+    /** Feature flag for legacy memory migration. */
+    private USE_STRUCTURED_LTMF = true;
+    /** Safety guard: Maximum number of tool iterations before force-terminating a turn. */
     private MAX_TOOL_CALLS_PER_TURN = 8;
+    /** Telemetry: Detailed log of the most recent turn's tool usage and token counts. */
     private lastTurnExecutionLog?: TurnExecutionLog;
     private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
     private currentTurnAuditRecord?: PromptAuditRecord;
@@ -171,6 +212,7 @@ export class AgentService {
 
         this.router = new SmartRouterService(this.brain, this.brain);
         this.talaRouter = new TalaContextRouter(this.memory);
+        this.docIntel = new DocumentationIntelligenceService(process.cwd()); // Initial default, updated via setWorkspaceRoot
 
         this.tools.setMemoryService(this.memory);
         this.tools.setGoalManager(this.goals);
@@ -1132,6 +1174,7 @@ Exported standalone package from Tala.
     public setWorkspaceRoot(root: string) {
         this.ingestion.setWorkspaceRoot(root);
         this.tools.setRoot(root);
+        this.docIntel = new DocumentationIntelligenceService(root);
         if (this.systemInfo) this.systemInfo.workspaceRoot = root;
     }
 
@@ -1187,6 +1230,19 @@ Exported standalone package from Tala.
         } catch { return null; }
     }
 
+    /**
+     * Initializes the "Soul" (Python-based sidecar microservices).
+     * 
+     * This method:
+     * 1. Resolves the correct Python environment (canonical/sandboxed).
+     * 2. Sanitizes environment variables and injects User Identity.
+     * 3. Orchestrates parallel ignition of MCP servers (Tala Core, Mem0, Astro, World).
+     * 4. Establishes the Memory Graph connection via stdio.
+     * 5. Handles LTMF (Long-Term Memory Format) migrations.
+     * 6. Starts background loops like auto-ingestion and health checks.
+     * 
+     * @param pythonPath - Path to the local Python binary used for bootstrapping.
+     */
     public async igniteSoul(pythonPath: string) {
         if (this.isSoulReady) return;
         this.ingestion.setStructuredMode(this.USE_STRUCTURED_LTMF);
@@ -1289,11 +1345,15 @@ Exported standalone package from Tala.
             await this.refreshMcpTools();
             await this.syncAstroProfiles();
             await this.syncUserProfileAstro();
+            await this.docIntel.ignite();
         } catch (e) {
             console.error('[AgentService] igniteSoul failed:', this.stripPIIFromDebug(e));
         }
     }
 
+    /**
+     * Gracefully shuts down all active MCP sidecars and local inference engines.
+     */
     public async shutdown() {
         await Promise.all([this.rag.shutdown(), this.memory.shutdown(), this.inference.getLocalEngine().extinguish()]);
     }
@@ -1510,7 +1570,16 @@ Exported standalone package from Tala.
         return { isGreeting: false, greetingClass: 'none' };
     }
 
-    public async chat(userMessage: string, onToken: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[], capabilitiesOverride?: any) {
+    /**
+     * Primary chat entry point. Orchestrates the turn loop and artifact routing.
+     */
+    public async chat(
+        userMessage: string,
+        onToken?: (token: string) => void,
+        onEvent?: (type: string, data: any) => void,
+        images?: string[],
+        capabilitiesOverride?: any
+    ): Promise<AgentTurnOutput> {
         const assemblyStart = Date.now();
         const correlationId = uuidv4();
         auditLogger.setCorrelationId(correlationId);
@@ -1525,7 +1594,7 @@ Exported standalone package from Tala.
 
         // --- TALA CONTEXT ROUTER (UPGRADED PIPELINE) ---
         // Context routing yields the singular atomic TurnContext representation.
-        const turnObject = await this.talaRouter.process(`${this.activeSessionId}_${Date.now()}`, userMessage, activeMode as any);
+        const turnObject = await this.talaRouter.process(`${this.activeSessionId}_${Date.now()}`, userMessage, activeMode as any, this.docIntel);
         const memoryContext = turnObject.promptBlocks.map(b => `${b.header}\n${b.content}`).join('\n\n');
         const hasMemories = turnObject.retrieval.approvedCount > 0;
         const isGreeting = turnObject.intent.isGreeting;
@@ -1536,8 +1605,9 @@ Exported standalone package from Tala.
         }
 
         if (userMessage.startsWith('/') && this.functions?.exists(userMessage.substring(1).split(' ')[0])) {
-            onToken(await this.functions.executeFunction(userMessage.substring(1).split(' ')[0], userMessage.split(' ').slice(1)));
-            return;
+            const funcResult = await this.functions.executeFunction(userMessage.substring(1).split(' ')[0], userMessage.split(' ').slice(1));
+            onToken?.(funcResult);
+            return { message: funcResult, artifact: null, suppressChatContent: false };
         }
 
         const dynamicContext = `[EMOTIONAL STATE]: ${astroState}\n\n[MEMORY RECALL]: The memories below are your lived experiences — parts of who you are. Weave them naturally into your response the way a person would recall something that happened to them. Do not quote them verbatim or announce you are referencing them. If something in the conversation connects to a memory, let it surface organically. If no memory is relevant, simply respond without mentioning memory at all.`;
@@ -1829,7 +1899,7 @@ Exported standalone package from Tala.
                 });
 
                 const requestStart = Date.now();
-                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken, signal, toolsToSend, brainOptions);
+                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
 
                 this.logViewerService?.logPerformanceMetric({
@@ -1905,7 +1975,7 @@ Failure to provide a tool call will result in system termination.`;
                     const retryOptions: any = { temperature: 0.1 };
                     if (turnObject.intent.class === 'coding') retryOptions.tool_choice = 'required';
 
-                    const retryResponse = await this.brain.streamResponse(truncated, envelopeSystem + "\n\n" + systemPrompt, onToken, signal, filteredTools, retryOptions);
+                    const retryResponse = await this.brain.streamResponse(truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
 
                     calls = retryResponse.toolCalls || [];
                     if (calls.length === 0 && retryResponse.content) {
@@ -2169,8 +2239,39 @@ Failure to provide a tool call will result in system termination.`;
             }
         }
 
+        // --- ARTIFACT ROUTING ---
+        // Inspect tool results and final response to see if an artifact should be emitted
+        const toolResults = executionLog.toolCalls.filter(tc => tc.ok).map(tc => ({
+            name: tc.name,
+            args: tc.arguments,
+            result: tc.resultPreview
+        }));
+
+        const normalized = artifactRouter.normalizeAgentOutput(finalResponse, toolResults);
+
+        if (normalized.artifact) {
+            console.log(`[ArtifactRouter] Emitting artifact type=${normalized.artifact.type} id=${normalized.artifact.id}`);
+            if (onEvent) {
+                onEvent('artifact-open', normalized.artifact);
+            }
+            if (normalized.suppressChatContent) {
+                // If the UI is already streaming, this replaces the final state with a summary
+                // The UI will need to handle 'chat-done' with potential content replacement
+                finalResponse = normalized.message || finalResponse;
+
+                // Update the last assistant message in transientMessages if it exists
+                const lastAssistant = transientMessages.reverse().find(m => m.role === 'assistant');
+                if (lastAssistant) {
+                    lastAssistant.content = finalResponse;
+                }
+                transientMessages.reverse(); // put it back
+            }
+        }
+
         this.chatHistory.push(...transientMessages);
         this.saveSession();
+
+        return normalized;
     }
 
     private finalizeAssistantContent(intent: string, raw: string, executedToolCount: number, hasPendingCalls: boolean, mode: string = 'assistant'): string {
@@ -2376,6 +2477,18 @@ Failure to provide a tool call will result in system termination.`;
         return res.content;
     }
 
+    /**
+     * Executes a registered tool by name with provided arguments.
+     * 
+     * **Safety & Security:**
+     * - Enforces workspace sandboxing for all file system tools.
+     * - Proxies MCP tool calls to the `McpService` sidecar.
+     * - Redacts sensitive data in audit logs.
+     * 
+     * @param name - The tool name.
+     * @param args - Key-value pair arguments for the tool.
+     * @returns The stringified result of the tool execution.
+     */
     public async executeTool(name: string, args: any): Promise<any> {
         return await this.tools.executeTool(name, args);
     }
@@ -2657,10 +2770,16 @@ Failure to provide a tool call will result in system termination.`;
         return this.memory.delete(id);
     }
 
+    /**
+     * Updates a memory item by ID.
+     */
     public async updateMemory(id: string, text: string) {
         return this.memory.update(id, text);
     }
 
+    /**
+     * Returns the current model status and fidelity information.
+     */
     public getModelStatus() {
         const instance = this.getActiveInstance();
         const modelId = instance?.model || 'unknown';

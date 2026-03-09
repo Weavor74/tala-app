@@ -31,12 +31,23 @@ export interface ChatMessage {
     metadata?: any;
 }
 
+/**
+ * Represents a call to a specific tool/function requested by the LLM.
+ */
 export interface ToolCall {
+    /** Unique identifier for the tool call instance. */
     id: string;
+    /** The type of call (currently only 'function' is supported). */
     type: 'function';
+    /** The function definition and arguments provided by the model. */
     function: {
+        /** The name of the function to execute. */
         name: string;
-        arguments: any; // JSON object or string
+        /** 
+         * The arguments for the function. 
+         * Can be a JSON object (if already parsed) or a raw string. 
+         */
+        arguments: any;
     };
     /** Support for model-specific extensions (e.g., Gemini's thought_signature) */
     [key: string]: any;

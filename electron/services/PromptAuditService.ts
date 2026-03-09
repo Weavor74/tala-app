@@ -123,6 +123,23 @@ function redactSensitiveFields(obj: any): any {
 // PROMPT AUDIT SERVICE
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * LLM Governance & Transparency Engine.
+ * 
+ * The `PromptAuditService` provides detailed visibility into the final prompts 
+ * sent to AI models. It captures the assembly process, inclusion flags, 
+ * and raw payloads, ensuring that engineering decisions (e.g., context pruning) 
+ * are auditable and transparent.
+ * 
+ * **Core Responsibilities:**
+ * - **Pre-flight Auditing**: Captures the exact prompt bytes before they leave 
+ *    the application.
+ * - **Governance Logs**: Maintains a JSONL record of prompt metadata, 
+ *   including `sessionId`, `turnId`, and `intent`.
+ * - **Redaction**: Scrubs API keys and sensitive tokens before logging.
+ * - **Volume Analysis**: Tracks character counts per context block (Astro, 
+ *   Memory, History) to optimize prompt performance.
+ */
 export class PromptAuditService {
     private config: PromptAuditConfig;
     private logPath: string | null = null;
@@ -166,8 +183,13 @@ export class PromptAuditService {
     }
 
     /**
-     * Emit the audit record. Called from both post-assembly and pre-flight,
-     * but most commonly once with all fields populated from AgentService.
+     * Records a complete prompt audit event.
+     * 
+     * This is the primary entry point for capturing the final state of an 
+     * LLM request. Depending on the `level` configuration, it will output 
+     * to the console, to a persistent JSONL file, or both.
+     * 
+     * @param record - The fully assembled `PromptAuditRecord`.
      */
     public emit(record: PromptAuditRecord): void {
         if (!this.config.enabled || this.config.level === 'off') return;

@@ -235,10 +235,14 @@ export class WorkflowService {
     }
 
     /**
-     * Saves a workflow execution run to disk.
-     * @param {string} workflowId - ID of the workflow.
-     * @param {string} runId - Unique ID for this run.
-     * @param {any} data - The execution result/log data.
+     * Persists a workflow execution run to disk.
+     * 
+     * Runs are stored in the `.agent/workflow_runs/` directory as JSON files.
+     * The filename follows the pattern `{workflowId}_{runId}.json`.
+     * 
+     * @param workflowId - The unique ID of the parent workflow.
+     * @param runId - A unique identifier for this specific execution (e.g., a timestamp).
+     * @param data - The result object containing success status, logs, and context.
      */
     public saveRun(workflowId: string, runId: string, data: any) {
         const runsDir = path.join(this.workspaceDir, '.agent', 'workflow_runs');
@@ -330,7 +334,13 @@ export class WorkflowService {
         }
     }
     /**
-     * Updates the last run timestamp of a workflow.
+     * Updates the `lastRun` timestamp for a workflow definition.
+     * 
+     * Finds the workflow by ID, updates the timestamp in memory, and triggers 
+     * a `saveWorkflow()` to persist the change.
+     * 
+     * @param id - The workflow ID.
+     * @param timestamp - The epoch timestamp of the run.
      */
     public updateLastRun(id: string, timestamp: number) {
         const workflows = this.listWorkflows();
@@ -342,10 +352,11 @@ export class WorkflowService {
     }
 
     /**
-     * Initializes the workflow scheduler.
-     * Checks for due workflows every 60 seconds.
+     * Initializes the background workflow scheduler.
      * 
-     * @param onExecute - Callback to execute a workflow by ID.
+     * Starts a 60-second polling loop that calls `checkSchedules()`.
+     * 
+     * @param onExecute - Execution callback provided by the Main process to trigger a workflow.
      */
     public initScheduler(onExecute: (id: string) => void) {
         setInterval(() => {

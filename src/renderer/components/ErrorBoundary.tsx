@@ -1,8 +1,22 @@
+/**
+ * Git View Panel
+ *
+ * An advanced, full-screen Git management dashboard for deep repository operations.
+ *
+ * **Key Domains:**
+ * - **History**: Visualizes the commit log with metadata (author, hash, date).
+ * - **Branch Management**: Allows checking out existing branches and creating new experimental forks.
+ * - **Workdir Diff**: Displays an unpaged, live diff of uncommitted changes.
+ *
+ * **Architecture:**
+ * - Acts as an orchestration layer over `GitService` via IPC (`api.gitBranches`, `api.gitLog`, etc.).
+ * - Complements the `SourceControl.tsx` sidebar by providing a more expansive management UI.
+ */
 import React from 'react';
 
 /**
  * ErrorBoundary
- * 
+ *
  * A React class component that catches JavaScript errors in any child
  * component tree and renders a styled fallback UI instead of crashing
  * the entire application.

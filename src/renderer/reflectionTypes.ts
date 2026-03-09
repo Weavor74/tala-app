@@ -1,3 +1,14 @@
+/**
+ * Reflection & Soul Type Definitions
+ * 
+ * Defines the complex state for TALA's internal self-improvement system (Reflection)
+ * and its emotional modulation system (Soul).
+ * 
+ * **System Domains:**
+ * - **Reflection Engine**: Handles observations, proposals, risk assessments, and outcomes.
+ * - **Soul Engine**: Manages emotional vectors (`warmth`, `focus`, etc.) and identity evolution.
+ * - **Goal Planning**: Tracks self-improvement targets and pipeline phases.
+ */
 export type ChangeCategory = 'prompt' | 'workflow' | 'bugfix' | 'docs' | 'test';
 export type ChangeType = 'modify' | 'create' | 'delete' | 'patch';
 export type RiskScore = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;

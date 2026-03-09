@@ -76,7 +76,7 @@ try {
             existing.forEach(e => (e as HTMLElement).remove());
 
             let idCounter = 1;
-            const items = [];
+            const items: string[] = [];
 
             // Targeted selectors for interactive elements
             const interactiveSelectors = [

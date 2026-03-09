@@ -122,6 +122,19 @@ export class OllamaBrain implements IBrain {
         return finalMessages;
     }
 
+    /**
+     * generateResponse
+     * 
+     * Sends a conversation to the local Ollama server for non-streaming inference.
+     * Implements automatic fallback: if the selected model does not support native
+     * tool calling, it retries the request without the `tools` field, allowing
+     * the agent to fall back to text-based tool extraction.
+     * 
+     * @param messages - Ordered conversation history.
+     * @param systemPrompt - Role-defining system instructions.
+     * @param tools - Available tool definitions (JSON Schema).
+     * @param options - Inference parameters (temperature, timeout, etc).
+     */
     async generateResponse(messages: ChatMessage[], systemPrompt?: string, tools?: any[], options?: BrainOptions): Promise<BrainResponse> {
         const body: any = {
             model: this.model,
@@ -228,6 +241,25 @@ export class OllamaBrain implements IBrain {
         }
     }
 
+    /**
+     * streamResponse
+     * 
+     * Initiates a streaming inference request.
+     * 
+     * **Stability Features:**
+     * - **Global Timeout**: Aborts the request if it exceeds a hard time limit.
+     * - **Heartbeat Watchdog**: Aborts if the model goes silent for >90s mid-stream.
+     * - **Think Timeout**: Limits long-running reasoning model (<think> blocks).
+     * - **Repetition Guard**: Detects and breaks infinite token/sentence loops.
+     * - **Auto-Regen**: Detects banned scripted openers and silently restarts.
+     * 
+     * @param messages - Ordered conversation history.
+     * @param systemPrompt - Role-defining system instructions.
+     * @param onChunk - Callback for each generated token/text chunk.
+     * @param signal - External abort signal.
+     * @param tools - Available tool definitions.
+     * @param options - Model-specific options.
+     */
     async streamResponse(
         messages: ChatMessage[],
         systemPrompt: string,
@@ -278,15 +310,14 @@ export class OllamaBrain implements IBrain {
             }, GLOBAL_TIMEOUT_MS);
 
             // --- Per-token heartbeat watchdog ---
-            // The old one-shot timeout was cleared the moment HTTP 200 arrived (before
-            // any tokens). This watchdog resets every time a chunk is received — if the
-            // model goes silent for TOKEN_SILENCE_MS the request is aborted.
+            // Aborts if the model stops emitting tokens for a significant period.
             const TOKEN_SILENCE_MS = 90_000;  // 90 s of stream silence = stall
             const THINK_TIMEOUT_MS = 60_000; // 60 s inside a <think> block = runaway reasoning
             let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
             let thinkTimer: ReturnType<typeof setTimeout> | null = null;
             let inThinkBlock = false;
 
+            /** Resets the silence watchdog timer on every token chunk. */
             const resetHeartbeat = () => {
                 if (heartbeatTimer) clearTimeout(heartbeatTimer);
                 heartbeatTimer = setTimeout(() => {
@@ -295,6 +326,7 @@ export class OllamaBrain implements IBrain {
                 }, TOKEN_SILENCE_MS);
             };
 
+            /** Starts a timer specifically for reasoning blocks to prevent runaway loops. */
             const startThinkTimer = () => {
                 if (thinkTimer) return;
                 thinkTimer = setTimeout(() => {
@@ -303,6 +335,7 @@ export class OllamaBrain implements IBrain {
                 }, THINK_TIMEOUT_MS);
             };
 
+            /** Clears the reasoning block timer. */
             const clearThinkTimer = () => {
                 if (thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; }
             };

@@ -1,0 +1,228 @@
+{
+  "generated_from": {
+    "requirements_trace_matrix": "docs/traceability/requirements_trace_matrix.md",
+    "test_trace_matrix": "docs/traceability/test_trace_matrix.md",
+    "file_inventory": "docs/audit/file_inventory_full.json",
+    "implementation_enrichment": "active source file docblocks"
+  },
+  "feature_count": 7,
+  "features": [
+    {
+      "feature_name": "Agent Core Features",
+      "slug": "agent_core_features",
+      "capability": "",
+      "subsystems": [
+        "Agent Core"
+      ],
+      "components": [
+        "Agent Shell",
+        "Agent Service",
+        "Session Manager"
+      ],
+      "source_files": [
+        "`electron/main.ts`",
+        "`electron/services/AgentService.ts`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-001**",
+        "**REQ-SYS-002**",
+        "**REQ-AGENT-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [
+        "### Agent Service"
+      ],
+      "interface_refs": [],
+      "security_refs": []
+    },
+    {
+      "feature_name": "Build System Features",
+      "slug": "build_system_features",
+      "capability": "",
+      "subsystems": [
+        "Build System"
+      ],
+      "components": [
+        "Bootstrapper"
+      ],
+      "source_files": [
+        "`bootstrap.ps1`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-BLD-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [],
+      "interface_refs": [],
+      "security_refs": []
+    },
+    {
+      "feature_name": "Frontend Features",
+      "slug": "frontend_features",
+      "capability": "",
+      "subsystems": [
+        "Frontend"
+      ],
+      "components": [
+        "React UI",
+        "Chat Container"
+      ],
+      "source_files": [
+        "`src/App.tsx`",
+        "`src/components/ChatContainer.tsx`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-003**",
+        "**REQ-UI-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [
+        "## 4. Frontend (Renderer)"
+      ],
+      "interface_refs": [],
+      "security_refs": []
+    },
+    {
+      "feature_name": "Inference Engine Features",
+      "slug": "inference_engine_features",
+      "capability": "",
+      "subsystems": [
+        "Inference Engine"
+      ],
+      "components": [
+        "Brain Drivers",
+        "Brain Interface"
+      ],
+      "source_files": [
+        "`electron/brains/OllamaBrain.ts`",
+        "`electron/brains/IBrain.ts`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-006**",
+        "**REQ-INF-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [],
+      "interface_refs": [],
+      "security_refs": []
+    },
+    {
+      "feature_name": "Memory Systems Features",
+      "slug": "memory_systems_features",
+      "capability": "",
+      "subsystems": [
+        "Memory Systems"
+      ],
+      "components": [
+        "Semantic RAG",
+        "Vector Store"
+      ],
+      "source_files": [
+        "`mcp-servers/tala-core/server.py`",
+        "`mcp-servers/tala-core/`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-005**",
+        "**REQ-MEM-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [
+        "- **Purpose**: Hosts SQLite databases for the knowledge graph and vector stores for RAG."
+      ],
+      "interface_refs": [],
+      "security_refs": []
+    },
+    {
+      "feature_name": "Security Layer Features",
+      "slug": "security_layer_features",
+      "capability": "",
+      "subsystems": [
+        "Security Layer"
+      ],
+      "components": [
+        "Guardrail Service",
+        "Audit Logger",
+        "Policy Engine"
+      ],
+      "source_files": [
+        "`electron/services/GuardrailService.ts`",
+        "`electron/services/LoggingService.ts`",
+        "`electron/security/CodeAccessPolicy.ts`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-007**",
+        "**REQ-SYS-008**",
+        "**REQ-SEC-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [],
+      "interface_refs": [],
+      "security_refs": [
+        "The primary defense against the most critical threats (**TH-001**, **TH-002**) is the **Isolation Kernel** pattern, where reasoning is decoupled from execution, and all execution is governed by a non-bypassable policy engine (`CodeAccessPolicy`)."
+      ]
+    },
+    {
+      "feature_name": "Tool Execution Features",
+      "slug": "tool_execution_features",
+      "capability": "",
+      "subsystems": [
+        "Tool Execution"
+      ],
+      "components": [
+        "Tool Service",
+        "Native Handlers"
+      ],
+      "source_files": [
+        "`electron/services/ToolService.ts`"
+      ],
+      "verification_methods": [],
+      "test_locations": [],
+      "requirement_ids": [
+        "**REQ-SYS-004**",
+        "**REQ-TOOL-001**"
+      ],
+      "requirement_descriptions": [],
+      "notes": [],
+      "implementation_entries": [],
+      "implementation_behavior": [],
+      "architecture_refs": [
+        "- **Purpose**: The \"Reasoning Engine\". Coordinates the turn loop, prompt construction, and tool execution.",
+        "### Tool Service"
+      ],
+      "interface_refs": [
+        "| **ToolService** | **MCP Servers** | JSON-RPC (stdio) | Delegated tool execution (RAG, Astro, Mem0). | Medium-High |"
+      ],
+      "security_refs": []
+    }
+  ]
+}

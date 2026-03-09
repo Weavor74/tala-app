@@ -9,6 +9,23 @@ export interface CodeAccessPolicyOptions {
     mode?: 'auto' | 'manual';
 }
 
+/**
+ * Security Enforcement & Sandboxing Engine.
+ * 
+ * The `CodeAccessPolicy` is the primary safety gate for all filesystem and 
+ * shell operations. It defines the boundaries within which the agent is 
+ * allowed to operate, preventing both accidental and malicious escapes.
+ * 
+ * **Core Responsibilities:**
+ * - **Path Validation**: Ensures all file operations (read/write/delete) are 
+ *   anchored to the workspace root and respect extension/denylist filters.
+ * - **Command Safety**: Validates shell commands against a prefix allowlist 
+ *   and strictly blocks chaining operators (&&, |, ;) and destructive patterns.
+ * - **Mode Management**: Supports `auto` vs `manual` modes for governing 
+ *   permission prompts in the UI.
+ * - **Size Constraints**: Enforces maximum read sizes to prevent memory 
+ *   exhaustion from large file reads.
+ */
 export class CodeAccessPolicy {
     private workspaceRoot: string;
     private allowedExtensions: Set<string>;
@@ -54,7 +71,21 @@ export class CodeAccessPolicy {
     public getWorkspaceRoot() { return this.workspaceRoot; }
 
     /**
-     * Resolves and validates a path against the workspace root and denied patterns.
+     * Resolves and validates a relative path against the security policy.
+     * 
+     * **Security Logic:**
+     * 1. **Anchor Check**: Resolves path to absolute and ensures it starts 
+     *    with `workspaceRoot`.
+     * 2. **Extension Check**: Blocks non-text or dangerous extensions 
+     *    (e.g., .exe, .db).
+     * 3. **Denylist Check**: Uses `minimatch` to block `node_modules`, `.git`, 
+     *    and other protected paths.
+     * 4. **Exception Handling**: Allows read-only access to specific bundled 
+     *    binaries even if in a denied folder.
+     * 
+     * @param relPath - The path relative to the workspace root.
+     * @param operation - The type of filesystem operation being attempted.
+     * @returns Validation result with the resolved `fullPath`.
      */
     public validatePath(relPath: string, operation: 'read' | 'write' | 'delete' = 'read'): { ok: boolean, fullPath: string, error?: string } {
         const fullPath = path.resolve(this.workspaceRoot, relPath);
@@ -102,8 +133,18 @@ export class CodeAccessPolicy {
     }
 
     /**
-     * Validates a shell command against the allowlist and denylist.
-     * Expects a normalized command.
+     * Validates a shell command for safe execution.
+     * 
+     * **Safety Gates:**
+     * 1. **Chaining Prevention**: Categorically blocks shell operators (`&`, `|`, 
+     *    `;`, `<`, `>`) to prevent injection or uncontrolled redirection.
+     * 2. **Destructive Patterns**: Blocks known dangerous commands like 
+     *    `rm -rf /` or `format`.
+     * 3. **Whitelist Check**: Ensures the command starts with an approved 
+     *    utility (e.g., `npm`, `git`, `python`).
+     * 
+     * @param command - The normalized command string to validate.
+     * @returns Validation result with an error message on failure.
      */
     public validateCommand(command: string): { ok: boolean, error?: string } {
         if (!command) return { ok: false, error: 'Command cannot be empty' };

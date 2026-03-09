@@ -1,3 +1,8 @@
+/**
+ * Reflection Primitives
+ * 
+ * Core structural types for the reflection engine.
+ */
 export type ChangeCategory = 'prompt' | 'workflow' | 'bugfix' | 'docs' | 'test';
 export type ChangeType = 'modify' | 'create' | 'delete' | 'patch';
 export type RiskScore = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;

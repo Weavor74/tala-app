@@ -1,8 +1,13 @@
 /**
  * Workflow Templates Catalog
  * 
- * Pre-defined JSON structures for common automation workflows.
- * Used by Settings.tsx to bootstrap new workflows for users.
+ * A collection of pre-defined JSON schemas representing canonical automation flows.
+ * Users can use these as blueprints when creating new workflows in the `Settings` panel.
+ * 
+ * **Included Blueprints:**
+ * - **Summarize URL**: Web scraping -> AI Synthesis -> File Storage.
+ * - **Smart Git Commit**: Change analysis -> AI Message Generation -> VCS Operation.
+ * - **Deep Research**: Multi-step discovery and report compilation.
  */
 
 export interface WorkflowTemplate {

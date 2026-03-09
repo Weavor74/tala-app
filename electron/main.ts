@@ -1,7 +1,18 @@
 /**
- * Tala — Electron Main Process Entry Point
+ * Main Process Entry Point
+ * 
+ * This file is the "Central Nervous System" of the Electron application.
+ * It coordinates the application lifecycle (ready, window-all-closed),
+ * window management, and service orchestration.
+ * 
+ * **Initialization Flow:**
+ * 1. Calls `bootstrap()` to setup local data paths.
+ * 2. Instantiates all core services (Agent, Git, Rag, Memory, etc.).
+ * 3. Initializes the IPC router to bridge renderer calls to services.
+ * 4. Spawns the main UI window.
+ * 5. Starts background schedulers (Workflows, Backups).
  */
-import './bootstrap'; // MUST BE FIRST - Redirects appData to local /data folder
+import './bootstrap';
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -174,7 +185,15 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let isQuitting = false;
 
+/**
+ * createWindow
+ * 
+ * Orchestrates the creation of the application windows (Splash and Main).
+ * It configures the main window with the context bridge preload script
+ * and enables essential features like webviewTag for external tool integration.
+ */
 const createWindow = () => {
+  // 1. Create and show Splash Screen
   splashWindow = new BrowserWindow({
     width: 520, height: 380, transparent: true, frame: false, alwaysOnTop: true, resizable: false, center: true, skipTaskbar: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
@@ -186,6 +205,7 @@ const createWindow = () => {
     splashWindow.loadFile(path.join(__dirname, '../dist/splash.html'));
   }
 
+  // 2. Create and configure Main Window
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, backgroundColor: '#0a0a0f',
     webPreferences: {
@@ -201,6 +221,7 @@ const createWindow = () => {
     mainWindow?.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  // Auto-close splash after a delay
   const closeSplash = () => {
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.close();
@@ -209,6 +230,7 @@ const createWindow = () => {
   };
   setTimeout(closeSplash, 3000);
 
+  // Link services to the main window for UI updates
   terminalService.setWindow(mainWindow);
   agent.setMainWindow(mainWindow);
 };

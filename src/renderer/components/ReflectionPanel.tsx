@@ -3,10 +3,20 @@ import type { ReflectionDashboardState, ChangeProposal, SoulIdentity, SoulReflec
 import ReflectionProposalCard from './ReflectionProposalCard';
 
 /**
- * ReflectionPanel
+ * Reflection Dashboard Component
  * 
- * The central hub for TALA's self-improvement loop.
- * Now includes "Engineering" (code changes) and "Soul" (behavioral identity) tabs.
+ * The central UI hub for Tala's self-improvement and existential awareness systems.
+ * 
+ * **Tabs:**
+ * - **Engineering**: Displays system improvement proposals, execution pipeline
+ *   activity, and autonomous engineering telemetry. Allows users to trigger
+ *   manual reflection cycles.
+ * - **Tala's Soul**: Visualizes the agent's internal identity, including
+ *   core values, behavioral boundaries, and recent ethical reflections.
+ * 
+ * **Data Flow:**
+ * - Fetches metrics and state from `AgentService` via `tala` IPC bridge.
+ * - Listens for real-time telemetry and pipeline updates.
  */
 const ReflectionPanel: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'engineering' | 'soul'>('engineering');
@@ -441,6 +451,11 @@ const ReflectionPanel: React.FC = () => {
     );
 };
 
+/**
+ * MetricCard
+ * 
+ * A compact display for reflection metrics (e.g., Promotion Rate, Total Attempts).
+ */
 const MetricCard: React.FC<{ title: string; value: string | number; icon?: string }> = ({ title, value, icon }) => (
     <div style={{ background: 'rgba(31, 41, 55, 0.8)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(75, 85, 99, 0.4)' }}>
         <div style={{ color: '#9ca3af', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>
@@ -450,6 +465,11 @@ const MetricCard: React.FC<{ title: string; value: string | number; icon?: strin
     </div>
 );
 
+/**
+ * SoulCard
+ * 
+ * Visualizes a categorical list of identity attributes (Values, Boundaries, Roles).
+ */
 const SoulCard: React.FC<{ title: string; items: string[]; color: string }> = ({ title, items, color }) => (
     <div style={{ background: 'rgba(31, 41, 55, 0.8)', padding: '1.25rem', borderRadius: '12px', border: `1px solid ${color}33` }}>
         <h3 style={{ fontSize: '0.75rem', color: color, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '1rem', fontWeight: 700 }}>{title}</h3>
@@ -463,6 +483,12 @@ const SoulCard: React.FC<{ title: string; items: string[]; color: string }> = ({
     </div>
 );
 
+/**
+ * GoalPanel
+ * 
+ * Management interface for self-improvement goals. 
+ * Allows users to add new goals to the queue and manually trigger processing.
+ */
 const GoalPanel: React.FC<{ goals: SelfImprovementGoal[], onRefresh: () => void }> = ({ goals, onRefresh }) => {
     const tala = (window as any).tala;
     const [title, setTitle] = useState('');

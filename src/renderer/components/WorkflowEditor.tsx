@@ -1,9 +1,18 @@
 /**
  * Workflow Editor (Visual Node Graph)
  *
- * A drag-and-drop visual workflow editor built on React Flow. Users can
- * design automation workflows by dragging node types from a palette,
- * connecting them with edges, and configuring each node's properties.
+ * A sophisticated drag-and-drop visual workflow editor built on `React Flow`. 
+ * Enables users to bridge the gap between simple chat interactions and complex
+ * deterministic automation.
+ *
+ * **Architecture:**
+ * - **Frontend (Renderer)**: Uses `React Flow` to manage node coordinates, edges,
+ *   and UI configuration. Serializes state into a JSON schema compatible with
+ *   the backend `WorkflowEngine`.
+ * - **Backend (Main)**: Orchestrates execution, managing state transitions,
+ *   looping, and tool invocation.
+ * - **PTY Debugging**: Provides real-time visual feedback on current node execution
+ *   and step-by-step debugging via dedicated IPC channels.
  *
  * **Supported node types** (from PALETTE_ITEMS):
  * - `manual` — Manual trigger (entry point).
@@ -20,11 +29,10 @@
  * - `guardrail` — Safety check with pass/fail outputs.
  * - `subworkflow` — Embed another workflow.
  *
- * **Saving:** Serializes nodes + edges + metadata and calls
- * `tala.saveWorkflow(workflow)` via IPC.
- *
- * **Execution:** Calls `tala.runWorkflow(id)` which delegates to
- * `WorkflowEngine` in the main process.
+ * **Interaction Model:**
+ * - **Saving:** Calls `tala.saveWorkflow(workflow)` via IPC.
+ * - **Execution:** Calls `tala.runWorkflow(id)` for autonomous run.
+ * - **Debugging:** Uses `debugWorkflowStart`, `debugWorkflowStep`, and `debugWorkflowStop`.
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactFlow, {

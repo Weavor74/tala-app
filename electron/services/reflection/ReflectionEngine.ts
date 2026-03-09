@@ -1,3 +1,9 @@
+/**
+ * Reflection Reasoning Engine
+ * 
+ * Responsible for the "Reflect" phase of the self-improvement pipeline.
+ * It analyzes detected issues and generates prioritized hypotheses for root causes.
+ */
 import { ReflectionIssue, ReflectionHypothesis } from './reflectionEcosystemTypes';
 import { LogInspectionService } from './LogInspectionService';
 import { RepoInspectionService } from './RepoInspectionService';

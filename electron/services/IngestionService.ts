@@ -4,11 +4,21 @@ import { RagService } from './RagService';
 import { LogViewerService } from './LogViewerService';
 
 /**
- * IngestionService
+ * Automated Knowledge Indexing Service.
  * 
- * Monitors the 'memory/' directory and automatically ingests/indexes 
- * documents into the RAG system. Ensures that the AI's long-term memory
- * is always up to date.
+ * The `IngestionService` monitors the workspace `memory/` directory and 
+ * coordinates the ingestion of new documents into the RAG vector store. 
+ * It ensures that the AI's long-term memory remains synchronized with 
+ * local file changes.
+ * 
+ * **Core Responsibilities:**
+ * - **Directory Monitoring**: Scans inbox folders (e.g., `roleplay`, `assistant`) 
+ *   for new `.md` or `.txt` files.
+ * - **Lifecycle Pipe**: Moves processed files to a dedicated `processed/` 
+ *   directory after successful indexing.
+ * - **Background Polling**: Operates a low-priority background loop to 
+ *   periodically refresh the knowledge base.
+ * - **Legacy Cleanup**: Handles archiving of deprecated memory formats.
  */
 export class IngestionService {
     private isScanning = false;
@@ -43,8 +53,16 @@ export class IngestionService {
     }
 
     /**
-     * Performs a full scan of the memory directory and ingests any new/updated files.
-     * Moves successfully ingested files to the 'processed' subdirectory.
+     * Executes a full synchronization scan of the memory inbox.
+     * 
+     * **Workflow:**
+     * 1. Verifies RAG baseline readiness.
+     * 2. Scans designated folders for untracked documents.
+     * 3. Moves each file to a category-specific `processed/` subdirectory.
+     * 4. Calls `RagService.ingestFile` to generate embeddings and index the content.
+     * 5. Logs performance metrics for ingestion latency.
+     * 
+     * @returns A summary of processed files and encountered errors.
      */
     public async scanAndIngest(): Promise<{ total: number; ingested: number; errors: number }> {
         if (this.isScanning) return { total: 0, ingested: 0, errors: 0 };

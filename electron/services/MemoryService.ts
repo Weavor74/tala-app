@@ -45,29 +45,25 @@ export interface MemoryItem {
 }
 
 /**
- * MemoryService
+ * Fact-Based Conversational Memory Engine.
  * 
- * Provides short-term, conversational memory for the Tala agent. Implements a
- * dual-storage strategy with an MCP remote backend (Mem0) as the primary store
- * and a local JSON file as a fallback.
+ * The `MemoryService` provides episodic and semantic memory for the agent, 
+ * specializing in short-term facts, preferences, and state. It implements 
+ * a high-reliability dual-storage strategy.
  * 
  * **Architecture:**
- * - **Primary**: Remote Mem0 MCP server (`mem0-core/server.py`) accessed via
- *   the MCP SDK. Provides semantic search and AI-powered memory extraction.
- * - **Fallback**: Local JSON file at `{userData}/tala_memory.json`. Uses simple
- *   keyword matching for search. Always receives writes for redundancy.
+ * - **Primary (Remote)**: Mem0 MCP server (`mem0-core/server.py`) for AI-powered 
+ *   extraction and graph-based relationships.
+ * - **Fallback (Local)**: Synchronous JSON persistence at `tala_memory.json` 
+ *   for instant recovery and redundancy.
  * 
- * **Difference from RagService:**
- * - `MemoryService` = short-term, conversational memory (facts, preferences, turns).
- * - `RagService` = long-term, document-based memory (narrative files, knowledge base).
- * 
- * @example
- * ```typescript
- * const memory = new MemoryService();
- * await memory.ignite('/path/to/python', '/path/to/server.py');
- * await memory.add('User prefers TypeScript over JavaScript');
- * const results = await memory.search('programming language preference');
- * ```
+ * **Key Features:**
+ * - **Composite Scoring**: Reranks memories using semantic similarity, 
+ *   salience, recency, and confidence.
+ * - **Contradiction Detection**: Automatically marks old facts as contested 
+ *   or superseded when new information conflicts.
+ * - **Association Expansion**: Performs one-hop graph walks to retrieve 
+ *   contextually related memories.
  */
 export class MemoryService {
     /** MCP SDK client instance for communicating with the remote Mem0 server. Null if not connected. */

@@ -1,4 +1,10 @@
 /**
+ * Strategic Planning Type Definitions
+ * 
+ * Defines the structures used by TALA's Navigator to simulate and evaluate
+ * different paths for achieving a high-level goal.
+ */
+/**
  * Represents a single strategic path for achieving a goal.
  */
 export interface Strategy {

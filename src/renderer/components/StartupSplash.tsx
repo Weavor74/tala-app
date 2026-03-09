@@ -1,3 +1,13 @@
+/**
+ * StartupSplash
+ * 
+ * A high-priority loading overlay that manages the application's boot sequence.
+ * 
+ * **Responsibilities:**
+ * - Visual Feedback: Displays a progress bar and status text (Initializing, Loading Core, Ready).
+ * - IPC Sync: Listens to the `startup-status` event from the main process.
+ * - Graceful Exit: Fades out upon 100% completion or triggers a safety timeout to prevent soft-locks.
+ */
 import React, { useEffect, useState } from 'react';
 
 export const StartupSplash: React.FC = () => {

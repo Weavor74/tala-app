@@ -1,5 +1,28 @@
+/**
+ * Log Viewer Panel
+ * 
+ * An advanced diagnostic interface for inspecting system logs, performance metrics,
+ * and subsystem health snapshots.
+ * 
+ * **Key Features:**
+ * - **Multi-source Reading**: Switches between different log providers (e.g., standard, specialized).
+ * - **Diagnostic Intelligence**: Calculates error/warn counts and unique session/turn distributions.
+ * - **Correlation Engine**: Links related logs by `sessionId` or `turnId` to reconstruct events.
+ * - **Timeline Visualization**: Reconstructs the execution flow for specific agent turns.
+ * - **Health Monitoring**: Displays real-time status of backend subsystems (Ollama, RAG, etc.).
+ * - **Log Management**: Supports archiving, clearing, and exporting log data.
+ * 
+ * @param api The `window.tala` IPC bridge.
+ */
 import React, { useState, useEffect, useMemo } from 'react';
-import type { LogViewerEntry, LogSourceInfo, LogSeverity, LogHealthSnapshot, LogDiagnosticsSummary, PerformanceSummary } from '../logTypes';
+import type {
+    LogSeverity,
+    LogViewerEntry,
+    LogSourceInfo,
+    LogHealthSnapshot,
+    PerformanceSummary,
+    LogDiagnosticsSummary
+} from '../logTypes';
 
 interface LogViewerPanelProps {
     api: any;

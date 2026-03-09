@@ -37,58 +37,38 @@ export interface SystemInfo {
 }
 
 /**
- * SystemService
+ * System Environment Detection & Configuration Engine.
  * 
- * Detects and reports comprehensive information about the user's system
- * environment. This is the foundation service that other services depend on
- * to resolve runtime paths and configure execution environments.
+ * The `SystemService` is a foundational utility that probes the host machine 
+ * to resolve runtime paths, detect virtual environments, and aggregate 
+ * environment variables. It ensures that the agent has a complete "map" 
+ * of the execution environment before attempting to run external code.
  * 
- * **Detection capabilities:**
- * 1. **OS Info**: Type, platform, and CPU architecture.
- * 2. **Node.js**: Path and version (via `where`/`which` commands).
- * 3. **Python (System)**: Path and version (tries `python` first, then `python3`).
- * 4. **Python (Venv)**: Deep-scans the workspace root and one level of subdirectories
- *    for virtual environments named `venv`, `.venv`, or `env`.
- * 5. **Environment Variables**: Merges `process.env` with venv environment and `.env` file values.
- * 
- * @example
- * ```typescript
- * const system = new SystemService();
- * const info = await system.detectEnv('/path/to/workspace');
- * console.log(info.pythonEnvPath); // '/path/to/workspace/venv/Scripts/python.exe'
- * console.log(info.envVariables?.OPENAI_API_KEY); // From .env file
- * ```
+ * **Core Responsibilities:**
+ * - **OS Fingerprinting**: Reports system type, architecture, and platform.
+ * - **Runtime Resolution**: Locates Node.js and system-level Python executables.
+ * - **Venv Discovery**: Scans the workspace for virtual environments (`venv`, `.venv`) 
+ *   and resolves their specific Python binaries.
+ * - **Variable Merging**: Combines `process.env`, `.env` file values, and venv-specific 
+ *   variables into a unified environment map.
+ * - **Execution Safety**: Performs preflight checks to ensure selected runtimes 
+ *   are functional.
  */
 export class SystemService {
     /**
-     * Performs a comprehensive detection of the system environment.
+     * Performs a deep probe of the host system and workspace.
      * 
-     * **Detection phases:**
+     * **Detection Phases:**
+     * 1. **OS Metadata**: Captures platform and architecture.
+     * 2. **Executable Paths**: Resolves Node and Python binaries via standard 
+     *    platform utilities (`where`/`which`).
+     * 3. **Workspace Scan**: If `workspaceDir` is provided, performs a deep 
+     *    recursive scan for Python virtual environments.
+     * 4. **Environment Aggregation**: Merges `.env` file contents over system 
+     *    and venv variables, ensuring a correct runtime context.
      * 
-     * 1. **Basic OS info**: Reads `os.type()`, `os.platform()`, `os.arch()`.
-     * 2. **Node.js detection**: Runs `where node` (Windows) or `which node` (Unix)
-     *    to find the Node.js executable path.
-     * 3. **Python detection (System)**: Tries `python --version` first, falls back
-     *    to `python3 --version`. Uses `where`/`which` to resolve the executable path.
-     * 4. **Virtual environment detection**: If `workspaceDir` is provided, scans for
-     *    `venv/`, `.venv/`, or `env/` directories in the workspace root AND one level
-     *    of subdirectories. For each candidate, checks if the Python executable exists
-     *    (`Scripts/python.exe` on Windows, `bin/python` on Unix).
-     * 5. **Venv environment capture**: When a venv is found, runs a tiny Python script
-     *    inside the venv to dump `os.environ` as JSON, capturing all environment
-     *    variables the venv would set (including `PATH` modifications). These are
-     *    merged into the returned `envVariables`.
-     * 6. **`.env` file parsing**: If a `.env` file exists in the workspace root,
-     *    parses it line-by-line (supports `KEY=VALUE`, ignores comments `#`, strips
-     *    surrounding quotes) and merges the values into `envVariables`.
-     * 
-     * **Environment variable priority** (last wins):
-     * `process.env` < `venv os.environ` < `.env` file
-     * 
-     * @param {string} [workspaceDir] - Optional absolute path to the workspace root.
-     *   If provided, enables venv detection, `.env` file parsing, and workspace-specific
-     *   environment variable merging. If omitted, only system-level detection is performed.
-     * @returns {Promise<SystemInfo>} A complete system information object.
+     * @param workspaceDir - Optional absolute path to anchor the workspace search.
+     * @returns A `SystemInfo` snapshot reflecting the current detection state.
      */
     public async detectEnv(workspaceDir?: string): Promise<SystemInfo> {
         const info: SystemInfo = {

@@ -1,15 +1,16 @@
+/**
+ * Strategy Generation Engine (The Navigator)
+ * 
+ * Responsible for calculating and evaluating implementation "Flight Paths" 
+ * for complex engineering goals. It leverages LLM reasoning to brainstorm 
+ * distinct technical approaches and applies risk/cost scoring based on 
+ * workspace context and emotional modulation.
+ */
 import { IBrain } from '../../brains/IBrain';
 import { Strategy, StrategicSimulation } from './strategyTypes';
 import { GoalNode } from './types';
 import { v4 as uuidv4 } from 'uuid';
 
-/**
- * StrategyEngine (The Navigator)
- * 
- * Responsible for generating and evaluating multiple implementation paths ("Flight Paths")
- * for complex goals. It uses the LLM to brainstorm distinct approaches and then
- * applies scoring for risk and cost.
- */
 export class StrategyEngine {
     private brain: IBrain;
 

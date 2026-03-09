@@ -1,3 +1,13 @@
+/**
+ * ConflictEditor Component
+ * 
+ * A specialized interactive diff viewer for resolving git-style merge conflicts.
+ * 
+ * **Mechanism:**
+ * - Parsers: Splices file content into `normal` and `conflict` chunks using standard markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+ * - Interaction: Provides per-chunk resolution actions (Accept Current, Accept Incoming, Accept Both).
+ * - Completion: Concatenates resolved chunks and notifies the caller via `onResolve`.
+ */
 import React, { useState, useEffect } from 'react';
 
 interface ConflictChunk {

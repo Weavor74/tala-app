@@ -1,11 +1,15 @@
 /**
- * EmotionDisplay — Compact radar chart of Tala's 7-axis emotional state.
- *
- * Renders a pure-SVG spider/radar chart showing:
- * Warmth, Wit, Intensity, Melancholy, Confidence, Introspection, Calm
- *
- * Fetches state via `get-emotion-state` IPC on mount and after each
- * chat turn (listens for `chat-done` event).
+ * EmotionDisplay Widget
+ * 
+ * A compact radar (spider) chart visualizing TALA's internal emotional vector.
+ * 
+ * **Visuals:**
+ * - Radar Chart: Maps 8 emotional axes (Warmth, Focus, Confidence, Calm, Empathy, Fear, Anger, Lust).
+ * - Real-time Integration: Listens for `astro-update` and `chat-done` events to refresh the state.
+ * - UX: Displays as a small indicator dot in the header, expanding into a full chart on hover.
+ * 
+ * **Data Source:**
+ * - Leverages the `AstroEngine` (via `getEmotionState`) to obtain a high-dimensionality mood vector.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 

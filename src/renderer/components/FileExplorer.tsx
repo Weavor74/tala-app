@@ -1,18 +1,19 @@
 /**
  * File Explorer Component
- *
- * Tree-view file browser displayed in the left sidebar panel.
- * Supports recursive directory expansion, right-click context menus,
- * and file operations (create file/folder, rename, delete, copy, move).
- *
+ * 
+ * A comprehensive tree-view browser for the current workspace, integrated into the left sidebar.
+ * 
+ * **Architecture:**
+ * - **Lazy Loading**: Directories are loaded on-demand via `tala.listDirectory`.
+ * - **Reactive Updates**: Synchronizes with disk changes via the `file-changed` event.
+ * - **IPC Integration**: Offloads heavy filesystem operations (CRUD) to the `TerminalService` or `FileService`.
+ * - **UI Features**: Supports right-click context menus, multi-modal file creation, and drag-and-drop metaphors (via clipboard).
+ * 
  * **Data flow:**
  * - Calls `tala.listDirectory(path)` to load directory contents.
  * - Opens files in the editor via the `onOpenFile` callback.
  * - Mutates the filesystem via `tala.createFile`, `tala.deleteFile`,
  *   `tala.createDirectory`, `tala.movePath`, `tala.copyPath`.
- *
- * The tree state (expanded directories, loaded children) is held
- * entirely in React state to avoid re-fetching unchanged subtrees.
  */
 import React, { useState, useEffect } from 'react';
 

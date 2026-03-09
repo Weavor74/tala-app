@@ -1,3 +1,15 @@
+/**
+ * FirstRunWizard
+ * 
+ * An introductory onboarding flow that triggers upon the application's first launch.
+ * 
+ * **Steps:**
+ * 1. **Welcome**: High-level introduction to TALA's capabilities.
+ * 2. **Infrastructure**: Informs the user about the local inference engine requirements (Ollama).
+ * 3. **Ready**: Briefs the user on hotkeys and sidebar navigation.
+ * 
+ * **Completion:** Calls `onComplete` to transition into the main application workspace.
+ */
 import React, { useState } from 'react';
 
 interface FirstRunWizardProps {

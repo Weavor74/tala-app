@@ -1,25 +1,34 @@
 /**
  * User Profile Editor
  *
- * Full-page form component for editing the user's deep profile data.
- * Renders sections for identity, contact, work history, education,
- * hobbies, and social network. On save, writes to `user_profile.json`
- * via `tala.saveProfile()`.
- *
- * Uses `profileData.ts` for types and default values.
+ * A high-confidentiality interface for managing the user's "Deep Profile".
+ * This data acts as the ground truth for TALA's identity system and PII handling.
+ * 
+ * **Content Domains:**
+ * - **Identity**: Legal names, birth data, and RP (Roleplay) aliases.
+ * - **Residence**: Physical address and contact vectors.
+ * - **History**: Professional employment and educational background.
+ * - **Social Network**: Trusted contacts and relational context.
+ * 
+ * **Security Context:**
+ * - Writes to `user_profile.json` via the encrypted `saveProfile` IPC handler.
+ * - This component is protected by strict PII leakage guards at the service layer.
  */
 import { useState, useEffect } from 'react';
 import { DEFAULT_PROFILE } from './profileData';
 import type { UserDeepProfile } from './profileData';
 
 /**
- * Reusable labeled text input field.
- *
- * @param {string} label - Field label text.
- * @param {string} value - Current input value.
- * @param {Function} onChange - Callback with new value string.
- * @param {string} placeholder - Placeholder text.
- * @param {string} width - CSS width (default '100%').
+ * Labeled Form Field
+ * 
+ * Unified input component for the profile editor.
+ * 
+ * @param {Object} props
+ * @param {string} props.label Visual label for the input.
+ * @param {string} props.value Current state values.
+ * @param {Function} props.onChange React state setter callback.
+ * @param {string} [props.placeholder] Optional input hint.
+ * @param {string} [props.width] Optional CSS width override.
  */
 const Field = ({ label, value, onChange, placeholder, width = '100%' }: any) => (
     <div style={{ marginBottom: 12, width }}>

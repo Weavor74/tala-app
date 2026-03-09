@@ -3,11 +3,21 @@ import fs from 'fs';
 import { app } from 'electron';
 
 /**
- * SettingsManager
+ * High-Integrity Settings Management Engine.
  * 
- * Centralized, safe settings loader and writer for `app_settings.json`.
- * Implements a 2000ms in-memory cache to reduce redundant disk I/O,
- * especially from rapid UI polling or multiple service initializations.
+ * The `SettingsManager` provides atomic, cached, and deep-merged I/O for the 
+ * application's `app_settings.json` file. It ensures that the system always 
+ * has a valid configuration, even in the event of disk corruption or 
+ * partial writes.
+ * 
+ * **Key Features:**
+ * - **Atomic Writes**: Uses a `.tmp` swap strategy to prevent file corruption.
+ * - **Burst-Resistant Cache**: Implements a short-TTL memory cache to collapse 
+ *   redundant reads from the UI or concurrent services.
+ * - **Deep Schema Merging**: Automatically fills missing keys with system 
+ *   defaults during load.
+ * - **Auto-Recovery**: Detects JSON corruption, backs up the damaged file to 
+ *   `.bak`, and restores factory defaults.
  */
 
 // Module-level cache to collapse bursts of identical reads (e.g. from UI polling)
@@ -161,13 +171,18 @@ export function deepMerge(target: any, source: any): any {
 }
 
 /**
- * Loads settings from disk with full safety:
- * 1. If file doesn't exist → returns a deep copy of DEFAULT_SETTINGS.
- * 2. If JSON parse fails → backs up corrupt file as `.bak`, returns defaults.
- * 3. If parsed object is missing required keys → merges with defaults.
+ * Securely loads the application configuration.
  * 
- * @param settingsPath - Absolute path to `app_settings.json`.
- * @returns A valid settings object, guaranteed to have all top-level keys.
+ * **Load Sequence:**
+ * 1. **Cache Check**: Returns a deep copy from memory if within TTL.
+ * 2. **Disk Read**: Synchronously reads the JSON file.
+ * 3. **Validation**: verifies the top-level structure.
+ * 4. **Merge**: Deep-merges disk values over `DEFAULT_SETTINGS` to ensure 
+ *    newly-added schema keys are present.
+ * 5. **Error Recovery**: Transparently handles corruption by reverting to defaults.
+ * 
+ * @param settingsPath - The absolute filesystem path to the settings file.
+ * @returns A guaranteed-valid settings object.
  */
 export function loadSettings(settingsPath: string): Record<string, any> {
     const now = Date.now();
@@ -221,15 +236,16 @@ export function loadSettings(settingsPath: string): Record<string, any> {
 }
 
 /**
- * Writes settings to disk atomically.
+ * Atomically persists the application configuration.
  * 
- * Writes to a `.tmp` file first, then renames to the target path.
- * This prevents partial writes from corrupting the settings file if
- * the process is killed mid-write.
+ * **Write Strategy:**
+ * To prevent partial-write corruption, this method writes to a temporary file 
+ * and then performs an atomic rename. If the rename fails (e.g., across 
+ * partitions), it falls back to a direct write with a retry.
  * 
- * @param settingsPath - Absolute path to `app_settings.json`.
- * @param data - The settings object to persist.
- * @returns `true` on success, `false` on failure.
+ * @param settingsPath - Target absolute path to `app_settings.json`.
+ * @param data - The configuration object to save.
+ * @returns `true` if saved successfully.
  */
 export function saveSettings(settingsPath: string, data: Record<string, any>): boolean {
     try {

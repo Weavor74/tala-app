@@ -1,8 +1,13 @@
 /**
- * userProfileTypes.ts
+ * User Identity & PII Type Definitions
  * 
- * Shared type definitions for User Profile and Identity.
- * These are used by both the Electron main process and the React renderer.
+ * Shared schemas for the "Deep Profile" and "Identity Context".
+ * These types form the contract between the high-confidentiality renderer root
+ * and the backend PII handling services.
+ * 
+ * **Security Context:**
+ * - `FullUserProfilePII` is never sent to LLMs; it is restricted to local storage.
+ * - `UserIdentityContext` is the "prompt-safe" variant used for agent character grounding.
  */
 
 export interface Address {

@@ -1,3 +1,24 @@
+/**
+ * Reflection Ecosystem Orchestrator
+ * 
+ * The `ReflectionService` is the central nervous system for TALA's autonomous
+ * self-improvement and self-modification capabilities. It coordinates a complex
+ * array of sub-services to implement a secure, validated "Observe-Reflect-Act" loop.
+ * 
+ * **Key Responsibilities:**
+ * - **Orchestration**: Manages the lifecycle of autonomous tasks via the `ReflectionScheduler`.
+ * - **Self-Modification**: Provides the gated `selfModify` tool for safe code changes.
+ * - **Telemetry & Journaling**: Maintains an immutable record of all system reflections and changes.
+ * - **Capability Gating**: Enforces strict permission rules for system-altering actions.
+ * - **Intent Routing**: Analyzes user requests to determine if they should be handled as reflections.
+ * 
+ * **Pipeline Phases:**
+ * 1. **Observe**: Scans logs and repository state for anomalies (`SelfImprovementService`).
+ * 2. **Reflect**: Analyzes issues and formulates hypotheses (`ReflectionEngine`).
+ * 3. **Stage**: Prepares candidate patches in a sandbox (`PatchStagingService`).
+ * 4. **Validate**: Runs automated tests and safety checks (`ValidationService`).
+ * 5. **Promote**: Deploys approved changes to the live codebase (`PromotionService`).
+ */
 import { ipcMain, BrowserWindow } from 'electron';
 import { loadSettings } from '../SettingsManager';
 

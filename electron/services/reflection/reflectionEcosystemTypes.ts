@@ -1,3 +1,21 @@
+/**
+ * Reflection Ecosystem Type Definitions
+ * 
+ * This file contains the complete type system for TALA's self-improvement pipeline.
+ * It covers the entire lifecycle of an autonomous engineering task, from issue discovery
+ * to validation and promotion.
+ * 
+ * **State Entities:**
+ * - **ReflectionIssue**: A detected problem or opportunity for improvement.
+ * - **CandidatePatch**: A staged code change targeting an issue.
+ * - **ValidationPlan/Report**: The automated testing protocol and results.
+ * - **PromotionRecord**: The final authoritative record of a deployed change.
+ * 
+ * **Control Entities:**
+ * - **SelfImprovementGoal**: A user-defined or system-generated target.
+ * - **ReflectionQueueItem**: A task in the agent's work pipeline.
+ * - **CapabilityGating**: Access control tokens for critical system operations.
+ */
 export type ReflectionIssueStatus = 'open' | 'analyzing' | 'hypothesized' | 'staged' | 'validated' | 'promoted' | 'rejected' | 'failed' | 'rolled_back';
 
 export type ToolCapability =

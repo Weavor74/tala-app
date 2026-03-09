@@ -18,8 +18,16 @@ import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
 
 /**
- * React wrapper around an xterm.js terminal instance.
- * Initializes on mount, connects to the backend PTY, and auto-disposes on unmount.
+ * Terminal Interface Component
+ * 
+ * A React wrapper for `xterm.js` that provides a functional terminal within the IDE.
+ * 
+ * **Bridging:**
+ * - Connects to the main process via `TerminalService` using the `tala` IPC bridge.
+ * - Handles bi-directional data flow (user typing `term.onData` -> PTY, PTY data -> `term.write`).
+ * - Supports automatic resizing based on the container dimensions.
+ * 
+ * @param id Unique identifier for the terminal session (tied to a specific PTY on the backend).
  */
 export const Terminal: React.FC<{ id: string }> = ({ id }) => {
     const containerRef = useRef<HTMLDivElement>(null);

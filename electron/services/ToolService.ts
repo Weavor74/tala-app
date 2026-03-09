@@ -27,36 +27,14 @@ export interface ToolDefinition {
 }
 
 /**
- * ToolService
+ * Tool Registry Service
  * 
- * Central registry for all tools available to the Tala AI agent. Tools are
- * callable functions that the AI can invoke during conversations to perform
- * actions like reading/writing files, browsing the web, running terminal
- * commands, capturing screenshots, and interacting with memory services.
+ * This service manages the lifecycle of all AI-executable tools. It handles:
+ * - **Core Tools**: File I/O, Browser automation, Terminal interaction.
+ * - **Service Tools**: Memory graph, Astro emotion engine, RAG search.
+ * - **MCP Tools**: Dynamic tool discovery from external MCP servers.
  * 
- * **Tool categories:**
- * 
- * | Category | Tools | Registered by |
- * |----------|-------|---------------|
- * | File I/O | `write_file`, `read_file`, `list_files` | `registerCoreTools()` |
- * | Browser | `browse`, `browser_click`, `browser_type`, `browser_scroll`, `browser_hover`, `browser_press_key`, `browser_get_dom`, `browser_screenshot`, `search_web` | `registerCoreTools()` |
- * | Terminal | `terminal_run`, `execute_command`, `execute_script` | `registerCoreTools()` |
- * | Memory | `mem0_search`, `mem0_add`, `mem0_get_recent` | `setMemoryService()` |
- * | Desktop | `desktop_screenshot`, `desktop_input` | `setMemoryService()` |
- * 
- * **How tools reach the AI:**
- * `getToolSchemas()` generates a formatted string of all registered tools,
- * which `AgentService` injects into the system prompt. When the AI responds
- * with a `TOOL_CALL` block, `AgentService.chat()` parses the tool name and
- * arguments, then calls `executeTool()` to run the tool.
- * 
- * @example
- * ```typescript
-    * const tools = new ToolService();
- * tools.setRoot('/workspace');
- * const schemas = tools.getToolSchemas();
- * const result = await tools.executeTool('write_file', { path: 'hello.txt', content: 'Hello!' });
- * ```
+ * Each tool follows the OpenAI `function` schema format.
  */
 export class ToolService {
     /** Map of registered tools, keyed by tool name. */
@@ -385,6 +363,15 @@ export class ToolService {
      * intercepted and dispatched by `AgentService.chat()` via event callbacks.
      * 
      * @private
+     */
+    /**
+     * Registers the foundational toolset for the agent.
+     * 
+     * **Tool Categories:**
+     * - **FileSystem**: `fs_read_text`, `fs_write_text`, `fs_list`.
+     * - **Browser**: `browser_open`, `browser_action`.
+     * - **Terminal**: `shell_run`, `shell_interactive`.
+     * - **RAG**: `rag_search`.
      */
     private registerCoreTools() {
         // Tool: write_file
@@ -1308,6 +1295,10 @@ export class ToolService {
     /**
      * Recursively rewrites a JSON schema to comply with OpenAI's Strict Structured Outputs (GBNF).
      * Enforces `additionalProperties: false` on all objects and explicitly lists all properties in `required`.
+     * 
+     * @param schema - The raw JSON Schema to transform.
+     * @param seen - Recursion guard for cyclic structures.
+     * @returns A strict, compatible JSON Schema.
      */
     private makeStrictSchema(schema: any, seen = new WeakSet()): any {
         if (!schema || typeof schema !== 'object') return schema;
@@ -1461,14 +1452,9 @@ export class ToolService {
     }
 
     /**
-     * Executes a registered tool with the given arguments.
-     *
-     * @param {string} name - The name of the tool to execute.
-     * @param {any} args - The arguments parsed from the AI's TOOL_CALL block.
-     * @param {ReadonlySet<string>} [allowedNames] - Optional runtime allowlist from AgentService.
-     *   When provided (strongly recommended), any name not in this set throws BEFORE registry lookup.
-     *   This is Gate #2 — a defense-in-depth layer beneath the AgentService pre-execution check.
-     * @returns {Promise<any>}
+     * @param name - The tool name as identified by the Brain.
+     * @param args - The arguments parsed from the Brain's response.
+     * @param allowedNames - Optional runtime allowlist from AgentService.
      */
     public async executeTool(name: string, args: any, allowedNames?: ReadonlySet<string>): Promise<any> {
         // Strip provider-specific prefixes if present (e.g. Gemini OpenAI shim prepends 'default_api:')

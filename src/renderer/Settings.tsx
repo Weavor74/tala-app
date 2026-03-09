@@ -1,33 +1,21 @@
 /**
- * Settings Panel (~2700 lines)
+ * Settings Panel
  *
  * The master configuration UI for the entire Tala application.
- * Renders a multi-tab settings page with the following sections:
+ * Provides a comprehensive interface for managing infrastructure, security, and persona.
+ * 
+ * **Key Domains:**
+ * - **Inference**: Configures LLM providers (Ollama, cloud endpoints).
+ * - **Agent Profile**: Fine-tunes the personality, memory, and tools for the current persona.
+ * - **Storage/RAG**: Manages vector database connectivity and embeddings.
+ * - **Security**: Handles SSO providers (OAuth) and local credential management.
+ * - **Automations**: Integrates with `WorkflowEditor` for graphical programming.
+ * - **Observability**: Embeds `LogViewerPanel` for monitoring and PTY diagnostics.
  *
- * - **General** — Deployment mode (USB/Local/Remote).
- * - **Inference** — Manage LLM provider instances (local Ollama, cloud OpenAI/Anthropic/etc.),
- *   scan for local engines, install Ollama, configure priorities.
- * - **Storage** — Configure RAG vector database providers (ChromaDB, Pinecone, Supabase, etc.).
- * - **Backup** — Schedule automatic workspace backups.
- * - **Authentication** — Local password, SSO login (Google/GitHub/Microsoft),
- *   developer API keys (Discord, OAuth client secrets).
- * - **Server** — Runtime configuration (Node/Python), remote SSH deployment.
- * - **Agent** — Create/edit agent personality profiles (system prompt, temperature,
- *   astro birth data, rules, workflow paths, MCP server assignments, guardrails).
- * - [x] Create `electron/services/LogViewerService.ts` with log parsing logic
-- [x] Register IPC handlers in `electron/services/IpcRouter.ts`
-- [x] Update `main.ts` to instantiate the service and add it to context
-- [x] Expose logs API in `preload.ts`
-- [ ] Implement `src/renderer/components/LogViewerPanel.tsx` (In Progress)
-- [ ] Integrate `LogViewerPanel` into `Settings.tsx` (Fixing structural issues)
-- [ ] Verify tab functionality and log source selection
-ed custom tool/function definitions.
- * - **Guardrails** — Create/edit content safety rules with scope (global/agent/session).
- * - **Workflows** — Visual workflow editor integration (opens `WorkflowEditor`).
- *
- * Data is loaded from `app_settings.json` via `tala.getSettings()`, migrated
- * with `migrateSettings()`, edited locally in React state, and persisted
- * via `tala.saveSettings(data)` on explicit save.
+ * **Persistence:**
+ * - Loads state from `app_settings.json` via `tala.getSettings()`.
+ * - Supports "Global" vs "Workspace" scoping via a deep-merge strategy.
+ * - Persists all changes to disk on-demand via the `Save` flow.
  */
 import { useState, useEffect } from 'react';
 import { DEFAULT_SETTINGS, migrateSettings } from './settingsData';

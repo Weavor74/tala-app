@@ -1,15 +1,42 @@
+/**
+ * MemoryFilter - Retrieval-Shaping Logic
+ * 
+ * This class is responsible for filtering, reranking, and de-conflicting memories
+ * after retrieval but before they are injected into the context. It acts as a 
+ * security and relevance gate between the `MemoryService` and `ContextAssembler`.
+ * 
+ * **Filtering Criteria:**
+ * - **Mode Isolation**: Prevents RP memories from leaking into Assistant mode (and vice versa).
+ * - **Status Discipline**: Excludes archived, superseded, or contested memories based on policy.
+ * - **Greeting Suppression**: Bypasses memory injection for low-substance turns.
+ * - **Source Policy**: Enforces strictness/looseness of information sources based on the active mode.
+ * 
+ * **Contradiction Resolution:**
+ * - Uses a two-pass approach (Explicit associations and Semantic deduplication).
+ * - Prefers explicit user-provided facts over inferred RAG results.
+ * - Deduplicates overlapping claims based on confidence and salience metrics.
+ */
+
 import { MemoryItem } from '../MemoryService';
 import { Mode, ModePolicyEngine } from './ModePolicyEngine';
 import { Intent } from './IntentClassifier';
 
+/**
+ * Result of a single memory item evaluation.
+ */
 export interface ExclusionResult {
+    /** `true` if the memory is allowed in the current context. */
     allowed: boolean;
+    /** Description of the policy that triggered an exclusion (for debugging). */
     reason?: string;
 }
 
 export class MemoryFilter {
     /**
      * Strictly filters candidates based on mode policy, memory status, and intent.
+     * Strictly filters candidate memories against the active mode and turn intent.
+     * 
+     * This is the primary entry point for ensuring context safety and relevance.
      */
     public static filter(candidates: MemoryItem[], mode: Mode, intent: Intent): MemoryItem[] {
         return candidates.filter(m => {
@@ -64,6 +91,14 @@ export class MemoryFilter {
      * Two-pass approach:
      *  1. Explicit contradiction links via m.associations[type=contradicts]
      *  2. Semantic deduplication: detect overlapping claims and keep the most authoritative
+     */
+    /**
+     * Resolves contradictions and deduplicates overlapping memories.
+     * 
+     * **Phases:**
+     * 1. **Explicit Links**: Checks for `contradicts` associations in memory metadata.
+     * 2. **Semantic Deduplication**: Identifies topically overlapping memories (keyword-based)
+     *    and retains only the most authoritative version based on salience and source rank.
      */
     public static resolveContradictions(candidates: MemoryItem[]): MemoryItem[] {
         if (candidates.length < 2) return candidates;

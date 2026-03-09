@@ -1,3 +1,13 @@
+/**
+ * AgentModeConfigPanel
+ * 
+ * An overlay interface for fine-tuning the active agent mode (RP, Hybrid, Assistant).
+ * 
+ * **Functionality:**
+ * - Reactive Configuration: Loads and updates mode-specific parameters (intensity, verbosity, safety guards).
+ * - Mode Awareness: Changes the available configuration fields based on the currently selected `activeMode`.
+ * - Persistence: Immediately syncs adjustments to the backend via `tala.updateModeConfig`.
+ */
 import React, { useState, useEffect } from 'react';
 
 interface Props {

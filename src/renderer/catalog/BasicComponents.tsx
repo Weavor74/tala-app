@@ -8,6 +8,15 @@
  *
  * Each component is intentionally simple — styled inline for portability
  * and designed to accept any props via `React.FC<any>`.
+ * 
+ * **Components Included:**
+ * - **Button**: Action trigger with variants.
+ * - **Card**: Content container with optional title.
+ * - **Input**: Textual data entry.
+ * - **Table**: Tabular data visualization.
+ * - **Badge**: Small status indicator.
+ * - **ProgressBar**: Visual completion tracker.
+ * - **GoalTree**: Specialized roadmap visualization.
  */
 import React from 'react';
 

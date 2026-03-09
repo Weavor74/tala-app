@@ -1,8 +1,15 @@
 /**
- * MemoryViewer — Sidebar panel for managing Tala's short-term memory.
+ * MemoryViewer Sidebar Panel
  *
- * Allows the user to browse, search, add, edit, and delete memory items.
- * Memories are facts, preferences, or context that Tala recalls during conversation.
+ * An interactive explorer for TALA's short-term associative memory bank.
+ * 
+ * **Capabilities:**
+ * - **CRUD**: Allows manual entry, editing, and deletion of atomic memory items (facts, preferences).
+ * - **Search**: Filters memory nodes by textual content for rapid recall assessment.
+ * - **Maintenance**: Provides "Prune" operations for aging out stale context and "Scan" for directory ingestion.
+ * 
+ * **Integration:**
+ * - Synchronizes with the `mem0-core` service via IPC (`getAllMemoryItems`, `addMemoryItem`, etc.).
  */
 import React, { useState, useEffect } from 'react';
 

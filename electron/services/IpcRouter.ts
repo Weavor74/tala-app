@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { AgentService } from './AgentService';
@@ -46,9 +47,28 @@ export interface IpcRouterContext {
   TEMP_SYSTEM_PATH: string;
 }
 
+/**
+ * Central API Registry for the Electron shell.
+ * 
+ * The `IpcRouter` orchestrates all communication between the React renderer and the 
+ * backend services. It manages:
+ * - Application lifecycle and settings migration.
+ * - AI agent orchestration and streaming chat responses.
+ * - File system operations and workspace sandboxing.
+ * - Integration with peripheral services (Git, MCP, Guardrails, Backup).
+ * - System-level interactions (Terminal PTYs, OAuth, Native Dialogs).
+ */
 export class IpcRouter {
+  /**
+   * Initializes the router with a dependency-injected context.
+   * @param ctx - Service container containing all backend managers and paths.
+   */
   constructor(private ctx: IpcRouterContext) { }
 
+  /**
+   * Registers all IPC handlers with `ipcMain`.
+   * This method effectively defines the entire backend API surface.
+   */
   public registerAll() {
     const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, logViewerService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
 
@@ -95,14 +115,19 @@ export class IpcRouter {
     });
 
     /**
-     * Saves the full app settings object to `app_settings.json`.
+     * Saves the full app settings object to disk.
      *
-     * Also handles:
-     * - Path migration between USB portable and system paths.
-     * - Environment variable updates for the terminal.
-     * - MCP server sync.
-     * - Agent brain reload and Discord login/logout.
-     * - Astro Engine profile sync if birth data is present.
+     * **Orchestration Logic:**
+     * - **Path Migration**: Automatically detects and handles migration between 'usb' (portable) 
+     *   and system data paths.
+     * - **Merging**: Performs a deep merge with existing settings, while preserving backend 
+     *   authority for critical values like `activeMode`.
+     * - **Sub-service Sync**:
+     *   - Updates `TerminalService` environment variables.
+     *   - Triggers `McpService` synchronization and tool refresh.
+     *   - Notifies `AgentService` to reload its brain configuration.
+     * 
+     * @param data - The partial or full settings object from the UI.
      */
     ipcMain.handle('save-settings', async (event, data) => {
       // If the user just switched to USB mode, we should migrate the file to the app dir
@@ -1158,14 +1183,15 @@ export class IpcRouter {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Handles an incoming chat message from the renderer.
+     * Main AI Interaction Entry Point.
      *
-     * Calls `AgentService.chat()` with:
-     * - A token callback that streams each generated token to the renderer.
-     * - An event callback that relays agent events (tool use, browser navigation).
+     * Processes an incoming message from the user and orchestrates the full agent lifecycle:
+     * 1. **Context Assembly**: Concatenates chat history, system instructions, and RAG data.
+     * 2. **Inference**: Streams tokens from the configured `IBrain` provider back to the UI.
+     * 3. **Action Loop**: Executes agent-requested tools (File I/O, Browser, Terminal, etc.).
+     * 4. **Event Relay**: Streams secondary updates (screenshot requests, nav events) to the UI.
      *
-     * On completion, sends `chat-done`. On error, sends `chat-error`.
-     * Also mirrors the cleaned response to Discord if a mirror channel is configured.
+     * Sends `chat-token` (stream), `agent-event` (meta), `chat-done` (final), or `chat-error`.
      */
     ipcMain.on('chat-message', async (event, payload) => {
       try {
@@ -1182,14 +1208,22 @@ export class IpcRouter {
         }
 
         console.log("[DEBUG] Calling agent.chat() with text length:", text.length, "and images:", images.length);
-        await agent.chat(text, (token) => {
-          fullResponse += token;
+        const result = await (agent as any).chat(text, (token: string) => {
+          fullResponse = fullResponse + token;
           event.sender.send('chat-token', token);
-        }, (type, data) => {
+        }, (type: string, data: any) => {
           // Relay custom events to renderer
           event.sender.send('agent-event', { type, data });
         }, images, payload.capabilitiesOverride);
-        event.sender.send('chat-done');
+
+        // Finalize turn and send done event with sanitized content and metadata
+        event.sender.send('chat-done', {
+          message: result.message,
+          artifact: result.artifact,
+          suppressChatContent: result.suppressChatContent,
+          messageHash: uuidv4().slice(0, 8),
+          timestamp: Date.now()
+        });
 
       } catch (e: any) {
         console.error("[IpcRouter] chat-message error:", e);
@@ -1519,7 +1553,7 @@ export class IpcRouter {
     /** Relays browser data (DOM or screenshot) from the renderer to AgentService. */
     ipcMain.on('browser-data-reply', (event, { type, data }) => {
       console.log(`[Main] Received browser-data-reply: type='${type}', data length=${data ? data.length : 'null'}`);
-      agent.provideBrowserData(type, data);
+      (agent as any).provideBrowserData(type, data);
     });
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -1,12 +1,45 @@
+/**
+ * Tala — Bootstrap Module
+ * 
+ * This module is responsible for early-stage application setup before any Electron
+ * UI or services are initialized. Its primary role is to enforce "Local-First" data
+ * sovereignty by redirecting Electron's default system paths (userData, temp, etc.)
+ * to a local `/data` directory within the application root.
+ * 
+ * This ensures that all user data, logs, and settings remain portable and
+ * isolated from the host operating system's standard application data folders.
+ */
+
+/**
+ * Electron Startup Bootstrap
+ * 
+ * This module handles early-stage environment preparation before any other
+ * logic runs. Its primary responsibility is to ensure data isolation by
+ * redirecting all Electron-specific data paths (userData, appData, etc.)
+ * to a local `/data` directory within the application root.
+ * 
+ * **Key features:**
+ * - Redirects `userData` to `./data`.
+ * - Propagates the redirected path to other system folders (`appData`, `documents`).
+ * - Resolves the local Python runtime path based on the OS.
+ */
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
-// Use a dynamic root to ensure portability even if the folder is moved
+/**
+ * The root directory of the application.
+ * In production (packaged), this is the folder containing the executable.
+ * In development, this is the project root (process.cwd()).
+ */
 const APP_ROOT = app.isPackaged
     ? path.dirname(app.getPath('exe'))
     : app.getAppPath();
 
+/**
+ * The canonical local data storage directory.
+ * All persistent app state (except the workspace) is stored here.
+ */
 const LOCAL_DATA_DIR = path.join(APP_ROOT, 'data');
 
 // Create local data directory if it doesn't exist
@@ -22,6 +55,7 @@ const DOCUMENTS_DIR = path.join(LOCAL_DATA_DIR, 'documents');
 const TEMP_DIR = path.join(LOCAL_DATA_DIR, 'temp');
 const DOWNLOADS_DIR = path.join(LOCAL_DATA_DIR, 'downloads');
 
+// Ensure standard subdirectories exist within the local data root
 [DOCUMENTS_DIR, TEMP_DIR, DOWNLOADS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });

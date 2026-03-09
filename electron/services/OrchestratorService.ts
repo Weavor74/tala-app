@@ -2,12 +2,16 @@ import { IBrain, ChatMessage } from '../brains/IBrain';
 import { ToolService } from './ToolService';
 
 /**
- * OrchestratorService
+ * Agentic Orchestrator Service
  * 
- * Manages background AI sub-agents ("Minions").
- * Extracts the core agentic loop from AgentService into a headless version
- * that can execute tools and reason without direct UI side-effects or 
- * persistent session history.
+ * Manages background AI sub-agents ("Minions") for autonomous task execution.
+ * It extracts the core agentic tool-use loop into a headless version that can
+ * reason and act without direct UI side-effects or persistent session pollution.
+ * 
+ * **Usage Context:**
+ * - Used for parallel background tasks (e.g., code analysis, log filtering).
+ * - Provides a "Headless Loop" that simulates the agent's main decision cycle.
+ * - Handles recursive tool execution and multi-turn reasoning cycles.
  */
 export class OrchestratorService {
     private brain: IBrain;

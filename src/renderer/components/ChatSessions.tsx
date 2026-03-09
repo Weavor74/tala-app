@@ -1,8 +1,13 @@
 /**
- * ChatSessions — sidebar panel for browsing, creating, and managing chat sessions.
- *
- * Displays a scrollable list of saved sessions, each showing title (first user message)
- * and timestamp. Click to load, delete button per session, "New Chat" at top.
+ * ChatSessions Panel
+ * 
+ * Side-bar interface for managing the persistent history of conversations.
+ * 
+ * **Functionality:**
+ * - **History Management**: Lists all saved chat sessions with metadata (message count, branching status).
+ * - **Interaction**: Allows loading a session into the main chat window, creating new sessions, and deleting legacy ones.
+ * - **Branching Awareness**: Visualizes if a session was branched from a parent (tree-based conversation support).
+ * - **Real-time Sync**: Updates the list reactively via IPC when sessions are modified elsewhere.
  */
 import React, { useState, useEffect } from 'react';
 

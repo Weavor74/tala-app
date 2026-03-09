@@ -3,11 +3,14 @@ import { MemoryViewer } from './MemoryViewer';
 import ReflectionPanel from './ReflectionPanel';
 
 /**
- * CoreWorkspace
+ * CoreWorkspace Layout
  * 
- * Unified panel for TALA's internal systems:
- * - Memory Bank (Short-term facts & context)
- * - Reflection (Self-improvement & Soul identity)
+ * The primary container for TALA's "internal" reflection and context systems.
+ * Provides a unified view for the agent's long-term memory and self-awareness processes.
+ * 
+ * **Tabs:**
+ * - **Memory Bank**: Short-term facts, recent context, and observation nodes (via `MemoryViewer`).
+ * - **Reflection**: Self-improvement metrics, goals, and soul identity attributes (via `ReflectionPanel`).
  */
 export const CoreWorkspace: React.FC = () => {
     const [mode, setMode] = useState<'memory' | 'reflection'>('memory');

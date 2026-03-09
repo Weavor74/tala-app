@@ -138,7 +138,13 @@ export class WorkflowEngine {
     }
 
     /**
-     * Starts a debug session for a workflow.
+     * Initializes a new debug session for a workflow.
+     * 
+     * Resets the execution context and populates the queue with the 
+     * identified start nodes. Subsequent steps can be triggered using `step()`.
+     * 
+     * @param workflow - The full workflow definition to debug.
+     * @param initialInput - Data to pass to the first node(s).
      */
     public startDebug(workflow: any, initialInput: any = {}) {
         const consoleLog: string[] = [];
@@ -183,7 +189,17 @@ export class WorkflowEngine {
     }
 
     /**
-     * Executes the next step in the debug session.
+     * Executes the next node in the debug queue.
+     * 
+     * **Workflow:**
+     * 1. Pops the next node-input pair from the session queue.
+     * 2. Executes the node using `executeNode()`.
+     * 3. Logs the output and updates the session history.
+     * 4. Identifies and pushes downstream nodes into the queue.
+     * 5. Emits events for UI synchronization.
+     * 
+     * @param workflowId - The ID of the workflow in debug mode.
+     * @throws Error if no active debug session is found.
      */
     public async step(workflowId: string) {
         const session = this.debugSessions.get(workflowId);

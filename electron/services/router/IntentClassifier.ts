@@ -1,9 +1,33 @@
+/**
+ * IntentClassifier - Decision Support / Cognitive Utility
+ * 
+ * This module provides heuristic-based intent classification for user queries.
+ * It is used by the `TalaContextRouter` to determine the high-level goal of a turn,
+ * which in turn influences memory weightings, tool gating, and response style.
+ * 
+ * **Classification Strategy:**
+ * - **Heuristic Pattern Matching**: Uses regex-based signals to detect intent.
+ * - **Precedence Overrides**: Content-rich signals (technical, lore) override simple greetings.
+ * - **Mixed Intent Resolution**: Identifies when a query spans multiple categories and selects a primary.
+ * 
+ * **System Impact:**
+ * - Determines if memory retrieval is bypassed (e.g., for greetings).
+ * - Influences the `ModePolicyEngine` on which tools are allowed for the current turn.
+ */
+
 export type IntentClass = 'greeting' | 'technical' | 'narrative' | 'coding' | 'lore' | 'action' | 'mixed' | 'unknown';
 
+/**
+ * Structured result of an intent classification operation.
+ */
 export interface Intent {
+    /** The primary category of the user's query. */
     class: IntentClass;
+    /** Confidence score (0.0 to 1.0) based on signal strength. */
     confidence: number;
+    /** The specific subsystem relevant to the intent (e.g., 'technical' or 'lore'). */
     subsystem?: string;
+    /** Debug log explanation for how the classification was reached. */
     precedenceLog?: string;
 }
 

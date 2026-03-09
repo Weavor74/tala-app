@@ -1,3 +1,19 @@
+/**
+ * AnnotationParser - Parsing / Translation Utility
+ * 
+ * Scans source files for inline TALA annotations — special comments that 
+ * provide durable instructions, context, or safety directives directly in the code.
+ * 
+ * **System Role:**
+ * - Extracts "Engineered Context" that survives across different model sessions.
+ * - Allows developers to provide hints or guardrails via `@tala:` tags.
+ * - Influences the `ContextAssembler` by providing pinned or warning blocks.
+ * 
+ * **collaborators:**
+ * - Consumed by `RepoInspectionService` to build a project-wide knowledge map.
+ * - Used by `TalaContextRouter` to prioritize certain code-level findings.
+ */
+
 import fs from 'fs';
 import path from 'path';
 
@@ -81,6 +97,16 @@ export class AnnotationParser {
     /**
      * Parses a file for @tala: annotations.
      */
+    /**
+     * Parses a physical file for @tala annotations.
+     * 
+     * **Constraints:**
+     * - Skips binary files by extension check.
+     * - Skips files larger than 500KB for performance.
+     * - Respects the `@tala:ignore` directive for the entire file.
+     * 
+     * @param filePath - Absolute path to the source file.
+     */
     static parseFile(filePath: string): AnnotationResult {
         const result: AnnotationResult = {
             filePath,
@@ -155,6 +181,9 @@ export class AnnotationParser {
 
     /**
      * Parses a string of file content (when you already have the content in memory).
+     * 
+     * @param content - The string content of the file to parse.
+     * @param filePath - Optional path to the file, used for `AnnotationResult.filePath`. Defaults to '<buffer>'.
      */
     static parseContent(content: string, filePath: string = '<buffer>'): AnnotationResult {
         const result: AnnotationResult = {
@@ -212,6 +241,17 @@ export class AnnotationParser {
      * Formats annotations into a context block for LLM injection.
      * Returns empty string if no annotations found.
      */
+    /**
+     * Formats parsed annotations into a human-readable context block for LLM prompts.
+     * 
+     * **Formatting Rules:**
+     * - Includes line numbers and tags.
+     * - Excludes 'ignore' tags.
+     * - Prepends the filename to the block.
+     * 
+     * @param result - The AnnotationResult object containing parsed annotations.
+     * @returns A formatted string suitable for LLM context, or an empty string if no relevant annotations or if the file is ignored.
+     */
     static formatForContext(result: AnnotationResult): string {
         if (result.annotations.length === 0) return '';
         if (result.hasIgnore) return ''; // File wants to be ignored
@@ -231,6 +271,15 @@ export class AnnotationParser {
     /**
      * Scans an entire directory tree for files with @tala annotations.
      * Useful for building a project-wide annotation summary.
+     * 
+     * **Behavior:**
+     * - Recursively walks directories up to a specified depth.
+     * - Skips common build/dependency directories (e.g., `node_modules`, `.git`).
+     * - Calls `parseFile` for each identified source file.
+     * 
+     * @param dirPath - The root directory path to start scanning from.
+     * @param maxDepth - The maximum recursion depth for directory scanning. Defaults to 2.
+     * @returns An array of AnnotationResult objects for files containing annotations.
      */
     static scanDirectory(dirPath: string, maxDepth: number = 2): AnnotationResult[] {
         const results: AnnotationResult[] = [];
@@ -265,6 +314,14 @@ export class AnnotationParser {
 
     /**
      * Generates a project-wide annotation summary for context injection.
+     * 
+     * **Purpose:**
+     * - Provides a high-level overview of all annotations across a project.
+     * - Prioritizes 'pinned' and 'warning' annotations for brevity and impact.
+     * - Includes summary statistics for total annotations, warnings, and todos.
+     * 
+     * @param dirPath - The root directory of the project to scan.
+     * @returns A formatted string summarizing project annotations, or an empty string if none are found.
      */
     static generateProjectSummary(dirPath: string): string {
         const results = AnnotationParser.scanDirectory(dirPath);

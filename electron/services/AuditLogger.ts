@@ -11,6 +11,22 @@ import { v4 as uuidv4 } from 'uuid';
  * Provides structured, append-only JSONL logging for the Tala app.
  * Adheres to the Engineering Autonomy & Auditability policy.
  */
+/**
+ * Structured Application Logging Engine.
+ * 
+ * The `AuditLogger` provides high-performance, structured JSONL logging for general 
+ * application events. Unlike `AuditService` (which focuses on legally defensible 
+ * compliance), this logger is used for operational diagnostics, session tracking, 
+ * and log-rotation management.
+ * 
+ * **Core Responsibilities:**
+ * - **Structured Output**: Generates consistent JSONL records with stable IDs.
+ * - **Correlation**: Automatically links log entries to `run_id`, `session_id`, 
+ *   and `correlation_id`.
+ * - **Privacy**: Integrates with `log_redact` to scrub PII from data payloads.
+ * - **Reliability**: Implements non-blocking writes and automatic size-based 
+ *   rotation.
+ */
 class AuditLogger {
     private logDir: string;
     private logPath: string;
@@ -99,6 +115,19 @@ class AuditLogger {
         this.write('ERROR', event, component, data, correlationId);
     }
 
+    /**
+     * Internal write primitive for log records.
+     * 
+     * Constructs the structured log entry, redacts sensitive keys, and queues 
+     * a non-blocking filesystem append. If the log file exceeds `maxSize`, 
+     * rotation is triggered asynchronously.
+     * 
+     * @param level - Log severity (INFO, WARN, ERROR).
+     * @param event - Short string identifier for the event type.
+     * @param component - The subsystem or class generating the log.
+     * @param data - Arbitrary data payload (redacted before write).
+     * @param correlationId - Optional override for tracking related operations.
+     */
     private write(level: string, event: string, component: string, data: Record<string, any>, correlationId?: string) {
         const record = {
             ts: new Date().toISOString(),

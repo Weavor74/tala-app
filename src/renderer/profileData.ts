@@ -1,16 +1,26 @@
+/**
+ * User Profile State & Defaults
+ * 
+ * This file manages the frontend's view of the "Deep Profile".
+ * It acts as a bridge to the backend PII types and provides a safe default state.
+ */
 import type { FullUserProfilePII } from '../../electron/services/userProfileTypes';
 
 export type { Address, Job, School, Contact } from '../../electron/services/userProfileTypes';
 
 /**
- * The complete user profile data model.
- * Aligned with FullUserProfilePII from the main process.
+ * Deep Profile Schema
+ * 
+ * Extends the backend `FullUserProfilePII` to ensure strict typing 
+ * in the renderer application.
  */
 export interface UserDeepProfile extends FullUserProfilePII { }
 
 /**
- * Empty default profile used when no saved profile is found on disk.
- * Pre-populates all fields to avoid null-reference errors in the UI.
+ * Global Profile Default
+ * 
+ * Used for new installations or when the profile record is corrupted/missing.
+ * Ensures consistent object structure for React rendering.
  */
 export const DEFAULT_PROFILE: UserDeepProfile = {
     userId: '',

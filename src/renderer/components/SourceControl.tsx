@@ -1,17 +1,17 @@
 /**
  * Source Control Panel
  *
- * Sidebar panel for everyday Git operations: staging, unstaging,
- * committing, syncing with remotes, and cloning from GitHub.
- *
- * **Key features:**
- * - Automatic detection of Git repository initialization.
- * - Change list showing modified/added/deleted files with stage/unstage buttons.
- * - Commit with message input.
- * - Push/pull sync using stored GitHub credentials.
- * - Clone from GitHub: lists user's repos and clones selected one.
- *
- * For advanced Git features (branches, stash, log), see `GitView.tsx`.
+ * A specialized sidebar interface for rapid, everyday Git operations.
+ * Optimized for a stream-based coding workflow where TALA and the USER share a repository.
+ * 
+ * **Capabilities:**
+ * - **Staging Area**: Visualizes the index vs. working tree (Modified, Unstaged, Staged).
+ * - **Commitment**: Provides atomic commit operations with message validation.
+ * - **Sync & Collaboration**: Bridges with GitHub for cloud-based synchronization (Pull/Push).
+ * - **Issue/PR Integration**: Surface-level visibility into GitHub repository state.
+ * 
+ * **Conflict Awareness:**
+ * - Detects merge conflicts (Status 'U') and delegates resolution to the `ConflictEditor` overlay.
  */
 import React, { useState, useEffect } from 'react';
 
@@ -161,8 +161,21 @@ export const SourceControl: React.FC<SourceControlProps> = ({ onOpenConflict }) 
 
     // ... handleInit, handleStage, handleUnstage, handleCommit ... 
     // (We'll assume these existing functions are preserved by the replacement range if we are careful, 
-    // or we must include them. Since the replacement range covers the WHOLE component, I must include them.)
-
+    /**
+     * Toast Notification System
+     *
+     * A reactive, globally-accessible alerting mechanism for ephemeral system feedback.
+     * 
+     * **Architecture:**
+     * - **Provider-Pattern**: Wraps the application root to manage the toast stack.
+     * - **Hook Engagement**: Exposes `useToast()` for any child component to trigger alerts.
+     * - **Management**: Automatically prioritizes and dismisses messages via timer-based removal.
+     * 
+     * **Alert Types:**
+     * - Success: Affirmative operations (e.g., Save, Deploy).
+     * - Error: Critical failures or permission blocks.
+     * - Info/Warning: Contextual status updates.
+     */
     const handleInit = async () => {
         if (!api || !api.gitInit) return;
         setLoading(true);

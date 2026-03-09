@@ -5,32 +5,23 @@ import * as path from 'path';
 import { LogViewerService } from './LogViewerService';
 
 /**
- * RagService
+ * Long-Term Narrative Memory Engine (RAG).
  * 
- * Manages the connection to the Tala Core RAG (Retrieval-Augmented Generation)
- * MCP server, providing long-term narrative memory retrieval and document ingestion.
+ * The `RagService` manages the connection to the Tala Core RAG MCP server, 
+ * providing a high-capacity vector store for document-based retrieval. 
+ * It is responsible for bridging the Electron main process with the Python-based 
+ * ChromaDB backend.
  * 
  * **How it differs from MemoryService:**
- * - `MemoryService` = short-term, fact-based conversational memory (Mem0).
- * - `RagService` = long-term, document-based narrative memory (ChromaDB vector store).
+ * - **RagService**: Large-scale, document-based narrative memory (ChromaDB). 
+ *   Ideal for codebases, books, and logs.
+ * - **MemoryService**: High-precision, fact-based conversational memory (Mem0). 
+ *   Ideal for user preferences, names, and recent decisions.
  * 
- * **Architecture:**
- * The service communicates with `mcp-servers/tala-core/server.py` via the MCP SDK's
- * stdio transport. The Python server uses ChromaDB for vector storage and retrieval,
- * SentenceTransformers for embedding generation, and supports file ingestion,
- * deletion, and semantic search.
- * 
- * **Lifecycle:**
- * 1. `ignite()` — Spawns the Python process and connects the MCP client.
- * 2. `search()` / `logInteraction()` / `ingestFile()` / `deleteFile()` — Called during operation.
- * 3. `shutdown()` — Nullifies the client during app closure.
- * 
- * @example
- * ```typescript
- * const rag = new RagService();
- * await rag.ignite('/path/to/python', '/path/to/server.py');
- * const context = await rag.search('Tell me about growing up in San Francisco');
- * ```
+ * **Core Responsibilities:**
+ * - **MCP Orchestration**: Spawns and manages the `tala-core` Python process.
+ * - **Vector Retrieval**: Provides semantic search capabilities for agent grounding.
+ * - **Lifecycle Management**: Handles startup (`ignite`), search, and cleanup (`shutdown`).
  */
 export class RagService {
     /** MCP SDK client for communicating with the tala-core RAG server. Null if not connected. */

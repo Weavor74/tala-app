@@ -1,3 +1,15 @@
+/**
+ * Electron Preload Script
+ * 
+ * This script acts as a secure bridge between the Electron main process
+ * and the renderer UI. It exposes the `window.tala` object using 
+ * the `contextBridge` API.
+ * 
+ * **Security Boundary:**
+ * - Uses `ipcRenderer.invoke` for request-response patterns.
+ * - Uses `ipcRenderer.send` for fire-and-forget events.
+ * - Restricts communication to a whitelist of approved IPC channels.
+ */
 import { contextBridge, ipcRenderer } from 'electron';
 
 /**
@@ -232,15 +244,15 @@ contextBridge.exposeInMainWorld('tala', {
     initTerminal: (id?: string) => ipcRenderer.invoke('terminal-init', id),
     /** Resizes the terminal. */
     resizeTerminal: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal-resize', { id, cols, rows }),
-    /** Sends raw input data to the terminal's stdin. */
+    /** Sends raw input data to the terminal's stdin (one-way). */
     sendTerminalInput: (id: string, data: string) => ipcRenderer.send('terminal-input', { id, data }),
-    /** Kills a terminal process. */
+    /** Kills a terminal process by ID. */
     killTerminal: (id: string) => ipcRenderer.invoke('terminal-kill', id),
 
-    // ─── Git ──────────────────────────────────────────────────────
-    /** Checks if Git is available and the workspace is a repo. */
+    // ─── Git Operations ───────────────────────────────────────────
+    /** Checks if Git is installed and if the workspace is a valid Git repository. */
     gitCheck: () => ipcRenderer.invoke('git-check'),
-    /** Gets the working tree status (staged, unstaged, untracked files). */
+    /** Returns the working tree status (staged, unstaged, untracked). */
     gitStatus: () => ipcRenderer.invoke('git-status'),
     /** Stages a file for commit. */
     gitStage: (file: string) => ipcRenderer.invoke('git-stage', file),

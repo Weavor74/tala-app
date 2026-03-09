@@ -1,17 +1,17 @@
 /**
  * Toast Notification System
  *
- * Lightweight toast/snackbar component for background event alerts.
- * Uses React Context so any component can trigger a toast via useToast().
- *
- * Types: success (green), error (red), info (blue), warning (orange)
- * Auto-dismisses after 5s. Stacks up to 5 toasts.
- *
- * Usage:
- *   // In App.tsx: <ToastProvider>...</ToastProvider>
- *   // In any child:
- *   const { addToast } = useToast();
- *   addToast({ type: 'success', message: 'Backup complete' });
+ * A reactive, globally-accessible alerting mechanism for ephemeral system feedback.
+ * 
+ * **Architecture:**
+ * - **Provider-Pattern**: Wraps the application root to manage the toast stack.
+ * - **Hook Engagement**: Exposes `useToast()` for any child component to trigger alerts.
+ * - **Management**: Automatically prioritizes and dismisses messages via timer-based removal.
+ * 
+ * **Alert Types:**
+ * - Success: Affirmative operations (e.g., Save, Deploy).
+ * - Error: Critical failures or permission blocks.
+ * - Info/Warning: Contextual status updates.
  */
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 

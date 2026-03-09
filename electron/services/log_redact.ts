@@ -13,9 +13,14 @@ const SENSITIVE_KEYS = [
 ];
 
 /**
- * Redacts sensitive values in an object or array recursively.
- * @param data The object to redact.
- * @returns A new object with sensitive values replaced by "***".
+ * Recursively redacts sensitive information from data structures.
+ * 
+ * This utility deep-walks objects and arrays, identifying keys that match 
+ * the `SENSITIVE_KEYS` pattern (e.g., 'apiKey', 'password', 'secret') and 
+ * replacing their values with a masked string ('***').
+ * 
+ * @param data - The object, array, or primitive to scrub.
+ * @returns A deep-cloned version of the data with sensitive values redacted.
  */
 export function redact(data: any): any {
     if (data === null || data === undefined) return data;

@@ -79,16 +79,28 @@ const SECRET_KEY = process.env.TALA_AUDIT_SECRET || 'default-dev-key';
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Computes SHA-256 hash of a string payload.
- * Used to verify integrity of recorded data.
+ * Computes a SHA-256 hash of a string payload.
+ * 
+ * Used primarily for generating tamper-evident fingerprints of file contents, 
+ * tool arguments, and event data.
+ * 
+ * @param data - The string to hash.
+ * @returns The hex-encoded SHA-256 hash.
  */
 export function computeHash(data: string): string {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
 /**
- * Signs an event using HMAC-SHA256.
- * Prevents tampering: any change to the event invalidates the signature.
+ * Signs an audit event using HMAC-SHA256.
+ * 
+ * Generates a cryptographic signature of the event's core fields (id, 
+ * timestamp, type, action, target, payloadHash) using the system's 
+ * `SECRET_KEY`. This ensures that even if a log line is modified, 
+ * the signature will no longer match the content.
+ * 
+ * @param event - The audit event to sign.
+ * @returns The hex-encoded HMAC-SHA256 signature.
  */
 export function signEvent(event: AuditEvent): string {
   const payload = JSON.stringify({
@@ -106,8 +118,14 @@ export function signEvent(event: AuditEvent): string {
 }
 
 /**
- * Creates and logs an audit event.
- * Writes to `DOCS_TODAY/audit-log.jsonl` in append-only mode.
+ * Persists an event to the immutable audit log.
+ * 
+ * This method is the primary entry point for legally defensible logging. 
+ * It signs the event, serializes it to JSONL, and appends it to 
+ * `audit-log.jsonl` in a synchronous operation to guarantee persistence 
+ * before control is returned.
+ * 
+ * @param event - The event to record.
  */
 export function logAuditEvent(event: AuditEvent): void {
   // 1. Enrich with signature

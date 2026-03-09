@@ -1,3 +1,21 @@
+/**
+ * McpService - Protocol / Tool Infrastructure
+ * 
+ * This service manages the lifecycle and tool connectivity of Model Context Protocol (MCP) servers.
+ * It acts as TALA's bridge to external tool servers, enabling the agent to interact with specialized
+ * microservices (e.g., Python scripts, remote APIs) via a standardized protocol.
+ * 
+ * **System Role:**
+ * - Orchestrates the connection between TALA's core agentic loop and external capabilities.
+ * - Manages the transition from abstract tool calls to concrete protocol requests.
+ * - Handles the discovery and normalization of tools/resources for downstream AI consumption.
+ * 
+ * **Collaboration Architecture:**
+ * - Consumed by `AgentService` and `OrchestratorService` to populate tool registries.
+ * - Relies on `SystemService` for environment isolation and binary resolution.
+ * - Uses `AuditLogger` to track protocol-level transactions and security boundaries.
+ */
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
@@ -6,9 +24,15 @@ import path from 'path';
 import { McpServerConfig } from '../../src/renderer/settingsData';
 import { auditLogger } from './AuditLogger';
 
+/**
+ * Enumeration of possible MCP server states within TALA's connection registry.
+ */
 export enum ServerState {
+    /** The server is connected, capability-cached, and ready for tool calls. */
     CONNECTED = 'CONNECTED',
+    /** The server has failed health checks and is awaiting a backoff-gated retry. */
     DEGRADED = 'DEGRADED',
+    /** The server has been explicitly disabled by the user or system policy. */
     DISABLED = 'DISABLED'
 }
 
@@ -20,37 +44,18 @@ export enum ServerState {
 interface Connection {
     client: Client;
     transport: StdioClientTransport | WebSocketClientTransport;
+    /** The subprocess instance (stdio only). */
     process?: ChildProcess;
     config: McpServerConfig;
     state: ServerState;
+    /** Incrementing counter for backoff calculation during DEGRADED states. */
     retryCount: number;
+    /** Epoch timestamp of the last connection attempt for backoff gating. */
     lastRetryTime: number;
 }
 
 /**
- * McpService
- * 
- * Manages connections to external Python microservices that communicate via the
- * Model Context Protocol (MCP). Each MCP server exposes a set of "tools" (callable
- * functions) and "resources" (readable data) that the Tala agent can use.
- * 
- * Two transport types are supported:
- * - **stdio**: The MCP server is spawned as a child process. Communication happens
- *   over the process's stdin/stdout pipes. This is the primary mode used for
- *   local Python servers (tala-core, astro-engine, mem0-core).
- * - **websocket**: The MCP server is a remote service accessible via WebSocket URL.
- * 
- * The service maintains a `Map<string, Connection>` keyed by server ID. The `sync()`
- * method reconciles this map with the user's saved configuration, connecting new
- * servers and disconnecting removed ones.
- * 
- * @example
- * ```typescript
- * const mcp = new McpService();
- * await mcp.connect({ id: 'rag', name: 'Tala Core', type: 'stdio', command: 'python', args: ['server.py'] });
- * const caps = await mcp.getCapabilities('rag');
- * console.log(caps.tools); // List of available tools
- * ```
+ * Central Service for managing Model Context Protocol (MCP) connections.
  */
 export class McpService {
     /** Map of active connections keyed by the server's unique ID string. */
@@ -105,6 +110,19 @@ export class McpService {
      *   - `enabled` {boolean} — Whether this server should be active.
      * @returns {Promise<boolean>} `true` if the connection was established successfully,
      *   `false` if an error occurred during connection.
+     */
+    /**
+     * Establishes a connection to an MCP server using the provided configuration.
+     * 
+     * **Lifecycle Action:**
+     * - Checks if server is already connected (id-based de-duplication).
+     * - Performs preflight checks for local Python servers (e.g., venv validation).
+     * - Instantiates the appropriate transport (Stdio or WebSocket).
+     * - Negotiates capabilities with the server via the MCP SDK client.
+     * - Transitions the server state to `CONNECTED` on success, or `DEGRADED` on failure.
+     * 
+     * @param config - The server configuration from user settings.
+     * @returns `true` if connection established and handshake completed.
      */
     public async connect(config: McpServerConfig): Promise<boolean> {
         if (this.connections.has(config.id)) {
@@ -228,6 +246,16 @@ export class McpService {
      * @param {string} id - The unique identifier of the MCP server to disconnect.
      * @returns {Promise<void>}
      */
+    /**
+     * Disconnects from an MCP server and removes it from the active registry.
+     * 
+     * **Side Effects:**
+     * - Closes the transport layer.
+     * - For `stdio` servers, terminates the associated child process.
+     * - Removes the connection from the internal map.
+     * 
+     * @param id - The unique identifier of the MCP server.
+     */
     public async disconnect(id: string) {
         const conn = this.connections.get(id);
         if (conn) {
@@ -259,6 +287,17 @@ export class McpService {
      *   - `tools` — Array of tool definitions the server provides.
      *   - `resources` — Array of resource definitions the server provides.
      *   - `error` — (optional) Error message if the query failed.
+     */
+    /**
+     * Retrieves the tool and resource definitions from a connected server.
+     * 
+     * **Discovery Flow:**
+     * - Checks internal `capabilityCache` for existing results within TTL.
+     * - Triggers `listTools()` and `listResources()` protocol calls if cache is stale.
+     * - Returns empty arrays if the server is `DEGRADED` or disconnected.
+     * 
+     * @param id - The id of the server to query.
+     * @param reason - Context for the query ('manual', 'periodic', 'connect').
      */
     public async getCapabilities(id: string, reason: string = 'manual') {
         const conn = this.connections.get(id);
@@ -344,8 +383,25 @@ export class McpService {
     // ─── Auto-Restart / Health Check ──────────────────────────────
 
     /**
-     * Starts a periodic health check loop (30s interval).
-     * Implements exponential backoff for reconnection and avoids spamming failed servers.
+     * Starts the health monitoring and recovery loop.
+     * 
+     * **Health Logic:**
+     * - Runs every 10 seconds.
+     * - **CONNECTED Servers**: Performs a lightweight ping or capability query to verify responsiveness.
+     * - **DEGRADED Servers**: Evaluates exponential backoff (30s, 60s, ..., up to 30m). If the 
+     *   backoff window has passed, attempts to re-establish the connection.
+     * 
+     * If a server recovers, the optional `onRecovery` callback is triggered to notify 
+     * the agent to refresh its tool registry.
+     */
+    /**
+     * Starts the health monitoring and recovery loop.
+     * 
+     * **Resiliency Logic:**
+     * - Runs every 10 seconds.
+     * - **CONNECTED Servers**: Probes for responsiveness (process status or light ping).
+     * - **DEGRADED Servers**: Implements exponential backoff (starting at 30s, up to 30m).
+     * - **Recovery**: On successful reconnect, triggers `onRecovery` to refresh tool registries.
      */
     public startHealthLoop() {
         if (this.healthInterval) return;
@@ -423,12 +479,26 @@ export class McpService {
     }
 
     /**
-     * Calls a tool on a connected MCP server.
+     * Invokes a specific tool on a connected MCP server.
      * 
-     * @param {string} serverId - The ID of the server to call.
-     * @param {string} toolName - The name of the tool to invoke.
-     * @param {any} args - Arguments to pass to the tool.
-     * @returns {Promise<any>} The result from the tool execution.
+     * @param serverId - The unique ID of the target MCP server.
+     * @param toolName - The name of the tool to execute.
+     * @param args - Arguments to pass to the tool (JSON Schema compliant).
+     * @returns The raw result from the MCP tool execution.
+     * @throws Error if the server is not connected or the tool call fails.
+     */
+    /**
+     * Invokes a specific tool on a connected MCP server.
+     * 
+     * **Execution Path:**
+     * - Proxies the request from the orchestrator logic to the MCP transport.
+     * - Wraps protocol-level errors into a localized `MCP Tool Error`.
+     * - Logs failures to the system console and audit logger.
+     * 
+     * @param serverId - The target server ID.
+     * @param toolName - The name of the tool to execute.
+     * @param args - Validated arguments for the tool.
+     * @returns The server's response payload.
      */
     public async callTool(serverId: string, toolName: string, args: any): Promise<any> {
         const conn = this.connections.get(serverId);

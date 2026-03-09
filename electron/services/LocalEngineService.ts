@@ -4,11 +4,16 @@ import fs from 'fs';
 import { app } from 'electron';
 
 /**
- * LocalEngineService
+ * Local LLM Engine Service
  * 
- * Manages the lifecycle of a built-in llama.cpp server instance.
- * This allows the application to run completely offline from a USB drive
- * using GGUF models.
+ * Manages the lifecycle and orchestration of the built-in llama.cpp server.
+ * This service enables TALA's "Offline Mode" by running GGUF models locally,
+ * and provides facilities for automatic model and binary downloads.
+ * 
+ * **Security & Portability:**
+ * - Operates entirely offline (no telemetry to external AI providers).
+ * - Manages portable Python and binary runtimes for zero-install execution.
+ * - Enforces context window constraints and GPU acceleration settings.
  */
 export class LocalEngineService {
     private serverProcess: ChildProcess | null = null;

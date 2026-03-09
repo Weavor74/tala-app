@@ -167,7 +167,14 @@ export class VoiceService {
     }
 
     /**
-     * Transcribes a buffer (e.g., from a microphone recording in the UI).
+     * Transcribes an audio buffer (e.g., from a microphone recording).
+     * 
+     * Temporarily persists the buffer to a file in the voice output directory, 
+     * calls `transcribe()`, and ensures the temp file is cleaned up afterward.
+     * 
+     * @param audioBuffer - The raw audio data.
+     * @param format - The audio format/extension (default: `'webm'`).
+     * @returns Transcribed text.
      */
     async transcribeBuffer(audioBuffer: Buffer, format: string = 'webm'): Promise<string> {
         const tempPath = path.join(this.outputDir, `temp_recording.${format}`);
@@ -181,7 +188,10 @@ export class VoiceService {
     }
 
     /**
-     * Checks if voice services are configured and available.
+     * Returns the operational status of the voice services.
+     * 
+     * @returns Object indicating availability of Whisper (STT) and ElevenLabs (TTS),
+     *   along with current endpoint and voice configurations.
      */
     getStatus() {
         return {

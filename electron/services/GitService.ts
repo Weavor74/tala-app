@@ -1,3 +1,22 @@
+/**
+ * GitService - Infrastructure Operations
+ * 
+ * Provides a production-grade interface for Git repository operations. This service
+ * wraps the system `git` command-line tool, providing TALA with the ability to 
+ * inspect code state, manage branches, and synchronize with remote repositories.
+ * 
+ * **System Role:**
+ * - Powers the "Source Control" and "Git View" components in the renderer.
+ * - Used by autonomous engines (e.g., `ReflectionService`) to verify repo state.
+ * - Handles complex auth-token injection for seamless GitHub integration.
+ * 
+ * **Safety & Trust Boundaries:**
+ * - Commands are executed as external processes via `child_process.exec`.
+ * - Trust is limited to the `workspaceDir` provided during instantiation.
+ * - Mutation operations (commit, push, checkout) are gated by UI or agent logic.
+ * - Shell-sensitive inputs (messages, branch names) are escaped or quoted.
+ */
+
 import { exec } from 'child_process';
 import path from 'path';
 
@@ -152,6 +171,16 @@ export class GitService {
      * 
      * @returns {Promise<boolean>} `true` if Git is available, `false` otherwise.
      */
+    /**
+     * Checks whether Git is available on this system.
+     * 
+     * **Multi-step Detection on Windows:**
+     * 1. Try default 'git' on PATH.
+     * 2. Probe common install paths (Program Files, LocalAppData).
+     * 3. Verify executable via `git --version`.
+     * 
+     * @returns `true` if a working git executable is found.
+     */
     public async checkOk(): Promise<boolean> {
         this.log('checkOk called.');
         this.log('Current PATH: ' + process.env.PATH);
@@ -210,6 +239,17 @@ export class GitService {
      * 
      * @returns {Promise<GitStatus[]>} Array of file status objects.
      * @throws {Error} If `git status` fails (e.g., not a Git repo).
+     */
+    /**
+     * Retrieves the current Git status of files in the workspace.
+     * 
+     * **Parsing Logic:**
+     * - Uses `git status --porcelain`.
+     * - Maps Git's 2-character status codes (XY) to `GitStatus` objects.
+     * - Reports files separately for staged and unstaged worktrees if both apply.
+     * 
+     * @returns Array of file status descriptors.
+     * @throws error if not a git repository.
      */
     public async getStatus(): Promise<GitStatus[]> {
         try {
@@ -572,18 +612,41 @@ export class GitService {
         }
     }
 
+    /**
+     * Fetches open issues for a specific GitHub repository.
+     * 
+     * @param owner - The repository owner.
+     * @param repo - The repository name.
+     * @param token - GitHub authentication token.
+     * @returns Array of open issues sorted by recently updated.
+     */
     public async fetchGithubIssues(owner: string, repo: string, token: string): Promise<any[]> {
         if (!token) return [];
         const url = `https://api.github.com/repos/${owner}/${repo}/issues?state=open&sort=updated`;
         return this.fetchGithubAPI(url, token);
     }
 
+    /**
+     * Fetches open pull requests for a specific GitHub repository.
+     * 
+     * @param owner - The repository owner.
+     * @param repo - The repository name.
+     * @param token - GitHub authentication token.
+     * @returns Array of open PRs sorted by recently updated.
+     */
     public async fetchGithubPRs(owner: string, repo: string, token: string): Promise<any[]> {
         if (!token) return [];
         const url = `https://api.github.com/repos/${owner}/${repo}/pulls?state=open&sort=updated`;
         return this.fetchGithubAPI(url, token);
     }
 
+    /**
+     * Generic helper for fetching data from the GitHub API.
+     * 
+     * @private
+     * @param url - The GitHub API endpoint.
+     * @param token - Bearer token for authentication.
+     */
     private async fetchGithubAPI(url: string, token: string): Promise<any[]> {
         try {
             const headers: any = {

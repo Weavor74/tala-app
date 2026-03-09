@@ -6,10 +6,18 @@ import { NarrativeEngine } from './NarrativeEngine';
 import { HypothesisEngine } from './HypothesisEngine';
 
 /**
- * SoulService
+ * Soul & Reasoning Service
  * 
- * Orchestrates Tala's high-level cognitive and existential functions.
- * Merges the 5 key "soul" modules into a single service exposed via IPC.
+ * The `SoulService` orchestrates TALA's high-level cognitive, existential, and
+ * ethical reasoning functions. It acts as the container for modules that manage
+ * the agent's identity, narrative memory, and ethical boundaries.
+ * 
+ * **Core Modules:**
+ * - **IdentityEvolutionEngine**: Manages the long-term personality and trait development.
+ * - **EthicsEngine**: Evaluates proposed actions against system safety and ethical guidelines.
+ * - **NarrativeEngine**: Generates human-readable explanations of system reasoning.
+ * - **HypothesisEngine**: Manages the resolution of system ambiguities and experiments.
+ * - **SoulLogger**: Maintains a high-fidelity record of deep reasoning decisions.
  */
 export class SoulService {
     private logger: SoulLogger;

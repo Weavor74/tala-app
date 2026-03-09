@@ -304,6 +304,15 @@ const BAN_LIST_DEFAULT = ['kill', 'destroy', 'hack'];
 // ═══════════════════════════════════════════════════════════════
 // GuardrailService
 // ═══════════════════════════════════════════════════════════════
+/**
+ * A Guardrails-compatible safety and validation service for Tala.
+ * 
+ * This service implements the Guard + Validator architecture, allowing the system to:
+ * - Validate agent inputs for prompt injection or jailbreak attempts.
+ * - Validate agent outputs for toxicity, bias, PII leakage, or logical consistency.
+ * - Apply corrective policies (fix, filter, refrain) on validation failure.
+ * - Export guard definitions into standalone Python scripts compatible with the `guardrails-ai` SDK.
+ */
 export class GuardrailService {
 
     private guardrailsPath: string;
@@ -391,6 +400,24 @@ export class GuardrailService {
         return this.validateWithGuard(guard, value, target);
     }
 
+    /**
+     * Executes a specific guard stack against a text value.
+     * 
+     * The validation process:
+     * 1. Filters validators based on the `target` (input or output).
+     * 2. Iterates through the validator stack.
+     * 3. For each failure, applies the specific `on_fail` policy:
+     *    - `noop`: Passive logging.
+     *    - `fix`: Modifies the text (e.g., redaction).
+     *    - `filter`: Removes the violating segment.
+     *    - `refrain`: Returns an empty string.
+     *    - `exception`: Immediately halts the pipeline.
+     * 
+     * @param guard - The guard definition to apply.
+     * @param value - The text to validate.
+     * @param target - The context of the validation ('input' or 'output').
+     * @returns A comprehensive result object with pass/fail status and audit logs.
+     */
     public async validateWithGuard(guard: GuardDefinition, value: string, target: 'input' | 'output'): Promise<ValidationResult> {
         const logs: string[] = [`Guard "${guard.name}" — validating ${target}...`];
         const violations: ViolationDetail[] = [];

@@ -3,7 +3,24 @@ import { Mode, ModePolicyEngine } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
 import { ContextAssembler, TurnContext } from './ContextAssembler';
+import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
 
+/**
+ * Tala Context Router
+ * 
+ * The primary entry point for context orchestration in the TALA ecosystem.
+ * It determines how to assemble the prompt for each turn by classifying intent,
+ * filtering relevant memories, and enforcing mode-based capability policies.
+ * 
+ * **Pipeline Logic:**
+ * 1. **Intent Classification**: Analyzes the query to identify the user's goal.
+ * 2. **Retrieval Gating**: Bypasses memory search for simple intents (e.g., greetings).
+ * 3. **Memory Retrieval**: Searches the `MemoryService` using mode-scoped weights.
+ * 4. **Policy Enforcement**: Filters memories based on security and mode constraints.
+ * 5. **Contradiction Resolution**: Merges conflicting memory state.
+ * 6. **Prompt Assembly**: Generates the final instruction blocks via the `ContextAssembler`.
+ * 7. **Capability Resolution**: Maps the current state to allowed system tools.
+ */
 export class TalaContextRouter {
     private memoryService: MemoryService;
 
@@ -14,8 +31,8 @@ export class TalaContextRouter {
     /**
      * The primary entry point for context orchestration.
      */
-    public async process(turnId: string, query: string, mode: Mode): Promise<TurnContext> {
-        console.log(`[TalaRouter] Processing turn ${turnId} in mode=${mode}`);
+    public async process(turnId: string, query: string, mode: Mode, docIntel?: DocumentationIntelligenceService): Promise<TurnContext> {
+        console.log(`[TalaRouter] Processing turn ${turnId} in mode=${mode} `);
 
         // 1. Resolve Mode (Handled by input)
         // 2. Classify Intent
@@ -23,7 +40,7 @@ export class TalaContextRouter {
         const isGreetingOnly = intent.class === 'greeting';
         const retrievalSuppressed = isGreetingOnly; // Gating logic
 
-        console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'}`);
+        console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
 
         // 3. Retrieval Phase (Conditional)
         let resolved: MemoryItem[] = [];
@@ -48,9 +65,17 @@ export class TalaContextRouter {
             console.log(`[TalaRouter] Retrieval bypassed due to ${intent.class} intent.`);
         }
 
-        // 6. Assembly & Handoff
+        // 6. Documentation Retrieval Phase (NEW)
+        let docContext = '';
+        const DOC_RELEVANCE_PATTERN = /\b(architecture|design|interface|spec|protocol|how does|explain|docs|documentation|logic|engine|service|requirement|traceability|security)\b/i;
+        if (docIntel && DOC_RELEVANCE_PATTERN.test(query) && mode !== 'rp') {
+            console.log(`[TalaRouter] Turn identified as documentation-relevant. Requesting doc context...`);
+            docContext = docIntel.getRelevantContext(query);
+        }
+
+        // 7. Assembly & Handoff
         // Pass retrievalSuppressed flag to tell assembler not to emit a fallback block when retrieval was intentionally gated.
-        const promptBlocks = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed).blocks;
+        const promptBlocks = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed, docContext).blocks;
         const fallbackUsed = promptBlocks.some((b: import('./ContextAssembler').ContextBlock) => b.header.includes('FALLBACK CONTRACT'));
 
         // 7. Capability Resolution (done here so TurnContext is self-contained)
@@ -67,7 +92,7 @@ export class TalaContextRouter {
             allowedCapabilities.push('all');
         }
 
-        console.log(`[TalaRouter] Routing complete. Approved memories: ${resolved.length}/${candidateCount}`);
+        console.log(`[TalaRouter] Routing complete.Approved memories: ${resolved.length}/${candidateCount}`);
         console.log(`[TalaRouter] Capabilities — allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
 
         const context: TurnContext = {

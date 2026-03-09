@@ -1,9 +1,17 @@
 /**
- * Notebooks Component
+ * Notebooks (Research Workspace)
  * 
- * A specialized research interface inspired by NotebookLM.
- * Group sources (search results, files, URLs) into named "Notebooks"
- * and toggle their context for Tala's reference.
+ * A specialized interface for organizing high-density information into "Notebooks".
+ * Modeled after advanced research tools (like NotebookLM), it allows source grouping.
+ * 
+ * **Workspace Modes:**
+ * - **Notebook View**: Manage the active curated sources (files, URLs) for a specific project.
+ * - **Search & Add**: Integrated discovery layer for finding new content to pull into a notebook.
+ * - **Global Library**: Quick access to the workspace's entire document repository.
+ * 
+ * **Agent Interaction:**
+ * - **Context Sync**: `UPDATE AGENT CONTEXT` sends selected sources to TALA's RAG system.
+ * - **Synthesis**: "GENERATE SUMMARY" triggers a chain-of-thought analysis over the selected notebook data.
  */
 import React, { useState, useEffect } from 'react';
 import { Search } from './Search';

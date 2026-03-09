@@ -20,31 +20,17 @@ export interface FileEntry {
 }
 
 /**
- * FileService
+ * Sandboxed Filesystem Service for the Tala workspace.
  * 
- * Provides sandboxed filesystem operations for the Tala workspace. All file
- * operations are confined to the workspace root directory for security —
- * path traversal attempts are rejected with an "Access denied" error.
+ * The `FileService` provides a secure, path-validated interface for all disk 
+ * operations within the active workspace. 
  * 
- * **Supported operations:**
- * - List directories, read files, search content
- * - Create, copy, move, and delete files and directories
- * 
- * **Security model:**
- * Every method that takes a relative path resolves it against `workspaceDir`
- * and checks that the resulting absolute path starts with `workspaceDir`.
- * This prevents path traversal (e.g., `../../etc/passwd`) attacks.
- * 
- * **Default workspace:**
- * - **Development:** `process.cwd()` (the project root).
- * - **Production:** `~/Documents/TalaWorkspace` (created if it doesn't exist).
- * 
- * @example
- * ```typescript
- * const files = new FileService('/workspace');
- * const entries = await files.listDirectory('src');
- * const content = await files.readFile('src/App.tsx');
- * ```
+ * **Core Responsibilities:**
+ * - **Sandboxing**: Confines all operations to `workspaceDir` to prevent path traversal.
+ * - **Policy Enforcement**: Integrates with `CodeAccessPolicy` for fine-grained read/write permissions.
+ * - **File Management**: Standard CRUD operations for files and directories.
+ * - **Search**: Implements a lightweight, recursive, case-insensitive content search.
+ * - **Watching**: Real-time monitoring of file changes via `chokidar`, relayed to the UI.
  */
 export class FileService {
     /** The absolute path to the current workspace root directory. */

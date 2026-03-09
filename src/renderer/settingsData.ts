@@ -4,20 +4,16 @@
  * This file is the **single source of truth** for the shape of `app_settings.json`.
  * Every configuration panel in the Settings UI reads/writes fields defined here.
  *
- * Sections:
- * - **Inference** — LLM provider instances (local & cloud).
- * - **Storage** — Vector database / RAG storage providers.
- * - **Backup** — Scheduled workspace backup config.
- * - **Auth** — Local password + cloud SSO + developer API keys.
- * - **Server** — Runtime and remote deployment config.
- * - **Agent** — Agent personality profiles, system prompts, rules.
- * - **Source Control** — Git hosting provider credentials.
- * - **System** — Custom environment variables.
- * - **MCP Servers** — Model Context Protocol server definitions.
- * - **Guardrails** — Content safety rules.
- * - **Workflows** — Workflow import/sync settings.
+ * **Core Configuration Domains:**
+ * - **Inference**: LLM provider instances (Ollama, Gemini, Groq, etc.).
+ * - **Storage**: Memory and RAG vector store providers (Chroma, S3).
+ * - **Identity**: Agent personality profiles and Star Citizen immersion settings.
+ * - **Security**: Local password auth, PII firewall, and audit logging.
+ * - **Protocol**: MCP server definitions and A2UI building blocks.
  *
- * Also exports `migrateSettings()` for forward-compatible schema upgrades.
+ * **Schema Management:**
+ * - Exports `DEFAULT_SETTINGS` for new workspace initialization.
+ * - Exports `migrateSettings()` for forward-compatible schema upgrades.
  */
 
 /** Base config mixin providing a deployment mode discriminator. */

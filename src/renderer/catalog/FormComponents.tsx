@@ -1,7 +1,13 @@
 /**
  * A2UI Form Components
  * 
- * Interactive components that manage local state and trigger actions.
+ * High-level interactive structures that wrap primitive controls and manage complex state.
+ * These components facilitate structured data collection and submission back to the agent.
+ * 
+ * **Architecture:**
+ * - **State Management**: Form data is collected locally before bulk submission.
+ * - **Prop Injection**: Automatically clones children to inject `onChange` and `value` props.
+ * - **Submission**: Dispatches unified `onAction` events with the aggregated form data.
  */
 import React, { useState } from 'react';
 import { Button } from './BasicComponents';

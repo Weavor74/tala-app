@@ -5,22 +5,20 @@ import * as pty from 'node-pty';
 import { CodeAccessPolicy } from './CodeAccessPolicy';
 
 /**
- * TerminalService
+ * Interactive Shell & PTY Service.
  * 
- * Manages a pseudo-terminal (PTY) session within the Electron application.
- * Spawns a system shell process (PowerShell on Windows, bash on macOS/Linux)
- * and bridges its stdin/stdout/stderr to the frontend `xterm.js` terminal
- * component via IPC events.
+ * The `TerminalService` manages low-level pseudo-terminal (PTY) sessions using `node-pty`.
+ * It provides a bridged shell environment for both the user (via `xterm.js`) and 
+ * the agent (via `ToolService`).
  * 
- * **Tier 3 Update**: Now uses `node-pty` for full PTY support, enabling
- * window resizing and proper TTY behavior (colors, cursor, signaling).
- * 
- * Key responsibilities:
- * - Spawning and managing the lifetime of a shell child process.
- * - Forwarding shell output to the renderer via `window.webContents.send('terminal-data', ...)`.
- * - Accepting user input from the frontend and writing to the PTY.
- * - Maintaining a rolling output buffer for AI context.
- * - Handling terminal resize events.
+ * **Core Responsibilities:**
+ * - **PTY Orchestration**: Spawns and manages lifecycle for `powershell.exe` (Windows) 
+ *   or `bash` (Unix).
+ * - **IPC Bridge**: Relays stdin/stdout data between the OS process and the UI.
+ * - **Context Buffering**: Maintains a rolling buffer of output used by the agent 
+ *   to observe the results of its commands.
+ * - **Isolation**: Confines shell processes to the `workspaceRoot`.
+ * - **Terminal State**: Handles interactive resizing (cols/rows) and exit signals.
  */
 export class TerminalService {
     /** Map of active PTY shell processes by ID. */
@@ -91,7 +89,15 @@ export class TerminalService {
     }
 
     /**
-     * Spawns a new system shell process using node-pty.
+     * Initializes a new PTY session.
+     * 
+     * Spawns the default system shell with a custom environment and listeners for
+     * incoming data and process exit. The terminal output is automatically 
+     * buffered and relayed to the renderer.
+     * 
+     * @param id - Optional unique identifier for the terminal. If omitted, a random 
+     *   ID is generated.
+     * @returns The terminal session ID.
      */
     public createTerminal(id?: string): string {
         const terminalId = id || Math.random().toString(36).substring(2, 9);

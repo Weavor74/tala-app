@@ -1,3 +1,8 @@
+/**
+ * Goal Graph Primitives
+ * 
+ * Defines the core structures for TALA's task decomposition and management system.
+ */
 export type GoalStatus = 'pending' | 'active' | 'completed' | 'blocked' | 'cancelled';
 
 /**
