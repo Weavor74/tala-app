@@ -1,0 +1,4 @@
+click==8.3.1
+llama-cpp-python
+mem0ai==1.0.2
+PyYAML

@@ -1,0 +1,139 @@
+{
+    "repository": "Tala",
+    "generated_at": "2026-03-09T08:20:00Z",
+    "folders": [
+        {
+            "path": ".agent",
+            "purpose": "Agent-specific configuration, functions, and workflows",
+            "status": "ACTIVE"
+        },
+        {
+            "path": ".tala",
+            "purpose": "Application-level settings and metadata",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "archive",
+            "purpose": "Historical or manual test databases and development tools",
+            "status": "ARCHIVE"
+        },
+        {
+            "path": "bin",
+            "purpose": "Executable binaries (llama.cpp) and bundled Python distributions",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "data",
+            "purpose": "User data, app settings, and shared storage",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "docs",
+            "purpose": "Project documentation and audit reports",
+            "status": "DOCS"
+        },
+        {
+            "path": "electron",
+            "purpose": "Electron main process source code, services, and tests",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "local-inference",
+            "purpose": "Backend service for local model execution (Python)",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "mcp-servers",
+            "purpose": "Model Context Protocol (MCP) server implementations",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "memory",
+            "purpose": "Roleplay data and memory-related artifacts",
+            "status": "DATA"
+        },
+        {
+            "path": "models",
+            "purpose": "Storage for Large Language Model (LLM) weights",
+            "status": "DATA"
+        },
+        {
+            "path": "public",
+            "purpose": "Static assets for the React renderer",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "REFLECTION_SYSTEM",
+            "purpose": "Source files for the reflection engine logic",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "scripts",
+            "purpose": "Deployment, build, and maintenance scripts",
+            "status": "SCRIPT"
+        },
+        {
+            "path": "src",
+            "purpose": "Frontend React application (renderer process)",
+            "status": "ACTIVE"
+        },
+        {
+            "path": "tests",
+            "purpose": "Integrated and unit tests for various project components",
+            "status": "TEST"
+        },
+        {
+            "path": "tools",
+            "purpose": "Internal development utilities",
+            "status": "ACTIVE"
+        }
+    ],
+    "sub_components": {
+        "electron": [
+            {
+                "path": "electron/main.ts",
+                "purpose": "Entry point for the Electron main process"
+            },
+            {
+                "path": "electron/services",
+                "purpose": "Core backend services (Reflection, Identity, Rag, etc.)"
+            },
+            {
+                "path": "electron/__tests__",
+                "purpose": "Unit tests for the main process logic"
+            }
+        ],
+        "mcp-servers": [
+            {
+                "path": "mcp-servers/astro-engine",
+                "purpose": "MCP server for astrological emotional state calculation"
+            },
+            {
+                "path": "mcp-servers/mem0-core",
+                "purpose": "Core Mem0 interaction server"
+            },
+            {
+                "path": "mcp-servers/tala-core",
+                "purpose": "Central RAG and metadata service and core agent logic"
+            },
+            {
+                "path": "mcp-servers/tala-memory-graph",
+                "purpose": "Graph-based memory storage and retrieval server"
+            }
+        ],
+        "src": [
+            {
+                "path": "src/renderer",
+                "purpose": "Shared types and logic for the React app"
+            },
+            {
+                "path": "src/components",
+                "purpose": "UI components (ReflectionDashboard, Chat, etc.)"
+            },
+            {
+                "path": "src/context",
+                "purpose": "React context providers for state management"
+            }
+        ]
+    }
+}

@@ -1,0 +1,71 @@
+{
+    "inventory_version": "1.0",
+    "audit_phase": "Pass 4 - Government-Grade Inventory",
+    "total_anchors": 8,
+    "anchor_entries": [
+        {
+            "path": "electron/preload.ts",
+            "interface_type": "IPC_BRIDGE",
+            "boundary_description": "Exposes secure IPC channels to the React frontend; isolates the renderer from the main process.",
+            "upstream_caller": "React Frontend",
+            "downstream_dependency": "IpcRouter.ts",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/IpcRouter.ts",
+            "interface_type": "IPC_DISPATCHER",
+            "boundary_description": "Central entrypoint for all IPC requests from the frontend; routes to backend services.",
+            "upstream_caller": "preload.ts",
+            "downstream_dependency": "AgentService, ToolService, LoggingService",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/ToolService.ts",
+            "interface_type": "TOOL_REGISTRY",
+            "boundary_description": "Defines the contract and registration logic for all system and MCP tools.",
+            "upstream_caller": "AgentService.ts",
+            "downstream_dependency": "MCP Servers, Native Tool Drivers",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "mcp-servers/tala-core/server.py",
+            "interface_type": "MCP_ENTRYPOINT",
+            "boundary_description": "MCP server providing semantic memory and RAG capabilities via standard JSON-RPC.",
+            "upstream_caller": "ToolService.ts (via MCP Client)",
+            "downsystem_dependency": "Vector DB, File System",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/AgentService.ts",
+            "interface_type": "REASONING_ENGINE",
+            "boundary_description": "The high-level boundary for autonomous agent decision making and turn orchestration.",
+            "upstream_caller": "IpcRouter.ts (tala:chat)",
+            "downstream_dependency": "OllamaBrain, ToolService",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/brains/OllamaBrain.ts",
+            "interface_type": "INFERENCE_ADAPTER",
+            "boundary_description": "Adapter for the local Ollama HTTP API; handles prompt/response serialization.",
+            "upstream_caller": "AgentService.ts",
+            "downstream_dependency": "Ollama HTTP API",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/GuardrailService.ts",
+            "interface_type": "SAFETY_BOUNDARY",
+            "boundary_description": "Enforces output validation and safety filtering before UI delivery.",
+            "upstream_caller": "AgentService.ts",
+            "downstream_dependency": "Regex Engines, LLM Validators",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tala_project/memory/graph/store.py",
+            "interface_type": "DATA_PERSISTENCE",
+            "boundary_description": "Abstract interface for the relational/graph memory store.",
+            "upstream_caller": "TalaCoreServer (MCP)",
+            "downstream_dependency": "SQLite / Vector Engine",
+            "confidence": "HIGH"
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+chromadb
+click
+fastapi
+huggingface_hub
+mcp
+mem0ai
+numpy
+pydantic
+python-dateutil
+PyYAML
+rich
+sentence-transformers
+server
+transformers
+uvicorn

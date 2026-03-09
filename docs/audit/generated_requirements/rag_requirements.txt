@@ -1,0 +1,13 @@
+sentence-transformers==3.0.0
+huggingface-hub==0.34.4
+transformers==4.40.0
+mem0ai==1.0.2
+numpy==1.26.4
+qdrant-client==1.16.2
+chromadb==1.0.13
+mcp==1.5.0
+fastapi==0.115.0
+uvicorn==0.30.6
+pydantic==2.9.2
+PyYAML==6.0.3
+python-dateutil==2.9.0.post0

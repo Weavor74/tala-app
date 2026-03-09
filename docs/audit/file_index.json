@@ -1,0 +1,101 @@
+{
+    "repository": "Tala",
+    "generated_at": "2026-03-09T08:22:00Z",
+    "files": [
+        {
+            "path": "electron/main.ts",
+            "role": "ENTRYPOINT",
+            "purpose": "Main process entry point"
+        },
+        {
+            "path": "electron/preload.ts",
+            "role": "BRIDGE",
+            "purpose": "Preload script for contextBridge"
+        },
+        {
+            "path": "electron/bootstrap.ts",
+            "role": "SERVICE",
+            "purpose": "Main process initialization"
+        },
+        {
+            "path": "src/main.tsx",
+            "role": "ENTRYPOINT",
+            "purpose": "React application entry point"
+        },
+        {
+            "path": "src/App.tsx",
+            "role": "UI",
+            "purpose": "Root UI component"
+        },
+        {
+            "path": "mcp-servers/tala-core/server.py",
+            "role": "SERVICE",
+            "purpose": "Main MCP server (RAG/Agent)"
+        },
+        {
+            "path": "mcp-servers/astro-engine/server.py",
+            "role": "SERVICE",
+            "purpose": "Astrological emotional vector service"
+        },
+        {
+            "path": "mcp-servers/mem0-core/server.py",
+            "role": "SERVICE",
+            "purpose": "Mem0 interaction server"
+        },
+        {
+            "path": "mcp-servers/tala-memory-graph/src/memory/server.py",
+            "role": "SERVICE",
+            "purpose": "Graph-based memory retrieval server"
+        },
+        {
+            "path": "package.json",
+            "role": "CONFIG",
+            "purpose": "Node.js manifest and scripts"
+        },
+        {
+            "path": "MASTER_PYTHON_REQUIREMENTS.txt",
+            "role": "CONFIG",
+            "purpose": "Consolidated Python dependencies"
+        },
+        {
+            "path": "tsconfig.json",
+            "role": "CONFIG",
+            "purpose": "TypeScript compiler settings"
+        },
+        {
+            "path": "vite.config.ts",
+            "role": "CONFIG",
+            "purpose": "Vite build configuration"
+        },
+        {
+            "path": "vitest.config.ts",
+            "role": "CONFIG",
+            "purpose": "Vitest configuration"
+        },
+        {
+            "path": "eslint.config.js",
+            "role": "CONFIG",
+            "purpose": "Linting configuration"
+        },
+        {
+            "path": "launch-inference.bat",
+            "role": "SCRIPT",
+            "purpose": "Start local model inference"
+        },
+        {
+            "path": "bootstrap.ps1",
+            "role": "SCRIPT",
+            "purpose": "Environment setup (PowerShell)"
+        },
+        {
+            "path": "README.md",
+            "role": "DOCS",
+            "purpose": "Primary project overview"
+        }
+    ],
+    "directories_mapped": [
+        "electron/services/",
+        "src/renderer/",
+        "src/components/"
+    ]
+}

@@ -1,0 +1,4 @@
+click
+llama-cpp-python
+mem0ai
+PyYAML

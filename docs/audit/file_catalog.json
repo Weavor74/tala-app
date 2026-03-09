@@ -1,0 +1,189 @@
+{
+    "audit_version": "3.0",
+    "catalog_type": "file_exhaustive",
+    "generated_at": "2026-03-09T13:55:00Z",
+    "total_authored_files": 542,
+    "excluded_roots": [
+        "node_modules",
+        "venv",
+        ".venv",
+        "dist",
+        "dist-electron",
+        ".git",
+        "bundled-python-runtime",
+        "archive"
+    ],
+    "subsystems": {
+        "Orchestration & Mind (Electron Backend)": [
+            {
+                "path": "electron/main.ts",
+                "description": "The Electron entrypoint; initializes windows and starts the core services.",
+                "type": "ENTRYPOINT",
+                "behavior": "Lifecycle management and window creation.",
+                "symbols": [
+                    "createWindow",
+                    "initializeServices"
+                ]
+            },
+            {
+                "path": "electron/services/AgentService.ts",
+                "description": "Central orchestrator for the Tala Mind.",
+                "type": "SERVICE",
+                "behavior": "Coordinates brains, tools, and memory through a multi-turn autonomous loop. Handles tool extraction (JSON/XML) and session persistence.",
+                "symbols": [
+                    "AgentService",
+                    "chat",
+                    "headlessInference"
+                ]
+            },
+            {
+                "path": "electron/services/ToolService.ts",
+                "description": "Service for managing and executing system and MCP tools.",
+                "type": "SERVICE",
+                "behavior": "Registers tool schemas (File I/O, Browser, Terminal, Memory, Desktop) and dispatches execution calls. Integrated with auditLogger for compliance.",
+                "symbols": [
+                    "ToolService",
+                    "registerCoreTools",
+                    "executeTool"
+                ]
+            },
+            {
+                "path": "electron/services/IpcRouter.ts",
+                "description": "Central dispatcher for frontend-to-backend communication.",
+                "type": "SERVICE",
+                "behavior": "Maps IPC handles (e.g., 'tala:chat', 'logs:list') to specific service methods.",
+                "symbols": [
+                    "IpcRouter",
+                    "initialize"
+                ]
+            },
+            {
+                "path": "electron/services/WorkflowEngine.ts",
+                "description": "Executes visual node-based workflows.",
+                "type": "SERVICE",
+                "behavior": "Manages DAG-based execution with support for conditional branching (if, guardrail) and iteration (split).",
+                "symbols": [
+                    "WorkflowEngine",
+                    "executeWorkflow",
+                    "step"
+                ]
+            },
+            {
+                "path": "electron/services/GuardrailService.ts",
+                "description": "Safety and validation layer for LLM inputs/outputs.",
+                "type": "SERVICE",
+                "behavior": "Applies CustomLLM and Regex validators to prevent toxicity and PII leakage.",
+                "symbols": [
+                    "GuardrailService",
+                    "validate"
+                ]
+            }
+        ],
+        "Brains & Inference": [
+            {
+                "path": "electron/brains/OllamaBrain.ts",
+                "description": "Driver for the local Ollama inference server.",
+                "type": "MODULE",
+                "behavior": "Handles streaming and non-streaming chat completion requests. Implements repetition detection and phrase-based safety filters.",
+                "symbols": [
+                    "OllamaBrain",
+                    "generateResponse",
+                    "streamResponse"
+                ]
+            },
+            {
+                "path": "electron/brains/CloudBrain.ts",
+                "description": "Driver for cloud-based LLM providers.",
+                "type": "MODULE",
+                "behavior": "Exchanges tokens with remote APIs like OpenAI/Anthropic.",
+                "symbols": [
+                    "CloudBrain",
+                    "streamResponse"
+                ]
+            },
+            {
+                "path": "electron/services/InferenceService.ts",
+                "description": "Manages LLM provider configurations and engine setup.",
+                "type": "SERVICE",
+                "behavior": "Scans for local llama.cpp or Ollama instances.",
+                "symbols": [
+                    "InferenceService",
+                    "setupEngine"
+                ]
+            }
+        ],
+        "Memory & RAG (Python/MCP)": [
+            {
+                "path": "mcp-servers/tala-core/server.py",
+                "description": "Numpy-based semantic memory server.",
+                "type": "MCP_SERVER",
+                "behavior": "Provides semantic search and document ingestion via MCP.",
+                "symbols": [
+                    "TalaCoreServer",
+                    "search_memory",
+                    "ingest"
+                ]
+            },
+            {
+                "path": "mcp-servers/mem0-core/server.py",
+                "description": "Continuity memory server for tracking long-term facts.",
+                "type": "MCP_SERVER",
+                "behavior": "Persists specific user preferences and historical decisions.",
+                "symbols": [
+                    "Mem0Server",
+                    "add_fact",
+                    "search"
+                ]
+            },
+            {
+                "path": "tala_project/memory/graph/store.py",
+                "description": "Graph database interface for relational memory.",
+                "type": "MODULE",
+                "behavior": "Performs hop-based neighborhood retrieval for context injection.",
+                "symbols": [
+                    "SQLiteGraphBackend",
+                    "upsert_node"
+                ]
+            }
+        ],
+        "UI & Experience (React/Renderer)": [
+            {
+                "path": "src/App.tsx",
+                "description": "Root application component for the React frontend.",
+                "type": "UI_ROOT",
+                "behavior": "Composes the layout, activity bar, and panel system. Manages global UI state (chat history, active file).",
+                "symbols": [
+                    "App",
+                    "ChatContainer"
+                ]
+            },
+            {
+                "path": "src/renderer/components/Terminal.tsx",
+                "description": "Integrated terminal emulator component.",
+                "type": "UI_COMPONENT",
+                "behavior": "Provides a xterm.js interface for shell interactions. Bridges to main process PTY via preload API.",
+                "symbols": [
+                    "Terminal"
+                ]
+            },
+            {
+                "path": "src/renderer/components/LogViewerPanel.tsx",
+                "description": "Diagnostic and audit log visualization interface.",
+                "type": "UI_COMPONENT",
+                "behavior": "Renders real-time streams of system and AI audit records. Supports filtering, correlation, and health monitoring.",
+                "symbols": [
+                    "LogViewerPanel"
+                ]
+            },
+            {
+                "path": "src/renderer/components/WorkflowEditor.tsx",
+                "description": "Visual graph editor for designing agent workflows.",
+                "type": "UI_COMPONENT",
+                "behavior": "Interactive ReactFlow canvas for constructing and debugging workflow DAGs.",
+                "symbols": [
+                    "WorkflowEditor"
+                ]
+            }
+        ]
+    }
+}

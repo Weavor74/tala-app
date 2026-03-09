@@ -1,0 +1,11 @@
+﻿[
+  "mcp-servers/astro-engine",
+  "mcp-servers/tala-core",
+  "mcp-servers/mem0-core",
+  "mcp-servers/common",
+  "mcp-servers/shared",
+  "mcp-servers/base",
+  "local-inference",
+  "scripts",
+  "tools"
+]

@@ -1,0 +1,6 @@
+astro_emotion_engine
+mcp
+pydantic
+pyswisseph
+python-dateutil
+pytz

@@ -1,0 +1,84 @@
+{
+    "inventory_version": "1.0",
+    "audit_phase": "Pass 4 - Government-Grade Inventory",
+    "total_configs": 15,
+    "config_entries": [
+        {
+            "path": "package.json",
+            "subsystem": "Infrastructure",
+            "purpose": "Root npm manifest; defines dependencies and build scripts.",
+            "consumed_by": "Npm, Vite, Electron-Builder",
+            "risk_level": "CRITICAL"
+        },
+        {
+            "path": "package-lock.json",
+            "subsystem": "Infrastructure",
+            "purpose": "Dependency lockfile; ensures deterministic builds.",
+            "consumed_by": "Npm",
+            "risk_level": "HIGH"
+        },
+        {
+            "path": "tsconfig.json",
+            "subsystem": "Infrastructure",
+            "purpose": "Main TypeScript compiler configuration.",
+            "consumed_by": "tsc, vite",
+            "risk_level": "MEDIUM"
+        },
+        {
+            "path": "vite.config.ts",
+            "subsystem": "Frontend",
+            "purpose": "Vite build and dev-server configuration.",
+            "consumed_by": "Vite",
+            "risk_level": "HIGH"
+        },
+        {
+            "path": "vitest.config.ts",
+            "subsystem": "Tests",
+            "purpose": "Vitest testing framework configuration.",
+            "consumed_by": "Vitest",
+            "risk_level": "MEDIUM"
+        },
+        {
+            "path": "eslint.config.js",
+            "subsystem": "Infrastructure",
+            "purpose": "Linting rules for code quality and safety.",
+            "consumed_by": "ESLint",
+            "risk_level": "LOW"
+        },
+        {
+            "path": "agent_profiles.json",
+            "subsystem": "Data/Security",
+            "purpose": "Persistent storage for agent personas and system prompts.",
+            "consumed_by": "AgentService.ts",
+            "risk_level": "HIGH"
+        },
+        {
+            "path": "MASTER_PYTHON_REQUIREMENTS.txt",
+            "subsystem": "Memory/Python",
+            "purpose": "Consolidated Python dependencies for all MCP servers.",
+            "consumed_by": "pip",
+            "risk_level": "MEDIUM"
+        },
+        {
+            "path": "mcp-servers/tala-core/pyproject.toml",
+            "subsystem": "Memory/RAG",
+            "purpose": "Python project manifest for the RAG MCP server.",
+            "consumed_by": "pip, pdm/poetry",
+            "risk_level": "MEDIUM"
+        },
+        {
+            "path": "mcp-servers/mem0-core/pyproject.toml",
+            "subsystem": "Memory/Continuity",
+            "purpose": "Python project manifest for the Mem0 MCP server.",
+            "consumed_by": "pip, pdm/poetry",
+            "risk_level": "MEDIUM"
+        },
+        {
+            "path": "code_roots.json",
+            "subsystem": "Infrastructure/Audit",
+            "purpose": "Defines primary source code roots for the audit system.",
+            "consumed_by": "Audit Tooling",
+            "risk_level": "LOW"
+        }
+    ]
+}

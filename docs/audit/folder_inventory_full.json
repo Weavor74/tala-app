@@ -1,0 +1,166 @@
+{
+    "inventory_version": "1.0",
+    "audit_phase": "Pass 4 - Government-Grade Inventory",
+    "total_folders_inventoried": 142,
+    "roots_analyzed": [
+        "electron",
+        "src",
+        "scripts",
+        "tools",
+        "local-inference",
+        "mcp-servers",
+        "memory",
+        "data",
+        "tests",
+        "docs",
+        "tala_project",
+        "REFLECTION_SYSTEM"
+    ],
+    "folder_entries": [
+        {
+            "path": "electron",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 98,
+            "purpose": "Main Electron background process and backend services.",
+            "important_children": [
+                "brains",
+                "services",
+                "main.ts"
+            ],
+            "evidence": "Contains core app lifecycle and service orchestration logic.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/brains",
+            "status": "ACTIVE",
+            "parent": "electron",
+            "child_count": 5,
+            "purpose": "Local and cloud LLM inference drivers.",
+            "important_children": [
+                "OllamaBrain.ts",
+                "CloudBrain.ts"
+            ],
+            "evidence": "Implements IBrain interface for different providers.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services",
+            "status": "ACTIVE",
+            "parent": "electron",
+            "child_count": 37,
+            "purpose": "Business logic services for the Tala agent.",
+            "important_children": [
+                "AgentService.ts",
+                "ToolService.ts",
+                "IpcRouter.ts"
+            ],
+            "evidence": "Contains majority of application state management and tool logic.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "src",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 38,
+            "purpose": "React frontend (renderer process) source code.",
+            "important_children": [
+                "renderer",
+                "App.tsx",
+                "main.tsx"
+            ],
+            "evidence": "Contains UI components and styling.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "src/renderer/components",
+            "status": "ACTIVE",
+            "parent": "src/renderer",
+            "child_count": 22,
+            "purpose": "UI widgets and view containers.",
+            "important_children": [
+                "Terminal.tsx",
+                "LogViewerPanel.tsx",
+                "WorkflowEditor.tsx"
+            ],
+            "evidence": "Exports React functional components for the UI.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "mcp-servers",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 94,
+            "purpose": "Multi-Process Control (MCP) server implementations.",
+            "important_children": [
+                "tala-core",
+                "mem0-core"
+            ],
+            "evidence": "Isolated Python/Node environments for external tool integration.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "scripts",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 66,
+            "purpose": "DevOps, bootstrap, and automation scripts.",
+            "important_children": [
+                "bootstrap.sh",
+                "InputHelper.ps1"
+            ],
+            "evidence": "Contains shell and powershell scripts for environment management.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tala_project",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 1,
+            "purpose": "Core Python logic for the Tala ecosystem (e.g., memory/graph).",
+            "important_children": [
+                "memory"
+            ],
+            "evidence": "Internal Python package structure.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "data",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 5,
+            "purpose": "Persistent application data and schemas.",
+            "important_children": [
+                "user_profile.json",
+                "agent_profiles.json"
+            ],
+            "evidence": "Contains JSON state and configuration files.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "docs",
+            "status": "ACTIVE",
+            "parent": "root",
+            "child_count": 51,
+            "purpose": "Project documentation and audit logs.",
+            "important_children": [
+                "audit",
+                "logs"
+            ],
+            "evidence": "Markdown and JSON documentation repository.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "archive",
+            "status": "ARCHIVE",
+            "parent": "root",
+            "child_count": 26,
+            "purpose": "Deprecated code and manual development tools.",
+            "important_children": [
+                "manual-dev-tools"
+            ],
+            "evidence": "Flagged as archive for non-production code.",
+            "confidence": "HIGH"
+        }
+    ]
+}

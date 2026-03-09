@@ -1,0 +1,781 @@
+{
+  "astro_engine": {
+    "files_scanned": [
+      "mcp-servers/astro-engine/astro_emotion_engine/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/aggregation/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/aggregation/normalize.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/cli/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/cli/main.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/config.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/engine.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/fallback_provider.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/provider.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/swisseph_provider.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/export/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/export/json_schema.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/base.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/jupiter.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/mars.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/mercury.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/moon_phase.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/natal_aspects.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/natal_baseline.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/outer_planets.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/saturn.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/transit_aspects.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/transit_volatility.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/modules/venus.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/domain.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/influences.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/natal.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/request.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/schemas/response.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/__init__.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/aspect_engine.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/chart_cache.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/chart_factory.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/geocoder.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/house_engine.py",
+      "mcp-servers/astro-engine/astro_emotion_engine/services/profile_manager.py"
+    ],
+    "manifest_files": [
+      "mcp-servers/astro-engine/requirements.txt",
+      "mcp-servers/astro-engine/pyproject.toml"
+    ],
+    "launcher_files": [],
+    "packages": [
+      {
+        "package": "astro_emotion_engine",
+        "version": "0.1.0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/export/json_schema.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
+        ],
+        "imported_as_modules": [
+          "astro_emotion_engine.config",
+          "astro_emotion_engine.engine",
+          "astro_emotion_engine.services.chart_factory",
+          "astro_emotion_engine.services.profile_manager"
+        ],
+        "manifest_sources": [],
+        "launcher_sources": []
+      },
+      {
+        "package": "mcp",
+        "version": "1.5.0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
+        ],
+        "imported_as_modules": [
+          "mcp.server.fastmcp"
+        ],
+        "manifest_sources": [
+          "mcp-servers/astro-engine/pyproject.toml"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pydantic",
+        "version": "2.0",
+        "version_source": "manifest:mcp-servers/astro-engine/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/schemas/domain.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/schemas/influences.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/schemas/natal.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/schemas/request.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/schemas/response.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/services/profile_manager.py"
+        ],
+        "imported_as_modules": [
+          "pydantic"
+        ],
+        "manifest_sources": [
+          "mcp-servers/astro-engine/pyproject.toml",
+          "mcp-servers/astro-engine/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pyswisseph",
+        "version": "2.10.3.2",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/swisseph_provider.py"
+        ],
+        "imported_as_modules": [
+          "swisseph"
+        ],
+        "manifest_sources": [
+          "mcp-servers/astro-engine/pyproject.toml",
+          "mcp-servers/astro-engine/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "python-dateutil",
+        "version": "2.9.0.post0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/cli/main.py",
+          "mcp-servers/astro-engine/astro_emotion_engine/services/chart_factory.py"
+        ],
+        "imported_as_modules": [
+          "dateutil"
+        ],
+        "manifest_sources": [
+          "mcp-servers/astro-engine/pyproject.toml",
+          "mcp-servers/astro-engine/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pytz",
+        "version": "2025.2",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/astro-engine/astro_emotion_engine/ephemeris/swisseph_provider.py"
+        ],
+        "imported_as_modules": [
+          "pytz"
+        ],
+        "manifest_sources": [
+          "mcp-servers/astro-engine/pyproject.toml",
+          "mcp-servers/astro-engine/requirements.txt"
+        ],
+        "launcher_sources": []
+      }
+    ]
+  },
+  "mcp_core": {
+    "files_scanned": [],
+    "manifest_files": [],
+    "launcher_files": [],
+    "packages": []
+  },
+  "inference": {
+    "files_scanned": [],
+    "manifest_files": [
+      "local-inference/requirements.txt"
+    ],
+    "launcher_files": [],
+    "packages": [
+      {
+        "package": "annotated-doc",
+        "version": "0.0.4",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "annotated-types",
+        "version": "0.7.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "anyio",
+        "version": "4.12.1",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "click",
+        "version": "8.3.1",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "colorama",
+        "version": "0.4.6",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "diskcache",
+        "version": "5.6.3",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "fastapi",
+        "version": "0.129.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "h11",
+        "version": "0.16.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "idna",
+        "version": "3.11",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "Jinja2",
+        "version": "3.1.6",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "llama_cpp_python",
+        "version": "0.3.16",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "MarkupSafe",
+        "version": "3.0.3",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "numpy",
+        "version": "2.4.2",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pydantic",
+        "version": "2.12.5",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pydantic-settings",
+        "version": "2.13.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pydantic_core",
+        "version": "2.41.5",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "python-dotenv",
+        "version": "1.2.1",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "PyYAML",
+        "version": "6.0.3",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "sse-starlette",
+        "version": "3.2.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "starlette",
+        "version": "0.52.1",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "starlette-context",
+        "version": "0.3.6",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "typing-inspection",
+        "version": "0.4.2",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "typing_extensions",
+        "version": "4.15.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "uvicorn",
+        "version": "0.40.0",
+        "version_source": "manifest:local-inference/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "local-inference/requirements.txt"
+        ],
+        "launcher_sources": []
+      }
+    ]
+  },
+  "rag": {
+    "files_scanned": [
+      "mcp-servers/mem0-core/add_requested_memory.py",
+      "mcp-servers/mem0-core/diag_mem0.py",
+      "mcp-servers/mem0-core/diag_mem0_v2.py",
+      "mcp-servers/mem0-core/diag_mem0_v3.py",
+      "mcp-servers/mem0-core/diag_mem0_v4.py",
+      "mcp-servers/mem0-core/server.py",
+      "mcp-servers/tala-core/debug_chroma.py",
+      "mcp-servers/tala-core/server.py"
+    ],
+    "manifest_files": [
+      "mcp-servers/mem0-core/requirements.txt",
+      "mcp-servers/tala-core/requirements.txt"
+    ],
+    "launcher_files": [
+      "mcp-servers/mem0-core/data/qdrant_db/meta.json",
+      "mcp-servers/tala-core/data/simple_vector_store/metadata.json"
+    ],
+    "packages": [
+      {
+        "package": "chromadb",
+        "version": "1.0.13",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/tala-core/debug_chroma.py"
+        ],
+        "imported_as_modules": [
+          "chromadb"
+        ],
+        "manifest_sources": [],
+        "launcher_sources": []
+      },
+      {
+        "package": "click",
+        "version": "8.3.1",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "PROBABLE",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [],
+        "launcher_sources": [
+          "mcp-servers/tala-core/data/simple_vector_store/metadata.json"
+        ]
+      },
+      {
+        "package": "fastapi",
+        "version": null,
+        "version_source": null,
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "huggingface_hub",
+        "version": "0.24.0,<0.26.0",
+        "version_source": "manifest:mcp-servers/tala-core/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "mcp",
+        "version": "1.5.0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/mem0-core/server.py",
+          "mcp-servers/tala-core/server.py"
+        ],
+        "imported_as_modules": [
+          "mcp.server.fastmcp"
+        ],
+        "manifest_sources": [],
+        "launcher_sources": []
+      },
+      {
+        "package": "mem0ai",
+        "version": "1.0.2",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/mem0-core/diag_mem0.py",
+          "mcp-servers/mem0-core/diag_mem0_v2.py",
+          "mcp-servers/mem0-core/diag_mem0_v3.py",
+          "mcp-servers/mem0-core/diag_mem0_v4.py",
+          "mcp-servers/mem0-core/server.py"
+        ],
+        "imported_as_modules": [
+          "mem0",
+          "mem0.config",
+          "mem0.configs.base"
+        ],
+        "manifest_sources": [
+          "mcp-servers/mem0-core/requirements.txt"
+        ],
+        "launcher_sources": [
+          "mcp-servers/mem0-core/data/qdrant_db/meta.json",
+          "mcp-servers/tala-core/data/simple_vector_store/metadata.json"
+        ]
+      },
+      {
+        "package": "numpy",
+        "version": "1.26.4",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/tala-core/server.py"
+        ],
+        "imported_as_modules": [
+          "numpy"
+        ],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "pydantic",
+        "version": "2.12.5",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "python-dateutil",
+        "version": "2.9.0.post0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "PyYAML",
+        "version": null,
+        "version_source": null,
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/tala-core/server.py"
+        ],
+        "imported_as_modules": [
+          "yaml"
+        ],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "rich",
+        "version": "14.0.0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "PROBABLE",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [],
+        "launcher_sources": [
+          "mcp-servers/tala-core/data/simple_vector_store/metadata.json"
+        ]
+      },
+      {
+        "package": "sentence-transformers",
+        "version": "3.0.0,<4.0.0",
+        "version_source": "manifest:mcp-servers/tala-core/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/tala-core/server.py"
+        ],
+        "imported_as_modules": [
+          "sentence_transformers"
+        ],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "server",
+        "version": null,
+        "version_source": null,
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "mcp-servers/mem0-core/add_requested_memory.py"
+        ],
+        "imported_as_modules": [
+          "server"
+        ],
+        "manifest_sources": [],
+        "launcher_sources": []
+      },
+      {
+        "package": "transformers",
+        "version": "4.40.0,<4.50.0",
+        "version_source": "manifest:mcp-servers/tala-core/requirements.txt",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      },
+      {
+        "package": "uvicorn",
+        "version": "0.41.0",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "CONFIRMED",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [
+          "mcp-servers/tala-core/requirements.txt"
+        ],
+        "launcher_sources": []
+      }
+    ]
+  },
+  "ui_tools": {
+    "files_scanned": [
+      "scripts/generate_python_dependency_audit.py",
+      "tools/dev/query_memory.py",
+      "tools/memory_validator.py"
+    ],
+    "manifest_files": [],
+    "launcher_files": [
+      "scripts/assemble_universal.bat",
+      "scripts/launch-inference.bat",
+      "scripts/launch-inference.sh",
+      "scripts/make_portable.bat",
+      "scripts/make_portable.sh",
+      "scripts/make_portable_win.bat",
+      "scripts/make_universal.bat",
+      "scripts/setup_usb.bat"
+    ],
+    "packages": [
+      {
+        "package": "click",
+        "version": "8.3.1",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "PROBABLE",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [],
+        "launcher_sources": [
+          "scripts/launch-inference.bat",
+          "scripts/make_portable_win.bat"
+        ]
+      },
+      {
+        "package": "llama-cpp-python",
+        "version": null,
+        "version_source": null,
+        "confidence": "PROBABLE",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [],
+        "launcher_sources": [
+          "scripts/launch-inference.bat",
+          "scripts/launch-inference.sh"
+        ]
+      },
+      {
+        "package": "mem0ai",
+        "version": "1.0.2",
+        "version_source": "installed-metadata:current-interpreter",
+        "confidence": "PROBABLE",
+        "imported_by_files": [],
+        "imported_as_modules": [],
+        "manifest_sources": [],
+        "launcher_sources": [
+          "scripts/assemble_universal.bat",
+          "scripts/make_portable.bat",
+          "scripts/make_portable.sh",
+          "scripts/make_portable_win.bat",
+          "scripts/make_universal.bat",
+          "scripts/setup_usb.bat"
+        ]
+      },
+      {
+        "package": "PyYAML",
+        "version": null,
+        "version_source": null,
+        "confidence": "CONFIRMED",
+        "imported_by_files": [
+          "tools/memory_validator.py"
+        ],
+        "imported_as_modules": [
+          "yaml"
+        ],
+        "manifest_sources": [],
+        "launcher_sources": []
+      }
+    ]
+  },
+  "unclassified": {
+    "files_scanned": [],
+    "manifest_files": [],
+    "launcher_files": [],
+    "packages": []
+  }
+}

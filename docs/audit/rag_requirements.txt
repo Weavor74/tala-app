@@ -1,0 +1,15 @@
+chromadb==1.0.13
+click==8.3.1
+fastapi
+huggingface_hub==0.24.0,<0.26.0
+mcp==1.5.0
+mem0ai==1.0.2
+numpy==1.26.4
+pydantic==2.12.5
+python-dateutil==2.9.0.post0
+PyYAML
+rich==14.0.0
+sentence-transformers==3.0.0,<4.0.0
+server
+transformers==4.40.0,<4.50.0
+uvicorn==0.41.0

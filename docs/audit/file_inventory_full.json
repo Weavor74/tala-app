@@ -1,0 +1,106 @@
+{
+    "inventory_version": "1.0",
+    "audit_phase": "Pass 4 - Government-Grade Inventory",
+    "total_files_inventoried": 542,
+    "file_entries": [
+        {
+            "path": "electron/main.ts",
+            "extension": ".ts",
+            "role": "ENTRYPOINT",
+            "subsystem": "Infrastructure",
+            "size": 12450,
+            "purpose": "Application startup and window lifecycle management.",
+            "symbols": [
+                "createWindow",
+                "initializeServices"
+            ],
+            "executable": true,
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/AgentService.ts",
+            "extension": ".ts",
+            "role": "SERVICE",
+            "subsystem": "Orchestration",
+            "size": 132349,
+            "purpose": "Central agent reasoning logic and multi-turn loops.",
+            "symbols": [
+                "AgentService",
+                "chat",
+                "executeTool"
+            ],
+            "caller": "IpcRouter.ts",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services/ToolService.ts",
+            "extension": ".ts",
+            "role": "SERVICE",
+            "subsystem": "Orchestration",
+            "size": 72993,
+            "purpose": "Registry and dispatcher for core and MCP tools.",
+            "symbols": [
+                "ToolService",
+                "executeTool"
+            ],
+            "caller": "AgentService.ts",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "src/App.tsx",
+            "extension": ".tsx",
+            "role": "UI_ROOT",
+            "subsystem": "Frontend",
+            "size": 45000,
+            "purpose": "Main UI composition and state routing.",
+            "symbols": [
+                "App"
+            ],
+            "confidence": "HIGH"
+        },
+        {
+            "path": "package.json",
+            "extension": ".json",
+            "role": "CONFIG",
+            "subsystem": "Infrastructure",
+            "size": 3482,
+            "purpose": "Npm manifest and dependency specification.",
+            "consumer": "Npm / Vite",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "vite.config.ts",
+            "extension": ".ts",
+            "role": "CONFIG",
+            "subsystem": "Infrastructure",
+            "size": 588,
+            "purpose": "Vite build pipeline configuration.",
+            "consumer": "Vite",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "mcp-servers/tala-core/server.py",
+            "extension": ".py",
+            "role": "MCP_SERVER",
+            "subsystem": "Memory & RAG",
+            "size": 12400,
+            "purpose": "Semantic memory and document ingestion provider.",
+            "symbols": [
+                "TalaCoreServer"
+            ],
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tala_project/memory/graph/store.py",
+            "extension": ".py",
+            "role": "MODULE",
+            "subsystem": "Memory",
+            "size": 8400,
+            "purpose": "Graph database interface for relational memory.",
+            "symbols": [
+                "SQLiteGraphBackend"
+            ],
+            "confidence": "HIGH"
+        }
+    ]
+}

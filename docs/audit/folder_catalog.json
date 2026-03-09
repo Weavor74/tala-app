@@ -1,0 +1,260 @@
+{
+    "repository": "Tala",
+    "generated_at": "2026-03-09T08:40:00Z",
+    "catalog_type": "EXHAUSTIVE_FOLDER_CATALOG",
+    "folders": [
+        {
+            "path": "/",
+            "status": "CONFIG",
+            "purpose": "Repository root containing build configs, launchers, and environment manifests.",
+            "parent": null,
+            "important_children": [
+                ".agent",
+                ".tala",
+                "electron",
+                "src",
+                "mcp-servers",
+                "scripts",
+                "local-inference"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains package.json and core project entrypoints.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": ".agent",
+            "status": "ACTIVE",
+            "purpose": "Agent-specific runtime configuration, MCP tool definitions, and workflows.",
+            "parent": "/",
+            "important_children": [
+                "functions",
+                "workflows"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains agent instructions and operational configs.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": ".tala",
+            "status": "ACTIVE",
+            "purpose": "Application-level operational settings and persistent session metadata.",
+            "parent": "/",
+            "deep_scanned": true,
+            "evidence": "Observed in root directory scans as a hidden config folder.",
+            "confidence": "MEDIUM"
+        },
+        {
+            "path": "archive",
+            "status": "ARCHIVE",
+            "purpose": "Legacy databases, old test logs, and decommissioned tools.",
+            "parent": "/",
+            "deep_scanned": false,
+            "evidence": "Labeling and contents suggest historical storage.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "bin",
+            "status": "DATA",
+            "purpose": "Storage for external binaries (llama.cpp) and bundled Python environments for portability.",
+            "parent": "/",
+            "important_children": [
+                "python-win",
+                "python"
+            ],
+            "deep_scanned": false,
+            "evidence": "Contains executable runtimes used by inference services.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "data",
+            "status": "DATA",
+            "purpose": "User-specific persistent data including session logs, chat history, and internal caches.",
+            "parent": "/",
+            "important_children": [
+                "chat_sessions",
+                "logs",
+                "memory",
+                "soul",
+                "workspace"
+            ],
+            "deep_scanned": true,
+            "evidence": "Structure-aware scan reveals active app data storage.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "docs",
+            "status": "DOCS",
+            "purpose": "Central hub for project documentation, including architectural guides and audit reports.",
+            "parent": "/",
+            "important_children": [
+                "audit",
+                "runtime"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains markdown files describing system components.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron",
+            "status": "ACTIVE",
+            "purpose": "Electron main process source code. Implements the bridge between UI and OS.",
+            "parent": "/",
+            "important_children": [
+                "brains",
+                "services",
+                "__tests__"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains main.ts and core backend services.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "electron/services",
+            "status": "ACTIVE",
+            "purpose": "Implementation of main process services (RAG, Identity, Terminal, etc.).",
+            "parent": "electron",
+            "deep_scanned": true,
+            "evidence": "Contains numerous TypeScript microservices.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "local-inference",
+            "status": "ACTIVE",
+            "purpose": "Python-based wrapper for local LLM inference via llama-cpp-python.",
+            "parent": "/",
+            "important_children": [
+                "venv"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains server logic to host local models.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "mcp-servers",
+            "status": "ACTIVE",
+            "purpose": "Model Context Protocol (MCP) server implementations providing specialized tools to the agent.",
+            "parent": "/",
+            "important_children": [
+                "astro-engine",
+                "mem0-core",
+                "tala-core",
+                "tala-memory-graph"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains multiple sub-projects following the MCP spec.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "memory",
+            "status": "DATA",
+            "purpose": "Long-term persona data, roleplay transcripts, and processed knowledge assets.",
+            "parent": "/",
+            "important_children": [
+                "processed",
+                "roleplay"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains datasets used for agent memory grounding.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "scripts",
+            "status": "SCRIPT",
+            "purpose": "Automation scripts for build, deployment, maintenance, and diagnostics.",
+            "parent": "/",
+            "important_children": [
+                "docs",
+                "audit"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains .bat, .sh, and .ts scripts for project tasks.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "src",
+            "status": "ACTIVE",
+            "purpose": "Frontend React (Vite) application source code (Renderer process).",
+            "parent": "/",
+            "important_children": [
+                "renderer",
+                "components"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains UI source and components.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tala_project",
+            "status": "ACTIVE",
+            "purpose": "Encapsulated logic for advanced memory graph operations and data extraction.",
+            "parent": "/",
+            "important_children": [
+                "memory",
+                "docs"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains highly specialized Python modules for knowledge graph management.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tests",
+            "status": "TEST",
+            "purpose": "Global unit and integration test suites for the whole application.",
+            "parent": "/",
+            "deep_scanned": true,
+            "evidence": "Contains .test.ts and .js test files.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "tools",
+            "status": "ACTIVE",
+            "purpose": "Development utilities and diagnostic tools for internal maintainers.",
+            "parent": "/",
+            "important_children": [
+                "dev"
+            ],
+            "deep_scanned": true,
+            "evidence": "Contains validation and query scripts.",
+            "confidence": "HIGH"
+        },
+        {
+            "path": "TEST_RUNS",
+            "status": "TEST",
+            "purpose": "Historical audit logs and evidence from previous automated testing cycles.",
+            "parent": "/",
+            "deep_scanned": false,
+            "evidence": "Contains timestamped directory results from test runs.",
+            "confidence": "HIGH"
+        }
+    ],
+    "excluded_roots": [
+        {
+            "path": "node_modules",
+            "reason": "Third-party Node.js dependencies."
+        },
+        {
+            "path": ".git",
+            "reason": "Version control metadata."
+        },
+        {
+            "path": "dist",
+            "reason": "Production build output for renderer."
+        },
+        {
+            "path": "dist-electron",
+            "reason": "Production build output for main process."
+        },
+        {
+            "path": "venv",
+            "reason": "Python virtual environment for local development."
+        },
+        {
+            "path": ".venv",
+            "reason": "Python virtual environment (alternative)."
+        },
+        {
+            "path": "__pycache__",
+            "reason": "Compiled Python bytecode."
+        }
+    ]
+}

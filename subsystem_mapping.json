@@ -1,0 +1,21 @@
+﻿{
+  "astro_engine": [
+    "mcp-servers/astro-engine"
+  ],
+  "mcp_core": [
+    "mcp-servers/common",
+    "mcp-servers/shared",
+    "mcp-servers/base"
+  ],
+  "inference": [
+    "local-inference"
+  ],
+  "rag": [
+    "mcp-servers/tala-core",
+    "mcp-servers/mem0-core"
+  ],
+  "ui_tools": [
+    "scripts",
+    "tools"
+  ]
+}
