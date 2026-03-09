@@ -186,6 +186,40 @@ export class ToolService {
                 }
             }
         });
+
+        // Tool: reflection_create_goal
+        this.register({
+            name: 'reflection_create_goal',
+            description: 'Creates a programmatic self-improvement reflection goal. USE THIS TOOL INSTEAD OF mem0_add when the user asks you to improve yourself, add a programmatic goal, or add something to the reflection dashboard. It enforces system evolution and tracks deep anomalies.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    request_text: { type: 'string', description: 'The exact conversational phrasing the user used to request this.' },
+                    title: { type: 'string', description: 'Short summary of the self-improvement intent.' },
+                    description: { type: 'string', description: 'Detailed criteria or description of what needs improving in the system.' },
+                    category: { type: 'string', enum: ['codebase', 'behavior', 'performance', 'identity', 'other'], description: 'Category of improvement.' },
+                    priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], description: 'Priority level.' }
+                },
+                required: ['request_text', 'title', 'description', 'priority']
+            },
+            execute: async (args) => {
+                try {
+                    const result = await this.reflectionService.createConversationalGoal(
+                        args.request_text,
+                        { title: args.title, description: args.description, priority: args.priority, category: args.category }
+                    );
+
+                    if (result.success) {
+                        return `SUCCESS: ${result.message}`;
+                    } else {
+                        // Return the truthful rejection reason cleanly to the LLM
+                        return `REJECTED: ${result.message}. Do not claim you added it. Inform the user of this rejection reason.`;
+                    }
+                } catch (e: any) {
+                    return `Error creating reflection goal: ${e.message}`;
+                }
+            }
+        });
     }
 
     /**
@@ -1348,7 +1382,7 @@ export class ToolService {
         // Define Capability Maps - mapping ToolCapabilities directly to physical tool objects
         const capabilityMap: Record<string, string[]> = {
             memory_retrieval: ['mem0_search', 'retrieve_context', 'query_graph'],
-            memory_write: ['mem0_add', 'manage_goals', 'task_plan'],
+            memory_write: ['mem0_add', 'manage_goals', 'task_plan', 'reflection_create_goal'],
             system_core: ['fs_read_text', 'fs_write_text', 'fs_list', 'shell_run'],
             diagnostic: ['self_audit', 'reflection_clean', 'system_diagnose']
         };

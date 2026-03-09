@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { ReflectionMetrics, ChangeProposal, SoulIdentity, SoulReflection, ReflectionEvent } from '../reflectionTypes';
+import type { ReflectionDashboardState, ChangeProposal, SoulIdentity, SoulReflection, ReflectionJournalEntry, SelfImprovementGoal, TelemetryEvent } from '../reflectionTypes';
 import ReflectionProposalCard from './ReflectionProposalCard';
 
 /**
@@ -10,10 +10,12 @@ import ReflectionProposalCard from './ReflectionProposalCard';
  */
 const ReflectionPanel: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'engineering' | 'soul'>('engineering');
-    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events'>('proposals');
-    const [metrics, setMetrics] = useState<ReflectionMetrics | null>(null);
+    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events' | 'goals' | 'telemetry'>('proposals');
+    const [dashboardState, setDashboardState] = useState<ReflectionDashboardState | null>(null);
     const [proposals, setProposals] = useState<ChangeProposal[]>([]);
-    const [reflectionEvents, setReflectionEvents] = useState<ReflectionEvent[]>([]);
+    const [reflectionEvents, setReflectionEvents] = useState<ReflectionJournalEntry[]>([]);
+    const [goals, setGoals] = useState<SelfImprovementGoal[]>([]);
+    const [telemetry, setTelemetry] = useState<TelemetryEvent[]>([]);
     const [identity, setIdentity] = useState<SoulIdentity | null>(null);
     const [reflections, setReflections] = useState<SoulReflection[]>([]);
     const [loading, setLoading] = useState(true);
@@ -30,23 +32,29 @@ const ReflectionPanel: React.FC = () => {
             }
 
             if (activeTab === 'engineering') {
-                // Fetch independently to be resilient
                 try {
-                    const m = await tala.getReflectionMetrics();
-                    setMetrics(m);
-                } catch (e) { console.error('Metrics fetch failed:', e); }
+                    const ds = await tala.getDashboardState();
+                    setDashboardState(ds);
+                } catch (e) { console.error('Dashboard state fetch failed:', e); }
 
                 try {
-                    const p = await tala.getReflectionProposals();
+                    const p = await tala.listProposals();
                     setProposals(p || []);
                 } catch (e) { console.error('Proposals fetch failed:', e); }
 
                 try {
-                    if (tala.getReflectionEvents) {
-                        const e = await tala.getReflectionEvents();
+                    if (tala.listJournalEntries) {
+                        const e = await tala.listJournalEntries();
                         setReflectionEvents(e || []);
                     }
                 } catch (e) { console.error('Events fetch failed:', e); }
+
+                try {
+                    if (tala.listGoals) {
+                        const g = await tala.listGoals();
+                        setGoals(g || []);
+                    }
+                } catch (e) { console.error('Goals fetch failed:', e); }
             } else {
                 try {
                     if (tala.getSoulIdentity) {
@@ -76,21 +84,43 @@ const ReflectionPanel: React.FC = () => {
             setTimeout(() => setNotification(null), 5000);
         });
 
+        const unsub2 = tala.onReflectionTelemetry?.((data: TelemetryEvent) => {
+            setTelemetry(prev => [data, ...prev].slice(0, 100)); // Keep last 100 events
+        });
+
+        const unsub3 = tala.onReflectionActivityUpdated?.((data: any) => {
+            setDashboardState(prev => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    pipelineActivity: data.activity,
+                    schedulerState: data.state
+                };
+            });
+        });
+
         return () => {
             clearInterval(interval);
             unsub?.();
+            unsub2?.();
+            unsub3?.();
         };
     }, [fetchData]);
 
     const handleForceTick = async () => {
         setLoading(true);
         if (activeTab === 'engineering') {
-            await tala.forceHeartbeat();
+            try {
+                const res = await tala.triggerReflection();
+                setNotification(res.success ? `Reflection Process: ${res.message}` : `Reflection Failed: ${res.message}`);
+            } catch (e: any) {
+                setNotification(`Error triggering reflection: ${e.message}`);
+            }
         }
         await fetchData();
     };
 
-    if (loading && !metrics && !identity) {
+    if (loading && !dashboardState && !identity) {
         return (
             <div style={{ padding: '2rem', color: '#9ca3af' }}>Gathering Internal State...</div>
         );
@@ -159,11 +189,65 @@ const ReflectionPanel: React.FC = () => {
                         </button>
                     </header>
 
-                    <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
-                        <MetricCard title="Total Reflections" value={metrics?.totalReflections ?? 0} icon="🔍" />
-                        <MetricCard title="Total Proposals" value={metrics?.totalProposals ?? 0} icon="📋" />
-                        <MetricCard title="Applied Changes" value={metrics?.appliedChanges ?? 0} icon="✅" />
-                        <MetricCard title="Success Rate" value={`${((metrics?.successRate ?? 1) * 100).toFixed(1)}%`} icon="📊" />
+                    {dashboardState?.pipelineActivity && (
+                        <div style={{ marginBottom: '2rem', padding: '1.25rem', background: '#1e293b', borderRadius: '8px', borderLeft: '4px solid #3b82f6', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                <div>
+                                    <h3 style={{ margin: '0 0 0.25rem 0', color: '#93c5fd', fontSize: '1.1rem', fontWeight: 600 }}>Live Execution Pipeline</h3>
+                                    <div style={{ fontSize: '0.875rem', color: '#9ca3af' }}>Status of the autonomous engineering queue</div>
+                                </div>
+                                <div style={{
+                                    padding: '0.25rem 0.75rem',
+                                    borderRadius: '12px',
+                                    background: dashboardState.pipelineActivity.isActive ? '#065f46' : '#374151',
+                                    color: dashboardState.pipelineActivity.isActive ? '#34d399' : '#9ca3af',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem'
+                                }}>
+                                    {dashboardState.pipelineActivity.isActive && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', animation: 'pulse 1.5s infinite' }} />}
+                                    {dashboardState.pipelineActivity.isActive ? 'Active' : 'Idle'}
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', background: '#0f172a', padding: '1rem', borderRadius: '6px' }}>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Current Phase</div>
+                                    <div style={{ fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', textTransform: 'capitalize' }}>
+                                        {dashboardState.pipelineActivity.currentPhase.replace('_', ' ')}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Engine</div>
+                                    <div style={{ fontSize: '1.125rem', fontWeight: 600, color: dashboardState.schedulerState?.isRunning ? '#a7f3d0' : '#f8fafc' }}>
+                                        {dashboardState.schedulerState?.isRunning ? 'Running' : 'Sleeping'}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Pending Goals</div>
+                                    <div style={{ fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc' }}>
+                                        {dashboardState.schedulerState?.queuedGoals ?? dashboardState.pipelineActivity.queuedGoalCount} Items
+                                    </div>
+                                </div>
+                                <div style={{ gridColumn: 'span 2' }}>
+                                    <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>Latest Output</div>
+                                    <div style={{ fontSize: '0.875rem', color: dashboardState.pipelineActivity.lastOutcome === 'failed' ? '#ef4444' : '#a7f3d0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {dashboardState.pipelineActivity.lastError || dashboardState.schedulerState?.lastError || dashboardState.pipelineActivity.lastSummary || dashboardState.schedulerState?.lastRunSummary || 'Awaiting telemetry...'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <section style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '2rem' }}>
+                        <MetricCard title="Total Attempts" value={dashboardState?.totalReflections ?? 0} icon="🔍" />
+                        <MetricCard title="Promoted" value={dashboardState?.appliedChanges ?? 0} icon="✅" />
+                        <MetricCard title="Success Rate" value={`${((dashboardState?.successRate ?? 0) * 100).toFixed(1)}%`} icon="📊" />
+                        <MetricCard title="Active Goals" value={dashboardState?.activeGoals ?? 0} icon="🎯" />
+                        <MetricCard title="Proposals Ready" value={dashboardState?.proposalsReady ?? 0} icon="📋" />
                     </section>
 
                     {/* Sub-tab Selector for Engineering */}
@@ -189,6 +273,28 @@ const ReflectionPanel: React.FC = () => {
                             }}
                         >
                             Internal Reflections ({reflectionEvents.length})
+                        </button>
+                        <button
+                            onClick={() => setEngineeringSubTab('goals')}
+                            style={{
+                                padding: '0.4rem 0.8rem', borderRadius: '20px', fontSize: '0.75rem', border: '1px solid #374151',
+                                background: engineeringSubTab === 'goals' ? '#374151' : 'transparent',
+                                color: engineeringSubTab === 'goals' ? '#fff' : '#9ca3af',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Improvement Goals ({goals.length})
+                        </button>
+                        <button
+                            onClick={() => setEngineeringSubTab('telemetry')}
+                            style={{
+                                padding: '0.4rem 0.8rem', borderRadius: '20px', fontSize: '0.75rem', border: '1px solid #374151',
+                                background: engineeringSubTab === 'telemetry' ? '#374151' : 'transparent',
+                                color: engineeringSubTab === 'telemetry' ? '#fff' : '#9ca3af',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Live Telemetry Stream
                         </button>
                     </div>
 
@@ -222,7 +328,7 @@ const ReflectionPanel: React.FC = () => {
                                 </div>
                             )}
                         </section>
-                    ) : (
+                    ) : engineeringSubTab === 'events' ? (
                         <section style={{ animation: 'fadeIn 0.2s ease-out' }}>
                             <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Internal Reflection Events</h2>
                             {reflectionEvents.length === 0 ? (
@@ -230,7 +336,7 @@ const ReflectionPanel: React.FC = () => {
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                     {reflectionEvents.map(e => (
-                                        <div key={e.id} style={{ background: '#1f2937', padding: '1.25rem', borderRadius: '12px', border: '1px solid #374151' }}>
+                                        <div key={e.entryId} style={{ background: '#1f2937', padding: '1.25rem', borderRadius: '12px', border: '1px solid #374151' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
                                                 <span style={{ fontWeight: 700, color: '#3b82f6' }}>{e.summary}</span>
                                                 <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{new Date(e.timestamp).toLocaleString()}</span>
@@ -239,15 +345,13 @@ const ReflectionPanel: React.FC = () => {
                                                 <div>
                                                     <div style={{ color: '#9ca3af', fontSize: '0.7rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Observations</div>
                                                     <ul style={{ margin: 0, paddingLeft: '1.2rem', color: '#e5e7eb' }}>
-                                                        {e.observations?.map((o, idx) => <li key={idx} style={{ marginBottom: '0.25rem' }}>{o}</li>)}
+                                                        {e.evidence?.errors?.map((o: any, idx: number) => <li key={idx} style={{ marginBottom: '0.25rem' }}>{o}</li>)}
                                                     </ul>
                                                 </div>
                                                 <div>
                                                     <div style={{ color: '#9ca3af', fontSize: '0.7rem', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Technical context</div>
                                                     <div style={{ color: '#9ca3af', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                        <span>Errors: {e.evidence.errors.length}</span>
-                                                        <span>Lat: {e.metrics.averageLatencyMs.toFixed(0)}ms</span>
-                                                        <span>Err Rate: {(e.metrics.errorRate * 100).toFixed(1)}%</span>
+                                                        <span>Errors: {e.evidence?.errors?.length || 0}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -256,6 +360,46 @@ const ReflectionPanel: React.FC = () => {
                                 </div>
                             )}
                         </section>
+                    ) : engineeringSubTab === 'telemetry' ? (
+                        <section style={{ animation: 'fadeIn 0.2s ease-out' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Live Telemetry Stream</h2>
+                                <button
+                                    onClick={() => setTelemetry([])}
+                                    style={{ background: 'transparent', color: '#9ca3af', border: '1px solid #374151', padding: '0.3rem 0.6rem', borderRadius: '4px', fontSize: '0.75rem', cursor: 'pointer' }}
+                                >
+                                    Clear Logs
+                                </button>
+                            </div>
+                            {telemetry.length === 0 ? (
+                                <div style={{ color: '#6b7280', fontFamily: 'monospace', padding: '1rem' }}>Awaiting telemetry events...</div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontFamily: 'monospace', fontSize: '0.8rem', background: '#0f172a', padding: '1rem', borderRadius: '8px', overflowY: 'auto', maxHeight: '500px' }}>
+                                    {telemetry.map((t, idx) => (
+                                        <div key={idx} style={{
+                                            display: 'grid',
+                                            gridTemplateColumns: 'minmax(140px, auto) 80px 160px 1fr',
+                                            gap: '0.75rem',
+                                            alignItems: 'start',
+                                            borderBottom: '1px solid #1e293b',
+                                            paddingBottom: '0.5rem'
+                                        }}>
+                                            <span style={{ color: '#64748b' }}>{new Date(t.timestamp).toLocaleTimeString() + '.' + new Date(t.timestamp).getMilliseconds().toString().padStart(3, '0')}</span>
+                                            <span style={{
+                                                color: t.level === 'error' ? '#ef4444' : t.level === 'warn' ? '#f59e0b' : t.level === 'debug' ? '#64748b' : '#34d399',
+                                                fontWeight: t.level === 'error' || t.level === 'warn' ? 700 : 400
+                                            }}>{t.level.toUpperCase()}</span>
+                                            <span style={{ color: '#8b5cf6', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{t.source}]</span>
+                                            <div style={{ color: '#e2e8f0', wordBreak: 'break-word' }}>
+                                                <div>{t.event}: {t.message}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </section>
+                    ) : (
+                        <GoalPanel goals={goals} onRefresh={fetchData} />
                     )}
                 </>
             ) : (
@@ -318,5 +462,115 @@ const SoulCard: React.FC<{ title: string; items: string[]; color: string }> = ({
         </div>
     </div>
 );
+
+const GoalPanel: React.FC<{ goals: SelfImprovementGoal[], onRefresh: () => void }> = ({ goals, onRefresh }) => {
+    const tala = (window as any).tala;
+    const [title, setTitle] = useState('');
+    const [description, setDescription] = useState('');
+    const [priority, setPriority] = useState('medium');
+    const [category, setCategory] = useState('tooling');
+
+    const handleCreate = async () => {
+        if (!title.trim()) return;
+        await tala.createGoal({
+            title, description, priority, category,
+            status: 'queued', source: 'user'
+        });
+        setTitle('');
+        setDescription('');
+        onRefresh();
+    };
+
+    return (
+        <section style={{ animation: 'fadeIn 0.2s ease-out' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Self-Improvement Goals</h2>
+                <button
+                    onClick={async () => {
+                        await tala.processNextGoal();
+                        onRefresh();
+                    }}
+                    style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '0.875rem' }}
+                >
+                    ▶ Process Next In Queue
+                </button>
+            </div>
+
+            {/* Add Goal Form */}
+            <div style={{ background: '#1f2937', padding: '1.5rem', borderRadius: '12px', border: '1px solid #374151', marginBottom: '2rem' }}>
+                <h3 style={{ fontSize: '1rem', marginBottom: '1rem', fontWeight: 600 }}>Create New Goal</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', marginBottom: '1rem' }}>
+                    <input
+                        type="text"
+                        placeholder="Goal Title"
+                        value={title}
+                        onChange={e => setTitle(e.target.value)}
+                        style={{ background: '#374151', color: '#fff', border: 'none', padding: '0.75rem', borderRadius: '6px' }}
+                    />
+                    <textarea
+                        placeholder="Detailed Description / Success Criteria"
+                        value={description}
+                        onChange={e => setDescription(e.target.value)}
+                        rows={3}
+                        style={{ background: '#374151', color: '#fff', border: 'none', padding: '0.75rem', borderRadius: '6px', resize: 'vertical' }}
+                    />
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                        <select
+                            value={category}
+                            onChange={e => setCategory(e.target.value)}
+                            style={{ background: '#374151', color: '#fff', border: 'none', padding: '0.75rem', borderRadius: '6px', flex: 1 }}
+                        >
+                            {['stability', 'memory', 'routing', 'identity', 'performance', 'tooling', 'ui', 'testing', 'documentation'].map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                        </select>
+                        <select
+                            value={priority}
+                            onChange={e => setPriority(e.target.value)}
+                            style={{ background: '#374151', color: '#fff', border: 'none', padding: '0.75rem', borderRadius: '6px', flex: 1 }}
+                        >
+                            <option value="low">Low Priority</option>
+                            <option value="medium">Medium Priority</option>
+                            <option value="high">High Priority</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <button
+                    onClick={handleCreate}
+                    disabled={!title.trim()}
+                    style={{ background: '#10b981', color: '#fff', border: 'none', padding: '0.75rem 1.5rem', borderRadius: '6px', fontWeight: 600, cursor: title.trim() ? 'pointer' : 'not-allowed', opacity: title.trim() ? 1 : 0.5 }}
+                >
+                    + Submit Goal to Pipeline
+                </button>
+            </div>
+
+            {/* Goal List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {goals.length === 0 ? (
+                    <div style={{ color: '#6b7280', textAlign: 'center', padding: '2rem' }}>No Active Goals</div>
+                ) : (
+                    goals.map(g => (
+                        <div key={g.goalId} style={{ background: '#1f2937', padding: '1.25rem', borderRadius: '12px', borderLeft: `4px solid ${g.status === 'completed' ? '#10b981' : (g.status === 'active' || g.status === 'validating' ? '#3b82f6' : '#6b7280')}` }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                                <div>
+                                    <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>{g.title}</h4>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#9ca3af', background: '#374151', padding: '2px 8px', borderRadius: '12px' }}>{g.category}</span>
+                                        <span style={{ fontSize: '0.7rem', color: '#9ca3af', background: '#374151', padding: '2px 8px', borderRadius: '12px' }}>Priority: {g.priority}</span>
+                                    </div>
+                                </div>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '4px 10px', borderRadius: '20px', background: 'rgba(255,255,255,0.1)', color: '#fff', textTransform: 'capitalize' }}>
+                                    {g.status}
+                                </span>
+                            </div>
+                            {g.description && <p style={{ fontSize: '0.875rem', color: '#d1d5db', marginTop: '0.75rem', marginBottom: 0 }}>{g.description}</p>}
+                        </div>
+                    ))
+                )}
+            </div>
+        </section>
+    );
+};
 
 export default ReflectionPanel;

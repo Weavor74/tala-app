@@ -1764,7 +1764,7 @@ Exported standalone package from Tala.
                 if (activeMode === 'rp') {
                     toolsToSend = [];
                 } else if (activeMode === 'hybrid') {
-                    const allowed = ['fs_read_text', 'mem0_search', 'query_graph', 'manage_goals', 'get_emotion_state'];
+                    const allowed = ['fs_read_text', 'mem0_search', 'query_graph', 'manage_goals', 'get_emotion_state', 'reflection_create_goal'];
                     if (modeConfig.allowShellRun) allowed.push('shell_run');
                     toolsToSend = toolsToSend.filter((t: any) => allowed.includes(t.function.name));
                 }

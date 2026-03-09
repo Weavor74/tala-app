@@ -5,7 +5,7 @@ export default defineConfig({
     test: {
         globals: true,
         environment: 'node',
-        include: ['tests/**/*.test.ts'],
+        include: ['tests/**/*.test.ts', 'electron/__tests__/**/*.test.ts'],
         exclude: ['node_modules', 'dist', 'dist-electron'],
         testTimeout: 10000,
         // Mock Electron modules that aren't available in Node context

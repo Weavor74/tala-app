@@ -20,6 +20,7 @@ import { InferenceService } from './services/InferenceService';
 import { loadSettings, saveSettings } from './services/SettingsManager';
 import { IpcRouter } from './services/IpcRouter';
 import { ReflectionService } from './services/reflection/ReflectionService';
+import { ReflectionAppService } from './services/reflection/ReflectionAppService';
 import { VoiceService } from './services/VoiceService';
 import { SoulService } from './services/soul/SoulService';
 import { UserProfileService } from './services/UserProfileService';
@@ -70,6 +71,7 @@ const inferenceService = new InferenceService();
 const workflowService = new WorkflowService(fileService.getRoot());
 const agent = new AgentService(terminalService, functionService, mcpService, inferenceService, userProfileService);
 const reflectionService = new ReflectionService(USER_DATA_DIR, SYSTEM_SETTINGS_PATH);
+const reflectionAppService = new ReflectionAppService(reflectionService);
 const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent);
@@ -87,7 +89,6 @@ const codeControlService = new CodeControlService(fileService, terminalService, 
 
 // Register Handlers
 soulService.registerIpcHandlers();
-reflectionService.registerIpcHandlers();
 reflectionService.start();
 
 // ═══════════════════════════════════════════════════════════════════════

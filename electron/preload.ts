@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -369,15 +369,34 @@ contextBridge.exposeInMainWorld('tala', {
     provideBrowserData: (type: string, data: any) => ipcRenderer.send('browser-data-reply', { type, data }),
 
     // ─── Reflection System ───────────────────────────────────────
-    /** Gets reflection system metrics (counts, success rate). */
+    getDashboardState: (activeMode?: string) => ipcRenderer.invoke('reflection:getDashboardState', activeMode),
+    triggerReflection: (activeMode?: string) => ipcRenderer.invoke('reflection:trigger', activeMode),
+    listIssues: () => ipcRenderer.invoke('reflection:listIssues'),
+    listGoals: () => ipcRenderer.invoke('reflection:listGoals'),
+    createGoal: (goalDef: any) => ipcRenderer.invoke('reflection:createGoal', goalDef),
+    updateGoal: (goalId: string, status: string) => ipcRenderer.invoke('reflection:updateGoal', goalId, status),
+    listProposals: () => ipcRenderer.invoke('reflection:listProposals'),
+    getProposal: (id: string) => ipcRenderer.invoke('reflection:getProposal', id),
+    listJournalEntries: () => ipcRenderer.invoke('reflection:listJournalEntries'),
+    listPromotions: () => ipcRenderer.invoke('reflection:listPromotions'),
+    listRollbacks: () => ipcRenderer.invoke('reflection:listRollbacks'),
+    promoteProposal: (id: string) => ipcRenderer.invoke('reflection:promoteProposal', id),
+    rollbackPromotion: (id: string) => ipcRenderer.invoke('reflection:rollbackPromotion', id),
+    getQueueState: () => ipcRenderer.invoke('reflection:getQueueState'),
+    getSchedulerState: () => ipcRenderer.invoke('reflection:getSchedulerState'),
+    processNextGoal: () => ipcRenderer.invoke('reflection:processNextGoal'),
+    cancelQueueItem: (id: string) => ipcRenderer.invoke('reflection:cancelQueueItem', id),
+    retryQueueItem: (id: string) => ipcRenderer.invoke('reflection:retryQueueItem', id),
+
+    /** Gets reflection system metrics (legacy). */
     getReflectionMetrics: () => ipcRenderer.invoke('reflection:get-metrics'),
-    /** Lists pending proposals awaiting approval. */
+    /** Lists pending proposals awaiting approval (legacy). */
     getReflectionProposals: (status?: string) => ipcRenderer.invoke('reflection:get-proposals', status),
-    /** Lists historical reflection events. */
+    /** Lists historical reflection events (legacy). */
     getReflectionEvents: () => ipcRenderer.invoke('reflection:get-reflections'),
-    /** Approves a proposal by ID. */
+    /** Approves a proposal by ID (legacy). */
     approveProposal: (id: string) => ipcRenderer.invoke('reflection:approve-proposal', id),
-    /** Rejects a proposal by ID. */
+    /** Rejects a proposal by ID (legacy). */
     rejectProposal: (id: string) => ipcRenderer.invoke('reflection:reject-proposal', id),
     /** Forces a heartbeat tick (debug). */
     forceHeartbeat: () => ipcRenderer.invoke('reflection:force-tick'),
@@ -386,6 +405,18 @@ contextBridge.exposeInMainWorld('tala', {
         const listener = (event: any, data: any) => callback(data);
         ipcRenderer.on('reflection:proposal-created', listener);
         return () => ipcRenderer.removeListener('reflection:proposal-created', listener);
+    },
+    /** Subscribes to new reflection telemetry events. Returns cleanup function. */
+    onReflectionTelemetry: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('reflection:telemetry', listener);
+        return () => ipcRenderer.removeListener('reflection:telemetry', listener);
+    },
+    /** Subscribes to reflection pipeline activity updates. */
+    onReflectionActivityUpdated: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('reflection:activityUpdated', listener);
+        return () => ipcRenderer.removeListener('reflection:activityUpdated', listener);
     },
 
     // ─── Session Export ───────────────────────────────────────────

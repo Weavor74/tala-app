@@ -18,6 +18,15 @@ export interface ReflectionEvent {
     };
 }
 
+export interface TelemetryEvent {
+    timestamp: string;
+    event: string;
+    level: 'debug' | 'info' | 'warn' | 'error';
+    source: string;
+    message: string;
+    [key: string]: any;
+}
+
 export interface ChangeProposal {
     id: string;
     reflectionId: string;
@@ -100,3 +109,97 @@ export interface SoulReflection {
     postDecisionReflection?: string;
 }
 
+export interface ReflectionJournalEntry {
+    entryId: string;
+    timestamp: string;
+    issueId: string;
+    patchId?: string;
+    eventType: 'issue_opened' | 'hypothesis_selected' | 'patch_staged' | 'validation_passed' | 'validation_failed' | 'promotion_accepted' | 'promotion_rejected' | 'rollback_executed';
+    summary: string;
+    evidence: any;
+    decision?: string;
+    tests?: any;
+    risks?: any;
+    nextSteps?: string;
+    tags: string[];
+    confidence: number;
+}
+
+export type GoalCategory = 'stability' | 'memory' | 'routing' | 'identity' | 'performance' | 'tooling' | 'ui' | 'testing' | 'documentation';
+export type GoalPriority = 'low' | 'medium' | 'high' | 'critical';
+export type GoalStatus = 'queued' | 'scheduled' | 'active' | 'analyzing' | 'blocked' | 'proposal_ready' | 'validating' | 'awaiting_review' | 'completed' | 'rejected' | 'failed';
+export type GoalSource = 'user' | 'system' | 'reflection' | 'operator';
+
+export interface SelfImprovementGoal {
+    goalId: string;
+    createdAt: string;
+    updatedAt: string;
+    title: string;
+    description: string;
+    category: GoalCategory;
+    priority: GoalPriority;
+    status: GoalStatus;
+    source: GoalSource;
+    linkedIssueIds: string[];
+    linkedPatchIds: string[];
+    successCriteria: string[];
+    notes: string;
+}
+
+export interface ReflectionDashboardState {
+    totalReflections: number;
+    totalProposals: number;
+    appliedChanges: number;
+    successRate: number;
+    activeIssues: number;
+    queuedGoals: number;
+    activeGoals: number;
+    proposalsReady: number;
+    validationFailures: number;
+    recentJournalEntries: number;
+    recentPromotions: number;
+    recentRollbacks: number;
+    capabilityState: string | null;
+    currentMode: string;
+    pipelineActivity?: ReflectionPipelineActivity;
+    schedulerState?: ReflectionSchedulerState;
+}
+
+export interface ReflectionSchedulerState {
+    enabled: boolean;
+    lastTickAt?: string;
+    nextTickAt?: string;
+    isRunning: boolean;
+    activeQueueItemId?: string;
+    activeRunType?: string;
+    queueDepth: number;
+    queuedGoals: number;
+    lastRunSummary?: string;
+    lastError?: string;
+    consecutiveFailures: number;
+    maxConcurrentJobs: number;
+}
+
+export type ReflectionPipelinePhase = 'idle' | 'queueing' | 'observing' | 'reflecting' | 'patching' | 'validating' | 'promoting' | 'journaling' | 'rolling_back' | 'failed' | 'completed';
+
+export interface ReflectionPipelineActivity {
+    isActive: boolean;
+    currentPhase: ReflectionPipelinePhase;
+    currentQueueItemId?: string;
+    currentGoalId?: string;
+    currentIssueId?: string;
+    currentPatchId?: string;
+    currentValidationReportId?: string;
+    startedAt?: string;
+    elapsedMs?: number;
+    lastCompletedAt?: string;
+    lastOutcome?: string;
+    lastSummary?: string;
+    lastError?: string;
+    queueDepth: number;
+    queuedGoalCount: number;
+    activeGoalCount: number;
+    proposalsReadyCount: number;
+    validationsRunningCount: number;
+    promotionsPendingCount: number;
+}
