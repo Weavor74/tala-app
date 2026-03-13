@@ -41,3 +41,15 @@ build/
 *.sw?
 __pycache__/
 *.pyc
+
+# Temporary files and scripts
+tmp/
+
+# Runtime output / debug artifacts
+*_output.txt
+*_out.txt
+*_debug*.txt
+*_debug*.json
+*_debug*.log
+*_verification_output.txt
+*_verify*.log
