@@ -29,6 +29,49 @@ dist_*
 build/
 *.local
 
+# Runtime state & local databases
+tala_memory_v1.db
+*.db
+tmp_userdata/
+tmp/
+
+# Generated output & debug artifacts
+archive_out.txt
+archive_verification_output.txt
+cleanup_actions.txt
+clear_verification_output.txt
+git_debug_log.txt
+llama_help.txt
+memory_audit.jsonl
+missing_symbol_audit.json
+missing_symbol_audit.txt
+not_used.txt
+ollama_error_debug.json
+test_output.txt
+verification_output.txt
+verify_archive.js
+verify_clear.js
+verify_logs.js
+
+# Historical / archive folders (move outside repo root)
+archive/
+DOCS_TODAY/
+REFLECTION_SYSTEM/
+TEST_RUNS/
+documentation/
+tala_project/
+
+# Probe & scratch output in scripts/
+scripts/_r1_out.txt
+scripts/_tool_pass.txt
+scripts/_toolchain_probe_output.txt
+scripts/_ui_probe1.txt
+scripts/_ui_probe2.txt
+scripts/test1.txt
+scripts/test2.txt
+scripts/test3.txt
+scripts/test4.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
