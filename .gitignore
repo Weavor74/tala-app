@@ -41,3 +41,54 @@ build/
 *.sw?
 __pycache__/
 *.pyc
+
+# Runtime-generated workspace state
+DOCS_TODAY/
+.agent/
+.tala/
+tmp/
+tmp_userdata/
+
+# Runtime databases
+*.db
+tala_memory_v1.db
+
+# Runtime-generated debug & audit outputs
+git_debug_log.txt
+ollama_error_debug.json
+memory_audit.jsonl
+*.jsonl
+.agent_response_marker
+
+# Test run artifacts
+TEST_RUNS/
+test_data/
+test_output.txt
+
+# Scratch / generated inventory outputs
+archive_out.txt
+archive_verification_output.txt
+clear_verification_output.txt
+verification_output.txt
+missing_symbol_audit.json
+missing_symbol_audit.txt
+not_used.txt
+cleanup_actions.txt
+code_roots.json
+subsystem_mapping.json
+llama_help.txt
+SUGGESTIONS_1.txt
+
+# Script probe outputs
+scripts/_r1_out.txt
+scripts/_tool_pass.txt
+scripts/_toolchain_probe_output.txt
+scripts/_ui_probe1.txt
+scripts/_ui_probe2.txt
+scripts/test1.txt
+scripts/test2.txt
+scripts/test3.txt
+scripts/test4.txt
+scripts/health_probe.json
+scripts/verify_tool_gates.json
+scripts/verify_tools_only_render.json
