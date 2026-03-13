@@ -1,2 +1,0 @@
-PASS: TOOLCHAIN_PROBE_OK
-node executed and files verified

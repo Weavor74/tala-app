@@ -41,3 +41,39 @@ build/
 *.sw?
 __pycache__/
 *.pyc
+
+# Temporary files and scripts
+tmp/
+tmp_userdata/
+
+# Runtime scratch / session state
+.agent_response_marker
+tala_memory_v1.db
+memory_audit.jsonl
+
+# Runtime output / debug artifacts
+*_output.txt
+*_out.txt
+*_debug*.txt
+*_debug*.json
+*_debug*.log
+*_verification_output.txt
+*_verify*.log
+archive_*.txt
+cleanup_*.txt
+clear_*.txt
+not_used.txt
+missing_symbol_audit.*
+ollama_error_debug.*
+
+# Probe / test scratch output in scripts/
+scripts/_r1_out.txt
+scripts/_tool_pass.txt
+scripts/_toolchain_probe_output.txt
+scripts/_ui_probe*.txt
+scripts/test[0-9].txt
+
+# Scratch documentation directories (session-generated)
+DOCS_TODAY/
+REFLECTION_SYSTEM/
+TEST_RUNS/
