@@ -63,7 +63,7 @@ type McpToolResult = {
 type McpServiceLike = {
     getCapabilities?: (id: string) => Promise<McpCapabilities | null | undefined>;
     setPythonPath?: (pythonPath: string) => void;
-    connect?: (config: import('../../src/renderer/settingsData').McpServerConfig) => Promise<boolean>;
+    connect?: (config: import('../../shared/settings').McpServerConfig) => Promise<boolean>;
     callTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<McpToolResult | null | undefined>;
     setOnRecovery?: (callback: () => void) => void;
 };

@@ -55,6 +55,7 @@ If you find yourself needing to write temporary output, use `/tmp/` or a gitigno
 - `renderer` (src/) communicates with `electron-main` via IPC only. No direct cross-process imports.
 - `electron-main` communicates with MCP servers via MCP protocol only. No inline Python execution.
 - `electron-main` communicates with `local-inference` via HTTP only.
+- `shared/` is a neutral zone. It must not contain side-effects, UI logic, or Node/Electron APIs.
 - MCP servers do not call each other directly.
 
 ### 9. If ownership is unclear, consult the mapping files
@@ -97,6 +98,7 @@ Before completing a task:
 | Build script | `scripts/` |
 | Test (TS) | `tests/` or `electron/__tests__/` |
 | Test fixture | `test_data/` |
+| Shared contract | `shared/` |
 | Architecture doc | `docs/architecture/` |
 | Feature spec | `docs/features/` |
 | Interface contract | `docs/interfaces/` |

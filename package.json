@@ -16,7 +16,13 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "postinstall": "patch-package",
-    "repo:check": "npx tsx scripts/diagnostics/validate_repo_structure.ts"
+    "repo:check": "npx tsx scripts/diagnostics/validate_repo_structure.ts",
+    "repo:boundaries": "npx tsx scripts/diagnostics/validate_subsystem_boundaries.ts",
+    "repo:fullcheck": "npm run repo:check && npm run repo:boundaries && npm run docs:verify && npm run lint && npm run build && npm run test",
+    "docs:index": "npx tsx scripts/docs/index_repo_docs.ts",
+    "docs:extract": "npx tsx scripts/docs/extract_architecture.ts",
+    "docs:generate": "npx tsx scripts/docs/generate_contract_docs.ts",
+    "docs:verify": "npx tsx scripts/diagnostics/validate_docs_drift.ts"
   },
   "build": {
     "appId": "com.antigravity.tala",

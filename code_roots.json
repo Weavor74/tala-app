@@ -94,6 +94,12 @@
       "purpose": "Static frontend assets served by Vite (splash, icons, vendor assets)"
     },
     {
+      "id": "shared",
+      "path": "shared/",
+      "language": "TypeScript",
+      "purpose": "Shared pure types, interfaces, enums, and neutral data contracts. NO logic, UI, or side-effects."
+    },
+    {
       "id": "archive",
       "path": "archive/",
       "language": "Various",

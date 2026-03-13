@@ -21,7 +21,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { spawn, ChildProcess, execSync } from 'child_process';
 import path from 'path';
-import { McpServerConfig } from '../../src/renderer/settingsData';
+import type { McpServerConfig } from '../../shared/settings';
 import { auditLogger } from './AuditLogger';
 
 /**

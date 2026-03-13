@@ -210,6 +210,24 @@
       "cross_boundary": []
     },
     {
+      "id": "shared",
+      "name": "Shared Type Contracts",
+      "root": "shared/",
+      "language": "TypeScript",
+      "owns": [
+        "shared/**/*.ts"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "UI logic",
+        "Backend services",
+        "Business logic"
+      ],
+      "cross_boundary": [
+        "Neutral zone: renderer and electron-main can both import from here"
+      ]
+    },
+    {
       "id": "archive",
       "name": "Archive",
       "root": "archive/",

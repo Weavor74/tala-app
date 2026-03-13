@@ -4,9 +4,7 @@
  * This file manages the frontend's view of the "Deep Profile".
  * It acts as a bridge to the backend PII types and provides a safe default state.
  */
-import type { FullUserProfilePII } from '../../electron/services/userProfileTypes';
-
-export type { Address, Job, School, Contact } from '../../electron/services/userProfileTypes';
+import type { FullUserProfilePII } from '../../shared/userProfile';
 
 /**
  * Deep Profile Schema

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import {
+import type {
     LogViewerEntry,
     LogSourceInfo,
     LogReadResult,
@@ -11,7 +11,7 @@ import {
     PerformanceMetricRecord,
     PerformanceSummary,
     SystemHealth
-} from '../../src/renderer/logTypes';
+} from '../../shared/logs';
 
 export interface ArchiveFileResult {
     source: string;

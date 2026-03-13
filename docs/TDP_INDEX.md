@@ -1,62 +1,213 @@
-# Technical Data Package Index — Tala System
+# Tala Documentation Index
 
-**Document ID**: TALA-TDP-INDEX-001  
-**Version**: 1.0.0  
-**Status**: Formal  
-**Owner**: Engineering / Program Management
+Automatically generated on 2026-03-13T21:05:48.645Z
 
-## 1. Introduction
-This document serves as the master entry point and navigation index for the Tala **Technical Data Package (TDP)**. The TDP is a comprehensive collection of engineering data, architectural designs, security models, and compliance artifacts that define the Tala autonomous agent platform.
+## General
 
-Tala is a secure, local-first platform designed for government-grade AI interactions, built on a multi-process architecture utilizing Electron, React, and the Model Context Protocol (MCP).
+- [Agent Working Rules](agent_working_rules.md)
+- [Code Access Policy & Safe Manipulation](code_access_policy.md)
+- [Code Roots](code_roots.md)
+- [Identity Handling: UUID-Only Canonical Architecture](identity_from_userprofile.md)
+- [Repository Layout](repo_layout.md)
+- [Subsystems](subsystems.md)
+- [Tala Documentation Index](TDP_INDEX.md)
+- [Tala Self-Improvement & Reflection Ecosystem](SELF_IMPROVEMENT_ECOSYSTEM.md)
 
-## 2. Documentation Structure
-The documentation is organized into hierarchical layers, ranging from high-level system intent to low-level implementation and verification proof.
+## architecture
 
--   **Layer 1: Foundations**: System purpose and high-level architecture.
--   **Layer 2: Control & Interface**: Detailed definitions of component boundaries and data flow.
--   **Layer 3: Security & Trust**: Threat models and defensive posture.
--   **Layer 4: Compliance & Sustainability**: Licensing, build instructions, and long-term maintenance.
--   **Layer 5: Requirements & Traceability**: Formal requirements mapped to implementation and tests.
--   **Layer 6: Lifecycle & Sustainment**: Long-term management and retirement policies.
+- [Architectural Decisions](architecture/architecture_decisions.md)
+- [Component Model](architecture/component_model.md)
+- [Data Flow](architecture/data_flow.md)
+- [Deployment Topology](architecture/deployment_topology.md)
+- [Runtime Flow](architecture/runtime_flow.md)
+- [Service Interactions](architecture/service_interactions.md)
+- [System Architecture Overview](architecture/overview.md)
+- [Tala System Overview](architecture/system_overview.md)
+- [Technology Stack](architecture/technology_stack.md)
 
-## 3. Documentation Navigation
+## audit
 
-| Documentation Area | Purpose | Primary Documents |
-|:---|:---|:---|
-| **Architecture** | Logical and physical system structure. | [System Overview](file:///d:/src/client1/tala-app/docs/architecture/system_overview.md), [Component Model](file:///d:/src/client1/tala-app/docs/architecture/component_model.md), [Runtime Flow](file:///d:/src/client1/tala-app/docs/architecture/runtime_flow.md) |
-| **Interfaces** | Data contracts and communication protocols. | [Interface Matrix](file:///d:/src/client1/tala-app/docs/interfaces/interface_matrix.md), [IPC Control](file:///d:/src/client1/tala-app/docs/interfaces/ipc_interface_control.md), [MCP Control](file:///d:/src/client1/tala-app/docs/interfaces/mcp_interface_control.md) |
-| **Security** | Threat analysis and trust boundaries. | [Threat Model](file:///d:/src/client1/tala-app/docs/security/threat_model.md), [Trust Boundaries](file:///d:/src/client1/tala-app/docs/security/trust_boundaries.md), [Security Overview](file:///d:/src/client1/tala-app/docs/security/security_overview.md) |
-| **Audit & Inventory** | Comprehensive lists of system assets. | [File Inventory](file:///d:/src/client1/tala-app/docs/audit/file_inventory_full.json), [Component Analysis](file:///d:/src/client1/tala-app/docs/audit/component_analysis.md) |
-| **Build & Sustainment** | Lifecycle management and deployment. | [Build Instructions](file:///d:/src/client1/tala-app/docs/build/build_instructions.md), [Disaster Recovery](file:///d:/src/client1/tala-app/docs/build/disaster_recovery.md), [Maintenance](file:///d:/src/client1/tala-app/docs/build/maintenance_guidelines.md) |
-| **Compliance** | Licensing and open-source usage. | [SBOM](file:///d:/src/client1/tala-app/docs/compliance/sbom.md), [License Inventory](file:///d:/src/client1/tala-app/docs/compliance/dependency_license_inventory.md), [Usage Policy](file:///d:/src/client1/tala-app/docs/compliance/open_source_usage_policy.md) |
-| **Requirements** | Formal functional and quality specs. | [System Requirements](file:///d:/src/client1/tala-app/docs/requirements/system_requirements.md), [Nonfunctional Reqs](file:///d:/src/client1/tala-app/docs/requirements/nonfunctional_requirements.md) |
-| **Traceability** | Mapping requirements to proof. | [Requirements Trace](file:///d:/src/client1/tala-app/docs/traceability/requirements_trace_matrix.md), [Test Trace](file:///d:/src/client1/tala-app/docs/traceability/test_trace_matrix.md) |
-| **Lifecycle** | Sustainment and retirement policies. | [Lifecycle Plan](file:///d:/src/client1/tala-app/docs/lifecycle/system_lifecycle_plan.md), [Maintenance Strategy](file:///d:/src/client1/tala-app/docs/lifecycle/maintenance_strategy.md), [Update Policy](file:///d:/src/client1/tala-app/docs/lifecycle/update_policy.md) |
+- [Exhaustive Folder Catalog - Tala Repository](audit/folder_catalog.md)
+- [Generated Requirements Summary](audit/generated_requirements_summary.md)
+- [Generated Requirements Validation Report](audit/generated_requirements_validation.md)
+- [Master Repository Audit Report: Tala](audit/MASTER_AUDIT_REPORT.md)
+- [Python Dependency Audit Report](audit/python_dependency_audit_report.md)
+- [Python Requirements Reconstruction Trace Report](audit/python_requirements_reconstruction.md)
+- [Repository Tree - Tala](audit/repo_tree.md)
+- [Tala — Configuration Inventory](audit/config_inventory.md)
+- [Tala — Exhaustive File Catalog](audit/file_catalog.md)
+- [Tala — Full File Inventory](audit/file_inventory_full.md)
+- [Tala — Full Folder Inventory](audit/folder_inventory_full.md)
+- [Tala — Interface Anchor Inventory](audit/interface_anchor_inventory.md)
+- [Tala Application Entrypoints](audit/entrypoints.md)
+- [Tala Node.js Environment Audit](audit/node_envs.md)
+- [Tala Python Environments Audit](audit/python_envs.md)
+- [Tala Repository File Index](audit/file_index.md)
+- [Tala Repository Folder Index](audit/folder_index.md)
+- [Tala Requirement and Usage Report](audit/requirement_report.md)
+- [Tala Service Index](audit/service_index.md)
 
-## 4. Engineering Baselines
+## build
 
--   **Configuration Baseline**: Defined in [MASTER_PYTHON_REQUIREMENTS.txt](file:///d:/src/client1/tala-app/MASTER_PYTHON_REQUIREMENTS.txt) and [package.json](file:///d:/src/client1/tala-app/package.json).
--   **Architecture Baseline**: Formalized in [architecture/component_model.md](file:///d:/src/client1/tala-app/docs/architecture/component_model.md).
--   **Interface Baseline**: Controlled via the [Interface Matrix](file:///d:/src/client1/tala-app/docs/interfaces/interface_matrix.md).
--   **Security Baseline**: Anchored in the [Isolation Kernel Pattern](file:///d:/src/client1/tala-app/docs/security/threat_model.md).
+- [Build Instructions — Tala System](build/build_instructions.md)
+- [Dependency Management — Tala System](build/dependency_management.md)
+- [Deployment Procedures — Tala System](build/deployment_procedures.md)
+- [Disaster Recovery — Tala System](build/disaster_recovery.md)
+- [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
+- [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
+- [Offline / Portable Build — Tala System](build/offline_portable_build.md)
+- [Release Packaging — Tala System](build/release_packaging.md)
+- [Update and Upgrade Process — Tala System](build/update_and_upgrade_process.md)
 
-## 5. Traceability Overview
-The Tala TDP implements 100% traceability for system-level functional requirements. 
-- **Requirements Identified**: 35
-- **Subsystems Mapped**: 7
-- **Verification Coverage**: 94% (Functional tests and demonstrations).
+## compliance
 
-Detailed mappings are available in the [Traceability Matrix](file:///d:/src/client1/tala-app/docs/traceability/requirements_trace_matrix.md).
+- [Dependency License Inventory — Tala System](compliance/dependency_license_inventory.md)
+- [License Risk Assessment — Tala System](compliance/license_risk_assessment.md)
+- [Open Source Usage Policy — Tala System](compliance/open_source_usage_policy.md)
+- [Software Bill of Materials (SBOM) — Tala System](compliance/sbom.md)
+- [Third-Party Component Inventory — Tala System](compliance/third_party_component_inventory.md)
 
-## 6. Maintenance of the TDP
-The Technical Data Package is maintained as "living documentation" within the repository.
-1.  **Reflection Pipeline**: Autonomous agents review documentation against code changes during every CI cycle.
-2.  **Pass-Based Updates**: Major architectural shifts trigger a re-generation of the relevant documentation "Passes" (e.g., Security Pass, Interface Pass).
-3.  **Audit Logs**: Changes to the TDP are recorded in the `./logs` subdirectory of each documentation folder.
+## contracts
 
-## 7. Document Versioning
-Documentation follows semantic versioning and is baselined with repository tags (e.g., `v1.0.0-TDP`). Critical engineering documents include a **Document ID** and **Version** header to ensure alignment between printed and digital copies.
+- [Contract: logs.ts](contracts/logs.md)
+- [Contract: settings.ts](contracts/settings.md)
+- [Contract: userProfile.ts](contracts/userProfile.md)
+- [Shared Contracts Index](contracts/README.md)
 
----
-*Generated by Tala Autopilot*
+## contributing
+
+- [File Placement Rules](contributing/file_placement_rules.md)
+
+## features
+
+- [Feature Specification — Agent Core Features](features/agent_core_features.md)
+- [Feature Specification — Build System Features](features/build_system_features.md)
+- [Feature Specification — Frontend Features](features/frontend_features.md)
+- [Feature Specification — Inference Engine Features](features/inference_engine_features.md)
+- [Feature Specification — Memory Systems Features](features/memory_systems_features.md)
+- [Feature Specification — Security Layer Features](features/security_layer_features.md)
+- [Feature Specification — Tool Execution Features](features/tool_execution_features.md)
+- [System Features — Tala](features/system_features.md)
+
+## interfaces
+
+- [Configuration Contracts Document — Tala System](interfaces/configuration_contracts.md)
+- [Inference Interface Control Document (ICD) — Tala System](interfaces/inference_interface_control.md)
+- [Interface Matrix — Tala System](interfaces/interface_matrix.md)
+- [Interface Risk Assessment — Tala System](interfaces/interface_risk_assessment.md)
+- [IPC Interface Control Document (ICD) — Tala System](interfaces/ipc_interface_control.md)
+- [MCP Interface Control Document (ICD) — Tala System](interfaces/mcp_interface_control.md)
+- [Service API Contracts — Tala System](interfaces/service_api_contracts.md)
+
+## lifecycle
+
+- [End of Life Policy — Tala System](lifecycle/end_of_life_policy.md)
+- [Long Term Support — Tala System](lifecycle/long_term_support.md)
+- [Maintenance Strategy — Tala System](lifecycle/maintenance_strategy.md)
+- [System Lifecycle Plan — Tala System](lifecycle/system_lifecycle_plan.md)
+- [Update Policy — Tala System](lifecycle/update_policy.md)
+
+## logs
+
+- [Architecture Generation Log](architecture/logs/architecture_generation_log.md)
+- [Audit Actions Log](audit/logs/audit_actions.md)
+- [Build Generation Log — Pass 8](build/logs/build_generation_log.md)
+- [Compliance Generation Log — Pass 9](compliance/logs/compliance_generation_log.md)
+- [Deep Catalog Generation Log](audit/logs/deep_catalog_generation_log.md)
+- [File Documentation Generation Log](audit/logs/file_doc_generation_log.md)
+- [Government-Grade Inventory Generation Log](audit/logs/government_inventory_generation_log.md)
+- [Interface Generation Log — Pass 6](interfaces/logs/interface_generation_log.md)
+- [Lifecycle Generation Log — Tala System](lifecycle/logs/lifecycle_generation_log.md)
+- [Requirements Validation Log](audit/logs/requirements_validation_log.md)
+- [requirements_generation_log.md](audit/logs/requirements_generation_log.md)
+- [Review Generation Log — Pass 7.5](review/logs/review_generation_log.md)
+- [Security Generation Log — Pass 7](security/logs/security_generation_log.md)
+- [Traceability Generation Log — Tala System](traceability/logs/traceability_generation_log.md)
+- [Unresolved Items Log](audit/logs/unresolved_items.md)
+
+## requirements
+
+- [Nonfunctional Requirements — Tala System](requirements/nonfunctional_requirements.md)
+- [Subsystem Requirements — Tala System](requirements/subsystem_requirements.md)
+- [System Requirements — Tala System](requirements/system_requirements.md)
+
+## review
+
+- [Cross-Reference Matrix — Tala System](review/cross_reference_matrix.md)
+- [Documentation Alignment Report — Tala System](review/documentation_alignment_report.md)
+- [Documentation Gaps — Tala System](review/documentation_gaps.md)
+- [Inconsistency Log — Tala System](review/inconsistency_log.md)
+
+## runtime
+
+- [Tool Execution Policy](runtime/tool_execution_policy.md)
+
+## security
+
+- [Attack Surface Inventory — Tala System](security/attack_surface_inventory.md)
+- [Data Handling — Tala System](security/data_handling.md)
+- [External Services Boundary — Tala System](security/external_services_boundary.md)
+- [Logging and Audit — Tala System](security/logging_and_audit.md)
+- [Secrets and Configuration Sensitivity — Tala System](security/secrets_and_configuration_sensitivity.md)
+- [Security Assumptions and Limitations — Tala System](security/security_assumptions_and_limitations.md)
+- [Security Overview — Tala System](security/security_overview.md)
+- [Security Risk Register — Tala System](security/security_risk_register.md)
+- [Threat Model — Tala System](security/threat_model.md)
+- [Trust Boundaries — Tala System](security/trust_boundaries.md)
+
+## subsystems
+
+- [Backend Services Index](subsystems/SERVICES.md)
+- [MCP Server: mem0-core](subsystems/mcp-mem0-core.md)
+- [MCP Server: tala-core](subsystems/mcp-tala-core.md)
+- [MCP Server: world-engine](subsystems/mcp-world-engine.md)
+- [MCP Tools Index](subsystems/MCP_TOOLS.md)
+- [Service: AgentService.ts](subsystems/service-AgentService.md)
+- [Service: AnnotationParser.ts](subsystems/service-AnnotationParser.md)
+- [Service: ArtifactRouter.ts](subsystems/service-ArtifactRouter.md)
+- [Service: AstroService.ts](subsystems/service-AstroService.md)
+- [Service: AuditLogger.ts](subsystems/service-AuditLogger.md)
+- [Service: AuditService.ts](subsystems/service-AuditService.md)
+- [Service: BackupService.ts](subsystems/service-BackupService.md)
+- [Service: CodeAccessPolicy.ts](subsystems/service-CodeAccessPolicy.md)
+- [Service: CodeControlService.ts](subsystems/service-CodeControlService.md)
+- [Service: DocumentationChunker.ts](subsystems/service-DocumentationChunker.md)
+- [Service: DocumentationClassifier.ts](subsystems/service-DocumentationClassifier.md)
+- [Service: DocumentationIndexer.ts](subsystems/service-DocumentationIndexer.md)
+- [Service: DocumentationIntelligenceService.ts](subsystems/service-DocumentationIntelligenceService.md)
+- [Service: DocumentationRetriever.ts](subsystems/service-DocumentationRetriever.md)
+- [Service: FileService.ts](subsystems/service-FileService.md)
+- [Service: FunctionService.ts](subsystems/service-FunctionService.md)
+- [Service: GitService.ts](subsystems/service-GitService.md)
+- [Service: GuardrailService.ts](subsystems/service-GuardrailService.md)
+- [Service: HybridMemoryManager.ts](subsystems/service-HybridMemoryManager.md)
+- [Service: InferenceService.ts](subsystems/service-InferenceService.md)
+- [Service: IngestionService.ts](subsystems/service-IngestionService.md)
+- [Service: IpcRouter.ts](subsystems/service-IpcRouter.md)
+- [Service: LocalEngineService.ts](subsystems/service-LocalEngineService.md)
+- [Service: log_redact.ts](subsystems/service-log_redact.md)
+- [Service: LogViewerService.ts](subsystems/service-LogViewerService.md)
+- [Service: McpService.ts](subsystems/service-McpService.md)
+- [Service: MemoryService.ts](subsystems/service-MemoryService.md)
+- [Service: OrchestratorService.ts](subsystems/service-OrchestratorService.md)
+- [Service: PromptAuditService.ts](subsystems/service-PromptAuditService.md)
+- [Service: RagService.ts](subsystems/service-RagService.md)
+- [Service: RuntimeSafety.ts](subsystems/service-RuntimeSafety.md)
+- [Service: SettingsManager.ts](subsystems/service-SettingsManager.md)
+- [Service: SmartRouterService.ts](subsystems/service-SmartRouterService.md)
+- [Service: SystemService.ts](subsystems/service-SystemService.md)
+- [Service: TerminalService.ts](subsystems/service-TerminalService.md)
+- [Service: ToolService.ts](subsystems/service-ToolService.md)
+- [Service: UserProfileService.ts](subsystems/service-UserProfileService.md)
+- [Service: userProfileTypes.ts](subsystems/service-userProfileTypes.md)
+- [Service: VoiceService.ts](subsystems/service-VoiceService.md)
+- [Service: WorkflowEngine.ts](subsystems/service-WorkflowEngine.md)
+- [Service: WorkflowService.ts](subsystems/service-WorkflowService.md)
+- [Service: WorldService.ts](subsystems/service-WorldService.md)
+
+## traceability
+
+- [Requirements Traceability Matrix — Tala System](traceability/requirements_trace_matrix.md)
+- [Test Traceability Matrix — Tala System](traceability/test_trace_matrix.md)
+- [Verification Methods — Tala System](traceability/verification_methods.md)
+

@@ -16,6 +16,7 @@ It is intended for both human contributors and AI coding agents.
 | `mcp-mem0` | Mem0 Core (MCP) | `mcp-servers/mem0-core/` | Python |
 | `mcp-memory-graph` | Memory Graph (MCP) | `mcp-servers/tala-memory-graph/` | Python |
 | `mcp-world-engine` | World Engine (MCP) | `mcp-servers/world-engine/` | Python |
+| `shared` | Shared Type Contracts | `shared/` | TypeScript |
 | `local-inference` | Local Inference Runtime | `local-inference/` | Python / Shell |
 | `tests` | Shared Test Suite | `tests/` | TypeScript |
 | `scripts` | Developer Scripts | `scripts/` | TypeScript / Shell / Python |
@@ -171,24 +172,33 @@ It is intended for both human contributors and AI coding agents.
 
 ---
 
-### `local-inference` — Local Inference Runtime
+### `shared` — Shared Type Contracts
 
-**Root:** `local-inference/`
+**Root:** `shared/`
 
-**Responsibility:** Configuration and scripts for running local inference (Ollama / llama.cpp). Not application logic.
+**Responsibility:** A neutral cross-layer zone for pure type definitions, interfaces, DTOs, and data contracts that must be understood by both the Renderer and Electron Main processes.
 
 **What belongs here:**
-- Python requirements for inference dependencies
-- Launch configuration
+- TypeScript `interface` and `type` definitions
+- `DTO` (Data Transfer Object) schemas
+- Enums and static constants (e.g., event names, shared error codes)
+- Validation schemas (e.g., Zod) that are utilized on both sides of the bridge
 
 **What must NOT be placed here:**
-- Application services
-- MCP server code
+- UI logic or React components
+- Electron backend service logic
+- Filesystem (Node `fs`) or OS-level operations
+- Side-effectful runtime code or bootstrapping behavior
+- Stateful service classes or singleton instances
+- Imports from `src/` or `electron/`
 
 **Cross-boundary interactions:**
-- Called by `electron-main` via HTTP (managed by `LocalEngineService.ts` and `InferenceService.ts`).
+- Neutral zone: Renderer and Electron Main can both import from here.
+- `shared/` MUST NOT import from `src/` or `electron/`.
 
 ---
+
+### `local-inference` — Local Inference Runtime
 
 ### `tests` — Shared Test Suite
 

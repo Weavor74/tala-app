@@ -11,6 +11,7 @@ It is intended for both human contributors and AI coding agents.
 |------|---------|
 | `src/` | React renderer UI — chat interface, settings panel, reflection dashboard, component library |
 | `electron/` | Electron main process, preload scripts, IPC router, and all backend services |
+| `shared/` | Shared pure types, interfaces, and enums — neutral contracts between renderer and electron |
 | `public/` | Static frontend assets served by Vite (splash screen, icons, vendor assets) |
 
 ---
@@ -117,5 +118,6 @@ The following files are the only items that belong at the repo root:
 2. **Do not commit runtime databases, logs, temp data, or generated output.** These are excluded by `.gitignore`.
 3. **New files must be placed in the subsystem that owns their responsibility.** Consult `code_roots.json` and `subsystem_mapping.json` when ownership is unclear.
 4. **Do not add new top-level directories** without updating `docs/repo_layout.md`, `code_roots.json`, and `subsystem_mapping.json`.
-5. **The `archive/` directory is frozen.** Do not add files to it.
-6. **Diagnostics and simulation scripts belong in `scripts/`.** Do not place them in `src/`, `electron/`, or the repo root.
+5. **The `shared/` directory is a neutral contract zone.** It must not contain UI logic, React components, Electron service logic, or any side-effectful runtime code.
+6. **The `archive/` directory is frozen.** Do not add files to it.
+7. **Diagnostics and simulation scripts belong in `scripts/`.** Do not place them in `src/`, `electron/`, or the repo root.
