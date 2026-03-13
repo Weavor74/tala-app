@@ -3,8 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
-// Project root is one level up from scripts/
-const ROOT = path.resolve(__dirname, '..');
+// Project root is two levels up from scripts/diagnostics/
+const ROOT = path.resolve(__dirname, '..', '..');
 
 // 1. Read package.json name/version
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));

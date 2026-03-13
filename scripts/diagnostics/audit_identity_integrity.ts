@@ -35,7 +35,7 @@ async function audit() {
     }
 
     // 2. Check Memory Graph Database
-    const dbPath = path.resolve(__dirname, '..', 'mcp-servers', 'tala-memory-graph', 'tala_memory_v1.db');
+    const dbPath = path.resolve(__dirname, '..', '..', 'mcp-servers', 'tala-memory-graph', 'tala_memory_v1.db');
     if (fs.existsSync(dbPath)) {
         console.log(`[INFO] Auditing memory graph: ${dbPath}`);
         const db = new sqlite3.Database(dbPath);
