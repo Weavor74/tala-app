@@ -1,0 +1,283 @@
+{
+  "version": "1.0",
+  "description": "Machine-readable ownership map for the Tala repository. Maps file patterns and path prefixes to subsystem owners. Used by agents and tooling to determine where a file belongs.",
+  "subsystems": [
+    {
+      "id": "renderer",
+      "name": "Renderer UI",
+      "root": "src/",
+      "language": "TypeScript",
+      "owns": [
+        "src/**/*.tsx",
+        "src/**/*.ts",
+        "src/**/*.css",
+        "src/assets/**",
+        "public/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Backend service logic",
+        "File system access (use IPC instead)",
+        "LLM inference calls",
+        "Database access",
+        "MCP server code"
+      ],
+      "cross_boundary": [
+        "Communicates with electron-main via Electron IPC only"
+      ]
+    },
+    {
+      "id": "electron-main",
+      "name": "Electron Main + Services",
+      "root": "electron/",
+      "language": "TypeScript",
+      "owns": [
+        "electron/main.ts",
+        "electron/preload.ts",
+        "electron/browser-preload.ts",
+        "electron/bootstrap.ts",
+        "electron/services/**",
+        "electron/brains/**",
+        "electron/types/**"
+      ],
+      "test_paths": [
+        "electron/__tests__/**"
+      ],
+      "do_not_place_here": [
+        "React components or renderer-side UI",
+        "MCP server implementations",
+        "Inference server code",
+        "Test fixture data"
+      ],
+      "cross_boundary": [
+        "Communicates with renderer via IPC only",
+        "Invokes MCP servers via MCP protocol through McpService.ts",
+        "Calls local-inference via HTTP through LocalEngineService.ts and InferenceService.ts"
+      ]
+    },
+    {
+      "id": "mcp-astro",
+      "name": "Astro Engine (MCP)",
+      "root": "mcp-servers/astro-engine/",
+      "language": "Python",
+      "owns": [
+        "mcp-servers/astro-engine/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Memory persistence",
+        "General agent logic"
+      ],
+      "cross_boundary": [
+        "Invoked by electron-main via MCP protocol"
+      ]
+    },
+    {
+      "id": "mcp-tala-core",
+      "name": "Tala Core (MCP)",
+      "root": "mcp-servers/tala-core/",
+      "language": "Python",
+      "owns": [
+        "mcp-servers/tala-core/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [],
+      "cross_boundary": [
+        "Invoked by electron-main via MCP protocol"
+      ]
+    },
+    {
+      "id": "mcp-mem0",
+      "name": "Mem0 Core (MCP)",
+      "root": "mcp-servers/mem0-core/",
+      "language": "Python",
+      "owns": [
+        "mcp-servers/mem0-core/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [],
+      "cross_boundary": [
+        "Invoked by electron-main via MCP protocol through MemoryService.ts"
+      ]
+    },
+    {
+      "id": "mcp-memory-graph",
+      "name": "Memory Graph (MCP)",
+      "root": "mcp-servers/tala-memory-graph/",
+      "language": "Python",
+      "owns": [
+        "mcp-servers/tala-memory-graph/**"
+      ],
+      "test_paths": [
+        "mcp-servers/tala-memory-graph/tests/**"
+      ],
+      "do_not_place_here": [],
+      "cross_boundary": [
+        "Invoked by electron-main via MCP protocol"
+      ]
+    },
+    {
+      "id": "mcp-world-engine",
+      "name": "World Engine (MCP)",
+      "root": "mcp-servers/world-engine/",
+      "language": "Python",
+      "owns": [
+        "mcp-servers/world-engine/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [],
+      "cross_boundary": [
+        "Invoked by electron-main via MCP protocol"
+      ]
+    },
+    {
+      "id": "local-inference",
+      "name": "Local Inference Runtime",
+      "root": "local-inference/",
+      "language": "Python",
+      "owns": [
+        "local-inference/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Application services",
+        "MCP server code"
+      ],
+      "cross_boundary": [
+        "Called by electron-main via HTTP through LocalEngineService.ts and InferenceService.ts"
+      ]
+    },
+    {
+      "id": "tests",
+      "name": "Shared Test Suite",
+      "root": "tests/",
+      "language": "TypeScript",
+      "owns": [
+        "tests/**",
+        "test_data/**"
+      ],
+      "test_paths": [
+        "tests/**"
+      ],
+      "do_not_place_here": [
+        "Production source code"
+      ],
+      "cross_boundary": [
+        "May import from electron/ and src/ for testing purposes"
+      ]
+    },
+    {
+      "id": "scripts",
+      "name": "Developer Scripts",
+      "root": "scripts/",
+      "language": "TypeScript",
+      "owns": [
+        "scripts/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Production application code",
+        "Runtime state or output files"
+      ],
+      "cross_boundary": []
+    },
+    {
+      "id": "tools",
+      "name": "Developer Tools",
+      "root": "tools/",
+      "language": "Python",
+      "owns": [
+        "tools/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [],
+      "cross_boundary": []
+    },
+    {
+      "id": "docs",
+      "name": "Documentation",
+      "root": "docs/",
+      "language": "Markdown",
+      "owns": [
+        "docs/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Application source code",
+        "Generated runtime outputs",
+        "Scratch or session-generated content"
+      ],
+      "cross_boundary": []
+    },
+    {
+      "id": "archive",
+      "name": "Archive",
+      "root": "archive/",
+      "language": "Various",
+      "owns": [
+        "archive/**"
+      ],
+      "test_paths": [],
+      "do_not_place_here": [
+        "Any new files — this directory is frozen"
+      ],
+      "cross_boundary": []
+    }
+  ],
+  "placement_rules": [
+    {
+      "pattern": "*.test.ts",
+      "owner": "tests",
+      "note": "Vitest test files — place in tests/ or electron/__tests__/"
+    },
+    {
+      "pattern": "*.spec.ts",
+      "owner": "tests",
+      "note": "Vitest spec files — place in tests/ or electron/__tests__/"
+    },
+    {
+      "pattern": "*.test.py",
+      "owner": "mcp-*",
+      "note": "Python test files — place in the relevant mcp-servers/<server>/tests/"
+    },
+    {
+      "pattern": "diagnose_*.ts",
+      "owner": "scripts",
+      "note": "Diagnostic scripts belong in scripts/"
+    },
+    {
+      "pattern": "simulate_*.ts",
+      "owner": "scripts",
+      "note": "Simulation harnesses belong in scripts/"
+    },
+    {
+      "pattern": "make_portable*",
+      "owner": "scripts",
+      "note": "Packaging scripts belong in scripts/"
+    },
+    {
+      "pattern": "*.service.ts",
+      "owner": "electron-main",
+      "note": "Backend services belong in electron/services/"
+    },
+    {
+      "pattern": "*.tsx",
+      "owner": "renderer",
+      "note": "React components belong in src/"
+    }
+  ],
+  "prohibited_at_root": [
+    "*.db",
+    "*.sqlite",
+    "*.log",
+    "*.gguf",
+    "*_output.txt",
+    "*_debug*.txt",
+    "memory_audit.jsonl",
+    ".agent_response_marker",
+    "tmp/",
+    "scratch/",
+    "DOCS_TODAY/",
+    "TEST_RUNS/"
+  ]
+}

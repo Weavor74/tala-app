@@ -1,0 +1,103 @@
+{
+  "version": "1.0",
+  "description": "Machine-readable registry of all official code roots in the Tala repository. Used by agents and tooling to determine file placement.",
+  "roots": [
+    {
+      "id": "renderer",
+      "path": "src/",
+      "language": "TypeScript",
+      "framework": "React",
+      "purpose": "Renderer UI — chat interface, settings panel, reflection dashboard, component library"
+    },
+    {
+      "id": "electron-main",
+      "path": "electron/",
+      "language": "TypeScript",
+      "purpose": "Electron main process, preload scripts, IPC router, and all backend services"
+    },
+    {
+      "id": "electron-tests",
+      "path": "electron/__tests__/",
+      "language": "TypeScript",
+      "purpose": "Electron-specific unit and integration tests (owned by electron-main subsystem)"
+    },
+    {
+      "id": "mcp-astro",
+      "path": "mcp-servers/astro-engine/",
+      "language": "Python",
+      "purpose": "Astrological emotional state engine — MCP server exposing emotional bias tools"
+    },
+    {
+      "id": "mcp-tala-core",
+      "path": "mcp-servers/tala-core/",
+      "language": "Python",
+      "purpose": "Core Tala tool surface — MCP server providing file I/O and memory primitives"
+    },
+    {
+      "id": "mcp-mem0",
+      "path": "mcp-servers/mem0-core/",
+      "language": "Python",
+      "purpose": "Mem0-backed long-term memory persistence — MCP server"
+    },
+    {
+      "id": "mcp-memory-graph",
+      "path": "mcp-servers/tala-memory-graph/",
+      "language": "Python",
+      "purpose": "Graph-structured associative memory layer — MCP server"
+    },
+    {
+      "id": "mcp-world-engine",
+      "path": "mcp-servers/world-engine/",
+      "language": "Python",
+      "purpose": "World-state and context persistence — MCP server"
+    },
+    {
+      "id": "local-inference",
+      "path": "local-inference/",
+      "language": "Python",
+      "purpose": "Local model serving runtime configuration and launch scripts (Ollama / llama.cpp)"
+    },
+    {
+      "id": "tests",
+      "path": "tests/",
+      "language": "TypeScript",
+      "purpose": "Shared cross-subsystem Vitest test suites"
+    },
+    {
+      "id": "test-data",
+      "path": "test_data/",
+      "language": "JSON",
+      "purpose": "Test fixture data used by automated tests — not runtime state"
+    },
+    {
+      "id": "scripts",
+      "path": "scripts/",
+      "language": "TypeScript",
+      "purpose": "Developer diagnostics, simulation harnesses, build packaging, portable distribution scripts"
+    },
+    {
+      "id": "tools",
+      "path": "tools/",
+      "language": "Python",
+      "purpose": "Developer utility scripts not part of the main build or test pipeline"
+    },
+    {
+      "id": "docs",
+      "path": "docs/",
+      "language": "Markdown",
+      "purpose": "Authoritative project documentation — architecture, features, interfaces, security, traceability"
+    },
+    {
+      "id": "public",
+      "path": "public/",
+      "language": "HTML",
+      "purpose": "Static frontend assets served by Vite (splash, icons, vendor assets)"
+    },
+    {
+      "id": "archive",
+      "path": "archive/",
+      "language": "Various",
+      "purpose": "Historical reference material — frozen, do not extend"
+    }
+  ]
+}
