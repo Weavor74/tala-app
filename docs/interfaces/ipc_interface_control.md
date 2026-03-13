@@ -41,6 +41,24 @@ The IPC system follows a **Two-Stage Isolation Pattern**:
 | `mcp:tools:list` | Invoke | `null` | `ToolSchema[]` | Lists all active MCP tools. |
 | `terminal:run` | Invoke | `{ command: string }` | `ExecResult` | Executes a shell command (Sensitive). |
 
+### 4.4. Model Status
+| Channel | Type | Payload | Returns | Description |
+|:---|:---|:---|:---|:---|
+| `get-model-status` | Invoke | `null` | `ModelStatusResult` | Returns the active instance's model ID, engine, source, and low-fidelity flag. |
+| `model-status` | Event | `ModelStatusResult` | N/A | Emitted by `InferenceService` when the active model changes. Listened to in `App.tsx`. |
+
+**`ModelStatusResult` shape:**
+```typescript
+{
+  id: string;           // Active instance ID
+  model: string;        // Model name/ID (e.g., "llama3:8b")
+  engine: string;       // Inference engine (e.g., "ollama", "cloud")
+  source: string;       // Source identifier
+  isLowFidelity: boolean; // True for <3B parameter models
+  warning: string;      // Human-readable warning if isLowFidelity is true
+}
+```
+
 ## 5. Security Controls
 -   **Channel Whitelisting**: Only channels explicitly registered in `IpcRouter.ts` are processed.
 -   **Context Isolation**: `contextIsolation: true` is enabled in the BrowserView.

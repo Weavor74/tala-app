@@ -62,11 +62,17 @@ This document describes the Tala system as a collection of interacting component
 ### React Application
 - **Path**: `src/`
 - **Purpose**: User interaction and visualization layer.
-- **Components**:
-    - `Terminal.tsx`: Live command execution view.
-    - `WorkflowEditor.tsx`: Graph-based workflow management.
-    - `ChatContainer.tsx`: Central message handling.
-- **Dependencies**: Electron Preload (IPC Bridge).
+- **Entry Point**: `src/App.tsx` — root component containing chat state, session management, and mode-switching logic.
+- **Components** (`src/renderer/components/`):
+    - `ChatSessions.tsx`: Chat session list and message rendering.
+    - `Terminal.tsx`: Live command execution view (xterm integration).
+    - `WorkflowEditor.tsx`: Graph-based workflow management (ReactFlow).
+    - `MemoryViewer.tsx`: Vector search and memory inspection.
+    - `ReflectionPanel.tsx`: Self-improvement dashboard.
+    - `LogViewerPanel.tsx`: Real-time log aggregation view.
+    - `AgentModeConfigPanel.tsx`: Mode selection and configuration UI.
+    - `EmotionDisplay.tsx`: Astro Engine emotional state visualization.
+- **Dependencies**: Electron Preload (IPC Bridge via `window.electronAPI`).
 
 ## 5. Storage Layer
 
