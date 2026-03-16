@@ -142,6 +142,13 @@ export interface TurnContext {
 
     /** Error state. Null when the turn completed without errors. */
     errorState: TurnErrorState | null;
+
+    /**
+     * Resolved memory items for cognitive assembly.
+     * Populated by TalaContextRouter when retrieval is not suppressed.
+     * Used by PreInferenceContextOrchestrator to feed CognitiveTurnAssembler.
+     */
+    resolvedMemories?: MemoryItem[];
 }
 
 interface AssemblyResult {

@@ -82,6 +82,10 @@ export class IpcRouter {
     const getSettingsPath = () => this.ctx.getSettingsPath();
     const setSettingsPath = (p: string) => this.ctx.setSettingsPath(p);
 
+    // Phase 3A: Wire the diagnostics aggregator into AgentService so cognitive
+    // contexts are recorded after each turn without exposing it in the constructor.
+    agent.setDiagnosticsAggregator(this.ctx.diagnosticsAggregator);
+
     // Alias for the dynamic getter
     const mainWindowResolver = {
       get webContents() { return getMainWindow()?.webContents; }

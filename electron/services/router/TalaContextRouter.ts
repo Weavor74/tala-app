@@ -138,7 +138,8 @@ export class TalaContextRouter {
                 mcpServicesUsed: [],
                 correlationId
             },
-            errorState: null
+            errorState: null,
+            resolvedMemories: resolved,
         };
 
         // Emit structured routing telemetry
