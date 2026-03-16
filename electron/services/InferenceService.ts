@@ -18,8 +18,10 @@ import type {
     StreamInferenceRequest,
     StreamInferenceResult,
 } from '../../shared/inferenceProviderTypes';
-import { ReflectionEngine } from './reflection/ReflectionEngine';
+import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
+
+type SignalCategory = TelemetrySignal['category'];
 
 /**
  * Represents a local AI inference provider detected during a port scan.
@@ -263,14 +265,34 @@ export class InferenceService {
             };
 
             try {
-                brainResult = await brain.streamResponse(
+                const openTimeoutMs = req.openTimeoutMs ?? 15000;
+
+                // Race the brain stream call against an open-timeout.
+                // The timeout only applies before the first token is received (stream-open window).
+                // Once streamOpenedForCurrentProvider=true the timeout is irrelevant.
+                let openTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+                const openTimeoutPromise = new Promise<never>((_, reject) => {
+                    openTimeoutHandle = setTimeout(() => {
+                        if (!streamOpenedForCurrentProvider) {
+                            const err = new Error(`Stream open timeout after ${openTimeoutMs}ms`);
+                            err.name = 'StreamOpenTimeoutError';
+                            reject(err);
+                        }
+                    }, openTimeoutMs);
+                });
+
+                const streamPromise = brain.streamResponse(
                     messages,
                     systemPrompt,
                     wrappedOnToken,
                     req.signal,
                     tools,
                     options
-                );
+                ).finally(() => {
+                    if (openTimeoutHandle) clearTimeout(openTimeoutHandle);
+                });
+
+                brainResult = await Promise.race([streamPromise, openTimeoutPromise]);
 
                 const completedAt = new Date().toISOString();
                 const durationMs = Date.now() - new Date(startedAt).getTime();
@@ -352,13 +374,13 @@ export class InferenceService {
                 if (streamOpenedForCurrentProvider && tokensEmitted > 0) {
                     const completedAt = new Date().toISOString();
                     const durationMs = Date.now() - new Date(startedAt).getTime();
-                    const isTimeout = lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT') || lastError.name === 'AbortError';
-                    const isAbort = req.signal?.aborted;
+                    const isAbort = req.signal?.aborted || lastError.name === 'AbortError';
+                    const isTimeout = !isAbort && (lastError.name === 'StreamOpenTimeoutError' || lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT'));
 
                     const streamStatus: StreamInferenceResult['streamStatus'] =
                         isAbort ? 'aborted' : isTimeout ? 'timeout' : 'failed';
 
-                    const signalCategory: import('./reflection/ReflectionEngine').TelemetrySignal['category'] =
+                    const signalCategory: SignalCategory =
                         isTimeout ? 'inference_timeout' : 'inference_failure';
 
                     telemetry.operational(
@@ -433,8 +455,8 @@ export class InferenceService {
         // All providers exhausted or non-retryable failure
         const completedAt = new Date().toISOString();
         const durationMs = Date.now() - new Date(startedAt).getTime();
-        const isTimeout = lastError?.message?.includes('timeout') || lastError?.message?.includes('ETIMEDOUT') || lastError?.name === 'AbortError';
-        const isAbort = req.signal?.aborted;
+        const isAbort = req.signal?.aborted || lastError?.name === 'AbortError';
+        const isTimeout = !isAbort && (lastError?.name === 'StreamOpenTimeoutError' || lastError?.message?.includes('timeout') || lastError?.message?.includes('ETIMEDOUT'));
 
         const streamStatus: StreamInferenceResult['streamStatus'] =
             isAbort ? 'aborted' : isTimeout ? 'timeout' : 'failed';
@@ -485,7 +507,7 @@ export class InferenceService {
             }
         );
 
-        const signalCategory: import('./reflection/ReflectionEngine').TelemetrySignal['category'] =
+        const signalCategory: SignalCategory =
             isTimeout ? 'inference_timeout'
             : fallbackApplied ? 'degraded_fallback'
             : 'inference_failure';

@@ -276,7 +276,27 @@ describe('InferenceService.executeStream()', () => {
         expect(reportedSignals.some((s) => s.category === 'inference_timeout')).toBe(true);
     });
 
-    it('abort signal sets streamStatus=aborted', async () => {
+    it('stream-open timeout (StreamOpenTimeoutError) emits inference_timeout', async () => {
+        const service = makeService();
+
+        const brain = makeBrain(async () => {
+            const err = new Error('Stream open timeout after 15000ms');
+            err.name = 'StreamOpenTimeoutError';
+            throw err;
+        });
+
+        const result = await service.executeStream(brain, [], '', () => {}, makeRequest());
+
+        expect(result.success).toBe(false);
+        expect(result.streamStatus).toBe('timeout');
+        expect(result.errorCode).toBe('timeout');
+
+        const eventTypes = emittedEvents.map((e) => e.eventType);
+        expect(eventTypes).toContain('inference_timeout');
+        expect(reportedSignals.some((s) => s.category === 'inference_timeout')).toBe(true);
+    });
+
+    it('abort signal sets streamStatus=aborted (not timeout)', async () => {
         const service = makeService();
         const controller = new AbortController();
 

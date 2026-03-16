@@ -1977,7 +1977,7 @@ Exported standalone package from Tala.
                 });
 
                 const requestStart = Date.now();
-                const response = await this.brain.streamResponse(truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
+                const response = await this.streamWithBrain(this.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
 
                 this.logViewerService?.logPerformanceMetric({
@@ -2053,7 +2053,7 @@ Failure to provide a tool call will result in system termination.`;
                     const retryOptions: any = { temperature: 0.1 };
                     if (turnObject.intent.class === 'coding') retryOptions.tool_choice = 'required';
 
-                    const retryResponse = await this.brain.streamResponse(truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
+                    const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
 
                     calls = retryResponse.toolCalls || [];
                     if (calls.length === 0 && retryResponse.content) {
