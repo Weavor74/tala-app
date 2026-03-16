@@ -65,7 +65,14 @@ export interface TelemetrySignal {
         | 'artifact_mismatch'
         | 'mode_conflict'
         | 'degraded_fallback'
-        | 'subsystem_unavailable';
+        | 'subsystem_unavailable'
+        // Priority 2A — aggregated diagnostic pattern signals
+        | 'repeated_provider_fallback'
+        | 'repeated_stream_timeout'
+        | 'provider_exhaustion'
+        | 'repeated_mcp_restart'
+        | 'critical_service_unavailable'
+        | 'degraded_subsystem_persistent';
     /** Human-readable description */
     description: string;
     /** Optional structured context */
@@ -201,6 +208,42 @@ export class ReflectionEngine {
     }
 
     /**
+     * Reports a thresholded aggregated instability signal.
+     *
+     * Unlike reportSignal(), this method only emits a signal when the streak count
+     * meets or exceeds the given threshold, and only once per threshold crossing.
+     * This prevents reflection noise from individual transient failures.
+     *
+     * Designed for Objective G patterns:
+     * - repeated_provider_fallback
+     * - repeated_stream_timeout
+     * - provider_exhaustion
+     * - repeated_mcp_restart
+     * - critical_service_unavailable
+     * - degraded_subsystem_persistent
+     *
+     * @param signal - The base signal to report.
+     * @param streakCount - Current consecutive failure count.
+     * @param threshold - Minimum streak to emit the signal (default: 3).
+     */
+    public static reportThresholdedSignal(
+        signal: TelemetrySignal,
+        streakCount: number,
+        threshold = 3,
+    ): void {
+        if (streakCount >= threshold) {
+            this.telemetrySignalBuffer.push({
+                ...signal,
+                context: {
+                    ...(signal.context ?? {}),
+                    streakCount,
+                    threshold,
+                },
+            });
+        }
+    }
+
+    /**
      * Returns a snapshot of buffered signals without draining.
      * Used for diagnostic inspection.
      */
@@ -230,7 +273,14 @@ export class ReflectionEngine {
             s.category === 'inference_failure' ||
             s.category === 'inference_timeout' ||
             s.category === 'mcp_instability' ||
-            s.category === 'subsystem_unavailable'
+            s.category === 'subsystem_unavailable' ||
+            // Priority 2A aggregated diagnostic pattern signals
+            s.category === 'repeated_provider_fallback' ||
+            s.category === 'repeated_stream_timeout' ||
+            s.category === 'provider_exhaustion' ||
+            s.category === 'repeated_mcp_restart' ||
+            s.category === 'critical_service_unavailable' ||
+            s.category === 'degraded_subsystem_persistent'
         );
 
         const errorRate = turns.length > 0 ? errors.length / turns.length : 0;
@@ -431,6 +481,37 @@ export class ReflectionEngine {
             obs.push(`Degraded fallback path activated in: ${subsystems}`);
         }
 
+        // Priority 2A — aggregated diagnostic pattern observations
+        const repeatedFallback = signals.filter(s => s.category === 'repeated_provider_fallback');
+        if (repeatedFallback.length > 0) {
+            obs.push(`Repeated provider fallback pattern detected (${repeatedFallback.length} signal(s))`);
+        }
+
+        const repeatedTimeout = signals.filter(s => s.category === 'repeated_stream_timeout');
+        if (repeatedTimeout.length > 0) {
+            obs.push(`Repeated stream timeout pattern detected (${repeatedTimeout.length} signal(s))`);
+        }
+
+        const providerExhaustion = signals.filter(s => s.category === 'provider_exhaustion');
+        if (providerExhaustion.length > 0) {
+            obs.push(`Provider exhaustion: all configured providers failed`);
+        }
+
+        const repeatedMcpRestart = signals.filter(s => s.category === 'repeated_mcp_restart');
+        if (repeatedMcpRestart.length > 0) {
+            obs.push(`Repeated MCP service restart pattern detected (${repeatedMcpRestart.length} signal(s))`);
+        }
+
+        const criticalUnavailable = signals.filter(s => s.category === 'critical_service_unavailable');
+        if (criticalUnavailable.length > 0) {
+            obs.push(`Critical service unavailable: ${criticalUnavailable.map(s => s.context?.serviceId ?? s.subsystem).join(', ')}`);
+        }
+
+        const persistentDegradation = signals.filter(s => s.category === 'degraded_subsystem_persistent');
+        if (persistentDegradation.length > 0) {
+            obs.push(`Persistent subsystem degradation detected in: ${persistentDegradation.map(s => s.subsystem).join(', ')}`);
+        }
+
         return obs;
     }
 
@@ -441,12 +522,21 @@ export class ReflectionEngine {
         errorRate: number
     ): ReflectionOutputType {
         const hasDegradedSignals = signals.some(
-            s => s.category === 'degraded_fallback' || s.category === 'subsystem_unavailable'
+            s => s.category === 'degraded_fallback' ||
+                s.category === 'subsystem_unavailable' ||
+                s.category === 'critical_service_unavailable' ||
+                s.category === 'degraded_subsystem_persistent'
         );
         const hasTimeouts = errors.some(e => /time[d\s]*out/i.test(e)) ||
-            signals.some(s => s.category === 'inference_timeout');
+            signals.some(s => s.category === 'inference_timeout' || s.category === 'repeated_stream_timeout');
+        const hasInstabilityPattern = signals.some(
+            s => s.category === 'repeated_provider_fallback' ||
+                s.category === 'provider_exhaustion' ||
+                s.category === 'repeated_mcp_restart' ||
+                s.category === 'mcp_instability'
+        );
 
-        if (hasDegradedSignals) return 'anomaly_summary';
+        if (hasDegradedSignals || hasInstabilityPattern) return 'anomaly_summary';
         if (hasTimeouts && errorRate > ERROR_RATE_TRIGGER_THRESHOLD) return 'regression_warning';
         if (failedTools.length > 0) return 'operational_summary';
         if (errors.length > 0 && errorRate < 0.1) return 'confidence_limited_observation';
