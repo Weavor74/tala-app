@@ -290,6 +290,8 @@ export interface RuntimeDiagnosticsSnapshot {
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────
 
+import type { MemoryContributionCategory, EmotionalModulationStrength } from './cognitiveTurnTypes';
+
 /**
  * Normalized cognitive diagnostics read model for the most recent cognitive turn.
  * Safe to expose via IPC and UI surfaces.
@@ -303,7 +305,7 @@ export interface CognitiveDiagnosticsSnapshot {
     /** Summary of memory contributions in the last cognitive turn. */
     memoryContributionSummary: {
         totalApplied: number;
-        byCategory: Partial<Record<string, number>>;
+        byCategory: Partial<Record<MemoryContributionCategory, number>>;
         retrievalSuppressed: boolean;
     };
     /** Summary of documentation contributions in the last cognitive turn. */
@@ -314,7 +316,7 @@ export interface CognitiveDiagnosticsSnapshot {
     /** Emotional modulation status in the last cognitive turn. */
     emotionalModulationStatus: {
         applied: boolean;
-        strength: string;
+        strength: EmotionalModulationStrength;
         astroUnavailable: boolean;
     };
     /** Reflection note status in the last cognitive turn. */

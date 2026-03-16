@@ -39,6 +39,7 @@ import type {
     CognitiveModePolicy,
     CognitiveProviderMetadata,
     DocContributionModel,
+    MemoryContributionCategory,
 } from '../../../shared/cognitiveTurnTypes';
 
 // ─── Assembly inputs ──────────────────────────────────────────────────────────
@@ -168,7 +169,7 @@ export class CognitiveTurnAssembler {
             mode,
         );
 
-        const memoryCategories: Partial<Record<string, number>> = {};
+        const memoryCategories: Partial<Record<MemoryContributionCategory, number>> = {};
         for (const c of memoryContributions.contributions) {
             memoryCategories[c.category] = (memoryCategories[c.category] ?? 0) + 1;
         }
@@ -224,11 +225,12 @@ export class CognitiveTurnAssembler {
         }
 
         // ── 4. Emotional modulation ───────────────────────────────────────────
+        // Modulation is applied when the mode allows emotional expression beyond 'low'.
+        // RP mode has 'high' bounds; assistant mode has 'low' bounds (which suppresses
+        // modulation to prevent identity drift in task-focused turns).
+        const allowEmotionalModulation = modePolicy.emotionalExpressionBounds !== 'low';
         const emotionalModulation = EmotionalModulationPolicy.apply(
-            // Only apply modulation if mode policy permits
-            modePolicy.emotionalExpressionBounds !== 'low' || mode === 'rp'
-                ? astroStateText
-                : null, // Suppress in low-expression-bound modes
+            allowEmotionalModulation ? astroStateText : null,
             mode,
         );
 

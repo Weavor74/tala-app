@@ -27,7 +27,7 @@ import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService'
 import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
 import type { RuntimeControlService } from './RuntimeControlService';
-import type { TalaCognitiveContext } from '../../shared/cognitiveTurnTypes';
+import type { TalaCognitiveContext, MemoryContributionCategory } from '../../shared/cognitiveTurnTypes';
 
 export class RuntimeDiagnosticsAggregator {
     private lastCognitiveContext?: TalaCognitiveContext;
@@ -114,7 +114,7 @@ export class RuntimeDiagnosticsAggregator {
         const ctx = this.lastCognitiveContext;
         if (!ctx) return undefined;
 
-        const byCategory: Partial<Record<string, number>> = {};
+        const byCategory: Partial<Record<MemoryContributionCategory, number>> = {};
         for (const c of ctx.memoryContributions.contributions) {
             byCategory[c.category] = (byCategory[c.category] ?? 0) + 1;
         }

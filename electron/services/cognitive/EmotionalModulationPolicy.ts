@@ -194,11 +194,13 @@ export class EmotionalModulationPolicy {
 
     /**
      * Computes the maximum deviation across all emotional vector dimensions from neutral (0.5).
-     * Uses max deviation so that any single strongly-deviated dimension triggers modulation.
+     * Uses max (rather than average) so that any single strongly-deviated dimension triggers
+     * modulation — a high-warmth state should apply modulation even when all other dimensions
+     * are neutral.
      */
     private static computeMagnitude(vector: EmotionalVector): number {
         const values = [vector.warmth, vector.intensity, vector.clarity, vector.caution];
-        // Deviation from neutral (0.5) indicates meaningful modulation
+        // Deviation from neutral (0.5): higher = more emotionally expressive in that dimension
         const deviations = values.map(v => Math.abs(v - 0.5));
         return Math.max(...deviations);
     }

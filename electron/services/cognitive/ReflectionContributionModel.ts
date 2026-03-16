@@ -55,6 +55,9 @@ const DEFAULT_MAX_APPLICATIONS: Record<ReflectionNoteClass, number> = {
 /** Minimum confidence threshold for a note to be applied. */
 const MIN_CONFIDENCE_FOR_APPLICATION = 0.4;
 
+/** Maximum length for behavioral note summaries (characters). */
+const MAX_NOTE_SUMMARY_LENGTH = 300;
+
 // ─── ReflectionContributionStore ─────────────────────────────────────────────
 
 /**
@@ -89,7 +92,7 @@ export class ReflectionContributionStore {
         const note: ReflectionBehavioralNote = {
             noteId: uuidv4(),
             noteClass,
-            summary: summary.slice(0, 300), // Safety: cap summary length
+            summary: summary.slice(0, MAX_NOTE_SUMMARY_LENGTH),
             confidence,
             generatedAt: now.toISOString(),
             expiresAt: new Date(now.getTime() + lifespanMs).toISOString(),

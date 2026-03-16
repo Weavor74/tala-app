@@ -70,6 +70,9 @@ const MAX_CONTRIBUTIONS_BY_CATEGORY: Record<MemoryContributionCategory, number> 
     recent_continuity: 3,
 };
 
+/** Maximum length for memory contribution summaries (characters). */
+const MAX_MEMORY_SUMMARY_LENGTH = 200;
+
 // ─── Category detection ────────────────────────────────────────────────────────
 
 /**
@@ -190,7 +193,7 @@ export class MemoryContributionBuilder {
             contributions.push({
                 memoryId: memory.id,
                 category,
-                summary: memory.text.slice(0, 200), // Safety: truncate to 200 chars
+                summary: memory.text.slice(0, MAX_MEMORY_SUMMARY_LENGTH),
                 rationale: buildRationale(memory, category),
                 influenceScope: INFLUENCE_SCOPE_BY_CATEGORY[category],
                 salience,
