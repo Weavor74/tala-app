@@ -3,12 +3,17 @@
 # TALA INFERENCE LAUNCHER - macOS / Linux
 # ============================================================
 # Usage: ./launch-inference.sh
+# Safe to run from any directory — paths resolve relative to this script.
 
-cd "$(dirname "$0")"
+# Resolve this script's directory, then derive repo root (two levels up:
+# scripts/diagnostics/ -> scripts/ -> repo root).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 
 export N_CTX=16384
 
-# Detect platform and set Python path
+# Detect platform and set Python path (relative to REPO_ROOT)
 if [[ "$OSTYPE" == "darwin"* ]]; then
     PYTHON_EXE="bin/python-mac/bin/python3"
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -24,21 +29,24 @@ if [ ! -f "$PYTHON_EXE" ]; then
         PYTHON_EXE="bin/python-portable/bin/python3"
     else
         echo "[ERROR] No Python runtime found."
-        echo "Expected at: $PYTHON_EXE"
+        echo "Expected at: $REPO_ROOT/$PYTHON_EXE"
+        echo "Run bootstrap.sh first to set up the Python environment."
         exit 1
     fi
 fi
 
-# Find model file
+# Find model file (relative to REPO_ROOT)
 MODEL=$(ls models/*.gguf 2>/dev/null | head -1)
 
 if [ -z "$MODEL" ]; then
-    echo "[ERROR] No .gguf model found in models/ directory."
+    echo "[ERROR] No .gguf model found in $REPO_ROOT/models/ directory."
+    echo "Run bootstrap.sh first to download a model."
     exit 1
 fi
 
 echo "============================================================"
 echo "  TALA Local Inference Engine"
+echo "  Repo:    $REPO_ROOT"
 echo "  Python:  $PYTHON_EXE"
 echo "  Model:   $MODEL"
 echo "  Context: $N_CTX tokens"

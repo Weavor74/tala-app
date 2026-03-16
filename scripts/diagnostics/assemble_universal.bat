@@ -8,7 +8,7 @@ setlocal EnableDelayedExpansion
 :: It copies launchers, models, memory, and MCP servers into
 :: the universal-build folder.
 
-cd /d "%~dp0.."
+cd /d "%~dp0..\.."
 set "OUT=universal-build"
 
 echo [INFO] Project root: %CD%

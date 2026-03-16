@@ -17,11 +17,18 @@ Run this script from a PowerShell terminal: .\bootstrap.ps1
 #>
 
 $ErrorActionPreference = "Stop"
-$WorkingDir = (Get-Location).Path
+
+# ---------------------------------------------------------
+# Resolve repo root relative to this script's location
+# so bootstrap works regardless of the caller's CWD.
+# ---------------------------------------------------------
+$RepoRoot = $PSScriptRoot
+Set-Location $RepoRoot
 
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "      TALA UNIVERSAL BOOTSTRAP SCRIPT        " -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "      Repo root: $RepoRoot"
 Write-Host ""
 
 # ---------------------------------------------------------
@@ -39,9 +46,23 @@ try {
     exit 1
 }
 
+# Check npm
+try {
+    $npmVer = npm --version
+    Write-Host "      [OK] npm found: $npmVer" -ForegroundColor Green
+} catch {
+    Write-Host "      [ERROR] npm is not installed or not in PATH." -ForegroundColor Red
+    exit 1
+}
+
 # Check Python
 try {
-    $pyVer = python --version
+    $pyVer = python --version 2>&1
+    if ($pyVer -notmatch "Python 3") {
+        Write-Host "      [ERROR] Python 3 required but found: $pyVer" -ForegroundColor Red
+        Write-Host "      Please install Python 3.10+ from https://python.org/"
+        exit 1
+    }
     Write-Host "      [OK] Python found: $pyVer" -ForegroundColor Green
 } catch {
     Write-Host "      [ERROR] Python is not installed or not in PATH." -ForegroundColor Red
@@ -57,8 +78,9 @@ Write-Host "`n[2/5] Creating Runtime Directories..." -ForegroundColor Yellow
 
 $Dirs = @("models", "data", "bin\python-win", "memory")
 foreach ($Dir in $Dirs) {
-    if (-not (Test-Path $Dir)) {
-        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+    $FullPath = Join-Path $RepoRoot $Dir
+    if (-not (Test-Path $FullPath)) {
+        New-Item -ItemType Directory -Path $FullPath -Force | Out-Null
         Write-Host "      Created: $Dir"
     } else {
         Write-Host "      Exists: $Dir"
@@ -71,7 +93,7 @@ foreach ($Dir in $Dirs) {
 Write-Host "`n[3/5] Downloading Default Local LLM..." -ForegroundColor Yellow
 
 $ModelUrl = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
-$ModelDest = Join-Path $WorkingDir "models\Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+$ModelDest = Join-Path $RepoRoot "models\Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 
 if (-not (Test-Path $ModelDest)) {
     Write-Host "      Downloading Llama 3.2 3B Instruct (Q4_K_M)..."
@@ -87,8 +109,9 @@ if (-not (Test-Path $ModelDest)) {
 # ---------------------------------------------------------
 Write-Host "`n[4/5] Installing Node.js Dependencies..." -ForegroundColor Yellow
 
-if (Test-Path "package.json") {
-    Write-Host "      Running npm install..."
+$PackageJson = Join-Path $RepoRoot "package.json"
+if (Test-Path $PackageJson) {
+    Write-Host "      Running npm install in: $RepoRoot"
     npm install
     if ($LASTEXITCODE -ne 0) {
         Write-Host "      [ERROR] npm install failed." -ForegroundColor Red
@@ -96,7 +119,7 @@ if (Test-Path "package.json") {
     }
     Write-Host "      [OK] Node packages installed." -ForegroundColor Green
 } else {
-    Write-Host "      [ERROR] package.json not found. Are you in the TALA project root?" -ForegroundColor Red
+    Write-Host "      [ERROR] package.json not found at $RepoRoot" -ForegroundColor Red
     exit 1
 }
 
@@ -106,34 +129,48 @@ if (Test-Path "package.json") {
 Write-Host "`n[5/5] Building Python Virtual Environments..." -ForegroundColor Yellow
 
 # Function to build a venv and install requirements
+# $ModulePath is relative to $RepoRoot
 function Build-Venv {
-    param([string]$Path)
-    
-    $ReqFile = Join-Path $Path "requirements.txt"
-    $VenvDir = Join-Path $Path "venv"
+    param([string]$ModulePath)
+
+    $FullPath = Join-Path $RepoRoot $ModulePath
+    $ReqFile  = Join-Path $FullPath "requirements.txt"
+    $VenvDir  = Join-Path $FullPath "venv"
     $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
-    
-    if (-not (Test-Path $ReqFile)) { return }
-    
-    Write-Host "      -> Setting up $Path..."
-    
-    # Create Venv
+
+    if (-not (Test-Path $ReqFile)) {
+        Write-Host "      [SKIP] $ModulePath — no requirements.txt"
+        return
+    }
+
+    Write-Host "      -> Setting up $ModulePath..."
+
+    # Create Venv if absent
     if (-not (Test-Path $VenvDir)) {
         python -m venv $VenvDir
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "         [ERROR] Failed to create venv at $VenvDir" -ForegroundColor Red
+            return
+        }
     }
-    
+
     # Upgrade pip
     & $PythonExe -m pip install --upgrade pip --quiet
-    
-    # Install dependencies. For local-inference, we use an extra-index-url to grab prebuilt wheels 
+
+    # Install dependencies. For local-inference, we use an extra-index-url to grab prebuilt wheels
     # for llama-cpp-python so we don't compile C++ from scratch.
-    if ($Path -like "*local-inference*") {
+    if ($ModulePath -like "*local-inference*") {
         Write-Host "         Fetching pre-built wheels for llama-cpp-python..."
         & $PythonExe -m pip install -r $ReqFile --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
     } else {
         & $PythonExe -m pip install -r $ReqFile --quiet
     }
-    
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "         [ERROR] pip install failed for $ModulePath" -ForegroundColor Red
+        return
+    }
+
     Write-Host "         [OK] Installed." -ForegroundColor Green
 }
 
@@ -147,8 +184,9 @@ $PythonModules = @(
 )
 
 foreach ($Mod in $PythonModules) {
-    if (Test-Path $Mod) {
-        Build-Venv -Path $Mod
+    $FullPath = Join-Path $RepoRoot $Mod
+    if (Test-Path $FullPath) {
+        Build-Venv -ModulePath $Mod
     }
 }
 
@@ -157,4 +195,7 @@ Write-Host "   BOOTSTRAP COMPLETE!                       " -ForegroundColor Gree
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "You can now start TALA by running:"
 Write-Host "  > npm run dev"
+Write-Host ""
+Write-Host "To verify the environment is ready, run:"
+Write-Host "  > pwsh scripts\verify-setup.ps1"
 Write-Host ""

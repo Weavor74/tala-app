@@ -29,7 +29,8 @@
     "memory:check": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=audit",
     "memory:heal": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=apply-safe",
     "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",
-    "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts"
+    "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts",
+    "setup:verify": "bash scripts/verify-setup.sh"
   },
   "build": {
     "appId": "com.antigravity.tala",
