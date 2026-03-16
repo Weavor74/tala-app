@@ -210,3 +210,74 @@ InferenceService.refreshProviders()
 | `stream_opened` | `local_inference` | Inference stream started |
 | `stream_completed` | `local_inference` | Inference stream completed successfully |
 | `stream_aborted` | `local_inference` | Inference stream was cancelled |
+
+## 10. Cognitive Turn Path (Phase 3A)
+
+Phase 3A connects the cognitive model from Phases 3 and 3B to every live chat turn.
+
+### Canonical Live Cognitive Loop
+
+```
+AgentService.chat()
+  → PreInferenceContextOrchestrator.orchestrate()   [single canonical gathering call]
+    → TalaContextRouter.process()                    [memory + doc retrieval, intent, mode]
+    → AstroService.getEmotionalState()               [emotional state, mode-gated]
+    → reflectionContributionStore.getNoteCount()     [in-process, no I/O]
+    → _queryMcpPreInference()                        [intent/mode-gated, graceful no-op]
+  → PreInferenceOrchestrationResult                  [normalised pre-inference packet]
+  → CognitiveTurnAssembler.assemble()                [builds TalaCognitiveContext]
+  → InferenceService.selectProvider()                [provider/model for this turn]
+  → PromptProfileSelector.select()                   [model capability profile]
+  → CognitiveContextCompactor.compact()              [CompactPromptPacket]
+  → CompactPromptBuilder.build(..., compactPacket)   [final system prompt]
+  → streamWithBrain()                                [canonical inference path]
+  → post-turn:
+      → storeMemories()                              [mem0 + RAG + memory graph]
+      → ReflectionEngine.recordTurn()                [latency/outcome signal]
+      → diagnosticsAggregator.recordCognitiveContext() [diagnostics snapshot]
+```
+
+### Source Gating Policy
+
+`PreInferenceContextOrchestrator` applies intent/mode-aware gating before any retrieval call:
+
+| Source | Queried | Suppressed |
+|--------|---------|-----------|
+| Memory (via TalaContextRouter) | Always | — |
+| Docs (via TalaContextRouter) | doc-relevant query + mode ≠ rp | RP mode or no relevant query |
+| Astro/emotion | mode ≠ rp and astro ready | RP mode or astro unavailable |
+| Reflection store | Always (in-process) | — |
+| MCP pre-inference | coding/technical/task intent + mode ≠ rp | Greeting, conversation, RP |
+
+### Graceful Degradation
+
+- Astro unavailable → `astroStateText = null`, telemetry `emotional_state_skipped`, turn continues.
+- MCP pre-inference fails → `mcpContextSummary = undefined`, telemetry `mcp_preinference_failed`, turn continues.
+- Compaction fails → `compactPacket = undefined`, legacy `CompactPromptBuilder` path used, warning logged.
+
+### TurnContext.resolvedMemories (Phase 3A)
+
+`TurnContext` now includes `resolvedMemories?: MemoryItem[]` — the de-duplicated, contradiction-resolved memories from the router retrieval pass. This feeds `CognitiveTurnAssembler.assemble()` directly without a second memory query.
+
+### Diagnostics Integration
+
+`AgentService.setDiagnosticsAggregator(agg)` (called by `IpcRouter.registerAll()`) wires the runtime diagnostics aggregator. After every turn, `RuntimeDiagnosticsAggregator.recordCognitiveContext(cognitiveContext)` stores the live cognitive context, making it available through `diagnostics:getRuntimeSnapshot`.
+
+### Phase 3A Telemetry Events
+
+All Phase 3A events are emitted in the `cognitive` subsystem:
+
+| Event | When |
+|-------|------|
+| `preinference_orchestration_started` | Orchestration begins |
+| `preinference_orchestration_completed` | Orchestration succeeded |
+| `preinference_orchestration_failed` | Orchestration threw |
+| `mcp_preinference_requested/completed/suppressed/failed` | MCP gating/result |
+| `memory_preinference_applied` | Memory result applied or suppressed |
+| `doc_preinference_applied` | Doc context applied or suppressed |
+| `emotional_state_requested/applied/skipped` | Astro state gating/result |
+| `reflection_note_applied/suppressed` | Reflection store check |
+| `live_cognitive_context_recorded` | Diagnostics updated |
+| `live_compaction_applied` | CompactPromptPacket produced on real turn |
+| `post_turn_memory_write` | Mem0 post-turn write confirmed |
+| `post_turn_reflection_signal` | ReflectionEngine.recordTurn() called |

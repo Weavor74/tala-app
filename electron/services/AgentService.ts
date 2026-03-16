@@ -45,6 +45,13 @@ import { DeterministicIntentRouter } from './router/DeterministicIntentRouter';
 import { WorkflowRegistry } from './router/WorkflowRegistry';
 import { ToolResult } from './ToolService';
 import { CompactPromptBuilder } from './plan/CompactPromptBuilder';
+// Phase 3A: Live Cognitive Path Integration
+import { PreInferenceContextOrchestrator } from './cognitive/PreInferenceContextOrchestrator';
+import { CognitiveTurnAssembler } from './cognitive/CognitiveTurnAssembler';
+import { promptProfileSelector } from './cognitive/PromptProfileSelector';
+import { cognitiveContextCompactor } from './cognitive/CognitiveContextCompactor';
+import { telemetry } from './TelemetryService';
+import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -197,6 +204,11 @@ export class AgentService {
     private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
     private currentTurnAuditRecord?: PromptAuditRecord;
     private activeTurnId: string | null = null;
+    // Phase 3A: Live Cognitive Path Integration
+    /** Pre-inference context orchestrator — gathers all live context before CognitiveTurnAssembler. */
+    private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
+    /** Optional diagnostics aggregator — records cognitive context after each turn. */
+    private diagnosticsAggregator: RuntimeDiagnosticsAggregator | null = null;
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -222,6 +234,14 @@ export class AgentService {
 
         // Core system connections
         this.docIntel = new DocumentationIntelligenceService(process.cwd()); // Initial default, updated via setWorkspaceRoot
+
+        // Phase 3A: Initialise the pre-inference context orchestrator
+        this.preInferenceOrchestrator = new PreInferenceContextOrchestrator(
+            this.talaRouter,
+            this.astro,
+            this.docIntel,
+            null, // mcpService injected after MCP is ready (setMcpService)
+        );
 
         this.tools.setMemoryService(this.memory);
         this.tools.setGoalManager(this.goals);
@@ -595,6 +615,14 @@ export class AgentService {
     public setMcpService(mcp: McpServiceLike) {
         this.mcpService = mcp;
         this.tools.setMcpService(mcp);
+    }
+
+    /**
+     * Wires the runtime diagnostics aggregator so cognitive contexts can be recorded
+     * after each turn (Phase 3A: Live Cognitive Path Integration).
+     */
+    public setDiagnosticsAggregator(agg: RuntimeDiagnosticsAggregator): void {
+        this.diagnosticsAggregator = agg;
     }
 
     public setGitService(git: unknown) {
@@ -1680,14 +1708,43 @@ Exported standalone package from Tala.
         let activeInstance = settings.inference?.instances?.find((i: any) => i.id === settings.inference.activeLocalId) || (settings.inference?.instances?.length > 0 ? settings.inference.instances[0] : null);
         const isSmallLocalModel = (activeInstance?.source === 'local' || activeInstance?.engine === 'ollama') && (activeInstance?.model?.toLowerCase().includes('3b') || activeInstance?.model?.toLowerCase().includes('8b'));
 
-        const astroState = await this.getAstroState(settings);
+        // --- PHASE 3A: PRE-INFERENCE CONTEXT ORCHESTRATION ---
+        // Single canonical call replaces scattered astroState + talaRouter.process() calls.
+        // Gathers memory, doc, astro, reflection notes with mode/intent-aware gating.
+        const agentId = settings.agent?.activeProfileId || 'tala';
+        const userId = this.userProfile?.getIdentityContext().userId || 'User';
+        const orchResult = await this.preInferenceOrchestrator.orchestrate(
+            turnId,
+            userMessage,
+            activeMode as any,
+            { agentId, userId },
+        );
 
-        // --- TALA CONTEXT ROUTER (UPGRADED PIPELINE) ---
-        // Context routing yields the singular atomic TurnContext representation.
-        const turnObject = await this.talaRouter.process(`${this.activeSessionId}_${Date.now()}`, userMessage, activeMode as any, this.docIntel);
-        const memoryContext = turnObject.promptBlocks.map(b => `${b.header}\n${b.content}`).join('\n\n');
-        const hasMemories = turnObject.retrieval.approvedCount > 0;
-        const isGreeting = turnObject.intent.isGreeting;
+        const turnObject = orchResult.turnContext;
+        const memoryContext = orchResult.memoryContextText;
+        const hasMemories = orchResult.approvedMemories.length > 0;
+        const isGreeting = orchResult.isGreeting;
+        // Backward-compatible astroState string for legacy prompt paths
+        const astroState = orchResult.astroStateText ?? '[ASTRO STATE]: Offline';
+
+        // --- PHASE 3A: COGNITIVE TURN ASSEMBLY ---
+        // Build the authoritative TalaCognitiveContext for this turn.
+        const cognitiveContext = CognitiveTurnAssembler.assemble({
+            turnId,
+            rawInput: userMessage,
+            mode: activeMode as any,
+            approvedMemories: orchResult.approvedMemories,
+            memoryCandidateCount: orchResult.memoryCandidateCount,
+            memoryExcludedCount: orchResult.memoryExcludedCount,
+            memoryRetrievalSuppressed: orchResult.memoryRetrievalSuppressed,
+            memorySuppressionReason: orchResult.memorySuppressionReason,
+            intentClass: orchResult.intentClass,
+            isGreeting: orchResult.isGreeting,
+            astroStateText: orchResult.astroStateText,
+            docContextText: orchResult.docContextText,
+            docSourceIds: orchResult.docSourceIds,
+            docRationale: orchResult.docRationale,
+        });
 
         console.log(`[PromptAudit] turn_start sessionId=${this.activeSessionId} mode=${activeMode} intent=${turnObject.intent.class} isGreeting=${isGreeting}`);
         if (isGreeting) {
@@ -1789,6 +1846,46 @@ Exported standalone package from Tala.
             }
         }
 
+        // --- PHASE 3A: MODEL-AWARE COMPACTION ---
+        // Select provider/model and run CognitiveContextCompactor before prompt assembly.
+        // This ensures tiny/small models receive compressed packets within budget.
+        const providerSelection = this.inference.selectProvider({ fallbackAllowed: true, turnId });
+        const selectedProvider = providerSelection.selectedProvider;
+        const modelName = activeInstance?.model || selectedProvider?.preferredModel || 'unknown';
+
+        let compactPacket: import('../../shared/modelCapabilityTypes').CompactPromptPacket | undefined;
+        try {
+            const capabilityProfile = selectedProvider
+                ? promptProfileSelector.select(selectedProvider, modelName, turnId, activeMode)
+                : promptProfileSelector.select(
+                    { providerId: 'unknown', providerType: 'ollama' as const, displayName: 'Unknown' },
+                    modelName, turnId, activeMode,
+                );
+            compactPacket = cognitiveContextCompactor.compact(cognitiveContext, capabilityProfile);
+            telemetry.operational(
+                'cognitive',
+                'live_compaction_applied',
+                'info',
+                `turn:${turnId}`,
+                `Live compaction applied: profile=${capabilityProfile.promptProfileClass} policy=${capabilityProfile.compactionPolicy}`,
+                'success',
+                {
+                    payload: {
+                        turnId,
+                        profileClass: capabilityProfile.promptProfileClass,
+                        compactionPolicy: capabilityProfile.compactionPolicy,
+                        parameterClass: capabilityProfile.parameterClass,
+                        memoriesKept: compactPacket.diagnosticsSummary.memoriesKept,
+                        memoriesDropped: compactPacket.diagnosticsSummary.memoriesDropped,
+                        docsIncluded: compactPacket.diagnosticsSummary.docsIncluded,
+                    },
+                },
+            );
+        } catch (compactionErr) {
+            console.warn('[AgentService] Cognitive compaction failed, proceeding without packet:', compactionErr);
+            compactPacket = undefined;
+        }
+
         // --- DYNAMIC PROMPT ASSEMBLY via COMPACT BUILDER ---
         const systemPrompt = CompactPromptBuilder.build({
             systemPromptBase: activeProfile.systemPrompt,
@@ -1800,8 +1897,25 @@ Exported standalone package from Tala.
             goalsAndReflections: goalsAndReflections,
             dynamicContext: dynamicContext.replace(/\[ASTRO_STATE\]/g, astroState),
             toolSigs: toolSigs,
-            userIdentity: userIdentity
+            userIdentity: userIdentity,
+            compactPacket,
         });
+
+        // --- PHASE 3A: RECORD COGNITIVE CONTEXT IN DIAGNOSTICS ---
+        try {
+            this.diagnosticsAggregator?.recordCognitiveContext(cognitiveContext);
+            telemetry.operational(
+                'cognitive',
+                'live_cognitive_context_recorded',
+                'info',
+                `turn:${turnId}`,
+                `Cognitive context recorded in diagnostics: mode=${activeMode}`,
+                'success',
+                { payload: { turnId, mode: activeMode, recorded: !!this.diagnosticsAggregator } },
+            );
+        } catch (diagErr) {
+            console.warn('[AgentService] Diagnostics recording failed (non-fatal):', diagErr);
+        }
 
         const maxTokens = activeInstance?.ctxLen || 16384;
         const systemTokens = this.estimateTokens(systemPrompt);
@@ -2274,6 +2388,16 @@ Failure to provide a tool call will result in system termination.`;
                         // We use the activeMode captured at the top of the turn (line 1512)
                         await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId }, activeMode);
                         console.log(`[AgentService] Stored interaction to Mem0 (${memId}) under mode: ${activeMode}`);
+                        // Phase 3A: emit post-turn memory write telemetry
+                        telemetry.operational(
+                            'cognitive',
+                            'post_turn_memory_write',
+                            'info',
+                            `turn:${turnId}`,
+                            `Post-turn memory write: mem0 stored under mode=${activeMode}`,
+                            'success',
+                            { payload: { turnId, memId, mode: activeMode, source: 'mem0' } },
+                        );
                     }
                 } catch (e) {
                     console.warn('[AgentService] Mem0 post-store failed:', e);
@@ -2303,6 +2427,37 @@ Failure to provide a tool call will result in system termination.`;
                 }
             };
             storeMemories(); // fire-and-forget
+        }
+
+        // --- PHASE 3A: POST-TURN REFLECTION SIGNAL ---
+        // Emit a reflection signal based on the turn outcome so the reflection engine
+        // can build behavioral notes for future turns.
+        try {
+            const hasToolErrors = executionLog.toolCalls.some(tc => !tc.ok);
+            const durationMs = Date.now() - chatStartedAt;
+            // Record the turn for reflection latency stats / signal processing.
+            // ReflectionEngine.recordTurn() is a static method that buffers turn data.
+            const { ReflectionEngine } = await import('./reflection/ReflectionEngine');
+            ReflectionEngine.recordTurn({
+                timestamp: new Date().toISOString(),
+                latencyMs: durationMs,
+                turnNumber: executionLog.toolCalls.length,
+                model: modelName,
+                tokensUsed: cumulativeUsage.total_tokens,
+                hadToolCalls: executionLog.toolCalls.length > 0,
+            });
+            telemetry.operational(
+                'cognitive',
+                'post_turn_reflection_signal',
+                'info',
+                `turn:${turnId}`,
+                `Post-turn reflection signal recorded: durationMs=${durationMs} toolErrors=${hasToolErrors}`,
+                'success',
+                { payload: { turnId, durationMs, hasToolErrors, mode: activeMode, intent: orchResult.intentClass } },
+            );
+        } catch (reflErr) {
+            // Reflection signal failure is always non-fatal
+            console.warn('[AgentService] Post-turn reflection signal failed (non-fatal):', reflErr);
         }
 
         // --- FINAL UI BOUNDARY GUARD (Last Line of Defense) ---

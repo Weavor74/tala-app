@@ -1,3 +1,5 @@
+import type { CompactPromptPacket } from '../../../shared/modelCapabilityTypes';
+
 export interface PromptContext {
     systemPromptBase: string;
     activeProfileId: string;
@@ -9,6 +11,13 @@ export interface PromptContext {
     dynamicContext: string;
     toolSigs: string;
     userIdentity: string;
+    /**
+     * Optional compact prompt packet from CognitiveContextCompactor.
+     * When present, cognitive blocks (emotion, memory, task, reflection) are
+     * sourced from the packet rather than from raw dynamicContext / memoryContext.
+     * Phase 3A: Live Cognitive Path Integration.
+     */
+    compactPacket?: CompactPromptPacket;
 }
 
 /**
@@ -29,7 +38,14 @@ export class CompactPromptBuilder {
             return this.buildStandardPrompt(context);
         }
 
-        // --- COMPACT ENGINEERING PROMPT ---
+        // --- COMPACT ENGINEERING PROMPT (with optional cognitive packet) ---
+        // When a CompactPromptPacket is available, use its structured blocks
+        // instead of raw memoryContext / dynamicContext.
+        if (context.compactPacket) {
+            return this.buildCognitiveEngineeringPrompt(context, context.compactPacket);
+        }
+
+        // --- LEGACY COMPACT ENGINEERING PROMPT ---
         let prompt = `You are ${context.activeProfileId}, operating in STRICT ENGINEERING MODE.\n`;
         
         if (context.userIdentity) {
@@ -57,6 +73,38 @@ export class CompactPromptBuilder {
         return prompt;
     }
 
+    /**
+     * Builds a compact engineering prompt enriched by the cognitive compact packet.
+     * Used when a CompactPromptPacket is available from CognitiveContextCompactor.
+     * Phase 3A: Live Cognitive Path Integration.
+     */
+    private static buildCognitiveEngineeringPrompt(context: PromptContext, packet: CompactPromptPacket): string {
+        let prompt = '';
+
+        if (context.userIdentity) {
+            prompt += `${context.userIdentity}\n\n`;
+        }
+
+        // Use packet sections in stable order: identity → mode → tools → continuity → task → rules
+        const cognitiveSections = packet.assembledSections.filter(s => s.trim().length > 0);
+        if (cognitiveSections.length > 0) {
+            prompt += cognitiveSections.join('\n\n') + '\n\n';
+        }
+
+        // Append tool signatures if available
+        if (context.toolSigs && !context.toolSigs.includes('NO TOOLS AVAILABLE')) {
+            prompt += `[AVAILABLE TOOLS]\n${context.toolSigs}\n\n`;
+            prompt += `[PROTOCOL] Output JSON {"tool_calls": [{"name": "tool_name", "arguments": {...}}]} to call a tool.\n`;
+        }
+
+        // Append goals/reflections if present (not covered by packet)
+        if (context.goalsAndReflections.trim()) {
+            prompt += `[ACTIVE MISSIONS]\n${context.goalsAndReflections}\n\n`;
+        }
+
+        return prompt;
+    }
+
     private static buildStandardPrompt(context: PromptContext): string {
         const repetitionSafety = [
             '[STYLE CONSTRAINTS — STRICTLY ENFORCED]:',
@@ -77,13 +125,27 @@ export class CompactPromptBuilder {
             '  • If a tool fails, report the error exactly as received.',
         ].join('\n');
 
-        let systemPromptTemplate = (context.isSmallLocalModel ? repetitionSafety + "\n\n" : "") 
-            + context.systemPromptBase 
+        // When a CompactPromptPacket is available (Phase 3A), use its structured cognitive
+        // blocks to replace the raw dynamicContext and memoryContext.
+        const effectiveDynamic = context.compactPacket
+            ? (context.compactPacket.emotionalBiasBlock || context.dynamicContext)
+            : context.dynamicContext;
+        const effectiveMemory = context.compactPacket
+            ? [context.compactPacket.continuityBlock, context.compactPacket.currentTaskBlock]
+                .filter(Boolean)
+                .join('\n\n')
+            : context.memoryContext;
+        const hasEffectiveMemory = context.compactPacket
+            ? !!(context.compactPacket.continuityBlock || context.compactPacket.currentTaskBlock)
+            : context.hasMemories;
+
+        let systemPromptTemplate = (context.isSmallLocalModel ? repetitionSafety + "\n\n" : "")
+            + context.systemPromptBase
             + (context.isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
 
-        systemPromptTemplate = context.dynamicContext + "\n\n" 
-            + (context.hasMemories ? context.memoryContext + "\n\n" : "") 
-            + (context.goalsAndReflections.trim() ? context.goalsAndReflections + "\n\n" : "") 
+        systemPromptTemplate = effectiveDynamic + "\n\n"
+            + (hasEffectiveMemory ? effectiveMemory + "\n\n" : "")
+            + (context.goalsAndReflections.trim() ? context.goalsAndReflections + "\n\n" : "")
             + systemPromptTemplate;
 
         if (context.toolSigs && !context.toolSigs.includes('NO TOOLS AVAILABLE')) {
