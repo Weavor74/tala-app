@@ -816,6 +816,28 @@ export class IpcRouter {
       return await agent.scanLocalModels();
     });
 
+    // Provider registry IPC handlers
+
+    ipcMain.handle('inference:listProviders', async () => {
+      return inferenceService.getProviderInventory();
+    });
+
+    ipcMain.handle('inference:refreshProviders', async () => {
+      return await inferenceService.refreshProviders();
+    });
+
+    ipcMain.handle('inference:selectProvider', async (_e, providerId: string | undefined) => {
+      inferenceService.setSelectedProvider(providerId);
+      return { success: true };
+    });
+
+    ipcMain.handle('inference:getSelectedProvider', async () => {
+      const inventory = inferenceService.getProviderInventory();
+      const selectedId = inventory.selectedProviderId;
+      if (!selectedId) return null;
+      return inventory.providers.find(p => p.providerId === selectedId) ?? null;
+    });
+
     ipcMain.handle('install-local-engine', async (event, engineId) => {
       return await inferenceService.installEngine(engineId, getMainWindow()?.webContents);
     });

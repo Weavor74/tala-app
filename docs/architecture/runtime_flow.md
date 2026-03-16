@@ -151,3 +151,62 @@ Every turn emits structured JSONL audit events via `AuditLogger`:
 | `mcp_connect_ok` | After successful MCP server connection |
 | `mcp_connect_fail` | After failed MCP server connection |
 | `mcp_server_failed` | When a server exhausts retry attempts |
+
+## 9. Inference Path Integration (Phase 3)
+
+All inference requests are gated through a single authoritative path:
+
+```
+AgentService.loadBrainConfig()
+  → InferenceService.reconfigureRegistry(config)     [update provider registry from settings]
+  → InferenceService.selectProvider(request)         [deterministic selection + fallback policy]
+    → InferenceProviderRegistry.getInventory()       [read current provider state]
+    → ProviderSelectionService.select()              [apply selection rules]
+      → 1. user-selected provider if ready
+      → 2. best available local provider (by priority)
+      → 3. embedded llama.cpp
+      → 4. cloud provider
+      → 5. InferenceFailureResult if no viable provider
+  → InferenceSelectionResult                         [selected provider + fallback chain]
+  → configure OllamaBrain / CloudBrain               [brain wired to selected provider endpoint]
+```
+
+### Provider Detection Flow
+
+```
+InferenceService.refreshProviders()
+  → InferenceProviderRegistry.refresh()
+    → _runAllProbes() [all configured providers in parallel, failures isolated]
+      → probeOllama()          → /api/tags
+      → probeLlamaCpp()        → /health → /v1/models
+      → probeEmbeddedLlamaCpp()  → fs.existsSync + /health
+      → probeVllm()            → /v1/models
+      → probeKoboldCpp()       → /api/v1/model
+      → probeCloud()           → /v1/models
+    → _applyProbeResult()      [update descriptor status, emit telemetry]
+    → telemetry: provider_detected | provider_probe_failed | provider_unavailable
+  → telemetry: provider_inventory_refreshed
+```
+
+### IPC Surface for Provider Selection
+
+| Channel | Direction | Description |
+|---------|-----------|-------------|
+| `inference:listProviders` | renderer → main | Returns current `InferenceProviderInventory` |
+| `inference:refreshProviders` | renderer → main | Runs probes and returns updated inventory |
+| `inference:selectProvider` | renderer → main | Sets user-selected provider ID |
+| `inference:getSelectedProvider` | renderer → main | Returns selected provider descriptor |
+
+### Telemetry Events Added (Phase 3)
+
+| Event | Subsystem | When |
+|-------|-----------|------|
+| `provider_inventory_refreshed` | `local_inference` | After all probes complete |
+| `provider_detected` | `local_inference` | A provider probe succeeded |
+| `provider_probe_failed` | `local_inference` | A provider probe failed or errored |
+| `provider_selected` | `local_inference` | A provider was chosen by selection policy |
+| `provider_fallback_applied` | `local_inference` | Fallback triggered (preferred unavailable) |
+| `provider_unavailable` | `local_inference` | No viable provider found |
+| `stream_opened` | `local_inference` | Inference stream started |
+| `stream_completed` | `local_inference` | Inference stream completed successfully |
+| `stream_aborted` | `local_inference` | Inference stream was cancelled |

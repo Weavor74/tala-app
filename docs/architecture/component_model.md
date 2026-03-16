@@ -25,7 +25,42 @@ This document describes the Tala system as a collection of interacting component
 - **Outputs**: Result data or error messages.
 - **Dependencies**: MCP Client, local file system modules.
 
-## 2. Inference Adapters (Brains)
+## 2. Inference Pipeline
+
+### InferenceService
+- **Path**: `electron/services/InferenceService.ts`
+- **Purpose**: Canonical inference coordinator. Single entry point for all provider detection, selection, and embedded engine lifecycle.
+- **Inputs**: Provider registry config, selection requests from AgentService.
+- **Outputs**: InferenceSelectionResult (selected provider + fallback chain), provider inventory for UI/IPC.
+- **Dependencies**: `InferenceProviderRegistry`, `ProviderSelectionService`, `LocalInferenceManager`, `LocalEngineService`.
+- **Note**: Every brain configuration decision in `AgentService` goes through `InferenceService.selectProvider()`.
+
+### InferenceProviderRegistry
+- **Path**: `electron/services/inference/InferenceProviderRegistry.ts`
+- **Purpose**: Source of truth for all known inference providers and their runtime status. Runs provider probes and maintains the provider inventory.
+- **Provider types**: `ollama`, `llamacpp`, `embedded_llamacpp`, `vllm`, `koboldcpp`, `cloud`.
+- **Probe behaviour**: Failed probes for one provider never block other providers. All probe events emit structured telemetry.
+- **Outputs**: `InferenceProviderInventory` (descriptor list, selected provider ID, last refreshed).
+
+### ProviderSelectionService
+- **Path**: `electron/services/inference/ProviderSelectionService.ts`
+- **Purpose**: Deterministic provider selection and fallback policy.
+- **Selection order**:
+  1. User-selected provider if ready
+  2. Fallback (with telemetry) if selected provider is unavailable
+  3. Best available local provider by priority
+  4. Embedded llama.cpp
+  5. Cloud provider
+  6. Explicit failure — no silent unknown-provider selection
+- **Outputs**: `InferenceSelectionResult` (selected provider, reason, fallbackApplied, attemptedProviders).
+
+### LocalInferenceManager
+- **Path**: `electron/services/LocalInferenceManager.ts`
+- **Purpose**: Hardened lifecycle manager for the embedded llama.cpp engine. Implements state machine, readiness checks, timeout enforcement, bounded retry, and recovery.
+- **States**: `disabled → starting → ready → busy → degraded → unavailable → failed`
+- **Role in inference path**: Authoritative for embedded provider readiness. `InferenceService.getLocalInferenceManager()` exposes it for IPC handlers.
+
+## 3. Inference Adapters (Brains)
 
 ### Ollama Brain
 - **Path**: `electron/brains/OllamaBrain.ts`
