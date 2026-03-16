@@ -148,6 +148,17 @@ export type TelemetryEventType =
     | 'live_compaction_applied'
     | 'post_turn_memory_write'
     | 'post_turn_reflection_signal'
+    // Phase 3C — Cognitive Behavior Validation + Small-Model Tuning
+    | 'token_budget_computed'
+    | 'memory_ranking_applied'
+    | 'memory_explicit_override'
+    | 'doc_retrieval_gated'
+    | 'mcp_gating_evaluated'
+    | 'emotional_modulation_capped'
+    | 'reflection_threshold_evaluated'
+    | 'preinference_duration_ms'
+    | 'cognitive_assembly_duration_ms'
+    | 'compaction_duration_ms'
     // Degraded / fallback
     | 'degraded_fallback'
     | 'subsystem_unavailable'

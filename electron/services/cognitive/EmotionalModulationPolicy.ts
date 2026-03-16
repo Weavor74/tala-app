@@ -65,6 +65,21 @@ const HYBRID_MODE_CAP: EmotionalModulationStrength = 'medium';
 /** RP mode allows full modulation up to 'capped'. */
 const RP_MODE_CAP: EmotionalModulationStrength = 'capped';
 
+// ─── Model-size-aware modulation caps (Phase 3C) ──────────────────────────────
+
+/**
+ * Caps modulation strength by model parameter class.
+ * Tiny/small models receive at most 'medium' to prevent expression flooding.
+ * Medium models receive at most 'capped' (full expression).
+ */
+const MODEL_SIZE_CAP: Record<string, EmotionalModulationStrength> = {
+    tiny: 'medium',
+    small: 'medium',
+    medium: 'capped',
+    large: 'capped',
+    unknown: 'medium',  // conservative fallback
+};
+
 // ─── Minimum confidence threshold ─────────────────────────────────────────────
 
 /** Below this average vector magnitude, modulation is suppressed as 'none'. */
@@ -90,11 +105,13 @@ export class EmotionalModulationPolicy {
      * @param astroStateText - Raw string output from AstroService.getEmotionalState().
      *                         If null/empty, astro engine is treated as unavailable.
      * @param mode - Active cognitive mode.
+     * @param modelParameterClass - Optional model parameter class for size-aware capping (Phase 3C).
      * @returns Structured EmotionalModulationInput for inclusion in TalaCognitiveContext.
      */
     public static apply(
         astroStateText: string | null | undefined,
         mode: Mode,
+        modelParameterClass?: string,
     ): EmotionalModulationInput {
         const now = new Date().toISOString();
 
@@ -134,7 +151,12 @@ export class EmotionalModulationPolicy {
         const rawStrength = this.magnitudeToStrength(magnitude);
 
         // Apply mode-based cap
-        const strength = this.applyModeCap(rawStrength, mode);
+        const afterModeCap = this.applyModeCap(rawStrength, mode);
+
+        // Apply model-size-aware cap (Phase 3C)
+        const strength = modelParameterClass
+            ? this.applyModelSizeCap(afterModeCap, modelParameterClass)
+            : afterModeCap;
 
         // Identify influenced dimensions
         const influencedDimensions = this.identifyInfluencedDimensions(parsed.vector, strength);
@@ -233,6 +255,33 @@ export class EmotionalModulationPolicy {
 
         if (rawRank > capRank) {
             return modeCap;
+        }
+        return strength;
+    }
+
+    /**
+     * Applies model-size-aware caps (Phase 3C).
+     * Tiny/small models are capped at 'medium' to prevent expression flooding
+     * that could overwhelm limited context windows.
+     */
+    private static applyModelSizeCap(
+        strength: EmotionalModulationStrength,
+        modelParameterClass: string,
+    ): EmotionalModulationStrength {
+        const sizeCap = MODEL_SIZE_CAP[modelParameterClass] ?? MODEL_SIZE_CAP.unknown;
+
+        const strengthRank: Record<EmotionalModulationStrength, number> = {
+            none: 0,
+            low: 1,
+            medium: 2,
+            capped: 3,
+        };
+
+        const capRank = strengthRank[sizeCap];
+        const rawRank = strengthRank[strength];
+
+        if (rawRank > capRank) {
+            return sizeCap;
         }
         return strength;
     }
