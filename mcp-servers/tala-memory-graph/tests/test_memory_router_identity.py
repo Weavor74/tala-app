@@ -7,9 +7,9 @@ from memory_graph.router import MemoryRouter
 
 def test_router_graph_selection():
     router = MemoryRouter()
-    assert router.route("Who is Steven's dog?") == "graph"
+    assert router.route("Who is Alice's dog?") == "graph"
     assert router.route("What happened before the station visit?") == "graph"
-    assert router.route("Who is related to Orion?") == "graph"
+    assert router.route("Who is related to Buddy?") == "graph"
 
 def test_router_identity_priority():
     router = MemoryRouter()

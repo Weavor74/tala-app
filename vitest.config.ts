@@ -14,6 +14,9 @@ export default defineConfig({
         },
     },
     resolve: {
+        // Prefer TypeScript source over compiled JavaScript to avoid stale .js artifacts
+        // shadowing updated .ts implementations during test runs.
+        extensions: ['.ts', '.tsx', '.mts', '.mjs', '.js', '.jsx', '.json'],
         alias: {
             electron: path.resolve(__dirname, 'tests/__mocks__/electron.ts'),
         },

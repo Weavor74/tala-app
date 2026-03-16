@@ -31,6 +31,7 @@ import { LogInspectionService } from './LogInspectionService';
 import { SafeCommandService } from './SafeCommandService';
 import { SelfImprovementService } from './SelfImprovementService';
 import { ReflectionEngine } from './ReflectionEngine';
+import { ArtifactStore } from './ArtifactStore';
 import { PatchStagingService } from './PatchStagingService';
 import { ValidationService } from './ValidationService';
 import { PromotionService, RollbackService } from './DeploymentServices';
@@ -97,7 +98,7 @@ export class ReflectionService {
 
         // 3. Loop Services
         this.selfImprovement = new SelfImprovementService(this.repoInspector, this.logInspector);
-        this.reflection = new ReflectionEngine(this.repoInspector, this.logInspector);
+        this.reflection = new ReflectionEngine(new ArtifactStore(userDataDir));
         this.patchStager = new PatchStagingService(this.dirs, this.protectedRegistry);
         this.validator = new ValidationService(this.safeCmd, this.dirs);
         this.promoter = new PromotionService(rootDir, this.dirs, this.protectedRegistry, this.identityRegistry);
