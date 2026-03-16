@@ -252,3 +252,72 @@ export interface InferenceProviderInventory {
     lastRefreshed: string;
     refreshing: boolean;
 }
+
+// ─── Stream execution request ─────────────────────────────────────────────────
+
+/**
+ * Request parameters for streaming inference through the canonical path.
+ */
+export interface StreamInferenceRequest {
+    /** Pre-selected provider descriptor (from InferenceService.selectProvider()). */
+    provider: InferenceProviderDescriptor;
+    /** Turn identifier for telemetry correlation. */
+    turnId: string;
+    /** Correlation ID for multi-step operations. */
+    correlationId?: string;
+    /** Session ID for grouping events. */
+    sessionId?: string;
+    /** Agent mode for telemetry context. */
+    agentMode?: string;
+    /** Whether a bounded fallback is permitted if stream-open fails. */
+    fallbackAllowed?: boolean;
+    /** Fallback candidate providers (if fallbackAllowed=true). */
+    fallbackProviders?: InferenceProviderDescriptor[];
+    /** AbortSignal for cancellation. */
+    signal?: AbortSignal;
+    /** Stream-open timeout in milliseconds (default: 15000). */
+    openTimeoutMs?: number;
+}
+
+// ─── Stream execution result ─────────────────────────────────────────────────
+
+/**
+ * Final result from a canonical stream execution.
+ * Compatible with non-stream InferenceExecutionResult fields.
+ */
+export interface StreamInferenceResult {
+    success: boolean;
+    /** Content accumulated from stream tokens. */
+    content: string;
+    /** Final stream status. */
+    streamStatus: StreamExecutionStatus;
+    /** Whether a fallback provider was used. */
+    fallbackApplied: boolean;
+    /** Ordered list of provider IDs that were attempted. */
+    attemptedProviders: string[];
+    /** Provider ultimately used for the response. */
+    providerId: string;
+    /** Provider type of the final provider. */
+    providerType: InferenceProviderType;
+    /** Model name used. */
+    modelName: string;
+    /** Turn ID this stream belongs to. */
+    turnId: string;
+    /** ISO timestamp when stream was opened (or attempted). */
+    startedAt: string;
+    /** ISO timestamp when stream ended (completed, aborted, failed). */
+    completedAt: string;
+    /** Total duration in milliseconds. */
+    durationMs: number;
+    /** Whether the result is only partial (stream was aborted after tokens were received). */
+    isPartial: boolean;
+    /** Token counts if reported by the brain. */
+    promptTokens?: number;
+    completionTokens?: number;
+    /** Failure code if stream did not complete successfully. */
+    errorCode?: InferenceFailureCode;
+    /** Human-readable failure description. */
+    errorMessage?: string;
+    /** Raw BrainResponse metadata (model-specific extras). */
+    brainMetadata?: Record<string, unknown>;
+}

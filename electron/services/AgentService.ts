@@ -2752,6 +2752,20 @@ Failure to provide a tool call will result in system termination.`;
     }
 
     private streamWithBrain(brain: IBrain, messages: any[], systemPrompt: string, onChunk: (token: string) => void, signal: AbortSignal | undefined, tools: any[], options: any) {
+        // Route through InferenceService canonical stream path for telemetry and reflection integration.
+        // Resolve the current provider selection so executeStream() has the correct metadata.
+        const selection = this.inference.selectProvider({ fallbackAllowed: true, turnId: this.activeTurnId ?? 'unknown' });
+        if (selection.success && selection.selectedProvider) {
+            const req: import('../../shared/inferenceProviderTypes').StreamInferenceRequest = {
+                provider: selection.selectedProvider,
+                turnId: this.activeTurnId ?? 'unknown',
+                sessionId: this.activeSessionId,
+                fallbackAllowed: false, // Fallback at brain level is unsafe mid-turn; handled above
+                signal,
+            };
+            return this.inference.executeStream(brain, messages, systemPrompt, onChunk, req, tools, options);
+        }
+        // Fallback: if no provider is selected, call brain directly (preserves pre-existing behavior)
         return brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
     }
 

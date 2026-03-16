@@ -15,7 +15,11 @@ import type {
     InferenceSelectionRequest,
     InferenceSelectionResult,
     InferenceProviderInventory,
+    StreamInferenceRequest,
+    StreamInferenceResult,
 } from '../../shared/inferenceProviderTypes';
+import { ReflectionEngine } from './reflection/ReflectionEngine';
+import type { IBrain, BrainResponse } from '../brains/IBrain';
 
 /**
  * Represents a local AI inference provider detected during a port scan.
@@ -116,6 +120,407 @@ export class InferenceService {
      */
     public reconfigureRegistry(config: ProviderRegistryConfig): void {
         this.registry.reconfigure(config);
+    }
+
+    /**
+     * Executes a streaming inference request through the canonical path.
+     *
+     * This is the authoritative streaming entry point for all TALA streaming requests.
+     * AgentService must use this method instead of calling brain.streamResponse() directly.
+     *
+     * Responsibilities:
+     * - Emits stream lifecycle telemetry (stream_opened, stream_completed, stream_aborted)
+     * - Emits inference lifecycle telemetry (inference_started, inference_completed, inference_failed)
+     * - Reports ReflectionEngine signals for failures and timeouts
+     * - Implements bounded fallback if stream-open fails and fallback is allowed
+     *
+     * @param brain - The configured brain instance (IBrain) to use for streaming.
+     * @param messages - Conversation messages.
+     * @param systemPrompt - System prompt string.
+     * @param onToken - Callback invoked for each streamed token.
+     * @param req - Stream request metadata (provider, turnId, fallback config, etc.).
+     * @param tools - Optional tools array.
+     * @param options - Optional brain options.
+     * @returns StreamInferenceResult with full lifecycle metadata.
+     */
+    public async executeStream(
+        brain: IBrain,
+        messages: any[],
+        systemPrompt: string,
+        onToken: (chunk: string) => void,
+        req: StreamInferenceRequest,
+        tools?: any[],
+        options?: any
+    ): Promise<StreamInferenceResult> {
+        const startedAt = new Date().toISOString();
+        const attemptedProviders: string[] = [];
+        let currentProvider = req.provider;
+        let fallbackApplied = false;
+
+        telemetry.operational(
+            'inference',
+            'inference_started',
+            'info',
+            'InferenceService',
+            `Stream inference starting — provider: ${currentProvider.providerId}`,
+            'unknown',
+            {
+                turnId: req.turnId,
+                correlationId: req.correlationId,
+                sessionId: req.sessionId,
+                mode: req.agentMode ?? 'unknown',
+                payload: {
+                    providerId: currentProvider.providerId,
+                    providerType: currentProvider.providerType,
+                    streamMode: true,
+                    selectedByPolicy: true,
+                    fallbackAllowed: req.fallbackAllowed ?? false,
+                },
+            }
+        );
+
+        const candidateProviders = req.fallbackAllowed && req.fallbackProviders
+            ? [currentProvider, ...req.fallbackProviders]
+            : [currentProvider];
+
+        let lastError: Error | null = null;
+        let streamOpenedForCurrentProvider = false;
+        let tokensEmitted = 0;
+        let brainResult: BrainResponse | null = null;
+
+        for (let attempt = 0; attempt < candidateProviders.length; attempt++) {
+            currentProvider = candidateProviders[attempt];
+            streamOpenedForCurrentProvider = false;
+            tokensEmitted = 0;
+            lastError = null;
+
+            if (attempt > 0) {
+                fallbackApplied = true;
+                telemetry.operational(
+                    'inference',
+                    'provider_fallback_applied',
+                    'warn',
+                    'InferenceService',
+                    `Stream fallback — switching to provider: ${currentProvider.providerId}`,
+                    'partial',
+                    {
+                        turnId: req.turnId,
+                        correlationId: req.correlationId,
+                        sessionId: req.sessionId,
+                        mode: req.agentMode ?? 'unknown',
+                        payload: {
+                            providerId: currentProvider.providerId,
+                            providerType: currentProvider.providerType,
+                            attemptedProviders,
+                            fallbackApplied: true,
+                        },
+                    }
+                );
+
+                ReflectionEngine.reportSignal({
+                    timestamp: new Date().toISOString(),
+                    subsystem: 'local_inference',
+                    category: 'degraded_fallback',
+                    description: `Stream inference fell back to provider: ${currentProvider.providerId}`,
+                    context: {
+                        turnId: req.turnId,
+                        originalProvider: attemptedProviders[0],
+                        fallbackProvider: currentProvider.providerId,
+                        providerType: currentProvider.providerType,
+                    },
+                });
+            }
+
+            attemptedProviders.push(currentProvider.providerId);
+
+            // Wrapped token callback — tracks whether stream actually opened
+            const wrappedOnToken = (chunk: string) => {
+                if (!streamOpenedForCurrentProvider) {
+                    streamOpenedForCurrentProvider = true;
+                    telemetry.operational(
+                        'inference',
+                        'stream_opened',
+                        'info',
+                        'InferenceService',
+                        `Stream opened — provider: ${currentProvider.providerId}`,
+                        'success',
+                        {
+                            turnId: req.turnId,
+                            correlationId: req.correlationId,
+                            sessionId: req.sessionId,
+                            mode: req.agentMode ?? 'unknown',
+                            payload: {
+                                providerId: currentProvider.providerId,
+                                providerType: currentProvider.providerType,
+                                fallbackApplied,
+                                attemptedProviders: [...attemptedProviders],
+                            },
+                        }
+                    );
+                }
+                tokensEmitted++;
+                onToken(chunk);
+            };
+
+            try {
+                brainResult = await brain.streamResponse(
+                    messages,
+                    systemPrompt,
+                    wrappedOnToken,
+                    req.signal,
+                    tools,
+                    options
+                );
+
+                const completedAt = new Date().toISOString();
+                const durationMs = Date.now() - new Date(startedAt).getTime();
+
+                telemetry.operational(
+                    'inference',
+                    'stream_completed',
+                    'info',
+                    'InferenceService',
+                    `Stream completed — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                    'success',
+                    {
+                        turnId: req.turnId,
+                        correlationId: req.correlationId,
+                        sessionId: req.sessionId,
+                        mode: req.agentMode ?? 'unknown',
+                        payload: {
+                            providerId: currentProvider.providerId,
+                            providerType: currentProvider.providerType,
+                            fallbackApplied,
+                            attemptedProviders: [...attemptedProviders],
+                            tokensEmitted,
+                            durationMs,
+                            promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
+                            completionTokens: brainResult?.metadata?.usage?.completion_tokens,
+                        },
+                    }
+                );
+
+                telemetry.operational(
+                    'inference',
+                    'inference_completed',
+                    'info',
+                    'InferenceService',
+                    `Inference completed (stream) — provider: ${currentProvider.providerId}`,
+                    'success',
+                    {
+                        turnId: req.turnId,
+                        correlationId: req.correlationId,
+                        sessionId: req.sessionId,
+                        mode: req.agentMode ?? 'unknown',
+                        payload: {
+                            providerId: currentProvider.providerId,
+                            providerType: currentProvider.providerType,
+                            streamMode: true,
+                            fallbackApplied,
+                            attemptedProviders: [...attemptedProviders],
+                            durationMs,
+                            promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
+                            completionTokens: brainResult?.metadata?.usage?.completion_tokens,
+                            totalTokens: brainResult?.metadata?.usage?.total_tokens,
+                        },
+                    }
+                );
+
+                return {
+                    success: true,
+                    content: brainResult?.content ?? '',
+                    streamStatus: 'completed',
+                    fallbackApplied,
+                    attemptedProviders,
+                    providerId: currentProvider.providerId,
+                    providerType: currentProvider.providerType,
+                    modelName: currentProvider.preferredModel ?? 'unknown',
+                    turnId: req.turnId,
+                    startedAt,
+                    completedAt,
+                    durationMs,
+                    isPartial: false,
+                    promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
+                    completionTokens: brainResult?.metadata?.usage?.completion_tokens,
+                    brainMetadata: brainResult?.metadata,
+                };
+
+            } catch (err: any) {
+                lastError = err instanceof Error ? err : new Error(String(err));
+
+                // If stream opened before error (partial output), do not attempt fallback
+                if (streamOpenedForCurrentProvider && tokensEmitted > 0) {
+                    const completedAt = new Date().toISOString();
+                    const durationMs = Date.now() - new Date(startedAt).getTime();
+                    const isTimeout = lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT') || lastError.name === 'AbortError';
+                    const isAbort = req.signal?.aborted;
+
+                    const streamStatus: StreamInferenceResult['streamStatus'] =
+                        isAbort ? 'aborted' : isTimeout ? 'timeout' : 'failed';
+
+                    const signalCategory: import('./reflection/ReflectionEngine').TelemetrySignal['category'] =
+                        isTimeout ? 'inference_timeout' : 'inference_failure';
+
+                    telemetry.operational(
+                        'inference',
+                        'stream_aborted',
+                        'warn',
+                        'InferenceService',
+                        `Stream aborted mid-stream — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                        'partial',
+                        {
+                            turnId: req.turnId,
+                            correlationId: req.correlationId,
+                            sessionId: req.sessionId,
+                            mode: req.agentMode ?? 'unknown',
+                            payload: {
+                                providerId: currentProvider.providerId,
+                                providerType: currentProvider.providerType,
+                                fallbackApplied,
+                                attemptedProviders: [...attemptedProviders],
+                                tokensEmitted,
+                                durationMs,
+                                errorMessage: lastError.message,
+                                streamStatus,
+                            },
+                        }
+                    );
+
+                    ReflectionEngine.reportSignal({
+                        timestamp: new Date().toISOString(),
+                        subsystem: 'local_inference',
+                        category: signalCategory,
+                        description: `Mid-stream failure after ${tokensEmitted} tokens — provider: ${currentProvider.providerId}: ${lastError.message}`,
+                        context: {
+                            turnId: req.turnId,
+                            providerId: currentProvider.providerId,
+                            providerType: currentProvider.providerType,
+                            tokensEmitted,
+                            durationMs,
+                            fallbackApplied,
+                        },
+                    });
+
+                    // Do not retry after partial output — return partial result
+                    return {
+                        success: false,
+                        content: '',
+                        streamStatus,
+                        fallbackApplied,
+                        attemptedProviders,
+                        providerId: currentProvider.providerId,
+                        providerType: currentProvider.providerType,
+                        modelName: currentProvider.preferredModel ?? 'unknown',
+                        turnId: req.turnId,
+                        startedAt,
+                        completedAt,
+                        durationMs,
+                        isPartial: true,
+                        errorCode: isTimeout ? 'timeout' : 'partial_stream',
+                        errorMessage: lastError.message,
+                    };
+                }
+
+                // Stream never opened — fallback is safe if allowed and more candidates exist
+                const hasMoreCandidates = attempt < candidateProviders.length - 1;
+                if (!hasMoreCandidates) {
+                    break;
+                }
+                // Continue to next candidate (fallback)
+            }
+        }
+
+        // All providers exhausted or non-retryable failure
+        const completedAt = new Date().toISOString();
+        const durationMs = Date.now() - new Date(startedAt).getTime();
+        const isTimeout = lastError?.message?.includes('timeout') || lastError?.message?.includes('ETIMEDOUT') || lastError?.name === 'AbortError';
+        const isAbort = req.signal?.aborted;
+
+        const streamStatus: StreamInferenceResult['streamStatus'] =
+            isAbort ? 'aborted' : isTimeout ? 'timeout' : 'failed';
+
+        const eventType = isTimeout ? 'inference_timeout' : 'inference_failed';
+
+        telemetry.operational(
+            'inference',
+            eventType,
+            'error',
+            'InferenceService',
+            `Stream inference failed — providers attempted: ${attemptedProviders.join(', ')}`,
+            'failure',
+            {
+                turnId: req.turnId,
+                correlationId: req.correlationId,
+                sessionId: req.sessionId,
+                mode: req.agentMode ?? 'unknown',
+                payload: {
+                    attemptedProviders,
+                    fallbackApplied,
+                    streamStatus,
+                    durationMs,
+                    errorMessage: lastError?.message,
+                },
+            }
+        );
+
+        telemetry.operational(
+            'inference',
+            'stream_aborted',
+            'error',
+            'InferenceService',
+            `Stream aborted (no open) — providers: ${attemptedProviders.join(', ')}`,
+            'failure',
+            {
+                turnId: req.turnId,
+                correlationId: req.correlationId,
+                sessionId: req.sessionId,
+                mode: req.agentMode ?? 'unknown',
+                payload: {
+                    attemptedProviders,
+                    fallbackApplied,
+                    streamStatus,
+                    durationMs,
+                    errorMessage: lastError?.message,
+                },
+            }
+        );
+
+        const signalCategory: import('./reflection/ReflectionEngine').TelemetrySignal['category'] =
+            isTimeout ? 'inference_timeout'
+            : fallbackApplied ? 'degraded_fallback'
+            : 'inference_failure';
+
+        ReflectionEngine.reportSignal({
+            timestamp: new Date().toISOString(),
+            subsystem: 'local_inference',
+            category: signalCategory,
+            description: `Stream inference failed after ${attemptedProviders.length} provider attempt(s): ${lastError?.message ?? 'unknown error'}`,
+            context: {
+                turnId: req.turnId,
+                attemptedProviders,
+                fallbackApplied,
+                providerType: currentProvider.providerType,
+                durationMs,
+            },
+        });
+
+        return {
+            success: false,
+            content: '',
+            streamStatus,
+            fallbackApplied,
+            attemptedProviders,
+            providerId: currentProvider.providerId,
+            providerType: currentProvider.providerType,
+            modelName: currentProvider.preferredModel ?? 'unknown',
+            turnId: req.turnId,
+            startedAt,
+            completedAt,
+            durationMs,
+            isPartial: false,
+            errorCode: isTimeout ? 'timeout' : isAbort ? 'unknown' : 'server_error',
+            errorMessage: lastError?.message,
+        };
     }
 
     // ─── Public — embedded engine management ─────────────────────────────────
