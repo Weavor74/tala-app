@@ -186,6 +186,67 @@ export interface McpInventoryDiagnostics {
     lastUpdated: string;
 }
 
+// ─── Operator action record ───────────────────────────────────────────────────
+
+/**
+ * Records a single operator-initiated runtime control action.
+ * Stored in the snapshot for UI display and reflection awareness.
+ */
+export interface OperatorActionRecord {
+    /** ISO timestamp of the action. */
+    timestamp: string;
+    /** Type of action performed. */
+    action:
+        | 'provider_restart'
+        | 'provider_disable'
+        | 'provider_enable'
+        | 'provider_force_select'
+        | 'provider_probe'
+        | 'mcp_restart'
+        | 'mcp_disable'
+        | 'mcp_enable'
+        | 'mcp_probe';
+    /** ID of the entity the action was applied to. */
+    entityId: string;
+    /** Entity type for display. */
+    entityType: 'provider' | 'mcp_service';
+    /** State before the action. */
+    priorState?: string;
+    /** State after the action. */
+    newState?: string;
+    /** Human-readable reason or trigger. */
+    reason?: string;
+    /** Optional correlation ID for multi-step operations. */
+    correlationId?: string;
+}
+
+// ─── Provider health score ─────────────────────────────────────────────────────
+
+/**
+ * Health score and recovery metadata for a single provider.
+ * Tracked by ProviderHealthScorer for auto-demotion and recovery logic.
+ */
+export interface ProviderHealthScore {
+    /** Provider ID. */
+    providerId: string;
+    /** Consecutive failure count. */
+    failureStreak: number;
+    /** Total timeout count in the current session. */
+    timeoutCount: number;
+    /** Total fallback count in the current session. */
+    fallbackCount: number;
+    /** ISO timestamp of the last successful inference. */
+    lastSuccess?: string;
+    /** ISO timestamp of the last failure. */
+    lastFailure?: string;
+    /** Whether the provider has been administratively suppressed from auto-selection. */
+    suppressed: boolean;
+    /** ISO timestamp when suppression expires (if time-bounded). */
+    suppressedUntil?: string;
+    /** Current effective selection priority (may differ from base priority during demotion). */
+    effectivePriority: number;
+}
+
 // ─── Unified runtime diagnostics snapshot ────────────────────────────────────
 
 /**
@@ -211,4 +272,15 @@ export interface RuntimeDiagnosticsSnapshot {
     recentFailures: RuntimeFailureSummary;
     /** Last-updated timestamp per subsystem (keyed by subsystem name). */
     lastUpdatedPerSubsystem: Record<string, string>;
+    // ─── Phase 2B extensions ───────────────────────────────────────────────────
+    /** Recent operator-triggered runtime control actions. */
+    operatorActions: OperatorActionRecord[];
+    /** Health scores and suppression state per provider. */
+    providerHealthScores: ProviderHealthScore[];
+    /** IDs of providers currently suppressed from auto-selection. */
+    suppressedProviders: string[];
+    /** Recent provider auto-recovery events (ISO timestamps + providerId). */
+    recentProviderRecoveries: Array<{ providerId: string; timestamp: string; reason: string }>;
+    /** Recent MCP service restart events (ISO timestamps + serviceId). */
+    recentMcpRestarts: Array<{ serviceId: string; timestamp: string; reason: string }>;
 }

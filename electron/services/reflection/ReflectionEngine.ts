@@ -72,7 +72,13 @@ export interface TelemetrySignal {
         | 'provider_exhaustion'
         | 'repeated_mcp_restart'
         | 'critical_service_unavailable'
-        | 'degraded_subsystem_persistent';
+        | 'degraded_subsystem_persistent'
+        // Phase 2B — runtime control operational signals
+        | 'provider_instability_pattern'
+        | 'repeated_provider_restart'
+        | 'mcp_service_flapping'
+        | 'persistent_degraded_subsystem'
+        | 'operator_intervention_required';
     /** Human-readable description */
     description: string;
     /** Optional structured context */
@@ -280,7 +286,13 @@ export class ReflectionEngine {
             s.category === 'provider_exhaustion' ||
             s.category === 'repeated_mcp_restart' ||
             s.category === 'critical_service_unavailable' ||
-            s.category === 'degraded_subsystem_persistent'
+            s.category === 'degraded_subsystem_persistent' ||
+            // Phase 2B runtime control operational signals
+            s.category === 'provider_instability_pattern' ||
+            s.category === 'repeated_provider_restart' ||
+            s.category === 'mcp_service_flapping' ||
+            s.category === 'persistent_degraded_subsystem' ||
+            s.category === 'operator_intervention_required'
         );
 
         const errorRate = turns.length > 0 ? errors.length / turns.length : 0;

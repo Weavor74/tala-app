@@ -19,6 +19,7 @@ import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
 import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
+import { RuntimeControlService } from './RuntimeControlService';
 
 export interface IpcRouterContext {
   app: any;
@@ -40,6 +41,8 @@ export interface IpcRouterContext {
   logViewerService: LogViewerService;
   /** Runtime diagnostics aggregator — provides normalized snapshot for IPC consumers. */
   diagnosticsAggregator: RuntimeDiagnosticsAggregator;
+  /** Runtime control service — Phase 2B operational controls for providers and MCP. */
+  runtimeControl: RuntimeControlService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -1656,7 +1659,7 @@ export class IpcRouter {
     // IPC HANDLERS — RUNTIME DIAGNOSTICS (Priority 2A)
     // ═══════════════════════════════════════════════════════════════════════
 
-    const { diagnosticsAggregator } = this.ctx;
+    const { diagnosticsAggregator, runtimeControl } = this.ctx;
 
     /**
      * Returns the unified runtime diagnostics snapshot.
@@ -1684,6 +1687,77 @@ export class IpcRouter {
      */
     ipcMain.handle('diagnostics:getMcpStatus', async () => {
       return diagnosticsAggregator.getMcpStatus();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — RUNTIME CONTROL (Phase 2B)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Re-probes and refreshes a single inference provider.
+     */
+    ipcMain.handle('diagnostics:restartProvider', async (_e, providerId: string) => {
+      return runtimeControl.restartProvider(providerId);
+    });
+
+    /**
+     * Re-probes all inference providers (debounced).
+     */
+    ipcMain.handle('diagnostics:probeProviders', async () => {
+      return runtimeControl.probeProviders();
+    });
+
+    /**
+     * Suppresses a provider from auto-selection (session-scoped, reversible).
+     */
+    ipcMain.handle('diagnostics:disableProvider', async (_e, providerId: string, reason?: string) => {
+      return runtimeControl.disableProvider(providerId, reason);
+    });
+
+    /**
+     * Re-enables a previously suppressed provider.
+     */
+    ipcMain.handle('diagnostics:enableProvider', async (_e, providerId: string, reason?: string) => {
+      return runtimeControl.enableProvider(providerId, reason);
+    });
+
+    /**
+     * Forces a specific provider to be selected for the current session.
+     */
+    ipcMain.handle('diagnostics:forceProviderSelection', async (_e, providerId: string, reason?: string) => {
+      return runtimeControl.forceProviderSelection(providerId, reason);
+    });
+
+    /**
+     * Restarts an MCP service (disconnect + reconnect).
+     */
+    ipcMain.handle('diagnostics:restartMcpService', async (_e, serviceId: string) => {
+      const s = loadSettings(getSettingsPath());
+      const mcpConfigs = s.mcpServers ?? [];
+      return runtimeControl.restartMcpService(serviceId, mcpConfigs);
+    });
+
+    /**
+     * Disables an MCP service (disconnects it, prevents invocation).
+     */
+    ipcMain.handle('diagnostics:disableMcpService', async (_e, serviceId: string) => {
+      return runtimeControl.disableMcpService(serviceId);
+    });
+
+    /**
+     * Re-enables a previously disabled MCP service.
+     */
+    ipcMain.handle('diagnostics:enableMcpService', async (_e, serviceId: string) => {
+      const s = loadSettings(getSettingsPath());
+      const mcpConfigs = s.mcpServers ?? [];
+      return runtimeControl.enableMcpService(serviceId, mcpConfigs);
+    });
+
+    /**
+     * Triggers a health re-probe of all MCP services (debounced).
+     */
+    ipcMain.handle('diagnostics:probeMcpServices', async () => {
+      return runtimeControl.probeMcpServices();
     });
 
 

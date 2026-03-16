@@ -81,6 +81,18 @@ export type TelemetryEventType =
     | 'provider_selected'
     | 'provider_fallback_applied'
     | 'provider_unavailable'
+    // Provider runtime controls (Phase 2B)
+    | 'provider_restart_requested'
+    | 'provider_restart_completed'
+    | 'provider_disabled'
+    | 'provider_enabled'
+    | 'provider_health_demoted'
+    | 'provider_health_recovered'
+    // MCP runtime controls (Phase 2B)
+    | 'mcp_service_restart_requested'
+    | 'mcp_service_restart_completed'
+    | 'mcp_service_disabled'
+    | 'mcp_service_enabled'
     // Streaming
     | 'stream_opened'
     | 'stream_completed'
