@@ -10,6 +10,23 @@ export interface ModePolicy {
     forbiddenPatterns: string[];
 }
 
+/**
+ * Cognitive mode policy — governs how memory, docs, tools, and emotional
+ * expression are handled for a given mode. Consumed by CognitiveTurnAssembler.
+ */
+export interface CognitiveModeRules {
+    /** Memory retrieval policy: full retrieval, suppressed, or filtered to mode-safe memories. */
+    memoryRetrievalPolicy: 'full' | 'suppressed' | 'filtered';
+    /** Memory write policy for turns in this mode. */
+    memoryWritePolicy: 'do_not_write' | 'ephemeral' | 'short_term' | 'long_term' | 'user_profile';
+    /** Tool use policy: all tools, task-only tools, or none. */
+    toolUsePolicy: 'all' | 'task_only' | 'none';
+    /** Documentation retrieval policy: enabled or suppressed. */
+    docRetrievalPolicy: 'enabled' | 'suppressed';
+    /** Emotional expression bounds: how strongly emotion may influence output. */
+    emotionalExpressionBounds: 'low' | 'medium' | 'high';
+}
+
 export class ModePolicyEngine {
     private static readonly POLICIES: Record<Mode, ModePolicy> = {
         assistant: {
@@ -41,6 +58,34 @@ export class ModePolicyEngine {
         }
     };
 
+    /**
+     * Cognitive rules per mode — single source of truth for how mode affects cognition.
+     * Used by CognitiveTurnAssembler to populate CognitiveModePolicy.
+     */
+    private static readonly COGNITIVE_RULES: Record<Mode, CognitiveModeRules> = {
+        assistant: {
+            memoryRetrievalPolicy: 'full',
+            memoryWritePolicy: 'long_term',
+            toolUsePolicy: 'all',
+            docRetrievalPolicy: 'enabled',
+            emotionalExpressionBounds: 'low',
+        },
+        rp: {
+            memoryRetrievalPolicy: 'filtered',
+            memoryWritePolicy: 'do_not_write',
+            toolUsePolicy: 'none',
+            docRetrievalPolicy: 'suppressed',
+            emotionalExpressionBounds: 'high',
+        },
+        hybrid: {
+            memoryRetrievalPolicy: 'filtered',
+            memoryWritePolicy: 'short_term',
+            toolUsePolicy: 'task_only',
+            docRetrievalPolicy: 'enabled',
+            emotionalExpressionBounds: 'medium',
+        },
+    };
+
     public static getPolicy(mode: Mode): ModePolicy {
         return this.POLICIES[mode] || this.POLICIES.assistant;
     }
@@ -52,5 +97,13 @@ export class ModePolicyEngine {
     public static isSourceAllowed(mode: Mode, source: string): boolean {
         const allowed = this.getAllowedSources(mode);
         return allowed.includes('any') || allowed.includes(source);
+    }
+
+    /**
+     * Returns the cognitive rules for the given mode.
+     * These govern memory, docs, tools, and emotional expression at the cognitive layer.
+     */
+    public static getCognitiveRules(mode: Mode): CognitiveModeRules {
+        return this.COGNITIVE_RULES[mode] || this.COGNITIVE_RULES.assistant;
     }
 }

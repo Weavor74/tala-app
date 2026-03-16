@@ -34,6 +34,7 @@ export type TelemetrySubsystem =
     | 'artifact'
     | 'docs_intel'
     | 'reflection'
+    | 'cognitive'
     | 'audit'
     | 'system'
     | 'unknown';
@@ -110,6 +111,15 @@ export type TelemetryEventType =
     | 'reflection_completed'
     | 'reflection_suppressed'
     | 'reflection_output_ready'
+    // Cognitive loop (Phase 3)
+    | 'cognitive_context_assembled'
+    | 'memory_contribution_applied'
+    | 'mode_policy_applied'
+    | 'emotional_modulation_applied'
+    | 'emotional_modulation_skipped'
+    | 'reflection_contribution_applied'
+    | 'doc_context_applied'
+    | 'cognitive_context_compacted'
     // Degraded / fallback
     | 'degraded_fallback'
     | 'subsystem_unavailable'
@@ -310,6 +320,36 @@ export type ReflectionOutputType =
     | 'improvement_candidate'
     | 'regression_warning'
     | 'confidence_limited_observation';
+
+/** Payload for cognitive_context_assembled and related cognitive loop events (Phase 3). */
+export interface CognitivePayload {
+    /** Active mode for the turn. */
+    mode?: string;
+    /** Number of memory contributions applied. */
+    memoryContributionCount?: number;
+    /** Memory categories applied (counts per category). */
+    memoryCategories?: Partial<Record<string, number>>;
+    /** Whether memory retrieval was suppressed. */
+    memoryRetrievalSuppressed?: boolean;
+    /** Whether documentation context was applied. */
+    docContextApplied?: boolean;
+    /** Number of documentation sources applied. */
+    docSourceCount?: number;
+    /** Whether emotional modulation was applied. */
+    emotionalModulationApplied?: boolean;
+    /** Emotional modulation strength. */
+    emotionalModulationStrength?: string;
+    /** Whether astro engine was unavailable. */
+    astroUnavailable?: boolean;
+    /** Number of reflection behavioral notes applied. */
+    reflectionNoteCount?: number;
+    /** Whether the cognitive context was compacted. */
+    wasCompacted?: boolean;
+    /** Correlation ID linking to the full audit trail. */
+    correlationId?: string;
+    /** Reason for skipping modulation or reflection contribution. */
+    skipReason?: string;
+}
 
 /** Payload for artifact_routed / artifact_suppressed events. */
 export interface ArtifactPayload {

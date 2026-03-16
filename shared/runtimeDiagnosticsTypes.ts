@@ -283,4 +283,48 @@ export interface RuntimeDiagnosticsSnapshot {
     recentProviderRecoveries: Array<{ providerId: string; timestamp: string; reason: string }>;
     /** Recent MCP service restart events (ISO timestamps + serviceId). */
     recentMcpRestarts: Array<{ serviceId: string; timestamp: string; reason: string }>;
+    // ─── Phase 3: Cognitive diagnostics ────────────────────────────────────────
+    /** Normalized cognitive diagnostics for the most recent cognitive turn. */
+    cognitive?: CognitiveDiagnosticsSnapshot;
+}
+
+// ─── Cognitive diagnostics snapshot ──────────────────────────────────────────
+
+import type { MemoryContributionCategory, EmotionalModulationStrength } from './cognitiveTurnTypes';
+
+/**
+ * Normalized cognitive diagnostics read model for the most recent cognitive turn.
+ * Safe to expose via IPC and UI surfaces.
+ * Does not contain raw memory contents or full prompts.
+ */
+export interface CognitiveDiagnosticsSnapshot {
+    /** ISO timestamp of this snapshot. */
+    timestamp: string;
+    /** Active cognitive mode. */
+    activeMode: 'assistant' | 'rp' | 'hybrid';
+    /** Summary of memory contributions in the last cognitive turn. */
+    memoryContributionSummary: {
+        totalApplied: number;
+        byCategory: Partial<Record<MemoryContributionCategory, number>>;
+        retrievalSuppressed: boolean;
+    };
+    /** Summary of documentation contributions in the last cognitive turn. */
+    docContributionSummary: {
+        applied: boolean;
+        sourceCount: number;
+    };
+    /** Emotional modulation status in the last cognitive turn. */
+    emotionalModulationStatus: {
+        applied: boolean;
+        strength: EmotionalModulationStrength;
+        astroUnavailable: boolean;
+    };
+    /** Reflection note status in the last cognitive turn. */
+    reflectionNoteStatus: {
+        activeNoteCount: number;
+        suppressedNoteCount: number;
+        applied: boolean;
+    };
+    /** ISO timestamp of the last cognitive policy application. */
+    lastPolicyAppliedAt?: string;
 }
