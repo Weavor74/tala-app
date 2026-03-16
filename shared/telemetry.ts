@@ -120,6 +120,15 @@ export type TelemetryEventType =
     | 'reflection_contribution_applied'
     | 'doc_context_applied'
     | 'cognitive_context_compacted'
+    // Phase 3B — Small-model compaction
+    | 'prompt_profile_selected'
+    | 'cognitive_context_compacted_for_model'
+    | 'identity_compression_applied'
+    | 'tool_compression_applied'
+    | 'emotional_compression_applied'
+    | 'memory_budget_applied'
+    | 'doc_budget_applied'
+    | 'reflection_budget_applied'
     // Degraded / fallback
     | 'degraded_fallback'
     | 'subsystem_unavailable'
