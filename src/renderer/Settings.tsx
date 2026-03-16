@@ -3698,7 +3698,7 @@ Tone: Minimalist, calm, practical.
 // ═══════════════════════════════════════════════════════════════
 function AboutPanel() {
     const GITHUB_URL = 'https://github.com/Weavor74/tala-app';
-    const EMAIL = 'steven.k.pollard@gmail.com';
+    const EMAIL = 'contact@tala-app.dev';
     const VERSION = '0.0.0';
 
     const openExternal = (url: string) => {

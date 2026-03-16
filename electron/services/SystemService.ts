@@ -246,7 +246,7 @@ export class SystemService {
 
         // TALA_USER_ID must be preserved or added if missing (usually passed from AgentService)
         if (!env.TALA_USER_ID) {
-            env.TALA_USER_ID = process.env.TALA_USER_ID || 'anonymous-user';
+            env.TALA_USER_ID = process.env.TALA_USER_ID || 'unknown';
         }
 
         return env;

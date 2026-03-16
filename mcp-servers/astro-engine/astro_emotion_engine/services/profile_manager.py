@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, validator
 class AgentProfile(BaseModel):
     """Persistent agent profile with astrological birth data."""
     
-    agent_id: str = Field(..., description="Unique identifier (e.g., 'sage', 'orion')")
+    agent_id: str = Field(..., description="Unique identifier (e.g., 'sage', 'nova')")
     name: str = Field(..., description="Display name for the agent")
     birth_date: str = Field(..., description="ISO 8601 birth date (YYYY-MM-DDTHH:MM:SS)")
     birth_place: str = Field(..., description="Birth city name")

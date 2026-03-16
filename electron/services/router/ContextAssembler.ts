@@ -39,12 +39,69 @@ export interface ContextBlock {
 export type ToolCapability = 'memory_retrieval' | 'memory_write' | 'system_core' | 'diagnostic' | 'all';
 
 /**
+ * Memory write policy categories.
+ * Governs whether and how a given turn's output should be persisted to memory.
+ */
+export type MemoryWriteCategory =
+    | 'do_not_write'       // No memory persistence for this turn (e.g. RP mode, greeting)
+    | 'ephemeral'          // Write to session-only buffer, cleared on restart
+    | 'short_term'         // Write to short-term store (TTL-based expiry)
+    | 'long_term'          // Write to long-term store
+    | 'user_profile';      // Write to persistent user preference/profile store
+
+/** Structured decision object for memory write operations. */
+export interface MemoryWriteDecision {
+    category: MemoryWriteCategory;
+    /** Human-readable reason for the decision (required for auditability). */
+    reason: string;
+    /** Whether the write was actually executed (false = suppressed). */
+    executed: boolean;
+}
+
+/** Describes the resolved artifact output routing for a turn. */
+export interface ArtifactDecision {
+    /** The surface chosen for this turn's output. */
+    channel: 'chat' | 'workspace' | 'browser' | 'diff' | 'fallback';
+    /** Artifact type if routed to a non-chat surface. */
+    artifactType?: string;
+    /** Whether the artifact was suppressed from chat. */
+    suppressChatContent: boolean;
+    /** Stable artifact ID if deduplication applies. */
+    artifactId?: string;
+    /** Human-readable reason for the routing decision. */
+    reason: string;
+}
+
+/** Structured error state for a turn that encountered a failure. */
+export interface TurnErrorState {
+    hasError: boolean;
+    errorCode?: string;
+    errorMessage?: string;
+    /** Whether the turn recovered via a fallback path. */
+    recoveredViaFallback?: boolean;
+}
+
+/**
  * The unified contextual envelope for a single agent turn.
  * Compiled by the Context Router to govern the engine's next response.
+ *
+ * Phase 1 hardening adds the canonical fields required for a deterministic,
+ * auditable turn lifecycle:
+ *  - rawInput / normalizedInput  : unmodified and sanitised user text
+ *  - selectedTools               : tools the agent intends to invoke
+ *  - artifactDecision            : where the output is routed
+ *  - memoryWriteDecision         : whether and how to persist memory
+ *  - auditMetadata               : timing, MCP services used, correlation id
+ *  - errorState                  : structured failure information
  */
 export interface TurnContext {
     turnId: string;
     resolvedMode: string;
+
+    /** Raw text as received from the user, before any normalisation. */
+    rawInput: string;
+    /** Lower-cased, trimmed text used for intent classification and retrieval. */
+    normalizedInput: string;
 
     intent: {
         class: string;
@@ -65,6 +122,26 @@ export interface TurnContext {
     blockedCapabilities: ToolCapability[];
 
     persistedMode: string;
+
+    /** Tools selected for execution during this turn. Populated by AgentService. */
+    selectedTools: string[];
+
+    /** Final output routing decision. Null until artifact resolution is complete. */
+    artifactDecision: ArtifactDecision | null;
+
+    /** Memory write policy resolved for this turn. Null until policy evaluation runs. */
+    memoryWriteDecision: MemoryWriteDecision | null;
+
+    /** Structured audit metadata for traceability and observability. */
+    auditMetadata: {
+        turnStartedAt: number;
+        turnCompletedAt: number | null;
+        mcpServicesUsed: string[];
+        correlationId: string;
+    };
+
+    /** Error state. Null when the turn completed without errors. */
+    errorState: TurnErrorState | null;
 }
 
 interface AssemblyResult {

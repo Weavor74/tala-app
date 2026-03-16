@@ -34,4 +34,8 @@ export interface AgentTurnOutput {
     message?: string;
     artifact?: WorkspaceArtifact | null;
     suppressChatContent?: boolean;
+    /** Human-readable reason for the routing decision (for audit telemetry). */
+    routingReason?: string;
+    /** The output channel that received this turn's content. */
+    outputChannel?: 'chat' | 'workspace' | 'browser' | 'diff' | 'fallback';
 }

@@ -21,12 +21,12 @@ def main():
     ms = MemorySystem(db_path)
 
     print("--- STEP 2: Relationship Retrieval ---")
-    # Search for Steven or any recent node
-    result = ms.retrieve_context("Steven", max_nodes=3)
+    # Search for a recent node
+    result = ms.retrieve_context("User", max_nodes=3)
     nodes = result.get("nodes", [])
     if not nodes:
-        print("No nodes for 'Steven'. Searching for 'User'...")
-        result = ms.retrieve_context("User", max_nodes=3)
+        print("No nodes for 'User'. Searching for 'Tala'...")
+        result = ms.retrieve_context("Tala", max_nodes=3)
         nodes = result.get("nodes", [])
     
     for n in nodes:

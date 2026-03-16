@@ -1676,7 +1676,7 @@ Exported standalone package from Tala.
         // Identity Injection: Load user profile to tell the LLM who the User is
         let userIdentity = "";
         const identity = this.userProfile?.getIdentityContext();
-        if (identity && identity.userId !== 'anonymous-user') {
+        if (identity && identity.userId !== 'unknown') {
             const aliasStr = identity.aliases.map(a => `"${a}"`).join(' or ');
             userIdentity = `[USER IDENTITY]\nThe current user is ${identity.displayName}. All memories referring to ${aliasStr} refer to the User. Treat personal facts about "${identity.displayName}" as facts about the person you are talking to. Use this identity (ID: ${identity.userId}) to resolve memory ambiguity.`;
         }

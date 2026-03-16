@@ -13,20 +13,20 @@ def store(tmp_path):
     return GraphStore(str(db_path))
 
 def test_upsert_node(store):
-    store.upsert_node("n1", "person", "Steven", {"age": 30})
-    nodes = store.search_nodes("Steven")
+    store.upsert_node("n1", "person", "Alice", {"age": 30})
+    nodes = store.search_nodes("Alice")
     assert len(nodes) == 1
     assert nodes[0]['node_id'] == "n1"
     assert nodes[0]['type'] == "person"
     
     # Update
-    store.upsert_node("n1", "person", "Steven", {"age": 31})
-    nodes = store.search_nodes("Steven")
+    store.upsert_node("n1", "person", "Alice", {"age": 31})
+    nodes = store.search_nodes("Alice")
     assert json.loads(nodes[0]['attrs_json'])['age'] == 31
 
 def test_upsert_edge(store):
-    store.upsert_node("n1", "person", "Steven")
-    store.upsert_node("n2", "dog", "Orion")
+    store.upsert_node("n1", "person", "Alice")
+    store.upsert_node("n2", "dog", "Buddy")
     store.upsert_edge("e1", "n1", "n2", "owns", {"bought": 2020})
     
     nb = store.get_neighborhood("n1")
@@ -35,7 +35,7 @@ def test_upsert_edge(store):
     assert nb['edges'][0]['rel_type'] == "owns"
 
 def test_add_event(store):
-    store.add_event("ev1", "Childhood memory", "Orion was a black shepherd.", "2005-01-01", ["Orion"])
+    store.add_event("ev1", "Childhood memory", "Buddy was a black shepherd.", "2005-01-01", ["Buddy"])
     events = store.timeline_search("2000-01-01", "2010-01-01")
     assert len(events) == 1
     assert events[0]['title'] == "Childhood memory"

@@ -1,6 +1,7 @@
 import path from 'path';
 import { ArtifactType, WorkspaceArtifact, AgentTurnOutput } from '../types/artifacts';
 import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
+import { auditLogger } from './AuditLogger';
 
 // Namespace for stable IDs (Tala Artifact Namespace)
 const TALA_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
@@ -8,26 +9,40 @@ const TALA_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 /**
  * ArtifactRouter
  * 
- * Logic to decide whether content belongs in chat or in the workspace.
- * Prevents large documents and technical assets from flooding chat.
+ * Deterministic output routing for agent turns.
+ * Decides whether content belongs in chat, workspace editor, browser, diff view,
+ * or another artifact surface. Routing decisions are recorded in audit telemetry
+ * so every turn has an inspectable record of where its output went.
+ *
+ * **Routing Priority:**
+ * 1. Raw-content override (user requested in-chat display) → chat
+ * 2. Tool result artifact resolution → workspace / browser / diff
+ * 3. Message heuristics (HTML detection, length threshold) → workspace
+ * 4. Default → chat
  */
 export class ArtifactRouter {
 
     /**
      * Normalizes agent output into a structured AgentTurnOutput.
      * Decisions are based on content length, content type, and tool results.
+     * Routing decisions are emitted as audit telemetry.
      */
-    public normalizeAgentOutput(message: string, toolResults?: any[]): AgentTurnOutput {
+    public normalizeAgentOutput(message: string, toolResults?: any[], turnId?: string): AgentTurnOutput {
         // 1. Initial output configuration
         const output: AgentTurnOutput = {
             message: message,
             artifact: null,
-            suppressChatContent: false
+            suppressChatContent: false,
+            routingReason: 'default: chat output',
+            outputChannel: 'chat'
         };
 
         // 2. CHECK FOR EXPLICIT OVERRIDE (User wants it in chat)
         if (this.detectRawContentOverride(message)) {
+            output.routingReason = 'raw_content_override: user requested in-chat display';
+            output.outputChannel = 'chat';
             console.log(`[ArtifactRouter] RAW_CONTENT_OVERRIDE DETECTED. Bypassing artifact routing.`);
+            this.emitRoutingAudit(turnId, 'chat', output.routingReason, null);
             return output;
         }
 
@@ -41,6 +56,8 @@ export class ArtifactRouter {
                     // Significant artifacts (code, html, large docs) trigger suppression
                     if (message.length > 500 || ['editor', 'code', 'html', 'browser', 'diff', 'pdf'].includes(artifact.type)) {
                         output.suppressChatContent = true;
+                        output.outputChannel = this.artifactTypeToChannel(artifact.type);
+                        output.routingReason = `tool_result: artifact type=${artifact.type} id=${artifact.id}`;
                     }
                     break;
                 }
@@ -59,6 +76,8 @@ export class ArtifactRouter {
                     title: 'HTML Preview'
                 };
                 output.suppressChatContent = true;
+                output.outputChannel = 'browser';
+                output.routingReason = 'html_heuristic: message is likely HTML';
             } else if (message.length > 2000) {
                 output.artifact = {
                     id: this.generateStableId(message, 'md'),
@@ -69,6 +88,8 @@ export class ArtifactRouter {
                     title: 'Generated Document'
                 };
                 output.suppressChatContent = true;
+                output.outputChannel = 'workspace';
+                output.routingReason = `length_threshold: message length=${message.length} > 2000`;
             }
         }
 
@@ -81,12 +102,35 @@ export class ArtifactRouter {
             }
         }
 
+        this.emitRoutingAudit(turnId, output.outputChannel || 'chat', output.routingReason || 'default', output.artifact);
         return output;
     }
 
     /**
-     * Resolves a tool execution result into a workspace artifact if applicable.
+     * Emits structured audit telemetry for the routing decision.
      */
+    private emitRoutingAudit(
+        turnId: string | undefined,
+        channel: string,
+        reason: string,
+        artifact: WorkspaceArtifact | null | undefined
+    ): void {
+        auditLogger.info('artifact_routed', 'ArtifactRouter', {
+            turnId: turnId || 'unknown',
+            outputChannel: channel,
+            routingReason: reason,
+            artifactId: artifact?.id || null,
+            artifactType: artifact?.type || null
+        });
+    }
+
+    private artifactTypeToChannel(type: string): 'chat' | 'workspace' | 'browser' | 'diff' | 'fallback' {
+        if (type === 'browser' || type === 'html') return 'browser';
+        if (type === 'diff') return 'diff';
+        if (['editor', 'code', 'markdown', 'text', 'json', 'pdf', 'image', 'report'].includes(type)) return 'workspace';
+        return 'chat';
+    }
+
     /**
      * Resolves a tool execution result into a workspace artifact if applicable.
      */

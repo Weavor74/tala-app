@@ -5,49 +5,84 @@
 ## Class: `McpService`
 
 ## Overview
-McpService - Protocol / Tool Infrastructure
- 
- This service manages the lifecycle and tool connectivity of Model Context Protocol (MCP) servers.
- It acts as TALA's bridge to external tool servers, enabling the agent to interact with specialized
- microservices (e.g., Python scripts, remote APIs) via a standardized protocol.
- 
- **System Role:**
- - Orchestrates the connection between TALA's core agentic loop and external capabilities.
- - Manages the transition from abstract tool calls to concrete protocol requests.
- - Handles the discovery and normalization of tools/resources for downstream AI consumption.
- 
- **Collaboration Architecture:**
- - Consumed by `AgentService` and `OrchestratorService` to populate tool registries.
- - Relies on `SystemService` for environment isolation and binary resolution.
- - Uses `AuditLogger` to track protocol-level transactions and security boundaries.
-/
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
-import { spawn, ChildProcess, execSync } from 'child_process';
-import path from 'path';
-import type { McpServerConfig } from '../../shared/settings';
-import { auditLogger } from './AuditLogger';
+Central service for managing Model Context Protocol (MCP) server lifecycle and tool connectivity.
+`McpService` acts as TALA's bridge to external tool servers, enabling the agent to interact with
+specialized microservices (e.g., Python scripts, remote APIs) via a standardized protocol.
 
-/**
- Enumeration of possible MCP server states within TALA's connection registry.
-/
-export enum ServerState {
-    /** The server is connected, capability-cached, and ready for tool calls. */
-    CONNECTED = 'CONNECTED',
-    /** The server has failed health checks and is awaiting a backoff-gated retry. */
-    DEGRADED = 'DEGRADED',
-    /** The server has been explicitly disabled by the user or system policy. */
-    DISABLED = 'DISABLED'
-}
+**System Role:**
+- Orchestrates the connection between TALA's core agentic loop and external capabilities.
+- Manages the full server lifecycle: startup → readiness → health → reconnect/retry → shutdown.
+- Exposes structured service health to the runtime for deterministic capability gating.
+- Uses `AuditLogger` to track protocol-level transactions and security boundaries.
 
-/**
- Represents an active connection to a single MCP (Model Context Protocol) server.
- Each connection wraps the MCP SDK `Client` instance along with its transport
- layer and the original configuration that was used to establish it.
-/
-interface Connection {
+**Collaboration Architecture:**
+- Consumed by `AgentService` and `OrchestratorService` to populate tool registries.
+- Relies on `SystemService` for environment isolation and binary resolution.
+
+## Server State Model (Phase 1 Hardened)
+
+Each registered server progresses through a defined state machine.
+The runtime checks `isServiceCallable(serverId)` before invoking MCP-backed tools.
+
+| State | Value | Callable | Description |
+|-------|-------|----------|-------------|
+| `STARTING` | `'STARTING'` | No | Connection handshake in progress |
+| `CONNECTED` / `READY` | `'CONNECTED'` | Yes | Ready for tool calls |
+| `UNAVAILABLE` | `'UNAVAILABLE'` | No | Temporarily unreachable |
+| `DEGRADED` | `'DEGRADED'` | No | Failed health check; exponential backoff active |
+| `FAILED` | `'FAILED'` | No | Exhausted retries (>8); manual intervention required |
+| `DISABLED` | `'DISABLED'` | No | Explicitly disabled by user or system policy |
+
+`READY` is a semantic alias for `CONNECTED` — both map to the same enum value.
+
+## Service Health API (Phase 1 Hardened)
+
+### `getServiceHealth(serverId): McpServiceHealth | null`
+Returns a structured health report for a specific server, including state, retryCount,
+and whether the service is currently callable. Returns `null` if the server is unknown.
+
+### `getAllServiceHealth(): McpServiceHealth[]`
+Returns health reports for all registered servers. Used by `AgentService` to assess
+which MCP capabilities are available before assembling the tool registry.
+
+### `isServiceCallable(serverId): boolean`
+Returns `true` only if the server is in `CONNECTED` state. Used as a preflight check
+before any MCP tool invocation.
+
+## Graceful Degradation
+
+When a service is not callable, the agent degrades without crashing:
+- **Astro unavailable**: Turn continues without emotional modulation.
+- **Memory graph unavailable**: Falls back to local `MemoryService` store.
+- **Non-critical service**: Turn continues; `TurnContext.auditMetadata.mcpServicesUsed` records the gap.
+
+## Health Loop
+
+`startHealthLoop()` runs every 10 seconds:
+1. **CONNECTED**: Pings the server (or checks process state). On failure → transitions to DEGRADED.
+2. **DEGRADED**: Applies exponential backoff (30s, 60s, 120s, … up to 30m). On success → CONNECTED; if retries exceed 8 → FAILED.
+3. **FAILED / DISABLED**: Skipped entirely.
+
+When a server transitions to FAILED, the following occurs:
+- `console.warn('[McpService] Server <name> FAILED after <n> retries. Manual intervention required.')` is logged.
+- An `mcp_server_failed` JSONL audit event is emitted (including serverId, name, retryCount).
+- The server is excluded from all subsequent health checks.
+- Manual intervention (reconfiguring or restarting the server) is required to recover.
+
+## Key Methods
+
+| Method | Description |
+|--------|-------------|
+| `connect(config)` | Establishes stdio or WebSocket connection; transitions to CONNECTED or DEGRADED |
+| `disconnect(id)` | Closes transport and removes from registry |
+| `getCapabilities(id, reason)` | Returns tool/resource definitions; uses 10-minute capability cache |
+| `callTool(serverId, toolName, args)` | Invokes a tool on a connected server |
+| `syncConnections(configs)` | Reconciles live connections with user settings |
+| `startHealthLoop()` | Starts the 10-second health monitor |
+| `stopHealthLoop()` | Stops the health monitor |
+| `shutdown()` | Disconnects all servers and stops health loop |
+
     client: Client;
     transport: StdioClientTransport | WebSocketClientTransport;
     /** The subprocess instance (stdio only). */

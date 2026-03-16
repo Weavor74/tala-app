@@ -26,14 +26,44 @@ import { auditLogger } from './AuditLogger';
 
 /**
  * Enumeration of possible MCP server states within TALA's connection registry.
+ *
+ * Phase 1 hardening expands the state model to cover the full server lifecycle,
+ * enabling the runtime to reason about degraded and failed services deterministically.
  */
 export enum ServerState {
+    /** The server process is being started and the connection handshake is in progress. */
+    STARTING = 'STARTING',
     /** The server is connected, capability-cached, and ready for tool calls. */
     CONNECTED = 'CONNECTED',
+    /** Alias for CONNECTED — used in contexts where readiness semantics are important. */
+    READY = 'CONNECTED',
     /** The server has failed health checks and is awaiting a backoff-gated retry. */
     DEGRADED = 'DEGRADED',
+    /** The server is temporarily unreachable but has not yet entered exponential backoff. */
+    UNAVAILABLE = 'UNAVAILABLE',
+    /** The server has exhausted all retry attempts and is considered permanently failed. */
+    FAILED = 'FAILED',
     /** The server has been explicitly disabled by the user or system policy. */
     DISABLED = 'DISABLED'
+}
+
+/** Maximum retry count before a DEGRADED server transitions to FAILED. */
+const MAX_RETRY_BEFORE_FAILED = 8;
+
+/**
+ * Structured health report for a single MCP server.
+ * Used by the runtime to decide whether to invoke a service or degrade gracefully.
+ */
+export interface McpServiceHealth {
+    serverId: string;
+    name: string;
+    state: ServerState;
+    retryCount: number;
+    lastRetryTime: number;
+    /** Whether the service can currently accept tool invocations. */
+    isCallable: boolean;
+    /** Human-readable status description for diagnostics. */
+    statusMessage: string;
 }
 
 /**
@@ -412,6 +442,19 @@ export class McpService {
             for (const [id, conn] of this.connections) {
                 // Exponential Backoff Logic: 30s, 60s, 120s... up to 1800s (30m)
                 if (conn.state === ServerState.DEGRADED) {
+                    // Transition to FAILED after exhausting all retry attempts
+                    if (conn.retryCount >= MAX_RETRY_BEFORE_FAILED) {
+                        if (conn.state !== ServerState.FAILED) {
+                            conn.state = ServerState.FAILED;
+                            auditLogger.warn('mcp_server_failed', 'McpService', {
+                                serverId: id,
+                                name: conn.config.name,
+                                retryCount: conn.retryCount
+                            });
+                            console.warn(`[McpService] Server ${conn.config.name} FAILED after ${conn.retryCount} retries. Manual intervention required.`);
+                        }
+                        continue;
+                    }
                     const delaySeconds = Math.min(30 * Math.pow(2, Math.min(conn.retryCount - 1, 6)), 1800);
                     if (now < conn.lastRetryTime + (delaySeconds * 1000)) {
                         continue; // Skip until backoff expires
@@ -425,7 +468,7 @@ export class McpService {
                     continue;
                 }
 
-                if (conn.state === ServerState.DISABLED) continue;
+                if (conn.state === ServerState.DISABLED || conn.state === ServerState.FAILED) continue;
 
                 // Health check for CONNECTED servers
                 try {
@@ -476,6 +519,74 @@ export class McpService {
         return Array.from(this.connections.entries())
             .filter(([_, conn]) => conn.state === ServerState.CONNECTED)
             .map(([id, _]) => id);
+    }
+
+    /**
+     * Returns a structured health report for a specific MCP server.
+     *
+     * Used by the agent runtime to check service readiness before invoking
+     * dependent tools and to decide whether to degrade gracefully.
+     */
+    public getServiceHealth(serverId: string): McpServiceHealth | null {
+        const conn = this.connections.get(serverId);
+        if (!conn) return null;
+
+        const isCallable = conn.state === ServerState.CONNECTED;
+
+        let statusMessage: string;
+        switch (conn.state) {
+            case ServerState.CONNECTED:
+                statusMessage = 'Service is ready and accepting tool calls.';
+                break;
+            case ServerState.STARTING:
+                statusMessage = 'Service is starting up — connection handshake in progress.';
+                break;
+            case ServerState.DEGRADED:
+                statusMessage = `Service degraded after ${conn.retryCount} failure(s). Backoff retry in progress.`;
+                break;
+            case ServerState.UNAVAILABLE:
+                statusMessage = 'Service is temporarily unreachable.';
+                break;
+            case ServerState.FAILED:
+                statusMessage = `Service failed after ${conn.retryCount} retry attempt(s). Manual intervention required.`;
+                break;
+            case ServerState.DISABLED:
+                statusMessage = 'Service is disabled by user or system policy.';
+                break;
+            default:
+                statusMessage = 'Service state unknown.';
+        }
+
+        return {
+            serverId,
+            name: conn.config.name,
+            state: conn.state,
+            retryCount: conn.retryCount,
+            lastRetryTime: conn.lastRetryTime,
+            isCallable,
+            statusMessage
+        };
+    }
+
+    /**
+     * Returns health reports for all registered MCP servers.
+     *
+     * Callers can use this snapshot to determine which services are callable,
+     * which are degraded, and which should trigger a fallback path.
+     */
+    public getAllServiceHealth(): McpServiceHealth[] {
+        return Array.from(this.connections.keys())
+            .map(id => this.getServiceHealth(id))
+            .filter((h): h is McpServiceHealth => h !== null);
+    }
+
+    /**
+     * Returns true if the given server is in a callable state.
+     *
+     * Convenience wrapper used by AgentService before invoking MCP-backed tools.
+     */
+    public isServiceCallable(serverId: string): boolean {
+        return this.getServiceHealth(serverId)?.isCallable ?? false;
     }
 
     /**

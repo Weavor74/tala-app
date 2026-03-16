@@ -2,8 +2,10 @@ import { MemoryService, MemoryItem } from '../MemoryService';
 import { Mode, ModePolicyEngine } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
-import { ContextAssembler, TurnContext } from './ContextAssembler';
+import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory } from './ContextAssembler';
 import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
+import { auditLogger } from '../AuditLogger';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Tala Context Router
@@ -20,6 +22,8 @@ import { DocumentationIntelligenceService } from '../DocumentationIntelligenceSe
  * 5. **Contradiction Resolution**: Merges conflicting memory state.
  * 6. **Prompt Assembly**: Generates the final instruction blocks via the `ContextAssembler`.
  * 7. **Capability Resolution**: Maps the current state to allowed system tools.
+ * 8. **Memory Write Policy**: Determines whether this turn's output may be persisted.
+ * 9. **Audit Emission**: Emits structured telemetry for the full routing decision.
  */
 export class TalaContextRouter {
     private memoryService: MemoryService;
@@ -30,8 +34,14 @@ export class TalaContextRouter {
 
     /**
      * The primary entry point for context orchestration.
+     *
+     * Returns a fully-populated `TurnContext` that carries all routing decisions
+     * required for a deterministic, auditable agent turn.
      */
     public async process(turnId: string, query: string, mode: Mode, docIntel?: DocumentationIntelligenceService): Promise<TurnContext> {
+        const turnStartedAt = Date.now();
+        const correlationId = uuidv4();
+
         console.log(`[TalaRouter] Processing turn ${turnId} in mode=${mode} `);
 
         // 1. Resolve Mode (Handled by input)
@@ -78,7 +88,7 @@ export class TalaContextRouter {
         const promptBlocks = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed, docContext).blocks;
         const fallbackUsed = promptBlocks.some((b: import('./ContextAssembler').ContextBlock) => b.header.includes('FALLBACK CONTRACT'));
 
-        // 7. Capability Resolution (done here so TurnContext is self-contained)
+        // 8. Capability Resolution (done here so TurnContext is self-contained)
         const blockedCapabilities: string[] = [];
         const allowedCapabilities: string[] = [];
 
@@ -92,12 +102,18 @@ export class TalaContextRouter {
             allowedCapabilities.push('all');
         }
 
-        console.log(`[TalaRouter] Routing complete.Approved memories: ${resolved.length}/${candidateCount}`);
+        // 9. Memory Write Policy
+        const memoryWriteDecision = this.resolveMemoryWritePolicy(mode, intent.class, isGreetingOnly);
+
+        console.log(`[TalaRouter] Routing complete. Approved memories: ${resolved.length}/${candidateCount}`);
         console.log(`[TalaRouter] Capabilities — allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
+        console.log(`[TalaRouter] Memory write policy: ${memoryWriteDecision.category} — ${memoryWriteDecision.reason}`);
 
         const context: TurnContext = {
             turnId,
             resolvedMode: mode,
+            rawInput: query,
+            normalizedInput: query.toLowerCase().trim(),
             intent: {
                 class: intent.class,
                 confidence: intent.confidence || 0.9,
@@ -112,9 +128,63 @@ export class TalaContextRouter {
             fallbackUsed,
             allowedCapabilities: allowedCapabilities as any,
             blockedCapabilities: blockedCapabilities as any,
-            persistedMode: mode
+            persistedMode: mode,
+            selectedTools: [],
+            artifactDecision: null,
+            memoryWriteDecision,
+            auditMetadata: {
+                turnStartedAt,
+                turnCompletedAt: null,
+                mcpServicesUsed: [],
+                correlationId
+            },
+            errorState: null
         };
 
+        // Emit structured routing telemetry
+        auditLogger.info('turn_routed', 'TalaContextRouter', {
+            turnId,
+            mode,
+            intent: intent.class,
+            retrievalSuppressed,
+            approvedMemories: resolved.length,
+            excludedMemories: excludedCount,
+            fallbackUsed,
+            allowedCapabilities,
+            blockedCapabilities,
+            memoryWriteCategory: memoryWriteDecision.category,
+            correlationId
+        });
+
         return context;
+    }
+
+    /**
+     * Resolves the memory write policy for this turn based on mode and intent.
+     *
+     * Rules:
+     * - RP mode → do_not_write (RP isolation must not pollute memory)
+     * - Greeting intent → do_not_write (no content worth persisting)
+     * - Hybrid mode → short_term (moderate persistence)
+     * - Assistant mode with task/technical intent → long_term
+     * - Assistant mode otherwise → short_term
+     */
+    private resolveMemoryWritePolicy(mode: Mode, intentClass: string, isGreeting: boolean): MemoryWriteDecision {
+        if (mode === 'rp') {
+            return { category: 'do_not_write', reason: 'RP mode isolation prohibits memory writes', executed: false };
+        }
+        if (isGreeting || intentClass === 'greeting') {
+            return { category: 'do_not_write', reason: 'Greeting turns carry no persistent content', executed: false };
+        }
+        if (mode === 'hybrid') {
+            return { category: 'short_term', reason: 'Hybrid mode uses short-term persistence by default', executed: false };
+        }
+        if (mode === 'assistant') {
+            if (['technical', 'coding', 'planning', 'task_state'].includes(intentClass)) {
+                return { category: 'long_term', reason: `Technical/${intentClass} intent warrants long-term retention`, executed: false };
+            }
+            return { category: 'short_term', reason: 'Assistant mode default: short-term retention', executed: false };
+        }
+        return { category: 'short_term', reason: 'Default write policy', executed: false };
     }
 }
