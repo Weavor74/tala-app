@@ -124,5 +124,6 @@ The previous inline ad-hoc Ollama ping and llamacpp fallback logic has been remo
 
 - Provider probes do not run automatically at startup — `InferenceService.refreshProviders()` must be called explicitly (e.g., from bootstrap or on settings open).
 - `AgentService.loadBrainConfig()` uses the registry's last-known status for selection, not a fresh probe. Call `refreshProviders()` first for accurate detection.
-- Streaming telemetry events (`stream_opened`, `stream_completed`, `stream_aborted`) are defined in the telemetry schema and the event type union but are not yet emitted by the streaming path in `AgentService`. That wiring is a follow-up task.
 - The embedded llama.cpp provider (`embedded_llamacpp`) probe checks for file existence and server health, but does not automatically start the engine if it is not running. That remains the responsibility of the IPC handlers (`local-engine-start`).
+
+> **Phase 1B Update:** Streaming telemetry (`stream_opened`, `stream_completed`, `stream_aborted`) and inference reflection signals are now fully wired. See `docs/architecture/phase1b_streaming_hardening.md` for the canonical streaming path documentation.
