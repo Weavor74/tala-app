@@ -276,8 +276,11 @@ export class TelemetryService {
         return {
             timestamp: new Date().toISOString(),
             eventId: uuidv4(),
-            turnId: options.turnId ?? auditLogger.getCorrelationId() ?? 'global',
-            correlationId: options.correlationId,
+            // turnId defaults to 'global' when not scoped to a specific turn.
+            // We do not fall back to correlationId as they serve different purposes:
+            // turnId = agent turn scope; correlationId = cross-service tracing chain.
+            turnId: options.turnId ?? 'global',
+            correlationId: options.correlationId ?? auditLogger.getCorrelationId() ?? undefined,
             sessionId: options.sessionId ?? auditLogger.getSessionId() ?? 'none',
             subsystem,
             eventType,

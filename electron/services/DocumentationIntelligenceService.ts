@@ -109,12 +109,16 @@ export class DocumentationIntelligenceService {
     }
 
     // ------------------------------------------------------------------
-    // Gating check (public for testing)
+    // Gating check
     // ------------------------------------------------------------------
 
     /**
      * Evaluates the gating policy for a query.
      * Returns whether retrieval should proceed and the rule label that matched.
+     *
+     * This is a public method used both by `queryWithGating()` internally and
+     * by callers that need to pre-check whether retrieval will be attempted
+     * (e.g., for diagnostics or telemetry annotation before calling queryWithGating).
      */
     public evaluateGating(query: string): { allowed: boolean; ruleLabel: string } {
         const match = DOC_RETRIEVAL_PATTERN.exec(query);

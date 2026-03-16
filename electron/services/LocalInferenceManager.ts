@@ -117,7 +117,13 @@ export class LocalInferenceManager {
             {
                 turnId: this.currentTurnId,
                 mode: this.currentMode,
-                payload: payload as unknown as Record<string, unknown>,
+                payload: {
+                    previousState: payload.previousState,
+                    newState: payload.newState,
+                    reason: payload.reason,
+                    port: payload.port,
+                    modelPath: payload.modelPath,
+                },
             }
         );
     }

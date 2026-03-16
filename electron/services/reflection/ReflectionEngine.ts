@@ -363,7 +363,7 @@ export class ReflectionEngine {
                 failedToolCalls,
                 signals,
                 triggerEval,
-            } as ReflectionEvent['evidence'],
+            },
             observations,
             metrics: { averageLatencyMs: avgMs, errorRate }
         };

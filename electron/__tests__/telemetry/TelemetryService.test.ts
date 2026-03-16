@@ -99,10 +99,10 @@ describe('TelemetryService — canonical emission', () => {
         expect(event.channel).toBe('debug');
     });
 
-    it('uses fallback turnId from auditLogger when not provided', () => {
+    it('uses global as default turnId when not provided', () => {
         const event = svc.emit('agent', 'turn_start', 'info', 'Actor', 'summary', 'success');
-        // Falls back to auditLogger.getCorrelationId() = 'test-correlation'
-        expect(event.turnId).toBe('test-correlation');
+        // turnId defaults to 'global' — not correlationId — to avoid conflating turn scope with correlation chain
+        expect(event.turnId).toBe('global');
     });
 
     it('emits failure status correctly', () => {
