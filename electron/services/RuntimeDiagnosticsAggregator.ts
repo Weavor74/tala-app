@@ -4,6 +4,7 @@
  * Assembles a RuntimeDiagnosticsSnapshot from:
  * - InferenceDiagnosticsService (inference provider + stream state)
  * - McpLifecycleManager (MCP service inventory + lifecycle state)
+ * - RuntimeControlService (operator actions, health scores) — Phase 2B
  *
  * This is the single point of truth for app-facing runtime diagnostics.
  * IPC handlers call getSnapshot() to retrieve the current operational picture.
@@ -23,11 +24,14 @@ import type {
 } from '../../shared/runtimeDiagnosticsTypes';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
 import type { McpLifecycleManager } from './McpLifecycleManager';
+import { providerHealthScorer } from './inference/ProviderHealthScorer';
+import type { RuntimeControlService } from './RuntimeControlService';
 
 export class RuntimeDiagnosticsAggregator {
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
         private readonly mcpLifecycle: McpLifecycleManager,
+        private readonly runtimeControl?: RuntimeControlService,
     ) {}
 
     /**
@@ -44,6 +48,13 @@ export class RuntimeDiagnosticsAggregator {
         const degradedSubsystems = this._computeDegradedSubsystems(inferenceState, mcpInventory);
         const recentFailures = this._computeRecentFailures(inferenceState, mcpInventory);
 
+        // Phase 2B extensions
+        const providerHealthScores = providerHealthScorer.getAllScores();
+        const suppressedProviders = providerHealthScorer.getSuppressedProviderIds();
+        const operatorActions = this.runtimeControl?.getOperatorActions() ?? [];
+        const recentProviderRecoveries = this.runtimeControl?.getRecentProviderRecoveries() ?? [];
+        const recentMcpRestarts = this.runtimeControl?.getRecentMcpRestarts() ?? [];
+
         return {
             timestamp: now,
             sessionId,
@@ -55,6 +66,12 @@ export class RuntimeDiagnosticsAggregator {
                 inference: inferenceState.lastUpdated,
                 mcp: mcpInventory.lastUpdated,
             },
+            // Phase 2B
+            operatorActions,
+            providerHealthScores,
+            suppressedProviders,
+            recentProviderRecoveries,
+            recentMcpRestarts,
         };
     }
 
@@ -134,3 +151,4 @@ export class RuntimeDiagnosticsAggregator {
         return { count, lastFailureTime, lastFailureReason, failedEntityIds };
     }
 }
+
