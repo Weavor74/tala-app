@@ -21,19 +21,30 @@ import type {
     RuntimeFailureSummary,
     InferenceDiagnosticsState,
     McpInventoryDiagnostics,
+    CognitiveDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
 import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
 import type { RuntimeControlService } from './RuntimeControlService';
+import type { TalaCognitiveContext } from '../../shared/cognitiveTurnTypes';
 
 export class RuntimeDiagnosticsAggregator {
+    private lastCognitiveContext?: TalaCognitiveContext;
+
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
         private readonly mcpLifecycle: McpLifecycleManager,
         private readonly runtimeControl?: RuntimeControlService,
     ) {}
 
+    /**
+     * Records the most recent cognitive context for inclusion in diagnostics snapshots.
+     * Called by CognitiveTurnAssembler (or AgentService) after assembling each turn.
+     */
+    public recordCognitiveContext(context: TalaCognitiveContext): void {
+        this.lastCognitiveContext = context;
+    }
     /**
      * Returns the current normalized runtime diagnostics snapshot.
      * Safe to call from IPC handlers.
@@ -72,6 +83,8 @@ export class RuntimeDiagnosticsAggregator {
             suppressedProviders,
             recentProviderRecoveries,
             recentMcpRestarts,
+            // Phase 3: Cognitive diagnostics
+            cognitive: this._buildCognitiveDiagnostics(now),
         };
     }
 
@@ -92,6 +105,45 @@ export class RuntimeDiagnosticsAggregator {
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Builds a normalized cognitive diagnostics snapshot from the last recorded
+     * cognitive context. Returns undefined if no cognitive context has been recorded.
+     */
+    private _buildCognitiveDiagnostics(now: string): CognitiveDiagnosticsSnapshot | undefined {
+        const ctx = this.lastCognitiveContext;
+        if (!ctx) return undefined;
+
+        const byCategory: Partial<Record<string, number>> = {};
+        for (const c of ctx.memoryContributions.contributions) {
+            byCategory[c.category] = (byCategory[c.category] ?? 0) + 1;
+        }
+
+        return {
+            timestamp: now,
+            activeMode: ctx.modePolicy.mode,
+            memoryContributionSummary: {
+                totalApplied: ctx.memoryContributions.contributions.length,
+                byCategory,
+                retrievalSuppressed: ctx.memoryContributions.retrievalSuppressed,
+            },
+            docContributionSummary: {
+                applied: ctx.docContributions.applied,
+                sourceCount: ctx.docContributions.sourceIds.length,
+            },
+            emotionalModulationStatus: {
+                applied: ctx.emotionalModulation.applied,
+                strength: ctx.emotionalModulation.strength,
+                astroUnavailable: ctx.emotionalModulation.astroUnavailable,
+            },
+            reflectionNoteStatus: {
+                activeNoteCount: ctx.reflectionContributions.activeNotes.length,
+                suppressedNoteCount: ctx.reflectionContributions.suppressedNotes.length,
+                applied: ctx.reflectionContributions.applied,
+            },
+            lastPolicyAppliedAt: ctx.modePolicy.appliedAt,
+        };
+    }
 
     private _computeDegradedSubsystems(
         inference: InferenceDiagnosticsState,
