@@ -1,12 +1,18 @@
 #!/bin/bash
 set -e
 
+# Resolve repo root from this script's location (scripts/diagnostics/ -> scripts/ -> repo root)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
+
 echo "============================================================"
 echo "     TALA - FULLY PORTABLE BUILD CREATOR (Linux/Mac)"
 echo "============================================================"
 echo ""
 echo "This script creates a ZERO-INSTALLATION portable build."
 echo "Target machines will NOT need Python or Node.js installed."
+echo "Repo root: $REPO_ROOT"
 echo ""
 echo "PREREQUISITES:"
 echo "1. Download Python 3.13 for your platform:"
@@ -62,19 +68,19 @@ fi
 
 # Ensure pip is available
 echo "[STEP 2/5] Ensuring pip is installed..."
-if [ "$PLATFORM" == "mac" ]; then
-    "$PYTHON_DIR/bin/python3" -m ensurepip --upgrade
-else
-    "$PYTHON_DIR/bin/python3" -m ensurepip --upgrade
-fi
+"$PYTHON_DIR/bin/python3" -m ensurepip --upgrade
 
 # Install local-inference dependencies
 echo "[STEP 3/5] Installing Local Inference dependencies..."
-"$PYTHON_DIR/bin/python3" -m pip install -r local-inference/requirements.txt
+if [ -f "local-inference/requirements.txt" ]; then
+    "$PYTHON_DIR/bin/python3" -m pip install -r "local-inference/requirements.txt"
+else
+    echo "[SKIP] local-inference/requirements.txt not found"
+fi
 
 # Install MCP server dependencies
 echo "[STEP 4/5] Installing MCP Server dependencies..."
-for dir in mcp-servers/tala-core mcp-servers/mem0-core mcp-servers/astro-engine; do
+for dir in "mcp-servers/tala-core" "mcp-servers/mem0-core" "mcp-servers/astro-engine"; do
     if [ -f "$dir/requirements.txt" ]; then
         echo "  Installing $dir..."
         "$PYTHON_DIR/bin/python3" -m pip install -r "$dir/requirements.txt"
@@ -83,8 +89,11 @@ done
 
 # Make executable
 echo "[STEP 5/5] Setting permissions..."
-chmod +x "$PYTHON_DIR/bin/python3"
-chmod +x start_local_inference.sh
+if [ -n "$PYTHON_DIR" ] && [ -f "$PYTHON_DIR/bin/python3" ]; then
+    chmod +x "$PYTHON_DIR/bin/python3"
+else
+    echo "[WARN] Could not find $PYTHON_DIR/bin/python3 to set permissions"
+fi
 
 echo ""
 echo "============================================================"

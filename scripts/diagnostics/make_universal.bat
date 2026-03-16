@@ -30,7 +30,9 @@ set "PY_LINUX=cpython-%PYTHON_VER%+%PBS_TAG%-x86_64-unknown-linux-gnu-install_on
 set "OUT=universal-build"
 
 :: Ensure we run from project root
-cd /d "%~dp0.."
+:: Derive repo root from this script's location (%~dp0 = scripts\diagnostics\)
+:: Two levels up: scripts\diagnostics\ -> scripts\ -> repo root
+cd /d "%~dp0..\.."
 echo [INFO] Project root: %CD%
 
 :: ============================================================

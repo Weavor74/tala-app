@@ -2,7 +2,9 @@
 setlocal EnableDelayedExpansion
 
 :: Ensure we are running from the Project Root
-cd /d "%~dp0.."
+:: Derive repo root from this script's location (%~dp0 = scripts\diagnostics\)
+:: Two levels up: scripts\diagnostics\ -> scripts\ -> repo root
+cd /d "%~dp0..\.."
 
 echo ===================================================
 echo      Tala USB Environment Setup Script

@@ -10,7 +10,9 @@ echo No installation required on target machines.
 echo.
 pause
 
-cd /d "%~dp0.."
+:: Derive repo root from this script's location (%~dp0 = scripts\diagnostics\)
+:: Two levels up: scripts\diagnostics\ -> scripts\ -> repo root
+cd /d "%~dp0..\.."
 echo [INFO] Project root: %CD%
 
 :: ============================================================

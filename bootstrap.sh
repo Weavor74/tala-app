@@ -3,6 +3,14 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# ---------------------------------------------------------
+# Resolve repo root relative to this script's location
+# so bootstrap works regardless of the caller's CWD.
+# ---------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
+cd "$REPO_ROOT"
+
 # Define color codes for output
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -13,6 +21,7 @@ NC='\033[0m' # No Color
 echo -e "${CYAN}=============================================${NC}"
 echo -e "${CYAN}      TALA UNIVERSAL BOOTSTRAP SCRIPT        ${NC}"
 echo -e "${CYAN}=============================================${NC}"
+echo -e "      Repo root: ${REPO_ROOT}"
 echo ""
 
 # ---------------------------------------------------------
@@ -30,6 +39,15 @@ else
     exit 1
 fi
 
+# Check npm
+if command -v npm >/dev/null 2>&1; then
+    NPM_VER=$(npm --version)
+    echo -e "      ${GREEN}[OK] npm found: $NPM_VER${NC}"
+else
+    echo -e "      ${RED}[ERROR] npm is not installed or not in PATH.${NC}"
+    exit 1
+fi
+
 # Check Python (Try python3 first, then python)
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_CMD="python3"
@@ -41,7 +59,12 @@ else
     exit 1
 fi
 
-PY_VER=$($PYTHON_CMD --version)
+PY_VER=$($PYTHON_CMD --version 2>&1)
+# Verify Python 3
+if [[ "$PY_VER" != *"Python 3"* ]]; then
+    echo -e "      ${RED}[ERROR] Python 3 required but found: $PY_VER${NC}"
+    exit 1
+fi
 echo -e "      ${GREEN}[OK] Python found: $PY_VER${NC}"
 
 # Check for curl or wget for downloading
@@ -60,6 +83,7 @@ fi
 # ---------------------------------------------------------
 echo -e "\n${YELLOW}[2/5] Creating Runtime Directories...${NC}"
 
+# All directories are relative to REPO_ROOT (set above via cd)
 DIRS=("models" "data" "bin/python-mac" "bin/python-linux" "memory")
 for DIR in "${DIRS[@]}"; do
     if [ ! -d "$DIR" ]; then
@@ -76,7 +100,7 @@ done
 echo -e "\n${YELLOW}[3/5] Downloading Default Local LLM...${NC}"
 
 MODEL_URL="https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
-MODEL_DEST="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+MODEL_DEST="$REPO_ROOT/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 
 if [ ! -f "$MODEL_DEST" ]; then
     echo "      Downloading Llama 3.2 3B Instruct (Q4_K_M)..."
@@ -92,12 +116,12 @@ fi
 # ---------------------------------------------------------
 echo -e "\n${YELLOW}[4/5] Installing Node.js Dependencies...${NC}"
 
-if [ -f "package.json" ]; then
-    echo "      Running npm install..."
+if [ -f "$REPO_ROOT/package.json" ]; then
+    echo "      Running npm install in: $REPO_ROOT"
     npm install
     echo -e "      ${GREEN}[OK] Node packages installed.${NC}"
 else
-    echo -e "      ${RED}[ERROR] package.json not found. Are you in the TALA project root?${NC}"
+    echo -e "      ${RED}[ERROR] package.json not found at $REPO_ROOT${NC}"
     exit 1
 fi
 
@@ -107,34 +131,45 @@ fi
 echo -e "\n${YELLOW}[5/5] Building Python Virtual Environments...${NC}"
 
 build_venv() {
-    local PATH_DIR=$1
-    local REQ_FILE="$PATH_DIR/requirements.txt"
-    local VENV_DIR="$PATH_DIR/venv"
+    # $1 = module path relative to REPO_ROOT
+    local MODULE_PATH="$REPO_ROOT/$1"
+    local REQ_FILE="$MODULE_PATH/requirements.txt"
+    local VENV_DIR="$MODULE_PATH/venv"
     local VENV_PYTHON="$VENV_DIR/bin/python"
 
     if [ ! -f "$REQ_FILE" ]; then
+        echo "      [SKIP] $1 — no requirements.txt"
         return
     fi
 
-    echo "      -> Setting up $PATH_DIR..."
+    echo "      -> Setting up $1..."
 
-    # Create Venv
+    # Create venv if absent
     if [ ! -d "$VENV_DIR" ]; then
-        $PYTHON_CMD -m venv "$VENV_DIR"
+        if ! $PYTHON_CMD -m venv "$VENV_DIR"; then
+            echo -e "         ${RED}[ERROR] Failed to create venv at $VENV_DIR${NC}"
+            return 1
+        fi
     fi
 
     # Upgrade pip
     "$VENV_PYTHON" -m pip install --upgrade pip --quiet
 
     # Install dependencies
-    if [[ "$PATH_DIR" == *"local-inference"* ]]; then
+    if [[ "$1" == *"local-inference"* ]]; then
         echo "         Installing dependencies (this may compile llama-cpp-python)..."
-        # On Mac/Linux, we generally rely on pip finding a compatible wheel or 
+        # On Mac/Linux, we generally rely on pip finding a compatible wheel or
         # compiling it using local build tools (Xcode/build-essential).
-        # We also pass the extra index URL just in case a compatible wheel exists there.
-        "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
+        # We also pass the extra index URL in case a compatible wheel exists there.
+        if ! "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet; then
+            echo -e "         ${RED}[ERROR] pip install failed for $1${NC}"
+            return 1
+        fi
     else
-        "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --quiet
+        if ! "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --quiet; then
+            echo -e "         ${RED}[ERROR] pip install failed for $1${NC}"
+            return 1
+        fi
     fi
 
     echo -e "         ${GREEN}[OK] Installed.${NC}"
@@ -149,7 +184,7 @@ PYTHON_MODULES=(
 )
 
 for MOD in "${PYTHON_MODULES[@]}"; do
-    if [ -d "$MOD" ]; then
+    if [ -d "$REPO_ROOT/$MOD" ]; then
         build_venv "$MOD"
     fi
 done
@@ -159,4 +194,7 @@ echo -e "${GREEN}   BOOTSTRAP COMPLETE!                       ${NC}"
 echo -e "${CYAN}=============================================${NC}"
 echo "You can now start TALA by running:"
 echo "  > npm run dev"
+echo ""
+echo "To verify the environment is ready, run:"
+echo "  > bash scripts/verify-setup.sh"
 echo ""
