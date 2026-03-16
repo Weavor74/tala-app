@@ -4,17 +4,13 @@
  * Defines the authoritative type model for provider detection, selection,
  * execution, and failure handling across the TALA inference path.
  *
- * Provider hierarchy:
- *   local (Ollama, external llama.cpp, vLLM, kobold.cpp)
- *   embedded (bundled llama.cpp managed by LocalEngineService)
- *   cloud (OpenAI-compatible, Anthropic, etc.)
+ * Provider scopes:
+ *   local     — external process on the host (Ollama, vLLM, koboldcpp, external llama.cpp)
+ *   embedded  — bundled binary managed by LocalEngineService
+ *   cloud     — remote API endpoint
  *
- * Selection order (deterministic):
- *   1. User-selected provider if ready
- *   2. Best available local provider (by priority)
- *   3. Embedded llama.cpp if available
- *   4. Configured cloud provider
- *   5. Explicit failure — no silent fallback to unknown providers
+ * See docs/architecture/phase3_inference_integration.md for the selection policy
+ * and fallback order.
  */
 
 // ─── Provider scope ───────────────────────────────────────────────────────────

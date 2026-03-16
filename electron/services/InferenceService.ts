@@ -20,7 +20,7 @@ import type {
 /**
  * Represents a local AI inference provider detected during a port scan.
  * @deprecated Use InferenceProviderDescriptor from shared/inferenceProviderTypes.ts.
- *   The registry-based refresh() path supersedes scanLocal().
+ *   The registry-based InferenceService.refreshProviders() path supersedes scanLocal().
  */
 export interface ScannedProvider {
     engine: 'ollama' | 'llamacpp' | 'vllm';

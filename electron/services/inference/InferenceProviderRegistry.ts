@@ -167,7 +167,7 @@ async function probeCloud(endpoint: string, apiKey?: string): Promise<ProviderPr
 }
 
 /** Probe embedded llama.cpp using the running port from LocalEngineService status. */
-/** @internal Exported for direct unit testing without fs mocking. */
+/** Exported for direct unit testing. Callers within this module use this via `_probeOne()`. */
 export async function probeEmbeddedLlamaCpp(
     enginePort: number,
     modelPath: string,

@@ -1270,8 +1270,8 @@ Exported standalone package from Tala.
                 const ollama = new OllamaBrain();
                 ollama.configure(chosen.endpoint, inst.model ?? chosen.preferredModel ?? 'llama3');
                 this.brain = ollama;
-            } else {
-                // embedded_llamacpp, llamacpp, vllm, koboldcpp — start embedded if needed
+            } else if (chosen.providerType === 'embedded_llamacpp') {
+                // Start the embedded engine if not already running
                 const local = this.inference.getLocalEngine();
                 if (!local.getStatus().isRunning) {
                     const modelPath = path.join(process.cwd(), 'models', inferenceSettings?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
@@ -1280,6 +1280,9 @@ Exported standalone package from Tala.
                 const ollama = new OllamaBrain();
                 ollama.configure(chosen.endpoint, chosen.preferredModel ?? 'llama3');
                 this.brain = ollama;
+            } else {
+                // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
+                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: chosen.preferredModel });
             }
         } catch (e) { }
     }
