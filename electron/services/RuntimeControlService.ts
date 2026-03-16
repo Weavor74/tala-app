@@ -184,15 +184,8 @@ export class RuntimeControlService {
         const provider = inventory.providers.find(p => p.providerId === providerId);
         const priorState = provider?.status ?? 'unknown';
 
-        // Mark as suppressed in health scorer (time-bounded)
-        const score = providerHealthScorer.ensureScore(providerId, provider?.priority ?? 1);
-        const alreadySuppressed = score.suppressed;
-        if (!alreadySuppressed) {
-            // Force suppression by recording enough failures
-            for (let i = 0; i < 5; i++) {
-                providerHealthScorer.recordFailure(providerId, provider?.priority ?? 1, reason ?? 'Operator disabled');
-            }
-        }
+        // Directly suppress without simulating failures (avoids misleading telemetry/history)
+        providerHealthScorer.suppressProvider(providerId, provider?.priority ?? 1);
 
         telemetry.operational(
             'inference',

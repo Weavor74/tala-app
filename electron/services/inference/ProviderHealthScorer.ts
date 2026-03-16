@@ -71,7 +71,7 @@ export class ProviderHealthScorer {
      */
     public recordSuccess(providerId: string, basePriority = 1): void {
         const score = this.ensureScore(providerId, basePriority);
-        const wasSupressed = score.suppressed;
+        const wasSuppressed = score.suppressed;
         const wasDemoted = score.effectivePriority > basePriority;
         const now = new Date().toISOString();
 
@@ -81,7 +81,7 @@ export class ProviderHealthScorer {
         score.suppressedUntil = undefined;
         score.effectivePriority = basePriority;
 
-        if (wasSupressed || wasDemoted) {
+        if (wasSuppressed || wasDemoted) {
             telemetry.operational(
                 'inference',
                 'provider_health_recovered',
@@ -93,7 +93,7 @@ export class ProviderHealthScorer {
                     payload: {
                         providerId,
                         entityType: 'provider',
-                        priorState: wasSupressed ? 'suppressed' : 'demoted',
+                        priorState: wasSuppressed ? 'suppressed' : 'demoted',
                         newState: 'recovered',
                         reason: 'Successful inference after failure streak',
                         timestamp: now,
@@ -105,7 +105,7 @@ export class ProviderHealthScorer {
                 timestamp: now,
                 subsystem: 'inference',
                 category: 'provider_instability_pattern',
-                description: `Provider ${providerId} recovered from ${wasSupressed ? 'suppression' : 'demotion'} after successful inference`,
+                description: `Provider ${providerId} recovered from ${wasSuppressed ? 'suppression' : 'demotion'} after successful inference`,
                 context: { providerId, recovered: true },
             });
         }
@@ -246,7 +246,6 @@ export class ProviderHealthScorer {
         if (score.suppressedUntil && new Date().toISOString() > score.suppressedUntil) {
             score.suppressed = false;
             score.suppressedUntil = undefined;
-            score.effectivePriority = score.effectivePriority; // Retain until next success
             return false;
         }
 
@@ -293,6 +292,18 @@ export class ProviderHealthScorer {
             score.suppressed = false;
             score.suppressedUntil = undefined;
         }
+    }
+
+    /**
+     * Directly suppresses a provider from auto-selection without simulating failures.
+     * Sets a time-bounded suppression (SUPPRESSION_WINDOW_MS).
+     * Use this for operator-initiated disables rather than recording fake failures.
+     */
+    public suppressProvider(providerId: string, basePriority = 1): void {
+        const score = this.ensureScore(providerId, basePriority);
+        score.suppressed = true;
+        score.suppressedUntil = new Date(Date.now() + SUPPRESSION_WINDOW_MS).toISOString();
+        score.effectivePriority = basePriority + DEMOTION_PRIORITY_PENALTY;
     }
 }
 
