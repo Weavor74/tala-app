@@ -15,6 +15,16 @@ export interface ReflectionEvent {
         turns: any[];
         errors: string[];
         failedToolCalls: any[];
+        /** Phase 2: normalized subsystem signals that contributed to this reflection. */
+        signals?: any[];
+        /** Phase 2: trigger evaluation result that caused this reflection to fire. */
+        triggerEval?: {
+            shouldTrigger: boolean;
+            triggerReason: string;
+            triggeredBy?: string;
+            anomalyCount: number;
+            failureCount: number;
+        };
     };
     observations: string[];
     metrics: {
