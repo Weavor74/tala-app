@@ -56,6 +56,7 @@ export class CognitiveContextCompactor {
         context: TalaCognitiveContext,
         profile: ModelCapabilityProfile,
     ): CompactPromptPacket {
+        const compactionStart = Date.now();
         const profileClass = profile.promptProfileClass;
         const budget = profile.budgetProfile;
         const turnId = context.turnId;
@@ -210,6 +211,8 @@ export class CognitiveContextCompactor {
         };
 
         // ── 13. Emit compaction telemetry ─────────────────────────────────────
+        const compactionDurationMs = Date.now() - compactionStart;
+
         telemetry.operational(
             'cognitive',
             'cognitive_context_compacted_for_model',
@@ -232,6 +235,17 @@ export class CognitiveContextCompactor {
                     sectionsIncluded: diagnosticsSummary.sectionsIncluded,
                 },
             },
+        );
+
+        // Phase 3C — emit compaction performance telemetry
+        telemetry.operational(
+            'cognitive',
+            'compaction_duration_ms',
+            'debug',
+            'CognitiveContextCompactor',
+            `Compaction duration: ${compactionDurationMs}ms`,
+            'success',
+            { payload: { turnId, durationMs: compactionDurationMs } },
         );
 
         return {

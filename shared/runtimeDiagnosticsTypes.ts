@@ -327,4 +327,59 @@ export interface CognitiveDiagnosticsSnapshot {
     };
     /** ISO timestamp of the last cognitive policy application. */
     lastPolicyAppliedAt?: string;
+
+    // ─── Phase 3C extensions ──────────────────────────────────────────────────
+
+    /** Active prompt profile class (tiny/small/medium/large). */
+    promptProfile?: string;
+    /** Compaction summary from the last cognitive turn. */
+    compactionSummary?: {
+        profileClass: string;
+        compactionPolicy: string;
+        memoriesKept: number;
+        memoriesDropped: number;
+        docsIncluded: boolean;
+        reflectionNotesKept: number;
+        reflectionNotesDropped: number;
+        sectionsDropped: string[];
+    };
+    /** Memory contribution counts by category for the last cognitive turn. */
+    memoryContributionCounts?: {
+        candidatesFound: number;
+        candidatesUsed: number;
+        candidatesDropped: number;
+        byCategoryUsed: Partial<Record<MemoryContributionCategory, number>>;
+    };
+    /** Documentation contribution counts for the last cognitive turn. */
+    docContributionCounts?: {
+        retrieved: number;
+        used: number;
+        compacted: number;
+        suppressed: number;
+    };
+    /** MCP contribution counts for the last cognitive turn. */
+    mcpContributionCounts?: {
+        servicesRequested: number;
+        servicesUsed: number;
+        servicesFailed: number;
+        servicesSuppressed: number;
+    };
+    /** Reflection contribution counts for the last cognitive turn. */
+    reflectionContributionCounts?: {
+        notesAvailable: number;
+        notesApplied: number;
+        notesSuppressed: number;
+    };
+    /** Emotional bias summary for the last cognitive turn. */
+    emotionalBiasSummary?: {
+        strength: EmotionalModulationStrength;
+        dimensions: string[];
+        modulationApplied: boolean;
+    };
+    /** Performance measurements for the last cognitive turn (ms). */
+    performanceSummary?: {
+        preinferenceDurationMs?: number;
+        cognitiveAssemblyDurationMs?: number;
+        compactionDurationMs?: number;
+    };
 }

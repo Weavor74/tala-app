@@ -162,13 +162,15 @@ export class MemoryContributionBuilder {
             };
         }
 
-        // Sort: explicit/high-confidence first, then by salience * confidence
+        // Sort: explicit user facts always first, then by salience * confidence
+        // Explicit facts receive a large priority boost to guarantee they outrank any inferred memory.
         const sorted = [...approvedMemories].sort((a, b) => {
             const scoreOf = (m: MemoryItem): number => {
                 const salience = (m.metadata?.salience as number | undefined) ?? 0.5;
                 const confidence = (m.metadata?.confidence as number | undefined) ?? 0.5;
-                const isExplicit = m.metadata?.source === 'explicit' ? 0.2 : 0;
-                return salience * confidence + isExplicit;
+                // Explicit user facts receive a strong priority boost (Phase 3C)
+                const explicitBoost = m.metadata?.source === 'explicit' ? 1.0 : 0;
+                return salience * confidence + explicitBoost;
             };
             return scoreOf(b) - scoreOf(a);
         });
@@ -183,12 +185,19 @@ export class MemoryContributionBuilder {
             const maxForCategory = this.getMaxContributions(category, mode);
             const minSalience = MIN_SALIENCE_BY_CATEGORY[category];
             const salience = (memory.metadata?.salience as number | undefined) ?? 0.5;
+            const isExplicit = memory.metadata?.source === 'explicit';
+            const confidence = (memory.metadata?.confidence as number | undefined) ?? 0.5;
 
             // Skip if category is at capacity
             if (currentCount >= maxForCategory) continue;
 
-            // Skip if salience below threshold (except identity which has lower threshold)
-            if (salience < minSalience) continue;
+            // Skip low-confidence inferred memories — explicit facts bypass this check (Phase 3C)
+            if (!isExplicit && confidence < 0.3) continue;
+
+            // Skip if salience below threshold — explicit facts bypass salience filtering
+            if (!isExplicit && salience < minSalience) continue;
+
+            const overrides = isExplicit ? this.findOverriddenInferredMemory(memory, sorted) : undefined;
 
             contributions.push({
                 memoryId: memory.id,
@@ -197,6 +206,7 @@ export class MemoryContributionBuilder {
                 rationale: buildRationale(memory, category),
                 influenceScope: INFLUENCE_SCOPE_BY_CATEGORY[category],
                 salience,
+                ...(overrides ? { overrides } : {}),
             });
 
             categoryCounts[category] = currentCount + 1;
@@ -209,6 +219,24 @@ export class MemoryContributionBuilder {
             retrievalSuppressed: false,
             retrievedAt: now,
         };
+    }
+
+    /**
+     * Finds the first inferred memory (same category, not explicit) that an explicit
+     * memory overrides. Used for diagnostics/attribution only.
+     */
+    private static findOverriddenInferredMemory(
+        explicitMemory: MemoryItem,
+        allMemories: MemoryItem[],
+    ): string | undefined {
+        const explicitCategory = classifyMemoryCategory(explicitMemory);
+        const inferred = allMemories.find(
+            m =>
+                m.id !== explicitMemory.id &&
+                m.metadata?.source !== 'explicit' &&
+                classifyMemoryCategory(m) === explicitCategory,
+        );
+        return inferred?.id;
     }
 
     /**

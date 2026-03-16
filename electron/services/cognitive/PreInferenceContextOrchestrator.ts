@@ -407,6 +407,17 @@ export class PreInferenceContextOrchestrator {
                 },
             );
 
+            // Phase 3C — emit performance telemetry event
+            telemetry.operational(
+                'cognitive',
+                'preinference_duration_ms',
+                'debug',
+                `turn:${turnId}`,
+                `Pre-inference duration: ${orchestrationDurationMs}ms`,
+                'success',
+                { payload: { turnId, durationMs: orchestrationDurationMs } },
+            );
+
             return {
                 turnContext,
                 approvedMemories,

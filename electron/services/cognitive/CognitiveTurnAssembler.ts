@@ -106,6 +106,7 @@ export class CognitiveTurnAssembler {
      * @returns The fully-populated TalaCognitiveContext for this turn.
      */
     public static assemble(inputs: CognitiveAssemblyInputs): TalaCognitiveContext {
+        const assemblyStart = Date.now();
         const now = new Date().toISOString();
         const correlationId = uuidv4();
         const {
@@ -352,6 +353,8 @@ export class CognitiveTurnAssembler {
         };
 
         // ── 10. Final assembly telemetry ──────────────────────────────────────
+        const assemblyDurationMs = Date.now() - assemblyStart;
+
         telemetry.operational(
             'cognitive',
             'cognitive_context_assembled',
@@ -375,6 +378,17 @@ export class CognitiveTurnAssembler {
                     correlationId,
                 },
             },
+        );
+
+        // Phase 3C — emit cognitive assembly performance telemetry
+        telemetry.operational(
+            'cognitive',
+            'cognitive_assembly_duration_ms',
+            'debug',
+            `turn:${turnId}`,
+            `Cognitive assembly duration: ${assemblyDurationMs}ms`,
+            'success',
+            { payload: { turnId, durationMs: assemblyDurationMs } },
         );
 
         return context;

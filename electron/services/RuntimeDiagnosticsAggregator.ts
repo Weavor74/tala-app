@@ -28,9 +28,29 @@ import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
 import type { RuntimeControlService } from './RuntimeControlService';
 import type { TalaCognitiveContext, MemoryContributionCategory } from '../../shared/cognitiveTurnTypes';
+import type { CompactionDiagnosticsSummary } from '../../shared/modelCapabilityTypes';
+
+// ─── Phase 3C: Extended cognitive metadata ────────────────────────────────────
+
+/** Extended cognitive metadata recorded per turn for Phase 3C diagnostics. */
+export interface CognitiveTurnMeta {
+    context: TalaCognitiveContext;
+    compactionSummary?: CompactionDiagnosticsSummary;
+    preinferenceDurationMs?: number;
+    cognitiveAssemblyDurationMs?: number;
+    compactionDurationMs?: number;
+    mcpServicesRequested?: number;
+    mcpServicesUsed?: number;
+    mcpServicesFailed?: number;
+    mcpServicesSuppressed?: number;
+    docsRetrieved?: number;
+    docsUsed?: number;
+    docsCompacted?: number;
+    docsSuppressed?: number;
+}
 
 export class RuntimeDiagnosticsAggregator {
-    private lastCognitiveContext?: TalaCognitiveContext;
+    private lastCognitiveMeta?: CognitiveTurnMeta;
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -43,7 +63,17 @@ export class RuntimeDiagnosticsAggregator {
      * Called by CognitiveTurnAssembler (or AgentService) after assembling each turn.
      */
     public recordCognitiveContext(context: TalaCognitiveContext): void {
-        this.lastCognitiveContext = context;
+        this.lastCognitiveMeta = { ...this.lastCognitiveMeta, context };
+    }
+
+    /**
+     * Records extended cognitive metadata for Phase 3C diagnostics.
+     * Call after compaction, orchestration, and assembly to capture performance data.
+     */
+    public recordCognitiveMeta(meta: Partial<Omit<CognitiveTurnMeta, 'context'>>): void {
+        if (this.lastCognitiveMeta) {
+            this.lastCognitiveMeta = { ...this.lastCognitiveMeta, ...meta };
+        }
     }
     /**
      * Returns the current normalized runtime diagnostics snapshot.
@@ -111,19 +141,28 @@ export class RuntimeDiagnosticsAggregator {
      * cognitive context. Returns undefined if no cognitive context has been recorded.
      */
     private _buildCognitiveDiagnostics(now: string): CognitiveDiagnosticsSnapshot | undefined {
-        const ctx = this.lastCognitiveContext;
-        if (!ctx) return undefined;
+        const meta = this.lastCognitiveMeta;
+        if (!meta) return undefined;
+        const ctx = meta.context;
 
         const byCategory: Partial<Record<MemoryContributionCategory, number>> = {};
         for (const c of ctx.memoryContributions.contributions) {
             byCategory[c.category] = (byCategory[c.category] ?? 0) + 1;
         }
 
+        // ── Phase 3C: extended fields ─────────────────────────────────────────
+        const totalMemoryUsed = ctx.memoryContributions.contributions.length;
+        const totalCandidates = ctx.memoryContributions.candidateCount;
+        const totalExcluded = ctx.memoryContributions.excludedCount;
+        const totalDropped = Math.max(0, totalCandidates - totalMemoryUsed - totalExcluded);
+
+        const compSummary = meta.compactionSummary;
+
         return {
             timestamp: now,
             activeMode: ctx.modePolicy.mode,
             memoryContributionSummary: {
-                totalApplied: ctx.memoryContributions.contributions.length,
+                totalApplied: totalMemoryUsed,
                 byCategory,
                 retrievalSuppressed: ctx.memoryContributions.retrievalSuppressed,
             },
@@ -142,6 +181,56 @@ export class RuntimeDiagnosticsAggregator {
                 applied: ctx.reflectionContributions.applied,
             },
             lastPolicyAppliedAt: ctx.modePolicy.appliedAt,
+
+            // Phase 3C extensions
+            promptProfile: compSummary?.profileClass,
+            compactionSummary: compSummary
+                ? {
+                      profileClass: compSummary.profileClass,
+                      compactionPolicy: compSummary.compactionPolicy,
+                      memoriesKept: compSummary.memoriesKept,
+                      memoriesDropped: compSummary.memoriesDropped,
+                      docsIncluded: compSummary.docsIncluded,
+                      reflectionNotesKept: compSummary.reflectionNotesKept,
+                      reflectionNotesDropped: compSummary.reflectionNotesDropped,
+                      sectionsDropped: compSummary.sectionsDropped,
+                  }
+                : undefined,
+            memoryContributionCounts: {
+                candidatesFound: totalCandidates,
+                candidatesUsed: totalMemoryUsed,
+                candidatesDropped: totalDropped + totalExcluded,
+                byCategoryUsed: byCategory,
+            },
+            docContributionCounts: {
+                retrieved: meta.docsRetrieved ?? (ctx.docContributions.applied ? 1 : 0),
+                used: meta.docsUsed ?? (ctx.docContributions.applied ? 1 : 0),
+                compacted: meta.docsCompacted ?? 0,
+                suppressed: meta.docsSuppressed ?? (ctx.docContributions.applied ? 0 : 1),
+            },
+            mcpContributionCounts: {
+                servicesRequested: meta.mcpServicesRequested ?? 0,
+                servicesUsed: meta.mcpServicesUsed ?? 0,
+                servicesFailed: meta.mcpServicesFailed ?? 0,
+                servicesSuppressed: meta.mcpServicesSuppressed ?? 0,
+            },
+            reflectionContributionCounts: {
+                notesAvailable:
+                    ctx.reflectionContributions.activeNotes.length +
+                    ctx.reflectionContributions.suppressedNotes.length,
+                notesApplied: ctx.reflectionContributions.activeNotes.length,
+                notesSuppressed: ctx.reflectionContributions.suppressedNotes.length,
+            },
+            emotionalBiasSummary: {
+                strength: ctx.emotionalModulation.strength,
+                dimensions: ctx.emotionalModulation.influencedDimensions,
+                modulationApplied: ctx.emotionalModulation.applied,
+            },
+            performanceSummary: {
+                preinferenceDurationMs: meta.preinferenceDurationMs,
+                cognitiveAssemblyDurationMs: meta.cognitiveAssemblyDurationMs,
+                compactionDurationMs: meta.compactionDurationMs,
+            },
         };
     }
 
