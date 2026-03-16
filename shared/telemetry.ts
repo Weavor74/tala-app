@@ -52,7 +52,18 @@ export type TelemetryEventType =
     | 'memory_retrieval_suppressed'
     // Capability / policy
     | 'capability_gated'
-    // MCP
+    // MCP lifecycle (Priority 2A — parity with inference lifecycle events)
+    | 'mcp_service_starting'
+    | 'mcp_service_ready'
+    | 'mcp_service_degraded'
+    | 'mcp_service_unavailable'
+    | 'mcp_service_failed'
+    | 'mcp_service_recovering'
+    | 'mcp_service_recovered'
+    | 'mcp_health_check_completed'
+    | 'mcp_health_check_failed'
+    | 'mcp_inventory_refreshed'
+    // MCP tool invocation
     | 'mcp_status'
     | 'mcp_tool_invoked'
     | 'mcp_tool_failed'
@@ -194,6 +205,58 @@ export type LocalInferenceState =
     | 'degraded'
     | 'unavailable'
     | 'failed';
+
+/**
+ * Lifecycle states for individual MCP services.
+ * Aligned with RuntimeStatus in runtimeDiagnosticsTypes.ts.
+ */
+export type McpServiceState =
+    | 'disabled'
+    | 'starting'
+    | 'ready'
+    | 'degraded'
+    | 'unavailable'
+    | 'failed'
+    | 'recovering'
+    | 'stopped';
+
+/**
+ * Payload for MCP service lifecycle transition events.
+ * Used by mcp_service_starting, mcp_service_ready, mcp_service_degraded,
+ * mcp_service_unavailable, mcp_service_failed, mcp_service_recovering,
+ * mcp_service_recovered.
+ */
+export interface McpLifecyclePayload {
+    serviceId: string;
+    serviceKind: 'stdio' | 'websocket';
+    priorState: McpServiceState;
+    newState: McpServiceState;
+    reason?: string;
+    durationMs?: number;
+    restartCount?: number;
+}
+
+/**
+ * Payload for mcp_health_check_completed / mcp_health_check_failed events.
+ */
+export interface McpHealthCheckPayload {
+    serviceId: string;
+    serviceKind: 'stdio' | 'websocket';
+    healthy: boolean;
+    durationMs?: number;
+    errorMessage?: string;
+    retryCount?: number;
+}
+
+/**
+ * Payload for mcp_inventory_refreshed events.
+ */
+export interface McpInventoryPayload {
+    totalConfigured: number;
+    totalReady: number;
+    totalDegraded: number;
+    totalUnavailable: number;
+}
 
 /** Payload for memory_retrieved / memory_write_decision events. */
 export interface MemoryPayload {

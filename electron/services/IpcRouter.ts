@@ -18,6 +18,7 @@ import { loadSettings, saveSettings, deepMerge, setActiveMode, getActiveMode } f
 import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
+import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 
 export interface IpcRouterContext {
   app: any;
@@ -37,6 +38,8 @@ export interface IpcRouterContext {
   userProfileService: UserProfileService;
   codeControlService: CodeControlService;
   logViewerService: LogViewerService;
+  /** Runtime diagnostics aggregator — provides normalized snapshot for IPC consumers. */
+  diagnosticsAggregator: RuntimeDiagnosticsAggregator;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -1647,6 +1650,40 @@ export class IpcRouter {
       });
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0];
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — RUNTIME DIAGNOSTICS (Priority 2A)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const { diagnosticsAggregator } = this.ctx;
+
+    /**
+     * Returns the unified runtime diagnostics snapshot.
+     * Includes normalized inference provider state, active stream state,
+     * MCP service inventory, degraded subsystems, and recent failure summary.
+     *
+     * The renderer must call this handler to retrieve diagnostics.
+     * It must not perform its own probing or health interpretation.
+     */
+    ipcMain.handle('diagnostics:getRuntimeSnapshot', async () => {
+      return diagnosticsAggregator.getSnapshot();
+    });
+
+    /**
+     * Returns the normalized inference subsystem diagnostics state.
+     * Includes selected provider, stream status, fallback state, and last failure.
+     */
+    ipcMain.handle('diagnostics:getInferenceStatus', async () => {
+      return diagnosticsAggregator.getInferenceStatus();
+    });
+
+    /**
+     * Returns the normalized MCP service inventory diagnostics.
+     * Includes per-service lifecycle state, health, and failure metadata.
+     */
+    ipcMain.handle('diagnostics:getMcpStatus', async () => {
+      return diagnosticsAggregator.getMcpStatus();
     });
 
 

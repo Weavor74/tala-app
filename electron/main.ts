@@ -38,6 +38,9 @@ import { UserProfileService } from './services/UserProfileService';
 import { CodeAccessPolicy } from './services/CodeAccessPolicy';
 import { CodeControlService } from './services/CodeControlService';
 import { LogViewerService } from './services/LogViewerService';
+import { McpLifecycleManager } from './services/McpLifecycleManager';
+import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
+import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -90,6 +93,10 @@ const guardrailService = new GuardrailService();
 const gitService = new GitService(fileService.getRoot());
 const backupService = new BackupService();
 const logViewerService = new LogViewerService();
+
+// ─── Runtime Diagnostics (Priority 2A) ───────────────────────────────────────
+const mcpLifecycleManager = new McpLifecycleManager(mcpService);
+const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(inferenceDiagnostics, mcpLifecycleManager);
 
 // Initialize Code Access Policy and Control Service
 const codePolicy = new CodeAccessPolicy({
@@ -289,6 +296,7 @@ const ipcRouter = new IpcRouter({
   backupService,
   inferenceService,
   userProfileService,
+  diagnosticsAggregator,
   getSettingsPath: () => SETTINGS_PATH,
   setSettingsPath: (p) => { SETTINGS_PATH = p; },
   USER_DATA_DIR,

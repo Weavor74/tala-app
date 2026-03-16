@@ -19,6 +19,7 @@ import type {
     StreamInferenceResult,
 } from '../../shared/inferenceProviderTypes';
 import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
+import { inferenceDiagnostics } from './InferenceDiagnosticsService';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
 
 type SignalCategory = TelemetrySignal['category'];
@@ -88,7 +89,9 @@ export class InferenceService {
      * Should be called at startup and when settings change.
      */
     public async refreshProviders(turnId?: string, agentMode?: string): Promise<InferenceProviderInventory> {
-        return this.registry.refresh(turnId, agentMode);
+        const inventory = await this.registry.refresh(turnId, agentMode);
+        inferenceDiagnostics.updateFromInventory(inventory);
+        return inventory;
     }
 
     /**
@@ -96,7 +99,11 @@ export class InferenceService {
      * Use this before every real inference request.
      */
     public selectProvider(req: InferenceSelectionRequest = {}): InferenceSelectionResult {
-        return this.selectionService.select(req);
+        const result = this.selectionService.select(req);
+        if (result.selectedProvider) {
+            inferenceDiagnostics.recordProviderSelected(result.selectedProvider);
+        }
+        return result;
     }
 
     /**
@@ -105,6 +112,10 @@ export class InferenceService {
      */
     public setSelectedProvider(providerId: string | undefined): void {
         this.registry.setSelectedProviderId(providerId);
+
+        // Update diagnostics to reflect the selection change
+        const inventory = this.registry.getInventory();
+        inferenceDiagnostics.updateFromInventory(inventory);
 
         telemetry.operational(
             'local_inference',
@@ -158,6 +169,9 @@ export class InferenceService {
         const attemptedProviders: string[] = [];
         let currentProvider = req.provider;
         let fallbackApplied = false;
+
+        // Record stream start in diagnostics
+        inferenceDiagnostics.recordStreamStart(currentProvider.providerId, []);
 
         telemetry.operational(
             'inference',
@@ -239,6 +253,8 @@ export class InferenceService {
             const wrappedOnToken = (chunk: string) => {
                 if (!streamOpenedForCurrentProvider) {
                     streamOpenedForCurrentProvider = true;
+                    // Record that stream is now actively flowing
+                    inferenceDiagnostics.recordStreamActive();
                     telemetry.operational(
                         'inference',
                         'stream_opened',
@@ -348,7 +364,7 @@ export class InferenceService {
                     }
                 );
 
-                return {
+                const successResult: StreamInferenceResult = {
                     success: true,
                     content: brainResult?.content ?? '',
                     streamStatus: 'completed',
@@ -366,6 +382,8 @@ export class InferenceService {
                     completionTokens: brainResult?.metadata?.usage?.completion_tokens,
                     brainMetadata: brainResult?.metadata,
                 };
+                inferenceDiagnostics.recordStreamResult(successResult);
+                return successResult;
 
             } catch (err: any) {
                 lastError = err instanceof Error ? err : new Error(String(err));
@@ -424,7 +442,7 @@ export class InferenceService {
                     });
 
                     // Do not retry after partial output — return partial result
-                    return {
+                    const partialResult: StreamInferenceResult = {
                         success: false,
                         content: '',
                         streamStatus,
@@ -441,6 +459,8 @@ export class InferenceService {
                         errorCode: isTimeout ? 'timeout' : 'partial_stream',
                         errorMessage: lastError.message,
                     };
+                    inferenceDiagnostics.recordStreamResult(partialResult);
+                    return partialResult;
                 }
 
                 // Stream never opened — fallback is safe if allowed and more candidates exist
@@ -526,7 +546,7 @@ export class InferenceService {
             },
         });
 
-        return {
+        const exhaustedResult: StreamInferenceResult = {
             success: false,
             content: '',
             streamStatus,
@@ -543,6 +563,8 @@ export class InferenceService {
             errorCode: isTimeout ? 'timeout' : isAbort ? 'unknown' : 'server_error',
             errorMessage: lastError?.message,
         };
+        inferenceDiagnostics.recordStreamResult(exhaustedResult);
+        return exhaustedResult;
     }
 
     // ─── Public — embedded engine management ─────────────────────────────────
