@@ -63,6 +63,17 @@ export type TelemetryEventType =
     | 'inference_timeout'
     | 'inference_stream_partial'
     | 'inference_state_changed'
+    // Provider lifecycle
+    | 'provider_inventory_refreshed'
+    | 'provider_detected'
+    | 'provider_probe_failed'
+    | 'provider_selected'
+    | 'provider_fallback_applied'
+    | 'provider_unavailable'
+    // Streaming
+    | 'stream_opened'
+    | 'stream_completed'
+    | 'stream_aborted'
     // Artifact routing
     | 'artifact_routed'
     | 'artifact_suppressed'

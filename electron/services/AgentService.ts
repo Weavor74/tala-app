@@ -1190,43 +1190,96 @@ Exported standalone package from Tala.
     private async loadBrainConfig() {
         try {
             const settings = loadSettings(this.settingsPath);
-            if (settings.inference?.instances) {
-                let candidate = null;
-                if (settings.inference.activeLocalId) {
-                    candidate = settings.inference.instances.find((i: any) => i.id === settings.inference.activeLocalId);
+
+            // ── Step 1: Reconfigure registry from current settings ──────────────
+            const inferenceSettings = settings.inference ?? {};
+            const activeModeStr: string = (inferenceSettings.mode as string) ?? 'auto';
+            const routingMode: 'auto' | 'local-only' | 'cloud-only' =
+                activeModeStr === 'local-only' ? 'local-only'
+                    : activeModeStr === 'cloud-only' ? 'cloud-only'
+                        : 'auto';
+
+            // Build registry config from settings instances
+            const registryConfig: import('./inference/InferenceProviderRegistry').ProviderRegistryConfig = {};
+            const instances: any[] = inferenceSettings.instances ?? [];
+
+            for (const inst of instances) {
+                if (inst.engine === 'ollama') {
+                    registryConfig.ollama = { endpoint: inst.endpoint ?? 'http://127.0.0.1:11434', enabled: true };
+                } else if (inst.engine === 'llamacpp' && inst.source === 'local') {
+                    registryConfig.embeddedLlamaCpp = {
+                        port: 8080,
+                        modelPath: inst.modelPath ?? inferenceSettings?.localEngine?.modelPath,
+                        binaryPath: inferenceSettings?.localEngine?.binaryPath,
+                        enabled: true,
+                    };
+                } else if (inst.engine === 'vllm') {
+                    registryConfig.vllm = { endpoint: inst.endpoint, enabled: true };
+                } else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'custom'].includes(inst.engine) && inst.source !== 'local') {
+                    registryConfig.cloud = { endpoint: inst.endpoint, apiKey: inst.apiKey, model: inst.model, enabled: true };
                 }
-                if (!candidate) {
-                    let candidates = [...settings.inference.instances];
-                    if (settings.inference.mode === 'local-only') candidates = candidates.filter((i: any) => i.source === 'local');
-                    candidate = candidates.sort((a: any, b: any) => a.priority - b.priority)[0];
+            }
+
+            this.inference.reconfigureRegistry(registryConfig);
+
+            // ── Step 2: Determine preferred provider from settings ──────────────
+            const preferredProviderId = (() => {
+                if (inferenceSettings.activeLocalId) {
+                    const active = instances.find((i: any) => i.id === inferenceSettings.activeLocalId);
+                    if (!active) return undefined;
+                    if (active.engine === 'ollama') return 'ollama';
+                    if (active.engine === 'llamacpp' && active.source === 'local') return 'embedded_llamacpp';
+                    if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(active.engine)) return 'cloud';
                 }
+                return undefined;
+            })();
 
-                if (candidate) {
-                    let useCloudBrain = candidate.source === 'cloud' || ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(candidate.engine);
+            if (preferredProviderId) {
+                this.inference.setSelectedProvider(preferredProviderId);
+            }
 
-                    const local = this.inference.getLocalEngine();
-                    if (!useCloudBrain && candidate.engine === 'ollama') {
-                        const ollama = new OllamaBrain();
-                        ollama.configure(candidate.endpoint, candidate.model);
-                        if (!(await ollama.ping())) {
-                            const fallback = settings.inference.instances.find((i: any) => i.engine === 'llamacpp' && i.source === 'local');
-                            if (fallback) { candidate = fallback; useCloudBrain = true; }
-                        }
-                    }
+            // ── Step 3: Select provider via canonical policy ────────────────────
+            const selection = this.inference.selectProvider({
+                preferredProviderId,
+                mode: routingMode,
+                fallbackAllowed: true,
+                turnId: 'brain-config',
+                agentMode: 'system',
+            });
 
-                    if (candidate.engine === 'llamacpp' && candidate.source === 'local' && !local.getStatus().isRunning) {
-                        const modelPath = path.join(process.cwd(), 'models', settings.inference?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
-                        local.ensureReady().then(() => local.ignite(modelPath, settings.inference?.localEngine?.options)).catch(() => { });
-                    }
+            if (!selection.success || !selection.selectedProvider) {
+                // No viable provider — keep existing brain but log
+                console.warn('[AgentService] No viable inference provider found during brain config:', selection.reason);
+                return;
+            }
 
-                    if (useCloudBrain) {
-                        this.brain = new CloudBrain({ endpoint: candidate.endpoint, apiKey: candidate.apiKey, model: candidate.model });
-                    } else {
-                        const ollama = new OllamaBrain();
-                        ollama.configure(candidate.endpoint, candidate.model);
-                        this.brain = ollama;
-                    }
+            const chosen = selection.selectedProvider;
+
+            // ── Step 4: Configure brain based on selected provider ──────────────
+            if (chosen.scope === 'cloud' || chosen.providerType === 'cloud') {
+                const cloudInst = instances.find((i: any) =>
+                    ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(i.engine) && i.source !== 'local'
+                ) ?? {};
+                this.brain = new CloudBrain({
+                    endpoint: chosen.endpoint,
+                    apiKey: cloudInst.apiKey ?? chosen.apiKey,
+                    model: cloudInst.model ?? chosen.preferredModel,
+                });
+            } else if (chosen.providerType === 'ollama') {
+                const inst = instances.find((i: any) => i.engine === 'ollama') ?? {};
+                const ollama = new OllamaBrain();
+                ollama.configure(chosen.endpoint, inst.model ?? chosen.preferredModel ?? 'llama3');
+                this.brain = ollama;
+            } else {
+                // embedded_llamacpp, llamacpp, vllm, koboldcpp — start embedded if needed
+                const local = this.inference.getLocalEngine();
+                if (!local.getStatus().isRunning) {
+                    const modelPath = path.join(process.cwd(), 'models', inferenceSettings?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
+                    local.ensureReady().then(() => local.ignite(modelPath, inferenceSettings?.localEngine?.options)).catch(() => { });
                 }
+                const ollama = new OllamaBrain();
+                ollama.configure(chosen.endpoint, chosen.preferredModel ?? 'llama3');
+                this.brain = ollama;
             }
         } catch (e) { }
     }
