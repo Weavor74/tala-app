@@ -6,14 +6,25 @@ import { auditLogger } from './AuditLogger';
 import { redact } from './log_redact';
 
 /**
+ * Standardized execution result for all tools.
+ * Supports deterministic execution bypassing the LLM.
+ */
+export interface ToolResult {
+    /** The actual text content or data returned by the tool. */
+    result: string;
+    /** If false, the agent should NOT feed this output back to the LLM and should just render it to the user. */
+    requires_llm: boolean;
+    /** Optional images for vision-capable tools */
+    images?: string[];
+    /** Whether the operation was a success or failure */
+    success?: boolean;
+}
+
+/**
  * Defines the shape of a tool that can be registered with the ToolService.
  * 
  * Tools are exposed to the AI brain as callable functions. Each tool has a name,
  * description, JSON Schema parameters, and an async execute function.
- * 
- * The execute function can return either:
- * - A simple string result.
- * - An object with `result` and `images` (base64 strings) for vision-capable tools.
  */
 export interface ToolDefinition {
     /** Unique tool name used by the AI to invoke it (e.g., `'write_file'`, `'browse'`). */
@@ -22,8 +33,8 @@ export interface ToolDefinition {
     description: string;
     /** JSON Schema object describing the expected input arguments. */
     parameters: any;
-    /** The async function that executes the tool's logic. May return a string or an object with images. */
-    execute: (args: any) => Promise<string | { result: string; images: string[] }>;
+    /** The async function that executes the tool's logic. Returns a standardized ToolResult. */
+    execute: (args: any) => Promise<ToolResult | string>;
 }
 
 /**
@@ -45,6 +56,8 @@ export class ToolService {
     private systemInfo: any = null;
     /** Reference to the McpService for external tool integration. */
     private mcpService: any = null;
+    /** Universal Repository Search Subsystem */
+    private universalSearchService: any = null;
     /** Cache of available MCP tools, keyed by tool name. */
     private mcpTools: Map<string, { serverId: string, def: any }> = new Map();
     /** Reference to the GoalManager for planning tools. */
@@ -66,6 +79,10 @@ export class ToolService {
         'terminal_run', 'execute_command', 'execute_script'
     ]);
 
+    public getToolDefinition(name: string): ToolDefinition | undefined {
+        return this.tools.get(name);
+    }
+
 
     /**
      * Creates a new ToolService and registers all core tools.
@@ -76,6 +93,11 @@ export class ToolService {
      */
     constructor() {
         this.workspaceDir = path.join(app.getPath('documents'), 'TalaWorkspace');
+        
+        // Lazy load the universal search service to avoid circular dependencies during initialization
+        const { UniversalSearchService } = require('./search/UniversalSearchService');
+        this.universalSearchService = new UniversalSearchService(this.workspaceDir);
+        
         this.registerCoreTools();
     }
 
@@ -217,6 +239,10 @@ export class ToolService {
      */
     public setRoot(newRoot: string) {
         this.workspaceDir = newRoot;
+        if (this.universalSearchService) {
+            const { UniversalSearchService } = require('./search/UniversalSearchService');
+            this.universalSearchService = new UniversalSearchService(this.workspaceDir);
+        }
     }
 
 
@@ -307,9 +333,12 @@ export class ToolService {
                 try {
                     const screenshot = require('screenshot-desktop');
                     const imgBuffer = await screenshot({ format: 'png' });
+                    const base64Image = imgBuffer.toString('base64');
                     return {
-                        result: "Screenshot captured.",
-                        images: [imgBuffer.toString('base64')]
+                        result: `Screenshot saved. Context length: ${base64Image.length}`,
+                        images: [base64Image],
+                        requires_llm: false,
+                        success: true
                     };
                 } catch (e: any) { return `Error capturing screenshot: ${e.message} `; }
             }
@@ -433,25 +462,23 @@ export class ToolService {
                     }
 
                     const stats = fs.statSync(targetPath);
-                    if (stats.size > 1024 * 1024) {
+                    if (stats.size > 1024 * 1024) { // 1MB limit
                         return `Error: File is too large to read directly (${Math.round(stats.size / 1024)}KB). Use a search tool or list directories instead.`;
                     }
 
-                    const content = fs.readFileSync(targetPath, 'utf-8');
+                    const content = fs.readFileSync(targetPath, 'utf8');
                     const lines = content.split('\n');
-
+                    
                     // Add 1-indexed line numbers
                     const numberedContent = lines.map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`).join('\n');
-
-                    // Parse annotations
                     const annotationResult = AnnotationParser.parseFile(targetPath);
                     const annotationBlock = AnnotationParser.formatForContext(annotationResult);
 
-                    if (annotationBlock) {
-                        return `${annotationBlock}\n\n[FILE CONTENT]\n${numberedContent}`;
-                    }
-
-                    return numberedContent;
+                    return {
+                        result: `File: ${args.path}\n${annotationBlock}\n\`\`\`\n${numberedContent}\n\`\`\``,
+                        requires_llm: false,
+                        success: true
+                    };
                 } catch (e: any) {
                     return `Error reading file: ${e.message}`;
                 }
@@ -1144,6 +1171,35 @@ export class ToolService {
                     return files.length > 0 ? files.join('\n') : 'Directory is empty.';
                 } catch (e: any) {
                     return `Error listing files: ${e.message}`;
+                }
+            }
+        });
+
+        // Tool: fs_search (Canonical)
+        this.register({
+            name: 'fs_search',
+            description: 'Searches for a string pattern in all text files within the workspace. Recursive, case-insensitive.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'The text pattern to search for.' }
+                },
+                required: ['query']
+            },
+            execute: async (args) => {
+                if (!this.universalSearchService) {
+                    return "Error: UniversalSearchService not initialized.";
+                }
+
+                try {
+                    // Let the Universal Search Pipeline handle time budgeting, exclusions, and ranking
+                    const result = await this.universalSearchService.search(args.query, 10000);
+                    
+                    // We serialize the entire rich result object as JSON. 
+                    // AgentService > completeToolOnlyTurn expects to parse this if the intent was deterministic code search.
+                    return JSON.stringify(result);
+                } catch (e: any) {
+                    return `Error searching files: ${e.message}`;
                 }
             }
         });

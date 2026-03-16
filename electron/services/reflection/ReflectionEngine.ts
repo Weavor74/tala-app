@@ -5,16 +5,19 @@
  * It analyzes detected issues and generates prioritized hypotheses for root causes.
  */
 import { ReflectionIssue, ReflectionHypothesis } from './reflectionEcosystemTypes';
+import { MaintenanceReflectionEvent } from '../../../shared/maintenance/maintenanceEvents';
 import { LogInspectionService } from './LogInspectionService';
 import { RepoInspectionService } from './RepoInspectionService';
 
 export class ReflectionEngine {
     private repoInspector: RepoInspectionService;
     private logInspector: LogInspectionService;
+    private systemMaintenanceEvents: MaintenanceReflectionEvent[];
 
     constructor(repoInspector: RepoInspectionService, logInspector: LogInspectionService) {
         this.repoInspector = repoInspector;
         this.logInspector = logInspector;
+        this.systemMaintenanceEvents = [];
     }
 
     /**
@@ -46,5 +49,16 @@ export class ReflectionEngine {
         issue.updatedAt = new Date().toISOString();
 
         return issue;
+    }
+
+    /**
+     * Integrates system-maintenance orchestration feedback into the active Reflection panel.
+     */
+    public logMaintenanceEvent(event: MaintenanceReflectionEvent) {
+        console.log(`[ReflectionEngine] Logging ${event.domain} maintenance event: ${event.severity}`);
+        this.systemMaintenanceEvents.push(event);
+        
+        // In the real system, this triggers an IPC broadcast so the React frontend UI
+        // updates its 'system-maintenance' panel view.
     }
 }

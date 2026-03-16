@@ -570,6 +570,42 @@ That enforcement is optional, but the policy in this file should already guide h
 
 ---
 
+## Documentation Regeneration Rules
+
+Documentation in this repository is generated from the live codebase.
+
+**Maintenance Orchestrator Rules:**
+- Tala is the primary maintenance executor for documentation, code hygiene, and derived memory artifacts.
+- GitHub Actions is optional secondary enforcement, not the primary maintenance brain.
+- If a change affects docs, contracts, subsystem mappings, or shared types, Tala should run self-maintenance locally (`npm run self:maintain --mode=apply-safe`).
+- Protected memory must never be auto-rewritten.
+
+When modifying manually:
+- shared contracts
+- subsystem structure
+- Electron services
+- MCP tools
+- architecture mappings
+
+Run:
+
+```bash
+npm run docs:regen
+```
+
+Generated files include:
+
+- TDP_INDEX.md
+- docs/architecture/*
+- docs/contracts/*
+- docs/subsystems/*
+
+Do not manually edit generated documentation unless the generator scripts are updated accordingly.
+
+If generated docs appear incorrect, fix the generator or the source contracts rather than editing generated files.
+
+---
+
 ## Final Rule
 
 For TALA, code and documentation are part of the same system.

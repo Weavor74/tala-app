@@ -1,7 +1,5 @@
 # Tala Documentation Index
 
-Automatically generated on 2026-03-13T21:05:48.645Z
-
 ## General
 
 - [Agent Working Rules](agent_working_rules.md)
@@ -77,6 +75,10 @@ Automatically generated on 2026-03-13T21:05:48.645Z
 ## contributing
 
 - [File Placement Rules](contributing/file_placement_rules.md)
+
+## development
+
+- [Tala Self-Maintenance Orchestrator](development/self_maintenance.md)
 
 ## features
 

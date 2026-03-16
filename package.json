@@ -7,10 +7,10 @@
     "dev": "concurrently --kill-others \"npm run dev:vite\" \"npm run dev:electron\" \"npm run dev:inference\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p electron && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "dev:inference": ".\\scripts\\launch-inference.bat",
+    "dev:inference": ".\\scripts\\diagnostics\\launch-inference.bat",
     "build": "tsc -b && tsc -p electron && vite build",
     "dist": "npm run build && electron-builder",
-    "dist:universal": "scripts\\make_universal.bat",
+    "dist:universal": "scripts\\build\\make_universal.bat",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -20,9 +20,16 @@
     "repo:boundaries": "npx tsx scripts/diagnostics/validate_subsystem_boundaries.ts",
     "repo:fullcheck": "npm run repo:check && npm run repo:boundaries && npm run docs:verify && npm run lint && npm run build && npm run test",
     "docs:index": "npx tsx scripts/docs/index_repo_docs.ts",
-    "docs:extract": "npx tsx scripts/docs/extract_architecture.ts",
-    "docs:generate": "npx tsx scripts/docs/generate_contract_docs.ts",
-    "docs:verify": "npx tsx scripts/diagnostics/validate_docs_drift.ts"
+    "docs:architecture": "npx tsx scripts/docs/extract_architecture.ts",
+    "docs:contracts": "npx tsx scripts/docs/generate_contract_docs.ts",
+    "docs:regen": "npm run docs:index && npm run docs:architecture && npm run docs:contracts",
+    "docs:verify": "npx tsx scripts/diagnostics/validate_docs_drift.ts",
+    "docs:selfheal": "npx tsx scripts/diagnostics/maintenance/docs_maintenance.ts",
+    "code:heal": "npx tsx scripts/diagnostics/maintenance/code_maintenance.ts",
+    "memory:check": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=audit",
+    "memory:heal": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=apply-safe",
+    "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",
+    "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts"
   },
   "build": {
     "appId": "com.antigravity.tala",
@@ -138,3 +145,5 @@
     "wait-on": "^9.0.3"
   }
 }
+
+

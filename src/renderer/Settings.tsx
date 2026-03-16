@@ -19,7 +19,7 @@
  */
 import { useState, useEffect } from 'react';
 import { DEFAULT_SETTINGS, migrateSettings } from './settingsData';
-import type { AppSettings, InferenceInstance, SourceControlProvider } from './settingsData';
+import type { AppSettings, InferenceInstance, SourceControlProvider, AgentProfile, McpServerConfig } from './settingsData';
 import 'xterm/css/xterm.css';
 import { WorkflowEditor } from './components/WorkflowEditor';
 import { GitView } from './components/GitView';
@@ -605,7 +605,7 @@ export const Settings = () => {
                                                         alert("Cannot delete the last profile.");
                                                         return;
                                                     }
-                                                    const list = settings.agent.profiles.filter(x => x.id !== p.id);
+                                                    const list = settings.agent.profiles.filter((x: AgentProfile) => x.id !== p.id);
                                                     update('agent', 'profiles', list);
                                                     // If we deleted the active one, switch to first available
                                                     if (p.id === settings.agent.activeProfileId) {
@@ -3353,9 +3353,9 @@ Tone: Minimalist, calm, practical.
                                                             onChange={(e) => {
                                                                 e.stopPropagation();
                                                                 const list = [...(settings.mcpServers || [])];
-                                                                const t = list.find((x: any) => x.id === srv.id);
+                                                                const t = list.find((x: McpServerConfig) => x.id === srv.id);
                                                                 if (t) t.enabled = e.target.checked;
-                                                                setSettings(prev => ({ ...prev, mcpServers: list }));
+                                                                setSettings((prev: AppSettings) => ({ ...prev, mcpServers: list }));
                                                             }}
                                                         />
                                                         <div style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, color: srv.enabled ? '#fff' : '#888' }}>
@@ -3380,8 +3380,8 @@ Tone: Minimalist, calm, practical.
                                                         <h4 style={{ margin: 0, color: '#c586c0' }}>{srv.name.toUpperCase()}</h4>
                                                         <button
                                                             onClick={() => {
-                                                                const list = (settings.mcpServers || []).filter((s: any) => s.id !== srv.id);
-                                                                setSettings(prev => ({ ...prev, mcpServers: list }));
+                                                                const list = (settings.mcpServers || []).filter((s: McpServerConfig) => s.id !== srv.id);
+                                                                setSettings((prev: AppSettings) => ({ ...prev, mcpServers: list }));
                                                                 setSelectedMcpId(null);
                                                             }}
                                                             style={{ color: '#ff4444', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11 }}
@@ -3394,10 +3394,10 @@ Tone: Minimalist, calm, practical.
                                                         label="NAME"
                                                         value={srv.name}
                                                         onChange={(e: any) => {
-                                                            const list = [...settings.mcpServers];
-                                                            const t = list.find((x: any) => x.id === srv.id);
+                                                            const list = [...(settings.mcpServers || [])];
+                                                            const t = list.find((x: McpServerConfig) => x.id === srv.id);
                                                             if (t) t.name = e.target.value;
-                                                            setSettings(prev => ({ ...prev, mcpServers: list }));
+                                                            setSettings((prev: AppSettings) => ({ ...prev, mcpServers: list }));
                                                         }}
                                                     />
 
@@ -3407,10 +3407,10 @@ Tone: Minimalist, calm, practical.
                                                             style={selectStyle}
                                                             value={srv.type}
                                                             onChange={(e: any) => {
-                                                                const list = [...settings.mcpServers];
-                                                                const t = list.find((x: any) => x.id === srv.id);
+                                                                const list = [...(settings.mcpServers || [])];
+                                                                const t = list.find((x: McpServerConfig) => x.id === srv.id);
                                                                 if (t) t.type = e.target.value;
-                                                                setSettings(prev => ({ ...prev, mcpServers: list }));
+                                                                setSettings((prev: AppSettings) => ({ ...prev, mcpServers: list }));
                                                             }}
                                                         >
                                                             <option value="stdio">STDIO (Local Command)</option>
@@ -3424,10 +3424,10 @@ Tone: Minimalist, calm, practical.
                                                                 label="COMMAND"
                                                                 value={srv.command}
                                                                 onChange={(e: any) => {
-                                                                    const list = [...settings.mcpServers];
-                                                                    const t = list.find((x: any) => x.id === srv.id);
+                                                                    const list = [...(settings.mcpServers || [])];
+                                                                    const t = list.find((x: McpServerConfig) => x.id === srv.id);
                                                                     if (t) t.command = e.target.value;
-                                                                    setSettings(prev => ({ ...prev, mcpServers: list }));
+                                                                    setSettings((prev: AppSettings) => ({ ...prev, mcpServers: list }));
                                                                 }}
                                                                 placeholder="npx, python, etc..."
                                                             />

@@ -19,8 +19,20 @@
 import type { 
     McpServerConfig,
     StorageProvider,
-    AppSettings
+    AppSettings,
+    InferenceInstance,
+    SourceControlProvider,
+    AgentProfile
 } from '../../shared/settings';
+
+export type { 
+    McpServerConfig,
+    StorageProvider,
+    AppSettings,
+    InferenceInstance,
+    SourceControlProvider,
+    AgentProfile
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
     deploymentMode: 'local',

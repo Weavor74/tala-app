@@ -29,19 +29,22 @@ import { InferenceService } from './InferenceService';
 import { IngestionService } from './IngestionService';
 import { HybridMemoryManager } from './HybridMemoryManager';
 import { UserProfileService } from './UserProfileService';
-
 import { GuardrailService } from './GuardrailService';
 import { TalaContextRouter } from './router/TalaContextRouter';
 import { runtimeSafety } from './RuntimeSafety';
 import { GoalManager } from './plan/GoalManager';
 import { WorldService } from './WorldService';
 import { StrategyEngine } from './plan/StrategyEngine';
-import { MINION_ROLES } from './plan/MinionRoles';
+import { MinionRole, MINION_ROLES } from './plan/MinionRoles';
 import { SmartRouterService } from './SmartRouterService';
 import { auditLogger } from './AuditLogger';
 import { artifactRouter } from './ArtifactRouter';
 import { AgentTurnOutput } from '../types/artifacts';
 import { v4 as uuidv4 } from 'uuid';
+import { DeterministicIntentRouter } from './router/DeterministicIntentRouter';
+import { WorkflowRegistry } from './router/WorkflowRegistry';
+import { ToolResult } from './ToolService';
+import { CompactPromptBuilder } from './plan/CompactPromptBuilder';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -137,6 +140,7 @@ export class AgentService {
     private world: WorldService;
     /** Retrieval-Augmented Generation service for fetching relevant documents. */
     private rag: RagService;
+    private workflows: WorkflowRegistry;
     /** Central registry for all executable tools. */
     private tools: ToolService;
     /** Manages system backups and state snapshots. */
@@ -192,6 +196,7 @@ export class AgentService {
     private lastTurnExecutionLog?: TurnExecutionLog;
     private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
     private currentTurnAuditRecord?: PromptAuditRecord;
+    private activeTurnId: string | null = null;
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -212,6 +217,10 @@ export class AgentService {
 
         this.router = new SmartRouterService(this.brain, this.brain);
         this.talaRouter = new TalaContextRouter(this.memory);
+
+        this.workflows = new WorkflowRegistry(this.tools);
+
+        // Core system connections
         this.docIntel = new DocumentationIntelligenceService(process.cwd()); // Initial default, updated via setWorkspaceRoot
 
         this.tools.setMemoryService(this.memory);
@@ -1580,16 +1589,41 @@ Exported standalone package from Tala.
         images?: string[],
         capabilitiesOverride?: any
     ): Promise<AgentTurnOutput> {
-        const assemblyStart = Date.now();
+        const chatStartedAt = Date.now();
         const correlationId = uuidv4();
         auditLogger.setCorrelationId(correlationId);
         console.log(`[AgentService] ====== CHAT STARTED ======`);
 
+        const turnId = `${this.activeSessionId}_${Date.now()}`;
+        this.activeTurnId = turnId;
+
+        // --- TRUE FAST PATH: DETERMINISTIC ROUTING / LLM BYPASS ---
+        // Immediate check before Any state gathering (Astro, Router, Memory, RAG)
+        const routedIntent = DeterministicIntentRouter.route(userMessage);
         const settings = loadSettings(this.settingsPath);
+        const activeMode = this.getActiveMode(settings);
+
+        if (activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
+            console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent}`);
+            const toolName = routedIntent.suggestedTool;
+            if (toolName) {
+                try {
+                    const parsedArgs = routedIntent.extractedArgs || {};
+                    const toolStartTime = Date.now();
+                    const rawResult = await this.tools.executeTool(toolName, parsedArgs, new Set([toolName]));
+                    const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
+                    
+                    return await this.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, onToken, onEvent);
+                } catch (e: any) {
+                    console.error(`[AgentService] FAST PATH FAIL, falling back to LLM:`, e);
+                }
+            }
+        }
+
+        const assemblyStart = Date.now();
         let activeInstance = settings.inference?.instances?.find((i: any) => i.id === settings.inference.activeLocalId) || (settings.inference?.instances?.length > 0 ? settings.inference.instances[0] : null);
         const isSmallLocalModel = (activeInstance?.source === 'local' || activeInstance?.engine === 'ollama') && (activeInstance?.model?.toLowerCase().includes('3b') || activeInstance?.model?.toLowerCase().includes('8b'));
 
-        const activeMode = this.getActiveMode(settings);
         const astroState = await this.getAstroState(settings);
 
         // --- TALA CONTEXT ROUTER (UPGRADED PIPELINE) ---
@@ -1637,10 +1671,15 @@ Exported standalone package from Tala.
         const activeProfileId = settings.agent?.activeProfileId || 'tala';
         const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
 
-        let systemPromptTemplate = (isSmallLocalModel ? repetitionSafety + "\n\n" : "") + activeProfile.systemPrompt + (isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
-
         const goalsAndReflections = this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
-        systemPromptTemplate = dynamicContext + "\n\n" + (hasMemories ? memoryContext + "\n\n" : "") + (goalsAndReflections.trim() ? goalsAndReflections + "\n\n" : "") + systemPromptTemplate;
+        
+        // Identity Injection: Load user profile to tell the LLM who the User is
+        let userIdentity = "";
+        const identity = this.userProfile?.getIdentityContext();
+        if (identity && identity.userId !== 'anonymous-user') {
+            const aliasStr = identity.aliases.map(a => `"${a}"`).join(' or ');
+            userIdentity = `[USER IDENTITY]\nThe current user is ${identity.displayName}. All memories referring to ${aliasStr} refer to the User. Treat personal facts about "${identity.displayName}" as facts about the person you are talking to. Use this identity (ID: ${identity.userId}) to resolve memory ambiguity.`;
+        }
 
         // Mode Audit Logging
         const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit.log');
@@ -1658,10 +1697,8 @@ Exported standalone package from Tala.
         let allowedCapabilities: string[] | undefined = undefined;
 
         if (activeMode === 'rp') {
-            // Strict RP forbids all external context manipulation tools.
             turnObject.blockedCapabilities.push('all');
         } else if (activeMode === 'hybrid') {
-            // Limited visibility for Hybrid
             turnObject.allowedCapabilities.push('system_core', 'memory_retrieval', 'diagnostic');
             allowedCapabilities = turnObject.allowedCapabilities;
         } else {
@@ -1670,25 +1707,19 @@ Exported standalone package from Tala.
 
         if (turnObject.retrieval.suppressed) {
             turnObject.blockedCapabilities.push('memory_retrieval');
-            // Remove 'all' escape hatch if it existed during suppression.
             if (allowedCapabilities?.includes('all')) {
                 allowedCapabilities = ['system_core', 'diagnostic', 'memory_write'];
             } else if (allowedCapabilities) {
                 allowedCapabilities = allowedCapabilities.filter(c => c !== 'memory_retrieval' && c !== 'all');
             }
-            console.log(`[RouterGating] CAPABILITY BYPASS PREVENTION: Active blocked capabilities=`, turnObject.blockedCapabilities);
         }
 
         let toolSigs = "";
         let filteredTools: any[] = [];
         if (turnObject.blockedCapabilities.includes('all') || activeMode === 'rp') {
             toolSigs = "[NO TOOLS AVAILABLE IN RP MODE]";
-            // filteredTools stays empty — no tools permitted in RP mode
         } else {
-            // Re-render strings only based on the strictly resolved Capability Array
             filteredTools = this.tools.getToolDefinitions(allowedCapabilities, activeMode);
-
-            // Format fallback JSON signature string equivalent for the schema
             const formatSig = (tool: any) => {
                 let props = [];
                 for (const [key, val] of Object.entries(tool.function.parameters.properties) as any) {
@@ -1696,37 +1727,25 @@ Exported standalone package from Tala.
                 }
                 return `### ${tool.function.name}\nDescription: ${tool.function.description}\nSchema: {${props.join(', ')}}\n`;
             };
-
             toolSigs = "Available Tools:\n" + filteredTools.map(formatSig).join("\n");
-
             if (turnObject.retrieval.suppressed) {
                 toolSigs += "\n(Note: Memory-retrieval tools have been explicitly withheld by capability policy for this turn)";
             }
         }
 
-        if (activeMode !== 'rp') {
-            systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${toolSigs}\n\n[PROTOCOL]: Output JSON \`{"tool": "name", "args": {}}\` to call a tool.`;
-        } else {
-            systemPromptTemplate += `\n\n[USER INTERACTION]\nSpeak naturally as Tala. Do not use JSON or technical formatting.`;
-        }
-
-        systemPromptTemplate += `
-\n### Runtime Safety Rules
-1. If a tool has already been executed recently in the same task, do not execute it again unless the user explicitly requests it.
-2. Do not repeat diagnostics, reflections, or tests automatically.
-3. If the same response would be produced again, stop and request clarification from the user.
-4. Tool results are informational only. Do not call tools again unless the user explicitly requests it.
-`;
-
-        // Identity Injection: Load user profile to tell the LLM who the User is
-        let userIdentity = "";
-        const identity = this.userProfile?.getIdentityContext();
-        if (identity && identity.userId !== 'anonymous-user') {
-            const aliasStr = identity.aliases.map(a => `"${a}"`).join(' or ');
-            userIdentity = `[USER IDENTITY]\nThe current user is ${identity.displayName}. All memories referring to ${aliasStr} refer to the User. Treat personal facts about "${identity.displayName}" as facts about the person you are talking to. Use this identity (ID: ${identity.userId}) to resolve memory ambiguity.`;
-        }
-
-        let systemPrompt = (userIdentity ? userIdentity + "\n\n" : "") + systemPromptTemplate.replace(/\[ASTRO_STATE\]/g, astroState).replace(/\[CAPABILITY_CONTEXT\]/g, memoryContext).replace(/\[USER_QUERY\]/g, userMessage);
+        // --- DYNAMIC PROMPT ASSEMBLY via COMPACT BUILDER ---
+        const systemPrompt = CompactPromptBuilder.build({
+            systemPromptBase: activeProfile.systemPrompt,
+            activeProfileId: activeProfileId,
+            isSmallLocalModel: !!isSmallLocalModel,
+            isEngineeringMode: turnObject.intent.class === 'coding' || turnObject.intent.class === 'diagnostics',
+            hasMemories: hasMemories,
+            memoryContext: memoryContext,
+            goalsAndReflections: goalsAndReflections,
+            dynamicContext: dynamicContext.replace(/\[ASTRO_STATE\]/g, astroState),
+            toolSigs: toolSigs,
+            userIdentity: userIdentity
+        });
 
         const maxTokens = activeInstance?.ctxLen || 16384;
         const systemTokens = this.estimateTokens(systemPrompt);
@@ -1813,6 +1832,9 @@ Exported standalone package from Tala.
         };
         const turnSeenHashes = new Set<string>();
 
+        // (Original Phase 1 Logic removed from here)
+
+        // --- GROUNDING OVERRIDE ---
         // Grounded "what tools used" response path
         const isGroundingQuery = /\b(what tools (did you use|were used)|which tools (did you use|were used)|explain what (you did|tools were used)|what did you execute|show tool calls)\b/i.test(userMessage);
         if (isGroundingQuery) {
@@ -2272,6 +2294,236 @@ Failure to provide a tool call will result in system termination.`;
         this.saveSession();
 
         return normalized;
+    }
+
+    private async completeToolOnlyTurn(
+        result: ToolResult, 
+        turnId: string, 
+        intent: string, 
+        activeMode: string, 
+        toolName: string, 
+        args: any, 
+        toolStartTime: number,
+        chatStartedAt: number,
+        onToken?: (token: string) => void,
+        onEvent?: (type: string, data: any) => void
+    ): Promise<AgentTurnOutput> {
+        console.log(`[AgentService] Completing tool-only turn (intent=${intent})`);
+
+        // Record User Message
+        const userMessage = this.chatHistory[this.chatHistory.length - 1]?.content || 'Deterministic Operation';
+        if (!this.activeSessionId) this.newSession();
+        // The user message is usually pushed in chat() but we've bypassed that. 
+        // We'll trust that the caller or subsequent session save handles it if needed,
+        // but for tool-only turns we want a clean history.
+
+        const executionLog: TurnExecutionLog = {
+            turnId,
+            mode: activeMode,
+            intent,
+            usedEnvelope: false,
+            toolCallsPlanned: [{ name: toolName, arguments: args }],
+            toolCalls: [{
+                name: toolName,
+                arguments: args,
+                ok: result.success !== false,
+                startedAt: toolStartTime,
+                endedAt: Date.now(),
+                resultPreview: result.result?.substring(0, 2048)
+            }],
+            executedToolCount: 1,
+            toolsSentCount: 0,
+            timestamp: Date.now()
+        };
+
+        this.lastTurnExecutionLog = executionLog;
+        this.executionLogHistory.push(executionLog);
+
+        // --- STRICT TURN BINDING CHECK ---
+        if (turnId !== this.activeTurnId) {
+            console.warn(`[AgentService] Stale turn detected in completeToolOnlyTurn: received=${turnId}, active=${this.activeTurnId}. Blocking publication.`);
+            return { message: "Executing background process...", artifact: null, suppressChatContent: true };
+        }
+
+        // --- REAL DELIVERY BRIDGE ---
+        let finalResponse = `Executed \`${toolName}\` deterministically.`;
+        
+        // Custom message for file reading
+        if (toolName === 'fs_read_text' || toolName === 'read_file') {
+            const fileName = args.path ? path.basename(args.path) : 'file';
+            if (result.success !== false) {
+                finalResponse = `Opened ${args.path || 'file'} in the editor.`;
+            } else {
+                finalResponse = `Error reading ${args.path || 'file'}: ${result.result || 'Unknown error'}`;
+            }
+        } else if (toolName === 'fs_list' || intent === 'file_list') {
+            if (result.success !== false && result.result) {
+                const entries = result.result.split('\n').filter(Boolean);
+                const shortList = entries.slice(0, 15).map(e => e.replace('[FILE] ', '').replace('[DIR] ', '')).join(', ');
+                const more = entries.length > 15 ? `... (${entries.length - 15} more)` : '';
+                finalResponse = `Here are the entries in ${args.path || 'the directory'}: ${shortList}${more}`;
+            } else {
+                finalResponse = `Error listing ${args.path || 'directory'}: ${result.result || 'Unknown error'}`;
+            }
+        } else if (intent === 'git_branch' || toolName === 'shell_run' && args.command === 'git branch --show-current') {
+            if (result.success !== false && result.result) {
+                // Robust extraction: Extract branch name from shell wrapper output if present
+                // Wrapper format: "Exit Code: 0 STDOUT: master STDERR:" or plain "master"
+                let branch = result.result.trim();
+                const stdoutMatch = branch.match(/STDOUT:\s*([^\s]+)/);
+                if (stdoutMatch) {
+                    branch = stdoutMatch[1];
+                } else {
+                    // Fallback: strip any remaining common wrapper artifacts
+                    branch = branch.replace(/Exit Code: \d+\s*STDOUT:\s*/g, '').replace(/\s*STDERR:.*$/g, '').trim();
+                }
+                finalResponse = `You are currently on branch: **${branch}**`;
+            } else {
+                finalResponse = `Error checking branch: ${result.result || 'Unknown error'}`;
+            }
+        } else if (intent === 'repo_audit' || toolName === 'system_diagnose') {
+            if (result.success !== false && result.result) {
+                const report = result.result;
+                const lintErrors = (report.match(/--- LINT CHECK ---[\s\S]*?Summary:\s*(\d+)\s*errors/i) || [0, 0])[1];
+                const lintWarnings = (report.match(/--- LINT CHECK ---[\s\S]*?Summary:\s*\d+\s*errors,\s*(\d+)\s*warnings/i) || [0, 0])[1];
+                const buildErrors = (report.match(/--- BUILD CHECK ---[\s\S]*?Summary:\s*(\d+)\s*TypeScript\s*errors/i) || [0, 0])[1];
+                
+                const totalIssues = Number(lintErrors) + Number(lintWarnings) + Number(buildErrors);
+                const status = totalIssues > 0 ? "⚠️ Issues Found" : "✅ Clean";
+                
+                // Extract top issues (first 5 unique lines containing 'error' or 'warning')
+                const issues = report.split('\n')
+                    .filter(l => (l.includes('error') || l.includes('warning')) && !l.includes('Summary:'))
+                    .map(l => l.trim())
+                    .filter((v, i, a) => a.indexOf(v) === i)
+                    .slice(0, 5);
+                
+                let summary = `### Repository Audit Summary: ${status}\n\n`;
+                summary += `| Metric | Count |\n| :--- | :--- |\n`;
+                summary += `| **Lint Errors** | ${lintErrors} |\n`;
+                summary += `| **Lint Warnings** | ${lintWarnings} |\n`;
+                summary += `| **Build Errors** | ${buildErrors} |\n`;
+                summary += `| **Total Issues** | **${totalIssues}** |\n\n`;
+                
+                if (issues.length > 0) {
+                    summary += `**Top Issues Detections:**\n`;
+                    summary += issues.map(iss => `- ${iss}`).join('\n') + "\n\n";
+                }
+                
+                summary += `_The full diagnostic report has been saved to the workspace artifacts._\n`;
+                finalResponse = summary;
+            } else {
+                finalResponse = `Error running repo audit: ${result.result || 'Unknown error'}`;
+            }
+        } else if (intent === 'code_search' || toolName === 'fs_search') {
+            if (result.success !== false && result.result) {
+                try {
+                    const searchRes = JSON.parse(result.result);
+                    let report = `### Code Search Results\n`;
+                    report += `${searchRes.interpretation}\n\n`;
+
+                    if (searchRes.matches && searchRes.matches.length > 0) {
+                        report += `**Top Matches:**\n`;
+                        searchRes.matches.forEach((m: any) => {
+                            const confidenceEmoji = m.confidence === 'high' ? '🟢' : '🟡';
+                            report += `- ${confidenceEmoji} \`${m.filePath}\` (Score: ${m.score}, Type: ${m.matchType})\n`;
+                            if (m.preview) {
+                                report += `  > ${m.preview.trim()}\n`;
+                            }
+                        });
+                        report += `\n`;
+                    }
+
+                    if (searchRes.weakMatches && searchRes.weakMatches.length > 0) {
+                        report += `**Potential partial matches (suppressed):**\n`;
+                        searchRes.weakMatches.forEach((m: any) => {
+                            report += `- \`${m.filePath}\` (Score: ${m.score}, Type: ${m.matchType})\n`;
+                        });
+                        report += `\n`;
+                    }
+
+                    if (searchRes.relatedFiles && searchRes.relatedFiles.length > 0) {
+                        report += `**Possible related files:**\n`;
+                        searchRes.relatedFiles.forEach((m: any) => {
+                            report += `- \`${m.filePath}\` (Score: ${m.score})\n`;
+                        });
+                        report += `\n`;
+                    }
+
+                    const diag = searchRes.diagnostics;
+                    report += `**Search Diagnostics:**\n`;
+                    report += `- Files discovered: ${diag.filesDiscovered}\n`;
+                    report += `- Eligible files: ${diag.filesEligible}\n`;
+                    report += `- Files searched: ${diag.filesSearched}\n`;
+                    report += `- Timed out: ${diag.timedOut ? 'Yes' : 'No'}\n`;
+                    report += `- Complete coverage: ${diag.completeCoverage ? 'Yes' : 'No'}\n`;
+                    
+                    if (diag.filesSkippedTooLarge > 0 || diag.filesSkippedIgnored > 0) {
+                        report += `- Skipped: ${diag.filesSkippedTooLarge} too large, ${diag.filesSkippedIgnored} inaccessible\n`;
+                    }
+
+                    finalResponse = report;
+                } catch (e) {
+                    // Fallback if not JSON
+                    finalResponse = result.result;
+                }
+            } else {
+                finalResponse = `Error searching code: ${result.result || 'Unknown error'}`;
+            }
+        } else if (result.result) {
+            finalResponse += `\n\n\`\`\`\n${result.result.slice(0, 1500)}\n\`\`\``;
+        }
+        
+        // Timing Logs
+        const routingMs = toolStartTime - chatStartedAt;
+        const executionMs = Date.now() - toolStartTime;
+        finalResponse += `\n\n---\n**Timing**: Routing: \`${routingMs}ms\` | Execution: \`${(executionMs / 1000).toFixed(2)}s\``;
+
+        // 1. CHAT DELIVERY (Real-time publication)
+        if (onToken) {
+            console.log(`[AgentService] FastPath: Streaming confirmation to UI: ${finalResponse}`);
+            onToken(finalResponse);
+        }
+        const fakeCallId = `call_det_${Date.now()}`;
+        
+        const transientMessages: ChatMessage[] = [
+            {
+                role: 'assistant',
+                content: "",
+                tool_calls: [{ id: fakeCallId, type: 'function', function: { name: toolName, arguments: JSON.stringify(args) } }]
+            },
+            { role: 'tool', content: result.result, tool_call_id: fakeCallId, name: toolName },
+            { role: 'assistant', content: finalResponse }
+        ];
+
+        // Audit Logging (Technical bypass)
+        const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit_bypass.log');
+        if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
+        fs.appendFileSync(auditLogPath, JSON.stringify({ timestamp: new Date().toISOString(), intent, toolName, turnId }) + "\n");
+
+        // Artifact Routing
+        const toolResults = [{ name: toolName, args: args, result: result.result }];
+        const normalized = artifactRouter.normalizeAgentOutput(finalResponse, toolResults);
+
+        // 2. EDITOR/UI DELIVERY (Canonical Trigger)
+        if (normalized.artifact) {
+            console.log(`[AgentService] FastPath: Emitting artifact type=${normalized.artifact.type} id=${normalized.artifact.id} for tool-only turn`);
+            if (onEvent) {
+                onEvent('artifact-open', normalized.artifact);
+            }
+        }
+
+        this.chatHistory.push(...transientMessages);
+        this.saveSession();
+        
+        const finalResult = { 
+            message: normalized.message || finalResponse, 
+            artifact: normalized.artifact, 
+            suppressChatContent: normalized.suppressChatContent 
+        };
+
+        console.log(`[AgentService] Tool-only turn returned to UI (requires_llm=false)`);
+        return finalResult;
     }
 
     private finalizeAssistantContent(intent: string, raw: string, executedToolCount: number, hasPendingCalls: boolean, mode: string = 'assistant'): string {
@@ -2748,6 +3000,12 @@ Failure to provide a tool call will result in system termination.`;
     }
 
     public async getEmotionState(): Promise<string> {
+        // Suppress Astro refresh after technical deterministic turns to save work and reduce noise
+        const technicalIntents = ['file_read', 'file_list', 'git_status', 'git_branch', 'repo_audit', 'code_search', 'diagnostics', 'repo_query'];
+        if (this.lastTurnExecutionLog && technicalIntents.includes(this.lastTurnExecutionLog.intent)) {
+            console.log(`[AgentService] Post-turn astro refresh skipped for tool-only technical intent=${this.lastTurnExecutionLog.intent}`);
+            return "Technical mode active. Conversational refresh suppressed.";
+        }
         return this.getAstroState();
     }
 

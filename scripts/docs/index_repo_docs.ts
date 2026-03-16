@@ -42,7 +42,6 @@ function scanDocs(dir: string, category = ''): DocFile[] {
 function generateMarkdown(files: DocFile[]): string {
   const categories = [...new Set(files.map(f => f.category))].sort();
   let md = '# Tala Documentation Index\n\n';
-  md += 'Automatically generated on ' + new Date().toISOString() + '\n\n';
 
   for (const cat of categories) {
     md += `## ${cat}\n\n`;
