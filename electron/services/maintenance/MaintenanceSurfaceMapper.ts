@@ -120,7 +120,7 @@ export function mapMaintenanceSurface(
         issue.severity,
         issue.category,
         `${Math.round(issue.confidence * 100)}%`,
-        issue.recommendedAction || '—',
+        issue.description,
     ]);
 
     const issuesSection: A2UINode = {

@@ -66,11 +66,9 @@ export class MaintenanceActionExecutor {
             return await this._dispatch(proposal, executedAt);
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            telemetry.operational('maintenance', 'maintenance_action_failed', {
-                status: 'failure',
-                summary: `Maintenance action failed: ${proposal.actionType}`,
-                payload: { actionType: proposal.actionType, targetEntityId: proposal.targetEntityId, error: message },
-            });
+            telemetry.operational('maintenance', 'maintenance_action_failed', 'error', 'MaintenanceActionExecutor',
+                `Maintenance action failed: ${proposal.actionType}`, 'failure',
+                { payload: { actionType: proposal.actionType, targetEntityId: proposal.targetEntityId, error: message } });
             return this._result(proposal, 'failed', executedAt,
                 `Action '${proposal.actionType}' threw an exception.`, message);
         }
@@ -158,15 +156,14 @@ export class MaintenanceActionExecutor {
         const status: MaintenanceExecutionStatus = success ? 'success' : 'failed';
 
         const event = success ? 'maintenance_action_autoexecuted' : 'maintenance_action_failed';
-        telemetry.operational('maintenance', event as TelemetryEventType, {
-            status: success ? 'success' : 'failure',
-            summary: message,
-            payload: {
+        telemetry.operational('maintenance', event as TelemetryEventType,
+            success ? 'info' : 'error', 'MaintenanceActionExecutor',
+            message, success ? 'success' : 'failure',
+            { payload: {
                 actionType: proposal.actionType,
                 targetEntityId: proposal.targetEntityId,
                 issueId: proposal.issueId,
-            },
-        });
+            } });
 
         return {
             proposal,

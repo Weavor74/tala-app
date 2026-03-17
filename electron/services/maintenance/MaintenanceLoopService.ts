@@ -85,11 +85,9 @@ export class MaintenanceLoopService {
         if (prior === mode) return;
         this._state.mode = mode;
 
-        telemetry.operational('maintenance', 'maintenance_mode_changed', {
-            status: 'success',
-            summary: `Maintenance mode changed from '${prior}' to '${mode}'.`,
-            payload: { priorMode: prior, newMode: mode },
-        });
+        telemetry.operational('maintenance', 'maintenance_mode_changed', 'info', 'MaintenanceLoopService',
+            `Maintenance mode changed from '${prior}' to '${mode}'.`, 'success',
+            { payload: { priorMode: prior, newMode: mode } });
     }
 
     public getMode(): MaintenanceMode {
@@ -117,18 +115,16 @@ export class MaintenanceLoopService {
         const existingIds = new Set(this._state.activeIssues.map(i => i.id));
         for (const issue of detected) {
             if (!existingIds.has(issue.id)) {
-                telemetry.operational('maintenance', 'maintenance_issue_detected', {
-                    status: 'partial',
-                    summary: `Maintenance issue detected: ${issue.category} (${issue.severity})`,
-                    payload: {
+                telemetry.operational('maintenance', 'maintenance_issue_detected', 'warn', 'MaintenanceLoopService',
+                    `Maintenance issue detected: ${issue.category} (${issue.severity})`, 'partial',
+                    { payload: {
                         issueId: issue.id,
                         category: issue.category,
                         severity: issue.severity,
                         confidence: issue.confidence,
                         affectedEntityId: issue.affectedEntityId,
                         subsystem: issue.sourceSubsystem,
-                    },
-                });
+                    } });
             }
         }
 
@@ -137,11 +133,9 @@ export class MaintenanceLoopService {
         for (const prior of this._state.activeIssues) {
             const key = prior.category + (prior.affectedEntityId ?? '');
             if (!detectedIds.has(key)) {
-                telemetry.operational('maintenance', 'maintenance_issue_cleared', {
-                    status: 'success',
-                    summary: `Maintenance issue cleared: ${prior.category}`,
-                    payload: { issueId: prior.id, category: prior.category, severity: prior.severity },
-                });
+                telemetry.operational('maintenance', 'maintenance_issue_cleared', 'info', 'MaintenanceLoopService',
+                    `Maintenance issue cleared: ${prior.category}`, 'success',
+                    { payload: { issueId: prior.id, category: prior.category, severity: prior.severity } });
             }
         }
 
@@ -157,10 +151,9 @@ export class MaintenanceLoopService {
         });
 
         // Emit policy evaluation telemetry
-        telemetry.operational('maintenance', 'maintenance_policy_evaluated', {
-            status: 'success',
-            summary: `Maintenance policy evaluated: ${decisions.length} decision(s) for ${detected.length} issue(s).`,
-            payload: {
+        telemetry.operational('maintenance', 'maintenance_policy_evaluated', 'info', 'MaintenanceLoopService',
+            `Maintenance policy evaluated: ${decisions.length} decision(s) for ${detected.length} issue(s).`, 'success',
+            { payload: {
                 issueCount: detected.length,
                 decisionCount: decisions.length,
                 mode: this._state.mode,
@@ -168,8 +161,7 @@ export class MaintenanceLoopService {
                 autoExecuteCount: decisions.filter(d => d.outcome === 'auto_execute').length,
                 recommendCount: decisions.filter(d => d.outcome === 'recommend_action').length,
                 approvalNeededCount: decisions.filter(d => d.outcome === 'request_user_approval').length,
-            },
-        });
+            } });
 
         // 3. Append decisions to ring buffer
         this._state.recentDecisions = [
@@ -183,27 +175,23 @@ export class MaintenanceLoopService {
                 const key = decision.proposal.targetEntityId ?? decision.issue.category;
                 this._state.cooldowns[key] = decision.proposal.cooldownUntil;
 
-                telemetry.operational('maintenance', 'maintenance_cooldown_applied', {
-                    status: 'success',
-                    summary: `Maintenance cooldown applied to '${key}' until ${decision.proposal.cooldownUntil}.`,
-                    payload: { key, cooldownUntil: decision.proposal.cooldownUntil },
-                });
+                telemetry.operational('maintenance', 'maintenance_cooldown_applied', 'info', 'MaintenanceLoopService',
+                    `Maintenance cooldown applied to '${key}' until ${decision.proposal.cooldownUntil}.`, 'success',
+                    { payload: { key, cooldownUntil: decision.proposal.cooldownUntil } });
             }
 
             // Emit recommendation telemetry
             if (decision.outcome === 'recommend_action' || decision.outcome === 'request_user_approval') {
-                telemetry.operational('maintenance', 'maintenance_action_recommended', {
-                    status: 'partial',
-                    summary: `Maintenance action recommended: ${decision.proposal?.actionType ?? 'none'}`,
-                    payload: {
+                telemetry.operational('maintenance', 'maintenance_action_recommended', 'info', 'MaintenanceLoopService',
+                    `Maintenance action recommended: ${decision.proposal?.actionType ?? 'none'}`, 'partial',
+                    { payload: {
                         issueId: decision.issue.id,
                         category: decision.issue.category,
                         outcome: decision.outcome,
                         actionType: decision.proposal?.actionType,
                         targetEntityId: decision.proposal?.targetEntityId,
                         autoSafe: decision.proposal?.autoSafe ?? false,
-                    },
-                });
+                    } });
             }
         }
 
@@ -240,11 +228,9 @@ export class MaintenanceLoopService {
             }
 
             if (result.status === 'skipped') {
-                telemetry.operational('maintenance', 'maintenance_action_skipped', {
-                    status: 'suppressed',
-                    summary: result.message,
-                    payload: { actionType: proposal.actionType, issueId: proposal.issueId },
-                });
+                telemetry.operational('maintenance', 'maintenance_action_skipped', 'info', 'MaintenanceLoopService',
+                    result.message, 'suppressed',
+                    { payload: { actionType: proposal.actionType, issueId: proposal.issueId } });
             }
         }
     }
