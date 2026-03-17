@@ -10,8 +10,8 @@ import { OllamaBrain } from '../brains/OllamaBrain';
 import { promptAuditService, type PromptAuditRecord } from './PromptAuditService';
 import { CloudBrain } from '../brains/CloudBrain';
 import { BackupService } from './BackupService';
-import type { IBrain, ChatMessage, BrainResponse } from '../brains/IBrain';
-import type { StreamInferenceResult } from '../../shared/inferenceProviderTypes';
+import type { IBrain, ChatMessage, BrainResponse, ToolCall } from '../brains/IBrain';
+import type { StreamInferenceResult, CanonicalToolCall } from '../../shared/inferenceProviderTypes';
 import { ToolService } from './ToolService';
 import { SystemService } from './SystemService';
 import { RagService } from './RagService';
@@ -2176,7 +2176,7 @@ Exported standalone package from Tala.
                     break;
                 }
 
-                let calls = (activeMode === 'rp') ? [] : (responseToolCalls || []);
+                let calls: CanonicalToolCall[] = (activeMode === 'rp') ? [] : (responseToolCalls || []);
 
                 // --- HARDENED ToolRequired Gate ---
                 // Fire the recovery-retry whenever the model skipped structured tool calls
@@ -2314,7 +2314,7 @@ Failure to provide a tool call will result in system termination.`;
                     })));
                 }
 
-                assistantMsg.tool_calls = calls;
+                assistantMsg.tool_calls = this.normalizeToLegacyToolCalls(calls);
                 this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
 
                 // --- HARDENED Tool Execution with Timeouts + Execution-Time Gate ---
@@ -2845,6 +2845,29 @@ Failure to provide a tool call will result in system termination.`;
             console.log(`[AgentService] RAW_TOOL_JSON_BLOCKED_AT_COMMIT mode=${mode} intent=${intent}`);
         }
         return scrubbed;
+    }
+
+    /**
+     * Converts a CanonicalToolCall array into the legacy ToolCall format expected by
+     * ChatMessage.tool_calls.  This is the sole compatibility boundary between the
+     * canonical inference layer (CanonicalToolCall, id optional) and the legacy brain
+     * protocol (ToolCall, id required).
+     *
+     * - Guarantees every entry has a non-empty id.
+     * - Sets type to 'function'.
+     * - Stringifies arguments when they are a parsed object.
+     */
+    private normalizeToLegacyToolCalls(calls: CanonicalToolCall[]): ToolCall[] {
+        return calls.map((tc, i) => ({
+            id: tc.id ?? `tc_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`,
+            type: 'function' as const,
+            function: {
+                name: tc.function.name,
+                arguments: typeof tc.function.arguments === 'string'
+                    ? tc.function.arguments
+                    : JSON.stringify(tc.function.arguments),
+            },
+        }));
     }
 
     private commitAssistantMessage(
