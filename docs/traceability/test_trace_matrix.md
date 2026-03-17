@@ -12,6 +12,11 @@
 | **REQ-SYS-008** | Inspection | Contents of `docs/audit/audit_log.jsonl`. |
 | **REQ-AGENT-001** | Functional test | Trace history persistence test in `AgentService.Chat`. |
 | **REQ-TOOL-001** | Integration test | `tests/tool_execution.test.ts` |
+| **REQ-TOOL-002** | Unit test | `tests/ToolCallPipeline.test.ts` — loop-detection guard only fires when no toolCalls present (Fix 1) |
+| **REQ-TOOL-003** | Unit test | `tests/ToolCallPipeline.test.ts` — browser/web keywords and tools-sent-but-unused trigger recovery retry (Fix 2) |
+| **REQ-TOOL-004** | Unit test | `tests/ToolCallPipeline.test.ts` — non-coding retry failures fall through to plain content; coding turns hard-fail (Fix 3) |
+| **REQ-TOOL-005** | Unit test | `tests/ToolCallPipeline.test.ts` — assistantMsg.content sourced from retry response when retry provides tool calls (Fix 4) |
+| **REQ-TOOL-006** | Unit test | `tests/ToolCallPipeline.test.ts` — pipeline invariant: finalResponse never assigned from plain content when canonical toolCalls are present |
 | **REQ-SEC-001** | Unit test | `tests/security_policy.test.ts` |
 | **REQ-NF-SEC-001** | Analysis | Penetration test report in `docs/security/pentest_03.md`. |
 | **REQ-NF-PERF-001** | Demonstration | Inference benchmark output on reference hardware. |

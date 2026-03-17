@@ -263,6 +263,70 @@ AgentService.chat()
 
 `AgentService.setDiagnosticsAggregator(agg)` (called by `IpcRouter.registerAll()`) wires the runtime diagnostics aggregator. After every turn, `RuntimeDiagnosticsAggregator.recordCognitiveContext(cognitiveContext)` stores the live cognitive context, making it available through `diagnostics:getRuntimeSnapshot`.
 
+---
+
+## Tool-Call Execution Pipeline Decision Logic
+
+`AgentService.chat()` runs a `while` loop (max `MAX_AGENT_ITERATIONS`) to execute tool calls from the LLM response.  The following rules govern how tool calls are detected, recovered, and finalized on each iteration.
+
+### Decision branch order
+
+```
+streamWithBrain()
+  → response (BrainResponse | StreamInferenceResult)
+  
+  1. responseToolCalls = response.toolCalls         [canonical; may be undefined]
+  
+  2. Loop-detection guard
+       if !responseToolCalls?.length
+         && runtimeSafety.checkResponseLoop(content)
+       → finalResponse = "Loop detected…"  ← ONLY fires when no tool calls present
+         break
+  
+  3. calls = (activeMode === 'rp') ? [] : responseToolCalls
+  
+  4. ToolRequired recovery retry
+       triggers when: hasKeywordIndicatingToolUse || (toolsToSend.length > 0 && calls.length === 0)
+       AND:           calls.length === 0 && activeMode !== 'rp'
+       • sends retryResponse with envelope prompt + filteredTools
+       • populates calls from retryResponse.toolCalls
+       • falls back to brace-depth JSON envelope extraction from retryResponse.content
+       • if calls found: assistantMsg.content ← retryResponse.content (consistency fix)
+       • if calls empty + coding intent: hard-fail ("Tool call required…")  break
+       • if calls empty + other intent: fall through to plain-content path
+  
+  5. Plain-content finalization
+       if calls.length === 0:
+         finalResponse = response.content  ← ONLY reached when no canonical toolCalls
+         break
+  
+  6. Tool execution
+       for each call in calls:
+         ToolService.executeTool(toolName, args, allowedToolNames)
+         if result.startsWith('BROWSER_') && onEvent:
+           dispatchBrowserCommand() → agent-event → workspace browser panel
+         executionLog.toolCalls.push(…)
+```
+
+### Key invariants (enforced post-fix)
+
+| Invariant | Enforcement |
+|-----------|-------------|
+| `finalResponse` from plain content only when canonical toolCalls are truly absent | Loop-detection guard (step 2) skips when `responseToolCalls` non-empty; plain-content path (step 5) only reached when `calls.length === 0` |
+| Browser tool calls always reach `ToolService.executeTool()` | `hasKeywordIndicatingToolUse` now includes browser verbs/nouns; `toolsToSend.length > 0 && calls.length === 0` triggers recovery for any non-RP tool-available turn |
+| Coding turns always hard-fail if no tool calls produced | Coding intent check in step 4 retry failure path |
+| Non-coding retry failures return the original prose response | Non-coding intents fall through to step 5 after a failed retry |
+| assistantMsg context is consistent with its tool_calls | When retry provides calls, assistantMsg.content is sourced from retryResponse |
+
+### hasKeywordIndicatingToolUse patterns
+
+The keyword check (step 4) fires on two sets of patterns ANDed together:
+
+- **File-system verbs** (`create`, `write`, `edit`, …) × **file nouns** (`file`, `script`, `.ts`, `.json`, …)
+- **Browser verbs** (`browse`, `navigate`, `open`, `search`, `click`, `scroll`, `go`, …) × **web nouns** (`url`, `page`, `browser`, `site`, `https`, …) or HTTP URL pattern
+
+---
+
 ### Phase 3A Telemetry Events
 
 All Phase 3A events are emitted in the `cognitive` subsystem:
