@@ -131,7 +131,7 @@ export const A2UIWorkspaceSurface: React.FC<A2UIWorkspaceSurfaceProps> = ({
     );
 
     return (
-        <ErrorBoundary>
+        <ErrorBoundary name="A2UI Workspace Surface">
             <div
                 style={{
                     height: '100%',

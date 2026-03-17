@@ -140,7 +140,7 @@ describe('PromptProfileSelector — profile selection by model size', () => {
     });
 
     it('defaults cloud provider to large_profile when model name has no size indicator', () => {
-        const cloudProvider = makeProvider('openai', 'openai');
+        const cloudProvider = makeProvider('cloud', 'openai');
         const profile = selector.select(cloudProvider, 'gpt-4-turbo', 'turn-001', 'assistant');
         expect(profile.promptProfileClass).toBe('large_profile');
         expect(profile.parameterClass).toBe('large');
