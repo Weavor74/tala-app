@@ -79,35 +79,77 @@ function makeWorldModel(overrides: Partial<TalaWorldModel> = {}): TalaWorldModel
         availability: 'available' as const,
     };
     return {
-        assembledAt: now,
+        timestamp: now,
+        assemblyMode: 'full' as const,
         workspace: {
             meta,
             workspaceRoot: '/home/user/workspace',
-            classification: 'repo',
+            classification: 'repo' as const,
             rootResolved: true,
             knownDirectories: ['src', 'electron', 'shared', 'docs'],
             recentFiles: [],
+            activeFiles: [],
+            openArtifactCount: 0,
         },
         repo: {
             meta,
-            gitAvailable: true,
-            currentBranch: 'main',
+            repoRoot: '/home/user/workspace',
+            isRepo: true,
+            branch: 'main',
             isDirty: false,
-            projectType: 'typescript',
+            changedFileCount: 0,
+            projectType: 'electron_app' as const,
+            detectedDirectories: ['src', 'electron'],
+            hasArchitectureDocs: true,
+            hasIndexedDocs: false,
         },
         runtime: {
             meta,
-            selectedProvider: { providerId: 'ollama', providerName: 'Ollama', status: 'ready' },
-            providerInventory: { total: 1, ready: 1, unavailable: 0, degraded: 0 },
-            mcpSummary: { totalServices: 2, readyServices: 2, degradedServices: 0, unavailableServices: 0, lastUpdatedAt: now },
+            inferenceReady: true,
+            selectedProviderId: 'ollama',
+            selectedProviderName: 'Ollama',
+            totalProviders: 1,
+            readyProviders: 1,
             degradedSubsystems: [],
+            hasActiveDegradation: false,
+            streamActive: false,
         },
-        userGoal: {
+        tools: {
+            meta,
+            enabledTools: [],
+            blockedTools: [],
+            degradedTools: [],
+            mcpServices: [],
+            totalMcpServices: 2,
+            readyMcpServices: 2,
+        },
+        providers: {
+            meta,
+            preferredProviderId: 'ollama',
+            preferredProviderName: 'Ollama',
+            availableProviders: ['ollama'],
+            suppressedProviders: [],
+            degradedProviders: [],
+            totalProviders: 1,
+            lastFallbackApplied: false,
+        },
+        goals: {
             meta,
             immediateTask: 'Test A2UI surfaces',
-            projectFocus: 'tala-app',
-            persistentDirection: undefined,
-            goalIsStale: false,
+            immediateTaskConfidence: 'high' as const,
+            currentProjectFocus: 'tala-app',
+            projectFocusConfidence: 'high' as const,
+            stableDirection: undefined,
+            hasExplicitGoal: false,
+            isStale: false,
+        },
+        summary: {
+            hasDegradedSections: false,
+            hasUnavailableSections: false,
+            degradedSections: [],
+            unavailableSections: [],
+            activeAlerts: [],
+            taskFocus: 'Test A2UI surfaces',
         },
         ...overrides,
     } as TalaWorldModel;
@@ -262,7 +304,7 @@ describe('WorldSurfaceMapper', () => {
 
     it('shows no-git notice when git unavailable', () => {
         const model = makeWorldModel();
-        (model.repo as any).gitAvailable = false;
+        (model.repo as any).isRepo = false;
         const payload = mapWorldSurface(model);
         const rsSection = payload.components.find(c => c.id === 'world-repo');
         const noGitNode = rsSection?.children?.find(c => c.id === 'world-rs-nogit');

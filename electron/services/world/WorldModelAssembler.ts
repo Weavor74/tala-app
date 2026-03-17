@@ -29,6 +29,7 @@ import { userGoalStateBuilder } from './UserGoalStateBuilder';
 import type { UserGoalAssemblyInput } from '../../../shared/worldModelTypes';
 import type { RuntimeDiagnosticsSnapshot } from '../../../shared/runtimeDiagnosticsTypes';
 import type { GitService } from '../GitService';
+import type { A2UISurfaceCoordinator } from '../coordination/A2UISurfaceCoordinator';
 import type {
     TalaWorldModel,
     WorldModelDiagnosticsSummary,
@@ -63,9 +64,19 @@ interface CachedWorldModel {
 export class WorldModelAssembler {
     private _cache: CachedWorldModel | null = null;
     private readonly _options: WorldModelAssemblerOptions;
+    /** Phase 4D: Optional surface coordinator for world-event-driven surface updates. */
+    private _surfaceCoordinator: A2UISurfaceCoordinator | null = null;
 
     constructor(options: Partial<WorldModelAssemblerOptions> = {}) {
         this._options = { ...DEFAULT_OPTIONS, ...options };
+    }
+
+    /**
+     * Phase 4D: Attach a surface coordinator to receive automatic surface
+     * updates when the world model is rebuilt.
+     */
+    public setSurfaceCoordinator(coordinator: A2UISurfaceCoordinator): void {
+        this._surfaceCoordinator = coordinator;
     }
 
     /**
@@ -242,6 +253,23 @@ export class WorldModelAssembler {
         };
 
         this._cache = { model, builtAt: Date.now() };
+
+        // ── Phase 4D: Notify surface coordinator of world model rebuild ────────
+        if (this._surfaceCoordinator) {
+            void this._surfaceCoordinator.coordinate({
+                intentClass: 'workspace',
+                isGreeting: false,
+                mode: 'assistant',
+                triggerType: 'world_event',
+                world: {
+                    hasActiveDegradation: runtime.hasActiveDegradation,
+                    inferenceReady: runtime.inferenceReady,
+                    repoDetected: repo.isRepo,
+                    workspaceResolved: workspace.rootResolved,
+                    justRebuilt: true,
+                },
+            }).catch(() => { /* non-fatal */ });
+        }
 
         // ── Telemetry ─────────────────────────────────────────────────────────
         const telemetryEvent =

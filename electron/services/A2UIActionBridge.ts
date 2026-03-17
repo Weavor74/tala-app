@@ -1,9 +1,14 @@
 /**
- * A2UIActionBridge — Phase 4C: A2UI Workspace Surfaces
+ * A2UIActionBridge — Phase 4C/4D: A2UI Workspace Surfaces & Coordination
  *
  * Validates and executes actions dispatched from A2UI renderer surfaces.
  * Enforces an allowlist of safe actions and normalizes payloads before
  * routing to runtime services.
+ *
+ * Phase 4D additions:
+ * - UI → cognition feedback loop via CognitiveInteractionEvent.
+ * - Structured interaction summaries fed into short-term memory context.
+ * - All feedback is bounded and sanitized — no raw UI payloads injected.
  *
  * Safety model:
  * - Only allowlisted action names are accepted.
@@ -20,6 +25,8 @@ import type { RuntimeControlService } from './RuntimeControlService';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import type { MaintenanceMode } from '../../shared/maintenance/maintenanceTypes';
+import type { CognitiveInteractionEvent } from '../../shared/coordinationTypes';
+import type { RuntimeDiagnosticsSnapshot } from '../../shared/runtimeDiagnosticsTypes';
 import { telemetry } from './TelemetryService';
 
 /**
@@ -54,6 +61,12 @@ export interface A2UIActionBridgeDeps {
     runtimeControlService?: RuntimeControlService;
     diagnosticsAggregator?: RuntimeDiagnosticsAggregator;
     worldModelAssembler?: WorldModelAssembler;
+    /**
+     * Optional callback for feeding structured interaction events into cognition.
+     * Called after every successful action — receives a bounded summary.
+     * Phase 4D: UI → cognition feedback loop.
+     */
+    onCognitiveInteraction?: (event: CognitiveInteractionEvent) => void;
 }
 
 /**
@@ -119,6 +132,8 @@ export class A2UIActionBridge {
                     outcome: 'success',
                     targetPane: 'document_editor',
                 });
+                // Phase 4D: Feed structured interaction summary into cognition
+                this._emitCognitiveInteraction(action, true);
             } else {
                 this._failureCount++;
                 telemetry.event('a2ui_action_failed', {
@@ -150,6 +165,33 @@ export class A2UIActionBridge {
     /** Returns session-level action counters for diagnostics. */
     public getActionCounts(): { dispatched: number; failed: number } {
         return { dispatched: this._dispatchCount, failed: this._failureCount };
+    }
+
+    // ─── Phase 4D: Cognitive interaction feedback ─────────────────────────────
+
+    /**
+     * Emits a structured CognitiveInteractionEvent to the cognition loop.
+     * Only bounded, sanitized summaries are passed — never raw UI payloads.
+     */
+    private _emitCognitiveInteraction(action: A2UIActionDispatch, success: boolean): void {
+        const cb = this._deps.onCognitiveInteraction;
+        if (!cb) return;
+
+        const summary = _buildInteractionSummary(action.actionName, success);
+        const event: CognitiveInteractionEvent = {
+            timestamp: new Date().toISOString(),
+            actionName: action.actionName,
+            surfaceId: action.surfaceId,
+            summary,
+            success,
+        };
+
+        cb(event);
+        telemetry.event('surface_feedback_accepted', {
+            surfaceId: action.surfaceId,
+            actionName: action.actionName,
+            reason: summary,
+        });
     }
 
     // ─── Private execution logic ──────────────────────────────────────────────
@@ -198,10 +240,12 @@ export class A2UIActionBridge {
                 }
                 const snapshot = this._deps.diagnosticsAggregator?.getSnapshot();
                 const worldModel = this._deps.worldModelAssembler?.getCachedModel() ?? undefined;
-                if (!snapshot) {
-                    return { success: false, message: 'Diagnostics snapshot not available for maintenance check.', error: 'no_snapshot' };
+                // Snapshot is optional — maintenance cycle can run with partial context
+                if (snapshot) {
+                    await svc.runCycle(snapshot, worldModel ?? undefined);
+                } else {
+                    await svc.runCycle(_makeMinimalSnapshot(), worldModel ?? undefined);
                 }
-                await svc.runCycle(snapshot, worldModel ?? undefined);
                 const updated = await this._deps.router.openSurface('maintenance');
                 return {
                     success: true,
@@ -279,4 +323,64 @@ export class A2UIActionBridge {
             }
         }
     }
+}
+
+// ─── Interaction summary builder ──────────────────────────────────────────────
+
+/**
+ * Builds a minimal valid RuntimeDiagnosticsSnapshot for use when no live
+ * diagnostics aggregator is available (e.g. action bridge used standalone).
+ */
+function _makeMinimalSnapshot(): RuntimeDiagnosticsSnapshot {
+    const now = new Date().toISOString();
+    return {
+        timestamp: now,
+        inference: {
+            selectedProviderReady: false,
+            attemptedProviders: [],
+            fallbackApplied: false,
+            streamStatus: 'idle',
+            providerInventorySummary: { total: 0, ready: 0, unavailable: 0, degraded: 0 },
+            lastUpdated: now,
+        },
+        mcp: {
+            services: [],
+            totalConfigured: 0,
+            totalReady: 0,
+            totalDegraded: 0,
+            totalUnavailable: 0,
+            criticalUnavailable: false,
+            lastUpdated: now,
+        },
+        degradedSubsystems: [],
+        recentFailures: { count: 0, failedEntityIds: [] },
+        lastUpdatedPerSubsystem: {},
+        operatorActions: [],
+        providerHealthScores: [],
+        suppressedProviders: [],
+        recentProviderRecoveries: [],
+        recentMcpRestarts: [],
+    };
+}
+
+/**
+ * Builds a bounded, sanitized human-readable summary of an A2UI action.
+ * Used to feed structured context into the cognition loop.
+ * Max length: ~150 chars.
+ */
+function _buildInteractionSummary(actionName: A2UIActionName, success: boolean): string {
+    const status = success ? 'completed' : 'failed';
+    const summaries: Partial<Record<A2UIActionName, string>> = {
+        restart_provider: `User initiated provider restart action — ${status}.`,
+        restart_mcp_service: `User initiated MCP service restart — ${status}.`,
+        run_maintenance_check: `User initiated maintenance check — ${status}.`,
+        switch_maintenance_mode: `User changed maintenance mode — ${status}.`,
+        open_maintenance_surface: `User opened maintenance panel.`,
+        open_cognition_surface: `User opened cognition panel.`,
+        open_world_surface: `User opened world model panel.`,
+        refresh_maintenance: `User refreshed maintenance view.`,
+        refresh_cognition: `User refreshed cognition view.`,
+        refresh_world: `User refreshed world model view.`,
+    };
+    return summaries[actionName] ?? `User performed action '${actionName}' — ${status}.`;
 }

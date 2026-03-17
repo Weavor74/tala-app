@@ -21,6 +21,11 @@ This matrix provides a comprehensive mapping of all data and command flows betwe
 | **AgentService** | **MemoryService** | Internal API | Relational and vector semantic search. | High (History) |
 | **SettingsManager** | **app_settings.json** | Atomic File I/O | Persistence of system configuration. | Critical (Security) |
 | **GuardrailService** | **AgentService** | Internal API | Post-inference verification and redaction. | High |
+| **PreInferenceContextOrchestrator** | **A2UISurfaceCoordinator** | Internal API | Intent + mode → surface policy evaluation (Phase 4D). | Low |
+| **MaintenanceLoopService** | **A2UISurfaceCoordinator** | Internal API | Maintenance state changes → surface event trigger (Phase 4D). | Low |
+| **WorldModelAssembler** | **A2UISurfaceCoordinator** | Internal API | World model rebuild → world surface update trigger (Phase 4D). | Low |
+| **A2UISurfaceCoordinator** | **A2UIWorkspaceRouter** | Internal API | Policy decisions → surface open/update/focus routing (Phase 4D). | Low |
+| **A2UIActionBridge** | **Cognitive loop** | Callback | UI action summaries → CognitiveInteractionEvent feedback (Phase 4D). | Low |
 
 ## 3. Boundary Definitions
 

@@ -35,6 +35,7 @@ import type { RuntimeDiagnosticsSnapshot } from '../../../shared/runtimeDiagnost
 import type { TalaWorldModel } from '../../../shared/worldModelTypes';
 import type { RuntimeControlService } from '../RuntimeControlService';
 import type { McpServerConfig } from '../../../shared/settings';
+import type { A2UISurfaceCoordinator } from '../coordination/A2UISurfaceCoordinator';
 import type {
     TalaMaintenanceState,
     MaintenanceDiagnosticsSummary,
@@ -68,6 +69,8 @@ function makeDefaultState(mode: MaintenanceMode = 'recommend_only'): TalaMainten
 export class MaintenanceLoopService {
     private _state: TalaMaintenanceState;
     private _executor: MaintenanceActionExecutor;
+    /** Phase 4D: Optional surface coordinator for event-driven surface updates. */
+    private _surfaceCoordinator: A2UISurfaceCoordinator | null = null;
 
     constructor(
         runtimeControl: RuntimeControlService,
@@ -76,6 +79,14 @@ export class MaintenanceLoopService {
     ) {
         this._state = makeDefaultState(initialMode);
         this._executor = new MaintenanceActionExecutor(runtimeControl, getMcpConfigs);
+    }
+
+    /**
+     * Phase 4D: Attach a surface coordinator to receive automatic surface
+     * updates when maintenance issues are detected or resolved.
+     */
+    public setSurfaceCoordinator(coordinator: A2UISurfaceCoordinator): void {
+        this._surfaceCoordinator = coordinator;
     }
 
     // ─── Mode control ─────────────────────────────────────────────────────────
@@ -212,7 +223,26 @@ export class MaintenanceLoopService {
             await this._executeAutoActions(decisions);
         }
 
-        // 6. Return diagnostics summary
+        // 6. Phase 4D: Notify surface coordinator of maintenance state change
+        if (this._surfaceCoordinator) {
+            const summary = this.getDiagnosticsSummary();
+            void this._surfaceCoordinator.coordinate({
+                intentClass: 'maintenance',
+                isGreeting: false,
+                mode: 'assistant',
+                triggerType: 'maintenance_event',
+                maintenance: {
+                    hasCriticalIssues: (summary.issueCounts?.critical ?? 0) > 0,
+                    hasHighIssues: (summary.issueCounts?.high ?? 0) > 0,
+                    hasPendingAutoAction: summary.hasPendingAutoAction,
+                    hasApprovalNeededAction: summary.hasApprovalNeededAction,
+                    totalIssueCount: summary.activeIssues.length,
+                    justRan: true,
+                },
+            }).catch(() => { /* non-fatal */ });
+        }
+
+        // 7. Return diagnostics summary
         return this.getDiagnosticsSummary();
     }
 

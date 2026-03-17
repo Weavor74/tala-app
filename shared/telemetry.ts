@@ -190,6 +190,16 @@ export type TelemetryEventType =
     | 'a2ui_action_validated'
     | 'a2ui_action_executed'
     | 'a2ui_action_failed'
+    // A2UI surface coordination (Phase 4D)
+    | 'surface_policy_evaluated'
+    | 'surface_decision_open'
+    | 'surface_decision_update'
+    | 'surface_decision_suppress'
+    | 'surface_focus_requested'
+    | 'surface_update_skipped'
+    | 'surface_auto_triggered'
+    | 'surface_user_triggered'
+    | 'surface_feedback_accepted'
     // Generic
     | 'operational'
     | 'developer_debug';
