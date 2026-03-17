@@ -2164,7 +2164,11 @@ Exported standalone package from Tala.
                 }
 
                 // --- LOOP PROTECTION: Response Loop Detection ---
-                if (runtimeSafety.checkResponseLoop(assistantMsg.content)) {
+                // Only trigger when there are no canonical tool calls.  A response that
+                // carries tool calls represents a new *action*, not a repetition of prose,
+                // so we must not drop those tool calls just because the surrounding text
+                // happens to match a previously-seen content hash.
+                if (!responseToolCalls?.length && runtimeSafety.checkResponseLoop(assistantMsg.content)) {
                     console.warn(`[AgentService] LOOP DETECTED for content hash. Halting turn.`);
                     finalResponse = "Loop detected. Halting repeated tool execution. Awaiting new user instruction.";
                     const loopMsg: ChatMessage = { role: 'assistant', content: finalResponse };
@@ -2175,10 +2179,24 @@ Exported standalone package from Tala.
                 let calls = (activeMode === 'rp') ? [] : (responseToolCalls || []);
 
                 // --- HARDENED ToolRequired Gate ---
+                // Fire the recovery-retry whenever the model skipped structured tool calls
+                // despite tools being available.  The original keyword-only heuristic was
+                // too narrow – it missed browser/web tasks and any non-file-system tool use.
+                // New logic: also trigger when tools *were sent* to the model (toolsToSend
+                // is non-empty) but no structured calls came back.  For non-coding turns
+                // the retry is "best-effort": if it also produces no calls we fall through
+                // to plain-content finalization (using the original response text) rather
+                // than hard-failing with an error message.
                 const intentVerbs = ['create', 'write', 'edit', 'modify', 'delete', 'remove', 'add', 'update', 'patch', 'refactor', 'generate', 'scaffold', 'implement', 'fix', 'run', 'execute', 'lint', 'test', 'build', 'install', 'start'];
                 const intentNouns = ['file', 'script', 'folder', 'directory', 'path', 'ts', 'js', 'json', 'md', 'txt', 'npm', 'node', 'pnpm', 'yarn', 'python', 'pytest', 'eslint', 'tsc'];
+                // Browser / web keywords that the original regex missed
+                const browserVerbs = ['browse', 'navigate', 'open', 'search', 'click', 'visit', 'load', 'go', 'type', 'scroll'];
+                const browserNouns = ['website', 'url', 'page', 'browser', 'site', 'link', 'tab', 'http', 'https', 'www'];
                 const lowerUserMsg = userMessage.toLowerCase();
-                const requiresTool = intentVerbs.some(v => lowerUserMsg.includes(v)) && intentNouns.some(n => lowerUserMsg.includes(n));
+                const hasKeywordIndicatingToolUse = (intentVerbs.some(v => lowerUserMsg.includes(v)) && intentNouns.some(n => lowerUserMsg.includes(n)))
+                    || (browserVerbs.some(v => lowerUserMsg.includes(v)) && (browserNouns.some(n => lowerUserMsg.includes(n)) || /https?:\/\//.test(lowerUserMsg)));
+                // Also recover when tools were sent but the model silently skipped them
+                const requiresTool = hasKeywordIndicatingToolUse || (toolsToSend.length > 0 && calls.length === 0);
 
                 if (requiresTool && calls.length === 0 && activeMode !== 'rp') {
                     console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${filteredTools.length}`);
@@ -2251,13 +2269,20 @@ Failure to provide a tool call will result in system termination.`;
                     }
 
                     if (calls.length === 0) {
+                        // Coding turns MUST produce tool calls; any other intent may legitimately
+                        // respond with prose even when tools are available, so we let those fall
+                        // through to the plain-content finalization path below.
                         if (turnObject.intent.class === 'coding') {
                             console.log(`[AgentService] HardFail: intent=coding but no tool calls after retry`);
                             finalResponse = "Tool call required for this task. The model did not emit tool calls.";
-                        } else {
-                            finalResponse = "Tool call required for this task. Re-issue using tools only.";
+                            break;
                         }
-                        break;
+                        // Non-coding: fall through to plain-content path (calls.length === 0 below).
+                    } else {
+                        // Retry produced tool calls — update assistantMsg to use the retry
+                        // response's content so the committed message is internally consistent
+                        // (content and tool_calls come from the same inference call).
+                        assistantMsg.content = retryResponse.content || "";
                     }
                 }
 
@@ -2265,7 +2290,11 @@ Failure to provide a tool call will result in system termination.`;
                 console.log(`[AgentService] decision hasToolCalls=${calls.length > 0} willExecuteTools=${calls.length > 0}`);
 
                 if (calls.length === 0) {
-                    console.log(`[AgentService] finalizing plain content hasToolCalls=false`);
+                    // Guard: for non-RP mode calls is derived directly from responseToolCalls,
+                    // so calls.length === 0 implies responseToolCalls is truly absent.
+                    // For RP mode calls is always [] and any model-hallucinated responseToolCalls
+                    // are intentionally ignored (tools are disabled in RP mode).
+                    console.log(`[AgentService] finalizing plain content hasToolCalls=false responseToolCalls=${responseToolCalls?.length ?? 0} mode=${activeMode}`);
                     finalResponse = response.content || "";
                     this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
