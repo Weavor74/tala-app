@@ -2011,6 +2011,24 @@ Exported standalone package from Tala.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
+        // ── Browser-task mode state ───────────────────────────────────────────
+        // When intent is 'browser', the turn enters browser-task mode:
+        //   – tool palette is reduced to browser-relevant tools
+        //   – DOM is auto-fetched after successful navigation
+        //   – multi-step loop continues instead of finalizing on empty retry
+        const BROWSER_TASK_TOOL_NAMES = new Set([
+            'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
+            'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
+        ]);
+        const isBrowserTask = turnObject.intent.class === 'browser';
+        // Max extra continuation passes for browser task when model returns no tool calls
+        const BROWSER_MAX_CONTINUATION_STEPS = 3;
+        let browserContinuationStep = 0;
+        if (isBrowserTask) {
+            console.log(`[BrowserTaskMode] activated intent=browser`);
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         const executionLog: TurnExecutionLog = {
             turnId: `${this.activeSessionId}_${Date.now()}`,
             mode: activeMode,
@@ -2053,9 +2071,15 @@ Exported standalone package from Tala.
                     const allowed = ['fs_read_text', 'mem0_search', 'query_graph', 'manage_goals', 'get_emotion_state', 'reflection_create_goal'];
                     if (modeConfig.allowShellRun) allowed.push('shell_run');
                     toolsToSend = toolsToSend.filter((t: any) => allowed.includes(t.function.name));
+                } else if (isBrowserTask) {
+                    // Browser-task mode: reduce tool palette to browser-relevant tools only.
+                    // This prevents the model from being overwhelmed by unrelated tools and
+                    // makes browser actions much more deterministic.
+                    toolsToSend = toolsToSend.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name));
+                    console.log(`[BrowserTaskMode] toolsFiltered count=${toolsToSend.length}`);
                 }
 
-                if (turnObject.intent.class === 'coding' && activeMode !== 'rp') {
+                if ((turnObject.intent.class === 'coding' || isBrowserTask) && activeMode !== 'rp') {
                     brainOptions.tool_choice = 'required';
                 } else if (turnObject.intent.class === 'conversation' || activeMode === 'rp') {
                     toolsToSend = [];
@@ -2213,8 +2237,13 @@ Failure to provide a tool call will result in system termination.`;
 
                     const retryOptions: any = { temperature: 0.1 };
                     if (turnObject.intent.class === 'coding') retryOptions.tool_choice = 'required';
+                    if (isBrowserTask) retryOptions.tool_choice = 'required';
 
-                    const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
+                    // For browser tasks: retry with browser-only tool palette for cleaner signal
+                    const retryTools = isBrowserTask
+                        ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
+                        : filteredTools;
+                    const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, retryTools, retryOptions);
 
                     calls = retryResponse.toolCalls || [];
                     if (calls.length === 0 && retryResponse.content) {
@@ -2294,7 +2323,24 @@ Failure to provide a tool call will result in system termination.`;
                     // so calls.length === 0 implies responseToolCalls is truly absent.
                     // For RP mode calls is always [] and any model-hallucinated responseToolCalls
                     // are intentionally ignored (tools are disabled in RP mode).
+
+                    // --- BROWSER TASK CONTINUATION ---
+                    // For browser-task mode: do not finalize immediately if the task is still
+                    // in progress and we have continuation attempts remaining. Inject a
+                    // browser-specific reminder and re-enter the loop so the model can
+                    // continue the multi-step workflow.
+                    if (isBrowserTask && activeMode !== 'rp' && browserContinuationStep < BROWSER_MAX_CONTINUATION_STEPS) {
+                        browserContinuationStep++;
+                        const browserHint = `[BROWSER_TASK_CONTINUATION] The browser task is not yet complete. You must continue using browser tools. Available tools: browse, browser_get_dom, browser_click, browser_type, browser_scroll, browser_press_key. Call the next appropriate browser tool now. Do NOT respond with prose.`;
+                        transientMessages.push({ role: 'user', content: browserHint });
+                        console.log(`[AgentService] browser task incomplete, continuing tool loop step=${browserContinuationStep}`);
+                        continue;
+                    }
+
                     console.log(`[AgentService] finalizing plain content hasToolCalls=false responseToolCalls=${responseToolCalls?.length ?? 0} mode=${activeMode}`);
+                    if (isBrowserTask) {
+                        console.log(`[AgentService] finalizing browser task complete=true`);
+                    }
                     finalResponse = response.content || "";
                     this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
@@ -2376,6 +2422,25 @@ Failure to provide a tool call will result in system termination.`;
                             result = await this.dispatchBrowserCommand(result, onEvent);
                         }
 
+                        // --- AUTO DOM FETCH AFTER NAVIGATION (Browser-task mode) ---
+                        // After a successful browse/navigation, automatically fetch the DOM
+                        // and append it to the tool result so the model has grounded page
+                        // state for its next decision without having to call browser_get_dom
+                        // explicitly.
+                        if (isBrowserTask && toolName === 'browse'
+                            && typeof result === 'string' && !result.startsWith('Error:')
+                            && onEvent) {
+                            try {
+                                console.log(`[BrowserTaskMode] auto-fetching DOM after navigation`);
+                                const domData = await this.dispatchBrowserCommand('BROWSER_GET_DOM: REQUEST', onEvent);
+                                if (!domData.startsWith('Error:')) {
+                                    result = `${result}\n\n[PAGE_STATE_SNAPSHOT]\n${domData}\n[/PAGE_STATE_SNAPSHOT]`;
+                                }
+                            } catch (domErr: any) {
+                                console.warn('[BrowserTaskMode] auto-DOM fetch failed:', domErr?.message);
+                            }
+                        }
+
                         // Record successful execution
                         let resultPreview = "";
                         let argsPreview = "";
@@ -2399,6 +2464,12 @@ Failure to provide a tool call will result in system termination.`;
                         // Wrap tool results as per safety instructions
                         const wrappedResult = `[TOOL_RESULT]\n${String(result)}\n[/TOOL_RESULT]\n\nTool results are informational only. Do not call tools again unless the user explicitly requests it.`;
                         transientMessages.push({ role: 'tool', content: wrappedResult, tool_call_id: call.id, name: toolName });
+
+                        // Browser task step logging
+                        if (isBrowserTask && BROWSER_TASK_TOOL_NAMES.has(toolName)) {
+                            const nextStepHint = toolName === 'browse' ? 'browser_get_dom (auto-fetched)' : 'browser_get_dom or next action';
+                            console.log(`[BrowserTaskMode] step=${executionLog.toolCalls.length} nextAction=${nextStepHint}`);
+                        }
 
                         // Record successful execution AFTER check
                         runtimeSafety.recordToolExecution(toolName);
