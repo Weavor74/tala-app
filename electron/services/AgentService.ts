@@ -2014,16 +2014,23 @@ Exported standalone package from Tala.
         // ── Browser-task mode state ───────────────────────────────────────────
         // When intent is 'browser', the turn enters browser-task mode:
         //   – tool palette is reduced to browser-relevant tools
-        //   – DOM is auto-fetched after successful navigation
+        //   – DOM is auto-fetched after every successful mutating browser action
         //   – multi-step loop continues instead of finalizing on empty retry
         const BROWSER_TASK_TOOL_NAMES = new Set([
             'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
             'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
         ]);
+        // Tools that mutate page state and should trigger an auto DOM refresh.
+        const BROWSER_MUTATING_TOOL_NAMES = new Set([
+            'browse', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll',
+        ]);
         const isBrowserTask = turnObject.intent.class === 'browser';
         // Max extra continuation passes for browser task when model returns no tool calls
         const BROWSER_MAX_CONTINUATION_STEPS = 3;
         let browserContinuationStep = 0;
+        // Tracks whether at least one mutating browser action succeeded this turn.
+        // Used to distinguish genuine task completion from loop-exhaustion stalls.
+        let browserTaskHadSuccessfulAction = false;
         if (isBrowserTask) {
             console.log(`[BrowserTaskMode] activated intent=browser`);
         }
@@ -2339,9 +2346,24 @@ Failure to provide a tool call will result in system termination.`;
 
                     console.log(`[AgentService] finalizing plain content hasToolCalls=false responseToolCalls=${responseToolCalls?.length ?? 0} mode=${activeMode}`);
                     if (isBrowserTask) {
-                        console.log(`[AgentService] finalizing browser task complete=true`);
+                        // Distinguish genuine completion from loop-exhaustion stall.
+                        // A stall means: the continuation limit was reached AND no mutating
+                        // browser action succeeded during this turn.
+                        const stalled = browserContinuationStep >= BROWSER_MAX_CONTINUATION_STEPS
+                            && !browserTaskHadSuccessfulAction;
+                        if (stalled) {
+                            console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
+                            // Prepend an incomplete notice to the model's response so the caller
+                            // can surface the reason to the user.
+                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
+                            finalResponse = `${incompleteNote}\n\n${response.content || ''}`.trim();
+                        } else {
+                            console.log(`[AgentService] finalizing browser task complete=true hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
+                            finalResponse = response.content || "";
+                        }
+                    } else {
+                        finalResponse = response.content || "";
                     }
-                    finalResponse = response.content || "";
                     this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
                 }
@@ -2422,16 +2444,18 @@ Failure to provide a tool call will result in system termination.`;
                             result = await this.dispatchBrowserCommand(result, onEvent);
                         }
 
-                        // --- AUTO DOM FETCH AFTER NAVIGATION (Browser-task mode) ---
-                        // After a successful browse/navigation, automatically fetch the DOM
-                        // and append it to the tool result so the model has grounded page
-                        // state for its next decision without having to call browser_get_dom
-                        // explicitly.
-                        if (isBrowserTask && toolName === 'browse'
+                        // --- AUTO DOM FETCH AFTER MUTATING BROWSER ACTIONS (Browser-task mode) ---
+                        // After any successful mutating browser action, automatically fetch the DOM
+                        // so the model has grounded page state for its next decision without having
+                        // to call browser_get_dom explicitly.
+                        // Mutating tools: browse, browser_click, browser_type, browser_press_key,
+                        // browser_scroll.  browser_hover and browser_get_dom are excluded.
+                        if (isBrowserTask && BROWSER_MUTATING_TOOL_NAMES.has(toolName)
                             && typeof result === 'string' && !result.startsWith('Error:')
                             && onEvent) {
+                            browserTaskHadSuccessfulAction = true;
                             try {
-                                console.log(`[BrowserTaskMode] auto-fetching DOM after navigation`);
+                                console.log(`[BrowserTaskMode] auto-fetching DOM after ${toolName}`);
                                 const domData = await this.dispatchBrowserCommand('BROWSER_GET_DOM: REQUEST', onEvent);
                                 if (!domData.startsWith('Error:')) {
                                     result = `${result}\n\n[PAGE_STATE_SNAPSHOT]\n${domData}\n[/PAGE_STATE_SNAPSHOT]`;
@@ -2467,8 +2491,8 @@ Failure to provide a tool call will result in system termination.`;
 
                         // Browser task step logging
                         if (isBrowserTask && BROWSER_TASK_TOOL_NAMES.has(toolName)) {
-                            const nextStepHint = toolName === 'browse' ? 'browser_get_dom (auto-fetched)' : 'browser_get_dom or next action';
-                            console.log(`[BrowserTaskMode] step=${executionLog.toolCalls.length} nextAction=${nextStepHint}`);
+                            const autoFetched = BROWSER_MUTATING_TOOL_NAMES.has(toolName) ? 'dom-auto-fetched' : 'no-auto-fetch';
+                            console.log(`[BrowserTaskMode] step=${executionLog.toolCalls.length} tool=${toolName} ${autoFetched}`);
                         }
 
                         // Record successful execution AFTER check
@@ -3136,6 +3160,31 @@ Failure to provide a tool call will result in system termination.`;
      * @param onEvent    The agent-event callback provided by IpcRouter.
      * @returns The real browser result to be wrapped in [TOOL_RESULT].
      */
+    /**
+     * Normalises a browser element selector so that the preload script can
+     * resolve it via `data-tala-id`.
+     *
+     * The DOM snapshot (`browser_get_dom`) emits lines like:
+     *   `12[:V] <input:text> Search`
+     *
+     * A model that copies the whole line (or a summary like "[12] INPUT SEARCH")
+     * back as a selector would fail the `/^\d+$/.test(selector)` check in the
+     * preload.  Extract just the leading digits so both formats are accepted.
+     *
+     * CSS selectors (containing letters before any digit group, or containing
+     * common CSS characters) are passed through unchanged.
+     */
+    private static normalizeBrowserSelector(raw: string): string {
+        // Formats handled:
+        //   "12[:V] <input:text> Search"  → "12"
+        //   "[12] INPUT SEARCH"           → "12"
+        //   "12"                          → "12"  (already canonical)
+        //   "input[name='q']"             → pass through (CSS selector)
+        const m = raw.match(/^\[?(\d+)\]?(?:\[|[:, <]|$)/);
+        if (m) return m[1];
+        return raw;
+    }
+
     private async dispatchBrowserCommand(
         rawResult: string,
         onEvent: (type: string, data: any) => void
@@ -3152,26 +3201,35 @@ Failure to provide a tool call will result in system termination.`;
         }
 
         if (rawResult.startsWith('BROWSER_CLICK: ')) {
-            const selector = rawResult.slice('BROWSER_CLICK: '.length).trim();
-            console.log(`[BrowserTool] click selector="${selector}" targetSurface=${surfaceId}`);
+            const rawSelector = rawResult.slice('BROWSER_CLICK: '.length).trim();
+            const selector = AgentService.normalizeBrowserSelector(rawSelector);
+            console.log(`[BrowserTool] click selector="${selector}" (raw="${rawSelector}") targetSurface=${surfaceId}`);
             onEvent('browser-click', { selector, surfaceId });
-            return await this.waitForBrowserData('action-response');
+            const ack = await this.waitForBrowserData('action-response');
+            console.log(`[BrowserTool] click ack success=${!ack.startsWith('Error:')} target=${selector} message="${ack}"`);
+            return ack;
         }
 
         if (rawResult.startsWith('BROWSER_HOVER: ')) {
-            const selector = rawResult.slice('BROWSER_HOVER: '.length).trim();
+            const rawSelector = rawResult.slice('BROWSER_HOVER: '.length).trim();
+            const selector = AgentService.normalizeBrowserSelector(rawSelector);
             console.log(`[BrowserTool] hover selector="${selector}" targetSurface=${surfaceId}`);
             onEvent('browser-hover', { selector, surfaceId });
-            return await this.waitForBrowserData('action-response');
+            const ack = await this.waitForBrowserData('action-response');
+            console.log(`[BrowserTool] hover ack success=${!ack.startsWith('Error:')} target=${selector} message="${ack}"`);
+            return ack;
         }
 
         if (rawResult.startsWith('BROWSER_TYPE: ')) {
             const argsStr = rawResult.slice('BROWSER_TYPE: '.length).trim();
             let args: { selector?: string; text?: string } = {};
             try { args = JSON.parse(argsStr); } catch { args = {}; }
+            if (args.selector) args.selector = AgentService.normalizeBrowserSelector(args.selector);
             console.log(`[BrowserTool] type selector="${args.selector ?? ''}" textLength=${args.text?.length ?? 0} targetSurface=${surfaceId}`);
             onEvent('browser-type', { ...args, surfaceId });
-            return await this.waitForBrowserData('action-response');
+            const ack = await this.waitForBrowserData('action-response');
+            console.log(`[BrowserTool] type ack success=${!ack.startsWith('Error:')} target=${args.selector ?? ''} message="${ack}"`);
+            return ack;
         }
 
         if (rawResult.startsWith('BROWSER_SCROLL: ')) {
@@ -3180,14 +3238,18 @@ Failure to provide a tool call will result in system termination.`;
             try { args = JSON.parse(argsStr); } catch { args = {}; }
             console.log(`[BrowserTool] scroll direction=${args.direction ?? 'down'} targetSurface=${surfaceId}`);
             onEvent('browser-scroll', { ...args, surfaceId });
-            return await this.waitForBrowserData('action-response');
+            const ack = await this.waitForBrowserData('action-response');
+            console.log(`[BrowserTool] scroll ack success=${!ack.startsWith('Error:')} direction=${args.direction ?? 'down'} message="${ack}"`);
+            return ack;
         }
 
         if (rawResult.startsWith('BROWSER_PRESS_KEY: ')) {
             const key = rawResult.slice('BROWSER_PRESS_KEY: '.length).trim();
             console.log(`[BrowserTool] press_key key="${key}" targetSurface=${surfaceId}`);
             onEvent('browser-press-key', { key, surfaceId });
-            return await this.waitForBrowserData('action-response');
+            const ack = await this.waitForBrowserData('action-response');
+            console.log(`[BrowserTool] press_key ack success=${!ack.startsWith('Error:')} key=${key} message="${ack}"`);
+            return ack;
         }
 
         if (rawResult === 'BROWSER_GET_DOM: REQUEST') {
