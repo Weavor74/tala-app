@@ -34,6 +34,7 @@ import { reflectionContributionStore } from './ReflectionContributionModel';
 import { telemetry } from '../TelemetryService';
 import type { WorldModelAssembler } from '../world/WorldModelAssembler';
 import type { TalaWorldModel } from '../../../shared/worldModelTypes';
+import type { MaintenanceLoopService } from '../maintenance/MaintenanceLoopService';
 
 // ─── External service interfaces ─────────────────────────────────────────────
 
@@ -107,6 +108,14 @@ export interface PreInferenceOrchestrationResult {
      */
     worldStateSummary?: string;
 
+    // ─── Maintenance summary contribution (Phase 4B) ──────────────────────
+    /**
+     * Optional compact maintenance summary contributed when maintenance issues
+     * are relevant to the current turn (e.g. troubleshooting, technical intents).
+     * Suppressed on general chat turns to avoid noise.
+     */
+    maintenanceSummary?: string;
+
     // ─── Orchestration metadata ───────────────────────────────────────────
     /** Sources that were queried this turn. */
     sourcesQueried: string[];
@@ -134,6 +143,7 @@ export class PreInferenceContextOrchestrator {
         private readonly docIntel: DocumentationIntelligenceService | null,
         private readonly mcpService: McpPreInferenceServiceLike | null = null,
         private readonly worldModelAssembler: WorldModelAssembler | null = null,
+        private readonly maintenanceLoop: MaintenanceLoopService | null = null,
     ) {}
 
     /**
@@ -460,6 +470,22 @@ export class PreInferenceContextOrchestrator {
                 );
             }
 
+            // ── 7. Maintenance summary contribution (Phase 4B) ───────────────
+            // Selectively inject maintenance context on troubleshooting/technical turns.
+            // Suppressed on general chat, greeting, and RP mode to avoid noise.
+            let maintenanceSummary: string | undefined;
+            if (this.maintenanceLoop && this._isMaintenanceRelevant(mode, intentClass)) {
+                if (this.maintenanceLoop.hasActionableIssues()) {
+                    const cognitiveSummary = this.maintenanceLoop.getCognitiveSummary();
+                    maintenanceSummary = this._buildMaintenanceSummary(cognitiveSummary);
+                    sourcesQueried.push('maintenance');
+                } else {
+                    sourcesSuppressed.push('maintenance');
+                }
+            } else {
+                sourcesSuppressed.push('maintenance');
+            }
+
             return {
                 turnContext,
                 approvedMemories,
@@ -478,6 +504,7 @@ export class PreInferenceContextOrchestrator {
                 astroStateText,
                 mcpContextSummary,
                 worldStateSummary,
+                maintenanceSummary,
                 sourcesQueried,
                 sourcesSuppressed,
                 orchestrationDurationMs,
@@ -603,5 +630,47 @@ export class PreInferenceContextOrchestrator {
         }
 
         return parts.join(' | ');
+    }
+
+    /**
+     * Returns true if maintenance summary should be contributed for this turn.
+     * Suppressed on RP mode, greetings, and general conversation.
+     */
+    private _isMaintenanceRelevant(mode: Mode, intentClass: string): boolean {
+        if (mode === 'rp') return false;
+        if (intentClass === 'greeting' || intentClass === 'conversation') return false;
+        return (
+            intentClass === 'technical' ||
+            intentClass === 'task' ||
+            intentClass === 'troubleshooting' ||
+            intentClass === 'coding' ||
+            intentClass === 'workspace'
+        );
+    }
+
+    /**
+     * Builds a compact maintenance summary string for cognitive injection.
+     * Compact and safe — no raw issue details or execution logs.
+     */
+    private _buildMaintenanceSummary(
+        summary: import('../../../shared/maintenance/maintenanceTypes').MaintenanceCognitiveSummary,
+    ): string {
+        const parts: string[] = [];
+        if (summary.topIssueDescription) {
+            parts.push(`[Maintenance] ${summary.topIssueDescription}`);
+        }
+        if (summary.activeIssueCount > 1) {
+            parts.push(`+${summary.activeIssueCount - 1} more issue(s).`);
+        }
+        if (summary.recommendedAction) {
+            parts.push(summary.recommendedAction);
+        }
+        if (summary.pendingApproval) {
+            parts.push('User approval needed for a maintenance action.');
+        }
+        if (summary.recentAutoRecovery) {
+            parts.push('Auto-recovery was recently attempted.');
+        }
+        return parts.join(' ');
     }
 }

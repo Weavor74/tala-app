@@ -46,6 +46,8 @@ export interface IpcRouterContext {
   runtimeControl: RuntimeControlService;
   /** World model assembler — Phase 4A canonical world-model builder. */
   worldModelAssembler?: WorldModelAssembler;
+  /** Maintenance loop service — Phase 4B self-maintenance foundation. */
+  maintenanceLoopService?: import('./maintenance/MaintenanceLoopService').MaintenanceLoopService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -1782,6 +1784,44 @@ export class IpcRouter {
       return assembler.buildDiagnosticsSummary(model);
     });
 
+    /**
+     * Phase 4B — Self-maintenance diagnostics read model.
+     * Returns the current MaintenanceDiagnosticsSummary or null if not initialized.
+     * Read-only for the renderer; no policy evaluation is pushed to the UI.
+     */
+    ipcMain.handle('diagnostics:getMaintenanceState', async () => {
+      const maintenance = this.ctx.maintenanceLoopService;
+      if (!maintenance) return null;
+      return maintenance.getDiagnosticsSummary();
+    });
+
+    /**
+     * Phase 4B — Trigger a manual maintenance check cycle.
+     * Respects current maintenance mode; never bypasses policy or safety gates.
+     */
+    ipcMain.handle('diagnostics:runMaintenanceCheck', async () => {
+      const maintenance = this.ctx.maintenanceLoopService;
+      if (!maintenance) return null;
+      const aggregator = this.ctx.diagnosticsAggregator;
+      const worldModel = this.ctx.worldModelAssembler?.getCachedModel() ?? undefined;
+      const snapshot = aggregator.getSnapshot();
+      return maintenance.runCycle(snapshot, worldModel);
+    });
+
+    /**
+     * Phase 4B — Change the maintenance mode.
+     * Allowed values: 'observation_only' | 'recommend_only' | 'safe_auto_recovery'
+     */
+    ipcMain.handle('diagnostics:setMaintenanceMode', async (_e, mode: string) => {
+      const maintenance = this.ctx.maintenanceLoopService;
+      if (!maintenance) return { success: false, error: 'Maintenance loop service not initialized.' };
+      const allowed = ['observation_only', 'recommend_only', 'safe_auto_recovery'];
+      if (!allowed.includes(mode)) {
+        return { success: false, error: `Invalid maintenance mode '${mode}'.` };
+      }
+      maintenance.setMode(mode as any);
+      return { success: true, mode };
+    });
 
   }
 }
