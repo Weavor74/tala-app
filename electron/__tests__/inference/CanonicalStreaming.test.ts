@@ -97,6 +97,8 @@ function makeProvider(id = 'ollama-test'): InferenceProviderDescriptor {
         health: 'healthy',
         status: 'ready',
         priority: 10,
+        capabilities: { streaming: true, toolCalls: false, vision: false, embeddings: false },
+        models: ['llama3:latest'],
         preferredModel: 'llama3',
     };
 }

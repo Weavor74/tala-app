@@ -444,8 +444,7 @@ export class McpService {
                 if (conn.state === ServerState.DEGRADED) {
                     // Transition to FAILED after exhausting all retry attempts
                     if (conn.retryCount >= MAX_RETRY_BEFORE_FAILED) {
-                        if (conn.state !== ServerState.FAILED) {
-                            conn.state = ServerState.FAILED;
+                        conn.state = ServerState.FAILED;
                             auditLogger.warn('mcp_server_failed', 'McpService', {
                                 serverId: id,
                                 name: conn.config.name,

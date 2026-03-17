@@ -33,7 +33,7 @@ function makeProvider(overrides: Partial<InferenceProviderDescriptor> = {}): Inf
         health: 'healthy',
         status: 'ready',
         priority: 1,
-        capabilities: { streaming: true, tools: false, vision: false, json_mode: false },
+        capabilities: { streaming: true, toolCalls: false, vision: false, embeddings: false },
         models: ['llama3:latest'],
         preferredModel: 'llama3:latest',
         ...overrides,

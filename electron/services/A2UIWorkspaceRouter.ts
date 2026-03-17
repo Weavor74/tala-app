@@ -74,24 +74,18 @@ export class A2UIWorkspaceRouter {
     ): Promise<A2UISurfacePayload | null> {
         const focus = opts.focus ?? true;
 
-        telemetry.event('a2ui_surface_open_requested', {
-            surfaceId,
-            surfaceType: surfaceId,
-            targetPane: 'document_editor',
-        });
+        telemetry.emit('system', 'a2ui_surface_open_requested', 'info', 'A2UIWorkspaceRouter',
+            `A2UI surface open requested: ${surfaceId}`, 'success',
+            { payload: { surfaceId, surfaceType: surfaceId, targetPane: 'document_editor' } });
 
         let payload: A2UISurfacePayload | null = null;
         try {
             payload = await this._assemblePayload(surfaceId, focus);
         } catch (err) {
             this._failureCount++;
-            telemetry.event('a2ui_surface_failed', {
-                surfaceId,
-                surfaceType: surfaceId,
-                targetPane: 'document_editor',
-                outcome: 'failure',
-                reason: err instanceof Error ? err.message : String(err),
-            });
+            telemetry.emit('system', 'a2ui_surface_failed', 'warn', 'A2UIWorkspaceRouter',
+                `A2UI surface assembly failed: ${surfaceId}`, 'failure',
+                { payload: { surfaceId, surfaceType: surfaceId, targetPane: 'document_editor', outcome: 'failure', reason: err instanceof Error ? err.message : String(err) } });
             console.error(`[A2UIWorkspaceRouter] Failed to assemble surface '${surfaceId}':`, err);
             return null;
         }
@@ -99,13 +93,9 @@ export class A2UIWorkspaceRouter {
         const win = this._deps.getMainWindow();
         if (!win || win.isDestroyed()) {
             this._failureCount++;
-            telemetry.event('a2ui_surface_failed', {
-                surfaceId,
-                surfaceType: surfaceId,
-                targetPane: 'document_editor',
-                outcome: 'failure',
-                reason: 'No active BrowserWindow',
-            });
+            telemetry.emit('system', 'a2ui_surface_failed', 'warn', 'A2UIWorkspaceRouter',
+                `A2UI surface failed — no window: ${surfaceId}`, 'failure',
+                { payload: { surfaceId, surfaceType: surfaceId, targetPane: 'document_editor', outcome: 'failure', reason: 'No active BrowserWindow' } });
             return null;
         }
 
@@ -127,13 +117,9 @@ export class A2UIWorkspaceRouter {
 
         const isUpdate = this._openSurfaces.has(surfaceId);
         const eventType = isUpdate ? 'a2ui_surface_updated' : 'a2ui_surface_opened';
-        telemetry.event(eventType, {
-            surfaceId,
-            surfaceType: surfaceId,
-            targetPane: 'document_editor',
-            focused: focus,
-            outcome: 'success',
-        });
+        telemetry.emit('system', eventType, 'info', 'A2UIWorkspaceRouter',
+            `A2UI surface ${isUpdate ? 'updated' : 'opened'}: ${surfaceId}`, 'success',
+            { payload: { surfaceId, surfaceType: surfaceId, targetPane: 'document_editor', focused: focus, outcome: 'success' } });
 
         console.log(`[A2UIWorkspaceRouter] Surface '${surfaceId}' opened/updated. Tab: ${payload.tabId}`);
         return payload;
