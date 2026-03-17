@@ -2040,6 +2040,8 @@ Exported standalone package from Tala.
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
             turn++;
+            const toolResultsCount = transientMessages.filter(m => m.role === 'tool').length;
+            console.log(`[AgentService] retry loop iteration=${turn} toolResults=${toolResultsCount}`);
             const truncated = this.truncateHistory([...this.chatHistory, ...transientMessages], messageBudget);
 
             try {
@@ -2260,7 +2262,10 @@ Failure to provide a tool call will result in system termination.`;
                 }
 
 
+                console.log(`[AgentService] decision hasToolCalls=${calls.length > 0} willExecuteTools=${calls.length > 0}`);
+
                 if (calls.length === 0) {
+                    console.log(`[AgentService] finalizing plain content hasToolCalls=false`);
                     finalResponse = response.content || "";
                     this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;

@@ -311,6 +311,9 @@ export class InferenceService {
 
                 brainResult = await Promise.race([streamPromise, openTimeoutPromise]);
 
+                const hasToolCalls = !!(brainResult?.toolCalls?.length);
+                console.log(`[BrainResponse] hasToolCalls=${hasToolCalls} toolCalls=[${(brainResult?.toolCalls ?? []).map(tc => tc.function?.name).join(',')}]`);
+
                 const completedAt = new Date().toISOString();
                 const durationMs = Date.now() - new Date(startedAt).getTime();
 
