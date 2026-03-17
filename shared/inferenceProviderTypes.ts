@@ -301,7 +301,8 @@ export interface CanonicalToolCall {
         name: string;
         /**
          * Arguments for the function.
-         * May be a pre-parsed object or a raw JSON string depending on the provider.
+         * Brain implementations may return a pre-parsed object or a raw JSON string;
+         * AgentService normalizes both forms before dispatching to ToolService.executeTool().
          */
         arguments: Record<string, unknown> | string;
     };
