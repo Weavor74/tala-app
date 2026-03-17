@@ -58,3 +58,23 @@ The world model is integrated into `PreInferenceContextOrchestrator` as a select
 IPC: `diagnostics:getWorldModel` returns `WorldModelDiagnosticsSummary` (read-only, renderer-safe).
 
 See [`docs/architecture/phase4a_world_model.md`](./phase4a_world_model.md) for full details.
+
+
+## 8. Self-Maintenance Layer (Phase 4B)
+
+Phase 4B adds a bounded self-maintenance foundation that lets Tala detect unhealthy operational state and take safe, policy-driven recovery actions.
+
+The self-maintenance layer sits on top of the World Model and Runtime Diagnostics systems. Key components:
+
+- **`MaintenanceIssueDetector`** — detects issues from `RuntimeDiagnosticsSnapshot` and `TalaWorldModel` (provider health, MCP flapping, world model degradation)
+- **`MaintenancePolicyEngine`** — single canonical policy engine that classifies each issue into: `monitor`, `recommend_action`, `request_user_approval`, `auto_execute`, or `suppress_temporarily`
+- **`MaintenanceActionExecutor`** — wraps `RuntimeControlService` with safety gates, structured result objects, and telemetry
+- **`MaintenanceLoopService`** — bounded maintenance state manager; supports `observation_only`, `recommend_only`, and `safe_auto_recovery` modes
+
+Maintenance state is exposed via:
+- `diagnostics:getMaintenanceState` — IPC read model
+- `diagnostics:runMaintenanceCheck` — trigger manual cycle
+- `diagnostics:setMaintenanceMode` — change operational mode
+- `PreInferenceContextOrchestrator` — compact maintenance summary injected selectively on troubleshooting/technical turns
+
+See [`docs/architecture/phase4b_self_maintenance_foundation.md`](./phase4b_self_maintenance_foundation.md) for full details.

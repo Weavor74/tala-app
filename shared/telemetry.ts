@@ -38,6 +38,7 @@ export type TelemetrySubsystem =
     | 'audit'
     | 'system'
     | 'world_model'
+    | 'maintenance'
     | 'unknown';
 
 // ─── Event type categories ────────────────────────────────────────────────────
@@ -170,6 +171,16 @@ export type TelemetryEventType =
     // Degraded / fallback
     | 'degraded_fallback'
     | 'subsystem_unavailable'
+    // Phase 4B — Self-maintenance
+    | 'maintenance_issue_detected'
+    | 'maintenance_issue_cleared'
+    | 'maintenance_policy_evaluated'
+    | 'maintenance_action_recommended'
+    | 'maintenance_action_autoexecuted'
+    | 'maintenance_action_skipped'
+    | 'maintenance_action_failed'
+    | 'maintenance_cooldown_applied'
+    | 'maintenance_mode_changed'
     // Generic
     | 'operational'
     | 'developer_debug';
