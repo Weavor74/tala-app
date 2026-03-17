@@ -363,4 +363,44 @@ describe('InferenceService.executeStream()', () => {
         expect(result.promptTokens).toBe(5);
         expect(result.completionTokens).toBe(10);
     });
+
+    it('tool calls returned by the brain are propagated into StreamInferenceResult.toolCalls', async () => {
+        const service = makeService();
+
+        const brain = makeBrain(async (_msgs, _sys, onChunk) => {
+            onChunk('');
+            return {
+                content: '',
+                toolCalls: [
+                    {
+                        id: 'call-1',
+                        type: 'function' as const,
+                        function: { name: 'read_file', arguments: { path: '/tmp/test.ts' } },
+                    },
+                ],
+            } satisfies BrainResponse;
+        });
+
+        const result = await service.executeStream(brain, [], '', () => {}, makeRequest());
+
+        expect(result.success).toBe(true);
+        expect(result.toolCalls).toBeDefined();
+        expect(result.toolCalls).toHaveLength(1);
+        expect(result.toolCalls![0].function.name).toBe('read_file');
+        expect(result.toolCalls![0].id).toBe('call-1');
+    });
+
+    it('StreamInferenceResult.toolCalls is undefined when brain returns no tool calls', async () => {
+        const service = makeService();
+
+        const brain = makeBrain(async (_msgs, _sys, onChunk) => {
+            onChunk('hello');
+            return { content: 'hello' } satisfies BrainResponse;
+        });
+
+        const result = await service.executeStream(brain, [], '', () => {}, makeRequest());
+
+        expect(result.success).toBe(true);
+        expect(result.toolCalls).toBeUndefined();
+    });
 });

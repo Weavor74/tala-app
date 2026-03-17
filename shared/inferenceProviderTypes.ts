@@ -283,6 +283,32 @@ export interface StreamInferenceRequest {
     openTimeoutMs?: number;
 }
 
+// ─── Canonical tool call ──────────────────────────────────────────────────────
+
+/**
+ * Canonical representation of a tool call returned by any inference provider.
+ * All brain implementations must normalize their provider-specific tool call
+ * formats into this shape before returning a BrainResponse or StreamInferenceResult.
+ */
+export interface CanonicalToolCall {
+    /** Unique identifier for this tool call instance (may be absent for some providers). */
+    id?: string;
+    /** The type of call — currently only 'function' is supported. */
+    type: 'function';
+    /** The function name and its arguments as returned by the model. */
+    function: {
+        /** Name of the function to execute. */
+        name: string;
+        /**
+         * Arguments for the function.
+         * May be a pre-parsed object or a raw JSON string depending on the provider.
+         */
+        arguments: Record<string, unknown> | string;
+    };
+    /** Support for provider-specific extensions. */
+    [key: string]: unknown;
+}
+
 // ─── Stream execution result ─────────────────────────────────────────────────
 
 /**
@@ -324,4 +350,10 @@ export interface StreamInferenceResult {
     errorMessage?: string;
     /** Raw BrainResponse metadata (model-specific extras). */
     brainMetadata?: Record<string, unknown>;
+    /**
+     * Tool calls requested by the model during this stream.
+     * Populated only on successful completion when the model emitted tool calls
+     * instead of (or in addition to) prose content.
+     */
+    toolCalls?: CanonicalToolCall[];
 }
