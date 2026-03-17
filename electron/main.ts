@@ -41,6 +41,7 @@ import { LogViewerService } from './services/LogViewerService';
 import { McpLifecycleManager } from './services/McpLifecycleManager';
 import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
+import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -97,6 +98,9 @@ const logViewerService = new LogViewerService();
 // ─── Runtime Diagnostics (Priority 2A) ───────────────────────────────────────
 const mcpLifecycleManager = new McpLifecycleManager(mcpService);
 const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(inferenceDiagnostics, mcpLifecycleManager);
+
+// ─── World Model Assembler (Phase 4A) ─────────────────────────────────────────
+const worldModelAssembler = new WorldModelAssembler({ includeRepoState: true });
 
 // Initialize Code Access Policy and Control Service
 const codePolicy = new CodeAccessPolicy({
@@ -306,7 +310,8 @@ const ipcRouter = new IpcRouter({
   SYSTEM_SETTINGS_PATH,
   TEMP_SYSTEM_PATH,
   codeControlService,
-  logViewerService
+  logViewerService,
+  worldModelAssembler,
 });
 ipcRouter.registerAll();
 

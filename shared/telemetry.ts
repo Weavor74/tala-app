@@ -37,6 +37,7 @@ export type TelemetrySubsystem =
     | 'cognitive'
     | 'audit'
     | 'system'
+    | 'world_model'
     | 'unknown';
 
 // ─── Event type categories ────────────────────────────────────────────────────
@@ -159,6 +160,13 @@ export type TelemetryEventType =
     | 'preinference_duration_ms'
     | 'cognitive_assembly_duration_ms'
     | 'compaction_duration_ms'
+    // Phase 4A — World Model
+    | 'world_model_build_started'
+    | 'world_model_build_completed'
+    | 'world_model_build_partial'
+    | 'world_model_build_failed'
+    | 'world_state_applied'
+    | 'world_state_skipped'
     // Degraded / fallback
     | 'degraded_fallback'
     | 'subsystem_unavailable'
