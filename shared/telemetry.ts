@@ -181,6 +181,15 @@ export type TelemetryEventType =
     | 'maintenance_action_failed'
     | 'maintenance_cooldown_applied'
     | 'maintenance_mode_changed'
+    // A2UI workspace surfaces (Phase 4C)
+    | 'a2ui_surface_open_requested'
+    | 'a2ui_surface_opened'
+    | 'a2ui_surface_updated'
+    | 'a2ui_surface_failed'
+    | 'a2ui_action_received'
+    | 'a2ui_action_validated'
+    | 'a2ui_action_executed'
+    | 'a2ui_action_failed'
     // Generic
     | 'operational'
     | 'developer_debug';
@@ -454,4 +463,27 @@ export interface TurnReconstruction {
     hadDegradedFallback: boolean;
     toolCallCount: number;
     eventSequence: Array<{ eventType: TelemetryEventType; timestamp: string; status: TelemetryStatus }>;
+}
+
+// ─── A2UI telemetry payload ───────────────────────────────────────────────────
+
+/**
+ * Payload for A2UI surface and action telemetry events (Phase 4C).
+ * Safe fields only — no raw component payloads, no sensitive UI data.
+ */
+export interface A2UITelemetryPayload {
+    /** Surface identifier (cognition, world, maintenance). */
+    surfaceId?: string;
+    /** Surface type classification. */
+    surfaceType?: string;
+    /** Target rendering pane. Always 'document_editor' for Tala surfaces. */
+    targetPane?: 'document_editor';
+    /** Action name, if this is an action event. */
+    actionName?: string;
+    /** Outcome of the operation. */
+    outcome?: 'success' | 'failure' | 'rejected' | 'fallback';
+    /** Whether the surface tab was focused after the operation. */
+    focused?: boolean;
+    /** Human-readable reason for rejection or failure. */
+    reason?: string;
 }

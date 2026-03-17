@@ -48,6 +48,8 @@ import { StartupSplash } from './renderer/components/StartupSplash';
 import { Notebooks } from './renderer/components/Notebooks';
 import { CoreWorkspace } from './renderer/components/CoreWorkspace';
 import { AgentModeConfigPanel } from './renderer/components/AgentModeConfigPanel';
+import { A2UIWorkspaceSurface } from './renderer/A2UIWorkspaceSurface';
+import type { A2UISurfacePayload, A2UIActionDispatch } from '../shared/a2uiTypes';
 
 
 /** A single chat message in the conversation history. */
@@ -573,6 +575,46 @@ function App() {
 
     const handleAgentEvent = (event: { type: string, data: any }) => {
       console.log(`[Agent Event] Type: ${event.type}`, event.data);
+
+      // --- A2UI SURFACE OPENING (Phase 4C) ---
+      // Routes structured workspace surfaces to the document/editor pane.
+      // Chat receives only a lightweight toast notice, not the full surface.
+      if (event.type === 'a2ui-surface-open') {
+        const payload = event.data as A2UISurfacePayload;
+        if (!payload || !payload.surfaceId || !payload.tabId) {
+          console.warn('[A2UIBridge] Received malformed a2ui-surface-open payload:', payload);
+          return;
+        }
+
+        setTabs(prev => {
+          // Stable tab: update existing surface tab in place if it exists
+          const existingIndex = prev.findIndex(t => t.id === payload.tabId && t.type === 'a2ui');
+          if (existingIndex >= 0) {
+            const updated = prev.map((t, i) =>
+              i === existingIndex ? { ...t, title: payload.title, data: payload } : t
+            );
+            if (payload.focus !== false) {
+              setActiveTabId(payload.tabId);
+            }
+            return updated;
+          }
+          // Create new a2ui tab
+          const newTab: Tab = {
+            id: payload.tabId,
+            type: 'a2ui',
+            title: payload.title,
+            active: true,
+            data: payload,
+          };
+          if (payload.focus !== false) {
+            setActiveTabId(payload.tabId);
+          }
+          return [...prev, newTab];
+        });
+
+        console.log(`[A2UIBridge] Surface '${payload.surfaceId}' opened. Tab: ${payload.tabId}`);
+        return;
+      }
 
       // --- ARTIFACT OPENING (CANONICAL) ---
       if (event.type === 'artifact-open') {
@@ -1209,6 +1251,22 @@ function App() {
                     )}
                   </div>
                 </div>
+              )}
+              {/* A2UI WORKSPACE SURFACE (Phase 4C) — renders in document/editor pane only */}
+              {tab.type === 'a2ui' && tab.data && (
+                <A2UIWorkspaceSurface
+                  surfaceId={(tab.data as A2UISurfacePayload).surfaceId}
+                  components={(tab.data as A2UISurfacePayload).components}
+                  title={(tab.data as A2UISurfacePayload).title}
+                  onAction={(action: A2UIActionDispatch) => {
+                    const talaApi = (window as any).tala;
+                    if (talaApi?.a2ui?.dispatchAction) {
+                      talaApi.a2ui.dispatchAction(action).catch((err: Error) => {
+                        console.error('[A2UIAction] Dispatch failed:', err);
+                      });
+                    }
+                  }}
+                />
               )}
             </div>
           ))}

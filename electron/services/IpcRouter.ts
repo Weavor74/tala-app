@@ -21,6 +21,9 @@ import { LogViewerService } from './LogViewerService';
 import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './RuntimeControlService';
 import type { WorldModelAssembler } from './world/WorldModelAssembler';
+import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
+import { A2UIActionBridge } from './A2UIActionBridge';
+import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
 
 export interface IpcRouterContext {
   app: any;
@@ -76,6 +79,11 @@ export class IpcRouter {
    */
   constructor(private ctx: IpcRouterContext) { }
 
+  /** Phase 4C: A2UI workspace router — lazy-initialized in registerAll(). */
+  private _a2uiRouter: A2UIWorkspaceRouter | null = null;
+  /** Phase 4C: A2UI action bridge — lazy-initialized in registerAll(). */
+  private _a2uiActionBridge: A2UIActionBridge | null = null;
+
   /**
    * Registers all IPC handlers with `ipcMain`.
    * This method effectively defines the entire backend API surface.
@@ -90,6 +98,21 @@ export class IpcRouter {
     // Phase 3A: Wire the diagnostics aggregator into AgentService so cognitive
     // contexts are recorded after each turn without exposing it in the constructor.
     agent.setDiagnosticsAggregator(this.ctx.diagnosticsAggregator);
+
+    // Phase 4C: Initialize A2UI workspace router and action bridge.
+    this._a2uiRouter = new A2UIWorkspaceRouter({
+      getMainWindow,
+      diagnosticsAggregator: this.ctx.diagnosticsAggregator,
+      worldModelAssembler: this.ctx.worldModelAssembler,
+      maintenanceLoopService: this.ctx.maintenanceLoopService,
+    });
+    this._a2uiActionBridge = new A2UIActionBridge({
+      router: this._a2uiRouter,
+      maintenanceLoopService: this.ctx.maintenanceLoopService,
+      runtimeControlService: this.ctx.runtimeControl,
+      diagnosticsAggregator: this.ctx.diagnosticsAggregator,
+      worldModelAssembler: this.ctx.worldModelAssembler,
+    });
 
     // Alias for the dynamic getter
     const mainWindowResolver = {
@@ -1821,6 +1844,61 @@ export class IpcRouter {
       }
       maintenance.setMode(mode as any);
       return { success: true, mode };
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — PHASE 4C: A2UI WORKSPACE SURFACES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Phase 4C — Open or refresh a named A2UI workspace surface.
+     * Routes the assembled payload to the renderer's document/editor pane.
+     * @param surfaceId 'cognition' | 'world' | 'maintenance'
+     * @param options.focus Whether to focus the tab (default: true).
+     */
+    ipcMain.handle('a2ui:openSurface', async (_e, surfaceId: string, options?: { focus?: boolean }) => {
+      if (!this._a2uiRouter) return { success: false, error: 'A2UI router not initialized.' };
+      const allowed: A2UISurfaceId[] = ['cognition', 'world', 'maintenance'];
+      if (!allowed.includes(surfaceId as A2UISurfaceId)) {
+        return { success: false, error: `Unknown surface ID: '${surfaceId}'.` };
+      }
+      const payload = await this._a2uiRouter.openSurface(surfaceId as A2UISurfaceId, options);
+      return payload
+        ? { success: true, tabId: payload.tabId, title: payload.title }
+        : { success: false, error: 'Surface assembly failed.' };
+    });
+
+    /**
+     * Phase 4C — Dispatch a validated action from an A2UI surface.
+     * Actions are allowlisted; invalid actions are rejected.
+     */
+    ipcMain.handle('a2ui:dispatchAction', async (_e, action: A2UIActionDispatch) => {
+      if (!this._a2uiActionBridge) return { success: false, error: 'A2UI action bridge not initialized.' };
+      return this._a2uiActionBridge.dispatch(action);
+    });
+
+    /**
+     * Phase 4C — Retrieve the current cognitive diagnostics snapshot.
+     * Used by the renderer to pre-populate the cognition surface before the
+     * main process pushes the full surface payload.
+     */
+    ipcMain.handle('a2ui:getCognitiveSnapshot', async () => {
+      return this.ctx.diagnosticsAggregator.getSnapshot().cognitive ?? null;
+    });
+
+    /**
+     * Phase 4C — Retrieve current A2UI surface diagnostics.
+     * Allows inspection of open surfaces and action counters.
+     */
+    ipcMain.handle('a2ui:getDiagnostics', async () => {
+      if (!this._a2uiRouter) return null;
+      const routerDiag = this._a2uiRouter.getDiagnosticsSummary();
+      const actionCounts = this._a2uiActionBridge?.getActionCounts() ?? { dispatched: 0, failed: 0 };
+      return {
+        ...routerDiag,
+        actionDispatchCount: actionCounts.dispatched,
+        actionFailureCount: actionCounts.failed,
+      };
     });
 
   }
