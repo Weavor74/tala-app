@@ -126,6 +126,8 @@ export interface ProviderProbeResult {
 export interface InferenceSelectionRequest {
     /** Explicitly requested provider ID (from user settings or UI). */
     preferredProviderId?: string;
+    /** Explicitly requested model ID (from user settings or UI). */
+    preferredModelId?: string;
     /** Required capability for this request. */
     requiredCapability?: keyof InferenceProviderCapabilities;
     /** Routing mode override. */
@@ -149,6 +151,8 @@ export interface InferenceSelectionResult {
     success: boolean;
     /** The selected provider descriptor, if any. */
     selectedProvider?: InferenceProviderDescriptor;
+    /** The actual model name resolved from provider inventory. */
+    resolvedModel?: string;
     /** Human-readable reason for the selection decision. */
     reason: string;
     /** Whether a fallback provider was chosen (i.e. preferred was unavailable). */

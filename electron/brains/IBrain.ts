@@ -113,6 +113,11 @@ export interface IBrain {
     id: string;
 
     /**
+     * Re-configures the brain's internal settings (e.g., after model reconciliation).
+     */
+    configure(baseUrl: string, model: string): void;
+
+    /**
      * Checks whether the brain's inference server is reachable.
      */
     ping(): Promise<boolean>;

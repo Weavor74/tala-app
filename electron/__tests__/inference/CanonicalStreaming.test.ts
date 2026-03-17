@@ -107,6 +107,7 @@ function makeBrain(streamImpl: IBrain['streamResponse']): IBrain {
     return {
         id: 'test-brain',
         ping: async () => true,
+        configure: () => {},
         generateResponse: async () => ({ content: '' }),
         streamResponse: streamImpl,
     };

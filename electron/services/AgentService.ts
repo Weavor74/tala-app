@@ -1256,17 +1256,21 @@ Exported standalone package from Tala.
             }
 
             this.inference.reconfigureRegistry(registryConfig);
+            await this.inference.refreshProviders(); // Ensure inventory is fresh AFTER registry is configured
 
-            // ── Step 2: Determine preferred provider from settings ──────────────
-            const preferredProviderId = (() => {
+            // ── Step 2: Determine preferred provider and model from settings ───
+            const { preferredProviderId, preferredModelId } = (() => {
                 if (inferenceSettings.activeLocalId) {
                     const active = instances.find((i: any) => i.id === inferenceSettings.activeLocalId);
-                    if (!active) return undefined;
-                    if (active.engine === 'ollama') return 'ollama';
-                    if (active.engine === 'llamacpp' && active.source === 'local') return 'embedded_llamacpp';
-                    if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(active.engine)) return 'cloud';
+                    if (active) {
+                        let providerId: string | undefined;
+                        if (active.engine === 'ollama') providerId = 'ollama';
+                        else if (active.engine === 'llamacpp' && active.source === 'local') providerId = 'embedded_llamacpp';
+                        else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(active.engine)) providerId = 'cloud';
+                        return { preferredProviderId: providerId, preferredModelId: active.model };
+                    }
                 }
-                return undefined;
+                return { preferredProviderId: undefined, preferredModelId: undefined };
             })();
 
             if (preferredProviderId) {
@@ -1276,6 +1280,7 @@ Exported standalone package from Tala.
             // ── Step 3: Select provider via canonical policy ────────────────────
             const selection = this.inference.selectProvider({
                 preferredProviderId,
+                preferredModelId,
                 mode: routingMode,
                 fallbackAllowed: true,
                 turnId: 'brain-config',
@@ -1298,12 +1303,11 @@ Exported standalone package from Tala.
                 this.brain = new CloudBrain({
                     endpoint: chosen.endpoint,
                     apiKey: cloudInst.apiKey ?? chosen.apiKey,
-                    model: cloudInst.model ?? chosen.preferredModel,
+                    model: selection.resolvedModel ?? cloudInst.model ?? chosen.preferredModel,
                 });
             } else if (chosen.providerType === 'ollama') {
-                const inst = instances.find((i: any) => i.engine === 'ollama') ?? {};
                 const ollama = new OllamaBrain();
-                ollama.configure(chosen.endpoint, inst.model ?? chosen.preferredModel ?? 'llama3');
+                ollama.configure(chosen.endpoint, selection.resolvedModel ?? 'llama3');
                 this.brain = ollama;
             } else if (chosen.providerType === 'embedded_llamacpp') {
                 // Start the embedded engine if not already running
@@ -1313,11 +1317,11 @@ Exported standalone package from Tala.
                     local.ensureReady().then(() => local.ignite(modelPath, inferenceSettings?.localEngine?.options)).catch(() => { });
                 }
                 const ollama = new OllamaBrain();
-                ollama.configure(chosen.endpoint, chosen.preferredModel ?? 'llama3');
+                ollama.configure(chosen.endpoint, selection.resolvedModel ?? 'llama3');
                 this.brain = ollama;
             } else {
                 // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
-                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: chosen.preferredModel ?? '' });
+                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: selection.resolvedModel ?? chosen.preferredModel ?? '' });
             }
         } catch (e) { }
     }
@@ -1856,9 +1860,20 @@ Exported standalone package from Tala.
         // --- PHASE 3A: MODEL-AWARE COMPACTION ---
         // Select provider/model and run CognitiveContextCompactor before prompt assembly.
         // This ensures tiny/small models receive compressed packets within budget.
-        const providerSelection = this.inference.selectProvider({ fallbackAllowed: true, turnId });
+        const providerSelection = this.inference.selectProvider({ 
+            preferredProviderId: activeInstance?.id,
+            preferredModelId: activeInstance?.model,
+            fallbackAllowed: true, 
+            turnId,
+            agentMode: activeMode
+        });
         const selectedProvider = providerSelection.selectedProvider;
-        const modelName = activeInstance?.model || selectedProvider?.preferredModel || 'unknown';
+        const modelName = providerSelection.resolvedModel || activeInstance?.model || selectedProvider?.preferredModel || 'unknown';
+
+        if (this.brain && selectedProvider) {
+            console.log(`[AgentService] Reconciling brain for turn: ${turnId}. Provider=${selectedProvider.providerId} Model=${modelName}${providerSelection.resolvedModel ? ' (Reconciled from: ' + (activeInstance?.model || 'default') + ')' : ''}`);
+            this.brain.configure(selectedProvider.endpoint, modelName);
+        }
 
         let compactPacket: import('../../shared/modelCapabilityTypes').CompactPromptPacket | undefined;
         try {

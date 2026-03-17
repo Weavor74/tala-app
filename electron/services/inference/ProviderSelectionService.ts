@@ -56,7 +56,8 @@ export class ProviderSelectionService {
             attempted.push(preferredProviderId);
             const preferred = this.registry.getProvider(preferredProviderId);
             if (preferred && preferred.ready && this._capOk(preferred, requiredCapability)) {
-                return this._buildSuccess(preferred, `User-selected provider '${preferredProviderId}' is ready`, false, attempted);
+                const resolvedModel = this._reconcileModel(preferred, req.preferredModelId);
+                return this._buildSuccess(preferred, `User-selected provider '${preferredProviderId}' is ready`, false, attempted, resolvedModel);
             }
 
             if (!fallbackAllowed) {
@@ -89,10 +90,10 @@ export class ProviderSelectionService {
         }
 
         // ── Step 4: auto — prefer local/embedded before cloud ───────────────
-        const localResult = this._selectLocalOrEmbedded(attempted, true, turnId, agentMode, requiredCapability);
+        const localResult = this._selectLocalOrEmbedded(attempted, true, turnId, agentMode, requiredCapability, req.preferredModelId);
         if (localResult.success) return localResult;
 
-        return this._selectCloud(attempted, fallbackAllowed, turnId, agentMode, requiredCapability);
+        return this._selectCloud(attempted, fallbackAllowed, turnId, agentMode, requiredCapability, req.preferredModelId);
     }
 
     // ------------------------------------------------------------------
@@ -105,6 +106,7 @@ export class ProviderSelectionService {
         turnId: string,
         agentMode: string,
         requiredCapability?: keyof import('../../../shared/inferenceProviderTypes').InferenceProviderCapabilities,
+        requestedModel?: string,
     ): InferenceSelectionResult {
         // Local providers (scope = 'local'), sorted by priority
         const localProviders = Array.from(
@@ -114,14 +116,16 @@ export class ProviderSelectionService {
 
         if (localProviders.length > 0) {
             const chosen = localProviders[0];
-            return this._buildSuccess(chosen, `Best available local provider '${chosen.providerId}'`, attempted.length > 0, attempted);
+            const resolvedModel = this._reconcileModel(chosen, requestedModel);
+            return this._buildSuccess(chosen, `Best available local provider '${chosen.providerId}'`, attempted.length > 0, attempted, resolvedModel);
         }
         for (const d of this._getAll().filter(s => s.scope === 'local')) attempted.push(d.providerId);
 
         // Embedded llama.cpp fallback
         const embedded = this.registry.getProvider('embedded_llamacpp');
         if (embedded && embedded.ready && this._capOk(embedded, requiredCapability)) {
-            return this._buildSuccess(embedded, 'Fallback to embedded llama.cpp', attempted.length > 0, attempted);
+            const resolvedModel = this._reconcileModel(embedded, requestedModel);
+            return this._buildSuccess(embedded, 'Fallback to embedded llama.cpp', attempted.length > 0, attempted, resolvedModel);
         }
         if (embedded) attempted.push('embedded_llamacpp');
 
@@ -138,10 +142,12 @@ export class ProviderSelectionService {
         turnId: string,
         agentMode: string,
         requiredCapability?: keyof import('../../../shared/inferenceProviderTypes').InferenceProviderCapabilities,
+        requestedModel?: string,
     ): InferenceSelectionResult {
         const cloud = this.registry.getProvider('cloud');
         if (cloud && cloud.ready && this._capOk(cloud, requiredCapability)) {
-            return this._buildSuccess(cloud, 'Fallback to cloud provider', attempted.length > 0, attempted);
+            const resolvedModel = this._reconcileModel(cloud, requestedModel);
+            return this._buildSuccess(cloud, 'Fallback to cloud provider', attempted.length > 0, attempted, resolvedModel);
         }
         if (cloud) attempted.push('cloud');
 
@@ -165,6 +171,7 @@ export class ProviderSelectionService {
         reason: string,
         fallbackApplied: boolean,
         attempted: string[],
+        resolvedModel?: string,
     ): InferenceSelectionResult {
         telemetry.operational(
             'local_inference',
@@ -179,6 +186,7 @@ export class ProviderSelectionService {
         return {
             success: true,
             selectedProvider: provider,
+            resolvedModel,
             reason,
             fallbackApplied,
             attemptedProviders: attempted,
@@ -216,5 +224,36 @@ export class ProviderSelectionService {
             executionPath: 'none',
             failure,
         };
+    }
+
+    /**
+     * Reconciles a requested model name against the live provider inventory.
+     * Logic:
+     * 1. If requestedModel exactly matches one in inventory -> use it.
+     * 2. If requestedModel (e.g. 'llama3') matches if ':latest' is appended -> use that.
+     * 3. Else if provider has models -> use first one.
+     * 4. Else use provider's own preferredModel if it exists.
+     * 5. Else return requestedModel as-is (best effort).
+     */
+    private _reconcileModel(provider: InferenceProviderDescriptor, requestedModel?: string): string | undefined {
+        if (!requestedModel && provider.preferredModel) return provider.preferredModel;
+        if (!requestedModel) return provider.models[0];
+
+        // 1. Exact match
+        if (provider.models.includes(requestedModel)) return requestedModel;
+
+        // 2. Tag fuzzy match (requested 'llama3' -> match 'llama3:latest')
+        const tagMatch = provider.models.find(m => m === `${requestedModel}:latest`);
+        if (tagMatch) return tagMatch;
+
+        // 3. Prefix match (requested 'llama3' -> match 'llama3.1:latest')
+        const prefixMatch = provider.models.find(m => m.startsWith(`${requestedModel}:`) || m.startsWith(`${requestedModel}.`));
+        if (prefixMatch) return prefixMatch;
+
+        // 4. Default to first available if inventory exists
+        if (provider.models.length > 0) return provider.models[0];
+
+        // 5. Fallback to selection request or descriptor preference
+        return requestedModel || provider.preferredModel;
     }
 }

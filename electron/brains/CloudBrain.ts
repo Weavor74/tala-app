@@ -63,6 +63,11 @@ export class CloudBrain implements IBrain {
         this.config = config;
     }
 
+    public configure(baseUrl: string, model: string): void {
+        this.config.endpoint = baseUrl;
+        this.config.model = model;
+    }
+
     /**
      * Repairs mangled IDs or names that were accidentally concatenated during
      * a previous unstable generation turn.
