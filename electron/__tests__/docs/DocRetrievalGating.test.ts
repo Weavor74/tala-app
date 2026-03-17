@@ -58,7 +58,7 @@ function makeServiceWithRetriever(
     return svc;
 }
 
-function seedResults(count: number): ReturnType<typeof Array>[number][] {
+function seedResults(count: number): Array<{ chunk: { filePath: string; heading: string; content: string }; metadata: object; score: number }> {
     const results = [];
     for (let i = 0; i < count; i++) {
         results.push({

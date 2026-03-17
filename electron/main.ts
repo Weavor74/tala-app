@@ -40,6 +40,7 @@ import { CodeControlService } from './services/CodeControlService';
 import { LogViewerService } from './services/LogViewerService';
 import { McpLifecycleManager } from './services/McpLifecycleManager';
 import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
+import { RuntimeControlService } from './services/RuntimeControlService';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 
@@ -97,7 +98,8 @@ const logViewerService = new LogViewerService();
 
 // ─── Runtime Diagnostics (Priority 2A) ───────────────────────────────────────
 const mcpLifecycleManager = new McpLifecycleManager(mcpService);
-const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(inferenceDiagnostics, mcpLifecycleManager);
+const runtimeControl = new RuntimeControlService(inferenceService, mcpLifecycleManager, mcpService);
+const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(inferenceDiagnostics, mcpLifecycleManager, runtimeControl);
 
 // ─── World Model Assembler (Phase 4A) ─────────────────────────────────────────
 const worldModelAssembler = new WorldModelAssembler({ includeRepoState: true });
@@ -301,6 +303,7 @@ const ipcRouter = new IpcRouter({
   inferenceService,
   userProfileService,
   diagnosticsAggregator,
+  runtimeControl,
   getSettingsPath: () => SETTINGS_PATH,
   setSettingsPath: (p) => { SETTINGS_PATH = p; },
   USER_DATA_DIR,

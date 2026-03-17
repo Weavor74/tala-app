@@ -15,6 +15,7 @@ import { classifyModelCapability } from '../../services/cognitive/ModelCapabilit
 import { PromptProfileSelector } from '../../services/cognitive/PromptProfileSelector';
 import { CognitiveContextCompactor } from '../../services/cognitive/CognitiveContextCompactor';
 import type { TalaCognitiveContext } from '../../../shared/cognitiveTurnTypes';
+import type { InferenceProviderType } from '../../../shared/inferenceProviderTypes';
 
 // ─── Telemetry mock ───────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ vi.mock('../../services/TelemetryService', () => ({
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeProvider(providerType = 'ollama', providerId = 'test') {
+function makeProvider(providerType: InferenceProviderType = 'ollama', providerId = 'test') {
     return { providerId, providerType, displayName: 'Test' };
 }
 

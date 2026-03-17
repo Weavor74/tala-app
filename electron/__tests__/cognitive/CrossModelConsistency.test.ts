@@ -16,6 +16,7 @@ import { CognitiveTurnAssembler } from '../../services/cognitive/CognitiveTurnAs
 import { CognitiveContextCompactor } from '../../services/cognitive/CognitiveContextCompactor';
 import type { CognitiveAssemblyInputs } from '../../services/cognitive/CognitiveTurnAssembler';
 import type { MemoryItem } from '../../services/MemoryService';
+import type { InferenceProviderType } from '../../../shared/inferenceProviderTypes';
 
 // ─── Telemetry mock ───────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ vi.mock('../../services/TelemetryService', () => ({
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeProvider(providerId = 'ollama') {
+function makeProvider(providerId = 'ollama'): { providerId: string; providerType: InferenceProviderType; displayName: string } {
     return { providerId, providerType: 'ollama', displayName: 'Ollama' };
 }
 

@@ -81,21 +81,16 @@ export class A2UIActionBridge {
     public async dispatch(action: A2UIActionDispatch): Promise<A2UIActionResult> {
         this._dispatchCount++;
 
-        telemetry.event('a2ui_action_received', {
-            surfaceId: action.surfaceId,
-            actionName: action.actionName,
-            targetPane: 'document_editor',
-        });
+        telemetry.emit('system', 'a2ui_action_received', 'info', 'A2UIActionBridge',
+            `A2UI action received: ${action.actionName}`, 'success',
+            { payload: { surfaceId: action.surfaceId, actionName: action.actionName, targetPane: 'document_editor' } });
 
         // Step 1: Validate action name against allowlist
         if (!ALLOWED_ACTIONS.has(action.actionName)) {
             this._failureCount++;
-            telemetry.event('a2ui_action_failed', {
-                surfaceId: action.surfaceId,
-                actionName: action.actionName,
-                outcome: 'rejected',
-                reason: `Action '${action.actionName}' is not in the allowlist.`,
-            });
+            telemetry.emit('system', 'a2ui_action_failed', 'warn', 'A2UIActionBridge',
+                `A2UI action rejected: ${action.actionName}`, 'failure',
+                { payload: { surfaceId: action.surfaceId, actionName: action.actionName, outcome: 'rejected', reason: `Action '${action.actionName}' is not in the allowlist.` } });
             return {
                 success: false,
                 message: `Action '${action.actionName}' is not permitted.`,
@@ -103,41 +98,30 @@ export class A2UIActionBridge {
             };
         }
 
-        telemetry.event('a2ui_action_validated', {
-            surfaceId: action.surfaceId,
-            actionName: action.actionName,
-            targetPane: 'document_editor',
-        });
+        telemetry.emit('system', 'a2ui_action_validated', 'info', 'A2UIActionBridge',
+            `A2UI action validated: ${action.actionName}`, 'success',
+            { payload: { surfaceId: action.surfaceId, actionName: action.actionName, targetPane: 'document_editor' } });
 
         // Step 2: Execute
         try {
             const result = await this._execute(action);
             if (result.success) {
-                telemetry.event('a2ui_action_executed', {
-                    surfaceId: action.surfaceId,
-                    actionName: action.actionName,
-                    outcome: 'success',
-                    targetPane: 'document_editor',
-                });
+                telemetry.emit('system', 'a2ui_action_executed', 'info', 'A2UIActionBridge',
+                    `A2UI action executed: ${action.actionName}`, 'success',
+                    { payload: { surfaceId: action.surfaceId, actionName: action.actionName, outcome: 'success', targetPane: 'document_editor' } });
             } else {
                 this._failureCount++;
-                telemetry.event('a2ui_action_failed', {
-                    surfaceId: action.surfaceId,
-                    actionName: action.actionName,
-                    outcome: 'failure',
-                    reason: result.error,
-                });
+                telemetry.emit('system', 'a2ui_action_failed', 'warn', 'A2UIActionBridge',
+                    `A2UI action failed: ${action.actionName}`, 'failure',
+                    { payload: { surfaceId: action.surfaceId, actionName: action.actionName, outcome: 'failure', reason: result.error } });
             }
             return result;
         } catch (err) {
             this._failureCount++;
             const errMsg = err instanceof Error ? err.message : String(err);
-            telemetry.event('a2ui_action_failed', {
-                surfaceId: action.surfaceId,
-                actionName: action.actionName,
-                outcome: 'failure',
-                reason: errMsg,
-            });
+            telemetry.emit('system', 'a2ui_action_failed', 'warn', 'A2UIActionBridge',
+                `A2UI action threw: ${action.actionName}`, 'failure',
+                { payload: { surfaceId: action.surfaceId, actionName: action.actionName, outcome: 'failure', reason: errMsg } });
             console.error(`[A2UIActionBridge] Action '${action.actionName}' threw:`, err);
             return {
                 success: false,

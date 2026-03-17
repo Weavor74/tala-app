@@ -55,7 +55,7 @@ function makeTurnContext(overrides: Partial<TurnContext> = {}): TurnContext {
         intent: { class: 'technical', confidence: 0.9, isGreeting: false },
         retrieval: { suppressed: false, approvedCount: 2, excludedCount: 1 },
         promptBlocks: [
-            { header: '[MEMORY CONTEXT]', content: 'Memory fact 1\nMemory fact 2' },
+            { header: '[MEMORY CONTEXT]', content: 'Memory fact 1\nMemory fact 2', source: 'system', priority: 'normal' },
         ],
         fallbackUsed: false,
         allowedCapabilities: ['all'] as any[],
@@ -67,7 +67,13 @@ function makeTurnContext(overrides: Partial<TurnContext> = {}): TurnContext {
         auditMetadata: { turnStartedAt: Date.now(), turnCompletedAt: null, mcpServicesUsed: [], correlationId: 'corr-1' },
         errorState: null,
         resolvedMemories: [
-            { id: 'mem-1', text: 'Test memory 1', timestamp: new Date().toISOString(), metadata: { type: 'factual', source: 'mem0', salience: 0.8, confidence: 0.9 }, status: 'active' } as MemoryItem,
+            {
+                id: 'mem-1', text: 'Test memory 1', timestamp: Date.now(),
+                metadata: { type: 'factual', source: 'mem0' },
+                status: 'active', salience: 0.8, confidence: 0.9,
+                created_at: Date.now(), last_accessed_at: null, last_reinforced_at: null,
+                access_count: 1, associations: [],
+            } as MemoryItem,
         ],
         ...overrides,
     };
@@ -388,9 +394,11 @@ describe('CognitiveTurnAssembler — integration with orchestration result', () 
                 {
                     id: 'mem-2',
                     text: 'User prefers concise answers',
-                    timestamp: new Date().toISOString(),
-                    metadata: { type: 'preference', source: 'mem0', salience: 0.7, confidence: 0.85 },
-                    status: 'active',
+                    timestamp: Date.now(),
+                    metadata: { type: 'preference', source: 'mem0' },
+                    status: 'active', salience: 0.7, confidence: 0.85,
+                    created_at: Date.now(), last_accessed_at: null, last_reinforced_at: null,
+                    access_count: 1, associations: [],
                 } as MemoryItem,
             ],
             memoryCandidateCount: 5,
