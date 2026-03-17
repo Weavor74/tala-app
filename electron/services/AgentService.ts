@@ -1307,7 +1307,7 @@ Exported standalone package from Tala.
                 });
             } else if (chosen.providerType === 'ollama') {
                 const ollama = new OllamaBrain();
-                ollama.configure(chosen.endpoint, selection.resolvedModel ?? 'llama3');
+                ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
                 this.brain = ollama;
             } else if (chosen.providerType === 'embedded_llamacpp') {
                 // Start the embedded engine if not already running
@@ -1317,7 +1317,7 @@ Exported standalone package from Tala.
                     local.ensureReady().then(() => local.ignite(modelPath, inferenceSettings?.localEngine?.options)).catch(() => { });
                 }
                 const ollama = new OllamaBrain();
-                ollama.configure(chosen.endpoint, selection.resolvedModel ?? 'llama3');
+                ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
                 this.brain = ollama;
             } else {
                 // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain

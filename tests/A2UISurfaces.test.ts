@@ -22,6 +22,7 @@ vi.mock('../electron/services/TelemetryService', () => ({
     telemetry: {
         operational: vi.fn(),
         event: vi.fn(),
+        emit: vi.fn(),
     },
 }));
 
@@ -80,35 +81,77 @@ function makeWorldModel(overrides: Partial<TalaWorldModel> = {}): TalaWorldModel
     };
     return {
         assembledAt: now,
+        timestamp: now,
         workspace: {
             meta,
             workspaceRoot: '/home/user/workspace',
-            classification: 'repo',
+            classification: 'repo' as const,
             rootResolved: true,
             knownDirectories: ['src', 'electron', 'shared', 'docs'],
             recentFiles: [],
+            activeFiles: [],
+            openArtifactCount: 0,
         },
         repo: {
             meta,
-            gitAvailable: true,
-            currentBranch: 'main',
+            repoRoot: '/home/user/workspace',
+            isRepo: true,
+            branch: 'main',
             isDirty: false,
-            projectType: 'typescript',
+            changedFileCount: 0,
+            projectType: 'electron_app' as const,
+            detectedDirectories: ['src', 'electron'],
+            hasArchitectureDocs: true,
+            hasIndexedDocs: false,
         },
         runtime: {
             meta,
-            selectedProvider: { providerId: 'ollama', providerName: 'Ollama', status: 'ready' },
-            providerInventory: { total: 1, ready: 1, unavailable: 0, degraded: 0 },
-            mcpSummary: { totalServices: 2, readyServices: 2, degradedServices: 0, unavailableServices: 0, lastUpdatedAt: now },
+            inferenceReady: true,
+            selectedProviderId: 'ollama',
+            selectedProviderName: 'Ollama',
+            totalProviders: 1,
+            readyProviders: 1,
             degradedSubsystems: [],
+            hasActiveDegradation: false,
+            streamActive: false,
         },
-        userGoal: {
+        tools: {
+            meta,
+            enabledTools: [],
+            blockedTools: [],
+            degradedTools: [],
+            mcpServices: [],
+            totalMcpServices: 0,
+            readyMcpServices: 0,
+        },
+        providers: {
+            meta,
+            preferredProviderId: 'ollama',
+            preferredProviderName: 'Ollama',
+            availableProviders: ['ollama'],
+            suppressedProviders: [],
+            degradedProviders: [],
+            totalProviders: 1,
+            lastFallbackApplied: false,
+        },
+        goals: {
             meta,
             immediateTask: 'Test A2UI surfaces',
-            projectFocus: 'tala-app',
-            persistentDirection: undefined,
-            goalIsStale: false,
+            immediateTaskConfidence: 'high' as const,
+            currentProjectFocus: 'tala-app',
+            projectFocusConfidence: 'medium' as const,
+            hasExplicitGoal: false,
+            isStale: false,
         },
+        summary: {
+            sectionsAvailable: 6,
+            sectionsDegraded: 0,
+            sectionsUnavailable: 0,
+            hasActiveDegradation: false,
+            repoDirty: false,
+            alerts: [],
+        },
+        assemblyMode: 'full' as const,
         ...overrides,
     } as TalaWorldModel;
 }
@@ -262,7 +305,7 @@ describe('WorldSurfaceMapper', () => {
 
     it('shows no-git notice when git unavailable', () => {
         const model = makeWorldModel();
-        (model.repo as any).gitAvailable = false;
+        model.repo.isRepo = false;
         const payload = mapWorldSurface(model);
         const rsSection = payload.components.find(c => c.id === 'world-repo');
         const noGitNode = rsSection?.children?.find(c => c.id === 'world-rs-nogit');
@@ -388,17 +431,21 @@ describe('A2UIWorkspaceRouter', () => {
 
     it('emits a2ui_surface_open_requested telemetry', async () => {
         await router.openSurface('cognition');
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_surface_open_requested', expect.objectContaining({
-            surfaceId: 'cognition',
-            targetPane: 'document_editor',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_surface_open_requested', 'info', 'A2UIWorkspaceRouter',
+            expect.any(String), 'success',
+            expect.objectContaining({ payload: expect.objectContaining({ surfaceId: 'cognition', targetPane: 'document_editor' }) }),
+        );
     });
 
     it('emits a2ui_surface_opened telemetry on success', async () => {
         await router.openSurface('cognition');
-        expect(telemetry.event).toHaveBeenCalledWith(
-            expect.stringMatching(/a2ui_surface_(opened|updated)/),
-            expect.objectContaining({ outcome: 'success' })
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', expect.stringMatching(/a2ui_surface_(opened|updated)/), 'info', 'A2UIWorkspaceRouter',
+            expect.any(String), 'success',
+            expect.objectContaining({ payload: expect.objectContaining({ outcome: 'success' }) }),
         );
     });
 
@@ -406,10 +453,12 @@ describe('A2UIWorkspaceRouter', () => {
         mockWin.isDestroyed.mockReturnValue(true);
         const payload = await router.openSurface('cognition');
         expect(payload).toBeNull();
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_surface_failed', expect.objectContaining({
-            surfaceId: 'cognition',
-            outcome: 'failure',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_surface_failed', 'warn', 'A2UIWorkspaceRouter',
+            expect.any(String), 'failure',
+            expect.objectContaining({ payload: expect.objectContaining({ surfaceId: 'cognition', outcome: 'failure' }) }),
+        );
     });
 
     it('uses stable tab ID for cognition surface', async () => {
@@ -467,6 +516,7 @@ describe('A2UIActionBridge', () => {
         bridge = new A2UIActionBridge({
             router,
             maintenanceLoopService: mockMaintSvc,
+            diagnosticsAggregator: makeMockAggregator(),
         });
     });
 
@@ -478,9 +528,12 @@ describe('A2UIActionBridge', () => {
         });
         expect(result.success).toBe(false);
         expect(result.error).toBe('not_in_allowlist');
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_action_failed', expect.objectContaining({
-            outcome: 'rejected',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_action_failed', 'warn', 'A2UIActionBridge',
+            expect.any(String), 'failure',
+            expect.objectContaining({ payload: expect.objectContaining({ outcome: 'rejected' }) }),
+        );
     });
 
     it('dispatches open_cognition_surface successfully', async () => {
@@ -533,23 +586,32 @@ describe('A2UIActionBridge', () => {
 
     it('emits a2ui_action_received telemetry on dispatch', async () => {
         await bridge.dispatch({ surfaceId: 'cognition', actionName: 'refresh_cognition' });
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_action_received', expect.objectContaining({
-            actionName: 'refresh_cognition',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_action_received', 'info', 'A2UIActionBridge',
+            expect.any(String), 'success',
+            expect.objectContaining({ payload: expect.objectContaining({ actionName: 'refresh_cognition' }) }),
+        );
     });
 
     it('emits a2ui_action_validated telemetry for allowlisted action', async () => {
         await bridge.dispatch({ surfaceId: 'cognition', actionName: 'refresh_cognition' });
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_action_validated', expect.objectContaining({
-            actionName: 'refresh_cognition',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_action_validated', 'info', 'A2UIActionBridge',
+            expect.any(String), 'success',
+            expect.objectContaining({ payload: expect.objectContaining({ actionName: 'refresh_cognition' }) }),
+        );
     });
 
     it('emits a2ui_action_executed telemetry on success', async () => {
         await bridge.dispatch({ surfaceId: 'cognition', actionName: 'refresh_cognition' });
-        expect(telemetry.event).toHaveBeenCalledWith('a2ui_action_executed', expect.objectContaining({
-            outcome: 'success',
-        }));
+        // telemetry.emit(subsystem, eventType, severity, actor, summary, status, options)
+        expect(telemetry.emit).toHaveBeenCalledWith(
+            'system', 'a2ui_action_executed', 'info', 'A2UIActionBridge',
+            expect.any(String), 'success',
+            expect.objectContaining({ payload: expect.objectContaining({ outcome: 'success' }) }),
+        );
     });
 
     it('returns service_unavailable when maintenance service missing', async () => {
