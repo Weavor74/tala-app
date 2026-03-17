@@ -35,6 +35,7 @@ import { telemetry } from '../TelemetryService';
 import type { WorldModelAssembler } from '../world/WorldModelAssembler';
 import type { TalaWorldModel } from '../../../shared/worldModelTypes';
 import type { MaintenanceLoopService } from '../maintenance/MaintenanceLoopService';
+import type { A2UISurfaceCoordinator } from '../coordination/A2UISurfaceCoordinator';
 
 // ─── External service interfaces ─────────────────────────────────────────────
 
@@ -144,6 +145,8 @@ export class PreInferenceContextOrchestrator {
         private readonly mcpService: McpPreInferenceServiceLike | null = null,
         private readonly worldModelAssembler: WorldModelAssembler | null = null,
         private readonly maintenanceLoop: MaintenanceLoopService | null = null,
+        /** Phase 4D: Optional surface coordinator for intent-based surface decisions. */
+        private readonly surfaceCoordinator: A2UISurfaceCoordinator | null = null,
     ) {}
 
     /**
@@ -484,6 +487,34 @@ export class PreInferenceContextOrchestrator {
                 }
             } else {
                 sourcesSuppressed.push('maintenance');
+            }
+
+            // ── 8. Surface coordination (Phase 4D) ───────────────────────────
+            // Pass intent + mode to the surface coordinator so it can decide
+            // which A2UI surfaces to open/update. Fire-and-forget: a failure
+            // here must never block inference.
+            if (this.surfaceCoordinator) {
+                const maintSummary = this.maintenanceLoop?.getDiagnosticsSummary();
+                const worldModel = this.worldModelAssembler?.getCachedModel();
+                void this.surfaceCoordinator.coordinate({
+                    intentClass,
+                    isGreeting,
+                    mode,
+                    triggerType: 'intent_based',
+                    maintenance: maintSummary ? {
+                        hasCriticalIssues: (maintSummary.issueCounts?.critical ?? 0) > 0,
+                        hasHighIssues: (maintSummary.issueCounts?.high ?? 0) > 0,
+                        hasPendingAutoAction: maintSummary.hasPendingAutoAction,
+                        hasApprovalNeededAction: maintSummary.hasApprovalNeededAction,
+                        totalIssueCount: maintSummary.activeIssues.length,
+                    } : undefined,
+                    world: worldModel ? {
+                        hasActiveDegradation: worldModel.runtime.hasActiveDegradation,
+                        inferenceReady: worldModel.runtime.inferenceReady,
+                        repoDetected: worldModel.repo.isRepo,
+                        workspaceResolved: worldModel.workspace.rootResolved,
+                    } : undefined,
+                }).catch(() => { /* surface coordination errors are non-fatal */ });
             }
 
             return {
