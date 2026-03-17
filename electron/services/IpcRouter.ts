@@ -20,6 +20,7 @@ import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
 import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './RuntimeControlService';
+import type { WorldModelAssembler } from './world/WorldModelAssembler';
 
 export interface IpcRouterContext {
   app: any;
@@ -43,6 +44,8 @@ export interface IpcRouterContext {
   diagnosticsAggregator: RuntimeDiagnosticsAggregator;
   /** Runtime control service — Phase 2B operational controls for providers and MCP. */
   runtimeControl: RuntimeControlService;
+  /** World model assembler — Phase 4A canonical world-model builder. */
+  worldModelAssembler?: WorldModelAssembler;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -1762,6 +1765,21 @@ export class IpcRouter {
      */
     ipcMain.handle('diagnostics:probeMcpServices', async () => {
       return runtimeControl.probeMcpServices();
+    });
+
+    // ─── Phase 4A: World Model diagnostics ────────────────────────────────────
+
+    /**
+     * Returns the world model diagnostics summary.
+     * Read-only — renderer never drives world-model assembly.
+     * Returns null if no world model has been assembled yet.
+     */
+    ipcMain.handle('diagnostics:getWorldModel', async () => {
+      const assembler = this.ctx.worldModelAssembler;
+      if (!assembler) return null;
+      const model = assembler.getCachedModel();
+      if (!model) return null;
+      return assembler.buildDiagnosticsSummary(model);
     });
 
 

@@ -43,3 +43,18 @@ graph TD
 - **Node.js**: Underlying runtime for the desktop shell.
 - **Python 3.10+**: Runtime for MCP services and vector libraries.
 - **SQLite**: Primary persistent storage for structured memory.
+
+## 7. World Model Layer (Phase 4A)
+
+Phase 4A adds a structured world model that gives Tala a canonical view of her operating environment before inference. The `WorldModelAssembler` (in `electron/services/world/`) produces a `TalaWorldModel` from:
+
+- `WorkspaceStateBuilder` — workspace root, directories, classification.
+- `RepoStateBuilder` — git branch, dirty/clean, project type.
+- `RuntimeWorldStateProjector` — projects `RuntimeDiagnosticsSnapshot` into cognition-friendly state.
+- `UserGoalStateBuilder` — immediate task, project focus, stable direction.
+
+The world model is integrated into `PreInferenceContextOrchestrator` as a selective context source (contributed only when the turn intent is technical/coding/task/workspace/repo). The full model is never dumped into prompts — only a compact summary.
+
+IPC: `diagnostics:getWorldModel` returns `WorldModelDiagnosticsSummary` (read-only, renderer-safe).
+
+See [`docs/architecture/phase4a_world_model.md`](./phase4a_world_model.md) for full details.

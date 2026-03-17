@@ -32,6 +32,8 @@ import type { TalaContextRouter } from '../router/TalaContextRouter';
 import type { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
 import { reflectionContributionStore } from './ReflectionContributionModel';
 import { telemetry } from '../TelemetryService';
+import type { WorldModelAssembler } from '../world/WorldModelAssembler';
+import type { TalaWorldModel } from '../../../shared/worldModelTypes';
 
 // ─── External service interfaces ─────────────────────────────────────────────
 
@@ -97,6 +99,14 @@ export interface PreInferenceOrchestrationResult {
     /** Optional MCP context summary (normalised, not raw payload). */
     mcpContextSummary?: string;
 
+    // ─── World model contribution (Phase 4A) ─────────────────────────────
+    /**
+     * Optional compact world-state summary contributed to the cognitive context.
+     * Derived selectively from TalaWorldModel based on intent/mode — not the full model.
+     * Undefined when world-model contribution is skipped as irrelevant for this turn.
+     */
+    worldStateSummary?: string;
+
     // ─── Orchestration metadata ───────────────────────────────────────────
     /** Sources that were queried this turn. */
     sourcesQueried: string[];
@@ -123,6 +133,7 @@ export class PreInferenceContextOrchestrator {
         private readonly astroService: AstroServiceLike | null,
         private readonly docIntel: DocumentationIntelligenceService | null,
         private readonly mcpService: McpPreInferenceServiceLike | null = null,
+        private readonly worldModelAssembler: WorldModelAssembler | null = null,
     ) {}
 
     /**
@@ -418,6 +429,37 @@ export class PreInferenceContextOrchestrator {
                 { payload: { turnId, durationMs: orchestrationDurationMs } },
             );
 
+            // ── 6. World model contribution (Phase 4A) ────────────────────────
+            // Selectively contribute world-state summary based on intent/mode.
+            // Not contributed on every turn — only when situational context is relevant.
+            let worldStateSummary: string | undefined;
+            const worldModel = this.worldModelAssembler?.getCachedModel();
+
+            if (worldModel && this._isWorldStateRelevant(mode, intentClass)) {
+                worldStateSummary = this._buildWorldStateSummary(worldModel, intentClass);
+                sourcesQueried.push('world_model');
+                telemetry.operational(
+                    'world_model',
+                    'world_state_applied',
+                    'info',
+                    `turn:${turnId}`,
+                    `World state summary applied: intent=${intentClass} mode=${mode}`,
+                    'success',
+                    { payload: { turnId, mode, intentClass, summaryLen: worldStateSummary?.length ?? 0 } },
+                );
+            } else {
+                sourcesSuppressed.push('world_model');
+                telemetry.operational(
+                    'world_model',
+                    'world_state_skipped',
+                    'info',
+                    `turn:${turnId}`,
+                    `World state skipped: intent=${intentClass} mode=${mode} modelAvailable=${!!worldModel}`,
+                    'suppressed',
+                    { payload: { turnId, mode, intentClass, modelAvailable: !!worldModel } },
+                );
+            }
+
             return {
                 turnContext,
                 approvedMemories,
@@ -435,6 +477,7 @@ export class PreInferenceContextOrchestrator {
                 docRationale,
                 astroStateText,
                 mcpContextSummary,
+                worldStateSummary,
                 sourcesQueried,
                 sourcesSuppressed,
                 orchestrationDurationMs,
@@ -488,5 +531,77 @@ export class PreInferenceContextOrchestrator {
         //
         // If no relevant MCP state is available, return undefined (graceful no-op).
         return undefined;
+    }
+
+    // ─── World model helpers (Phase 4A) ──────────────────────────────────────
+
+    /**
+     * Determines whether world-state contribution is relevant for this turn.
+     *
+     * Rules:
+     *   - RP mode: world state is suppressed (no environmental grounding in RP).
+     *   - Greeting/conversation: world state is not useful overhead.
+     *   - Assistant/hybrid with technical, coding, task, or workspace intent:
+     *     world state is relevant and should be contributed.
+     */
+    private _isWorldStateRelevant(mode: Mode, intentClass: string): boolean {
+        if (mode === 'rp') return false;
+        if (intentClass === 'greeting' || intentClass === 'conversation') return false;
+        return (
+            intentClass === 'coding' ||
+            intentClass === 'technical' ||
+            intentClass === 'task' ||
+            intentClass === 'workspace' ||
+            intentClass === 'repo'
+        );
+    }
+
+    /**
+     * Builds a compact world-state summary string for cognitive injection.
+     * Only includes sections relevant to the current intent — not the full model.
+     * Safe for injection into cognitive context; no raw file contents.
+     */
+    private _buildWorldStateSummary(model: TalaWorldModel, intentClass: string): string {
+        const parts: string[] = [];
+
+        // Repo section — relevant for coding/technical/repo intents.
+        if (
+            (intentClass === 'coding' || intentClass === 'technical' || intentClass === 'repo') &&
+            model.repo.meta.availability !== 'unavailable'
+        ) {
+            const branchPart = model.repo.branch ? ` (${model.repo.branch})` : '';
+            const dirtyPart = model.repo.isDirty ? ` — ${model.repo.changedFileCount} uncommitted change(s)` : '';
+            parts.push(`Repo: ${model.repo.projectType}${branchPart}${dirtyPart}`);
+        }
+
+        // Runtime section — relevant for technical/task intents.
+        if (
+            (intentClass === 'technical' || intentClass === 'task') &&
+            model.runtime.meta.availability !== 'unavailable'
+        ) {
+            const providerPart = model.runtime.selectedProviderName
+                ? ` provider=${model.runtime.selectedProviderName}`
+                : '';
+            const degradedPart =
+                model.runtime.hasActiveDegradation
+                    ? ` DEGRADED: ${model.runtime.degradedSubsystems.join(',')}`
+                    : '';
+            parts.push(`Runtime: inference=${model.runtime.inferenceReady ? 'ready' : 'not ready'}${providerPart}${degradedPart}`);
+        }
+
+        // Workspace section — relevant for workspace/task intents.
+        if (
+            (intentClass === 'workspace' || intentClass === 'task') &&
+            model.workspace.meta.availability !== 'unavailable'
+        ) {
+            parts.push(`Workspace: ${model.workspace.classification} dirs=[${model.workspace.knownDirectories.join(',')}]`);
+        }
+
+        // Goal section — always include if available and there is an explicit goal.
+        if (model.goals.hasExplicitGoal && model.goals.immediateTask) {
+            parts.push(`Active task: ${model.goals.immediateTask.slice(0, 80)}`);
+        }
+
+        return parts.join(' | ');
     }
 }
