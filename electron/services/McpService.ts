@@ -451,9 +451,8 @@ export class McpService {
                                 retryCount: conn.retryCount
                             });
                             console.warn(`[McpService] Server ${conn.config.name} FAILED after ${conn.retryCount} retries. Manual intervention required.`);
-                        }
                         continue;
-                    }
+                        }
                     const delaySeconds = Math.min(30 * Math.pow(2, Math.min(conn.retryCount - 1, 6)), 1800);
                     if (now < conn.lastRetryTime + (delaySeconds * 1000)) {
                         continue; // Skip until backoff expires
