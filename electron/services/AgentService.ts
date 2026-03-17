@@ -2155,7 +2155,7 @@ Exported standalone package from Tala.
                 const assistantMsg: ChatMessage = { role: 'assistant', content: response.content || "" };
 
                 // Tools-Only suppression for coding turns in Assistant mode
-                const responseToolCalls = isStreamInferenceResult(response) ? undefined : response.toolCalls;
+                const responseToolCalls = response.toolCalls;
                 if (activeMode === 'assistant' && modeConfig.toolsOnlyCodingTurns && turnObject.intent.class === 'coding' && (responseToolCalls?.length || executionLog.executedToolCount > 0)) {
                     assistantMsg.content = "";
                     console.log(`[AgentService] Suppressing assistant prose for tools-only coding turn.`);
@@ -2196,7 +2196,7 @@ Failure to provide a tool call will result in system termination.`;
 
                     const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
 
-                    calls = (isStreamInferenceResult(retryResponse) ? undefined : retryResponse.toolCalls) || [];
+                    calls = retryResponse.toolCalls || [];
                     if (calls.length === 0 && retryResponse.content) {
                         // --- ROBUST ENVELOPE EXTRACTION ---
                         // Use brace-depth scanner to find the JSON object with tool_calls

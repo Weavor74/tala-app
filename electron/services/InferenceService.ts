@@ -17,6 +17,7 @@ import type {
     InferenceProviderInventory,
     StreamInferenceRequest,
     StreamInferenceResult,
+    CanonicalToolCall,
 } from '../../shared/inferenceProviderTypes';
 import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
 import { inferenceDiagnostics } from './InferenceDiagnosticsService';
@@ -381,6 +382,7 @@ export class InferenceService {
                     promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
                     completionTokens: brainResult?.metadata?.usage?.completion_tokens,
                     brainMetadata: brainResult?.metadata,
+                    toolCalls: brainResult?.toolCalls?.length ? brainResult.toolCalls : undefined,
                 };
                 inferenceDiagnostics.recordStreamResult(successResult);
                 return successResult;
