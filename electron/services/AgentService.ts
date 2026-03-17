@@ -2331,8 +2331,16 @@ Failure to provide a tool call will result in system termination.`;
 
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
 
-                        const result = await Promise.race([executePromise, timeoutPromise]);
+                        let result = await Promise.race([executePromise, timeoutPromise]);
                         const endTime = Date.now();
+
+                        // --- BROWSER COMMAND INTERCEPTION ---
+                        // Browser tools return BROWSER_* prefix strings that must be
+                        // dispatched as agent-events to the built-in workspace browser
+                        // panel and resolved with the actual browser response.
+                        if (typeof result === 'string' && result.startsWith('BROWSER_') && onEvent) {
+                            result = await this.dispatchBrowserCommand(result, onEvent);
+                        }
 
                         // Record successful execution
                         let resultPreview = "";
@@ -2963,6 +2971,12 @@ Failure to provide a tool call will result in system termination.`;
 
     private browserDataResolvers = new Map<string, (d: any) => void>();
 
+    /** Stable surface identifier for the built-in workspace browser panel.
+     *  Matches the surfaceId sent with every browser agent-event and logged
+     *  in Browser.tsx handleAgentEvent. Only one built-in browser surface
+     *  is supported; all browser tools target it by default. */
+    private static readonly BROWSER_SURFACE_ID = 'workspace-browser-1';
+
     private async waitForBrowserData(type: string, retryEmit?: () => void): Promise<string> {
         return new Promise(resolve => {
             const t = setTimeout(() => { this.browserDataResolvers.delete(type); resolve("Error: Timeout"); }, 15000);
@@ -2974,6 +2988,96 @@ Failure to provide a tool call will result in system termination.`;
     public provideBrowserData(type: string, data: any) {
         const res = this.browserDataResolvers.get(type);
         if (res) { res(data); this.browserDataResolvers.delete(type); }
+    }
+
+    /**
+     * Intercepts a `BROWSER_*`-prefixed command string returned by a browser tool,
+     * dispatches the corresponding agent-event to the built-in workspace browser
+     * panel, waits for the browser to confirm execution, and returns the actual
+     * result for the LLM.
+     *
+     * Control flow:
+     *   tool result ("BROWSER_NAVIGATE: …")
+     *   → dispatchBrowserCommand()
+     *   → onEvent("browser-navigate", { url, surfaceId })   ← sent to renderer
+     *   → Browser.tsx relays to webview / captures screenshot
+     *   → provideBrowserData() resolves the pending promise
+     *   → actual result returned to LLM
+     *
+     * @param rawResult  The raw `BROWSER_*` string from ToolService.
+     * @param onEvent    The agent-event callback provided by IpcRouter.
+     * @returns The real browser result to be wrapped in [TOOL_RESULT].
+     */
+    private async dispatchBrowserCommand(
+        rawResult: string,
+        onEvent: (type: string, data: any) => void
+    ): Promise<string> {
+        const surfaceId = AgentService.BROWSER_SURFACE_ID;
+
+        if (rawResult.startsWith('BROWSER_NAVIGATE: ')) {
+            const url = rawResult.slice('BROWSER_NAVIGATE: '.length).trim();
+            console.log(`[BrowserTool] browse url=${url} targetSurface=${surfaceId}`);
+            console.log(`[BrowserSurface] openUrl surface=${surfaceId} url=${url}`);
+            onEvent('browser-navigate', { url, surfaceId });
+            const response = await this.waitForBrowserData('action-response');
+            return response.startsWith('Error:') ? response : `Navigated to ${url}. ${response}`;
+        }
+
+        if (rawResult.startsWith('BROWSER_CLICK: ')) {
+            const selector = rawResult.slice('BROWSER_CLICK: '.length).trim();
+            console.log(`[BrowserTool] click selector="${selector}" targetSurface=${surfaceId}`);
+            onEvent('browser-click', { selector, surfaceId });
+            return await this.waitForBrowserData('action-response');
+        }
+
+        if (rawResult.startsWith('BROWSER_HOVER: ')) {
+            const selector = rawResult.slice('BROWSER_HOVER: '.length).trim();
+            console.log(`[BrowserTool] hover selector="${selector}" targetSurface=${surfaceId}`);
+            onEvent('browser-hover', { selector, surfaceId });
+            return await this.waitForBrowserData('action-response');
+        }
+
+        if (rawResult.startsWith('BROWSER_TYPE: ')) {
+            const argsStr = rawResult.slice('BROWSER_TYPE: '.length).trim();
+            let args: { selector?: string; text?: string } = {};
+            try { args = JSON.parse(argsStr); } catch { args = {}; }
+            console.log(`[BrowserTool] type selector="${args.selector ?? ''}" textLength=${args.text?.length ?? 0} targetSurface=${surfaceId}`);
+            onEvent('browser-type', { ...args, surfaceId });
+            return await this.waitForBrowserData('action-response');
+        }
+
+        if (rawResult.startsWith('BROWSER_SCROLL: ')) {
+            const argsStr = rawResult.slice('BROWSER_SCROLL: '.length).trim();
+            let args: { direction?: string; amount?: number } = {};
+            try { args = JSON.parse(argsStr); } catch { args = {}; }
+            console.log(`[BrowserTool] scroll direction=${args.direction ?? 'down'} targetSurface=${surfaceId}`);
+            onEvent('browser-scroll', { ...args, surfaceId });
+            return await this.waitForBrowserData('action-response');
+        }
+
+        if (rawResult.startsWith('BROWSER_PRESS_KEY: ')) {
+            const key = rawResult.slice('BROWSER_PRESS_KEY: '.length).trim();
+            console.log(`[BrowserTool] press_key key="${key}" targetSurface=${surfaceId}`);
+            onEvent('browser-press-key', { key, surfaceId });
+            return await this.waitForBrowserData('action-response');
+        }
+
+        if (rawResult === 'BROWSER_GET_DOM: REQUEST') {
+            console.log(`[BrowserTool] get_dom targetSurface=${surfaceId}`);
+            onEvent('browser-get-dom', { surfaceId });
+            return await this.waitForBrowserData('dom');
+        }
+
+        if (rawResult === 'BROWSER_SCREENSHOT: REQUEST') {
+            console.log(`[BrowserTool] screenshot targetSurface=${surfaceId}`);
+            onEvent('browser-screenshot', { surfaceId });
+            const base64 = await this.waitForBrowserData('screenshot');
+            if (base64.startsWith('Error:')) return base64;
+            return `Screenshot captured from ${surfaceId} (${base64.length} bytes base64 PNG).`;
+        }
+
+        // BROWSER_SEARCH and any unknown BROWSER_ commands pass through unchanged
+        return rawResult;
     }
 
     public async headlessInference(prompt: string, config?: any): Promise<string> {
