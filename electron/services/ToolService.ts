@@ -701,7 +701,7 @@ export class ToolService {
         // Tool: browse
         this.register({
             name: 'browse',
-            description: 'Starts a navigation to a URL. After this, you should use browser_get_dom to read the page content.',
+            description: 'Opens/navigates the built-in workspace browser to a URL. Use this to start any web navigation task. After calling this, you MUST call browser_get_dom to read the live page state before taking further actions. Workflow: browse → browser_get_dom → browser_click/browser_type → browser_get_dom → repeat.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -720,7 +720,7 @@ export class ToolService {
         // Tool: browser_click
         this.register({
             name: 'browser_click',
-            description: 'Clicks an element on the current page. PREFERRED: Use the numeric ID found in browser_get_dom (e.g. "12"). Fallback: CSS selector.',
+            description: 'Acts on the current workspace browser page by clicking an element. PREFERRED: Use the numeric ID from browser_get_dom (e.g. "12"). Fallback: CSS selector. Always call browser_get_dom first to know the IDs.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -736,7 +736,7 @@ export class ToolService {
         // Tool: browser_hover
         this.register({
             name: 'browser_hover',
-            description: 'Hovers the mouse over an element without clicking. Useful for triggering dropdowns or menus. Use the numeric ID from browser_get_dom.',
+            description: 'Hovers the mouse over an element in the current workspace browser page without clicking. Useful for triggering dropdowns or tooltip menus. Use the numeric ID from browser_get_dom.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -752,7 +752,7 @@ export class ToolService {
         // Tool: browser_type
         this.register({
             name: 'browser_type',
-            description: 'Types text into an input field. PREFERRED: Use the numeric ID found in browser_get_dom (e.g. "12"). Fallback: CSS selector.',
+            description: 'Types text into an input field in the current workspace browser page. PREFERRED: Use the numeric ID found in browser_get_dom (e.g. "12"). Fallback: CSS selector. After typing, use browser_press_key with "Enter" to submit, or browser_click to click a submit button.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -769,7 +769,7 @@ export class ToolService {
         // Tool: browser_scroll
         this.register({
             name: 'browser_scroll',
-            description: 'Scrolls the page content.',
+            description: 'Scrolls the current workspace browser page content up, down, to the top, or to the bottom. Use after browser_get_dom when elements are not visible.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -786,7 +786,7 @@ export class ToolService {
         // Tool: browser_press_key
         this.register({
             name: 'browser_press_key',
-            description: 'Presses a specific keyboard key (Enter, Escape, ArrowDown, etc.) in the browser context.',
+            description: 'Presses a keyboard key in the current workspace browser page context (e.g. Enter to submit forms, Escape to dismiss, ArrowDown to navigate dropdowns). Use after browser_type to submit searches.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -802,7 +802,7 @@ export class ToolService {
         // Tool: browser_get_dom
         this.register({
             name: 'browser_get_dom',
-            description: 'Retrieves a list of interactive elements on the page, each assigned a unique numeric ID (e.g. [12] BUTTON). Use these IDs for clicking and typing.',
+            description: 'Reads the current live workspace browser page state for next-step grounding. Returns interactive elements with unique numeric IDs (e.g. [12] BUTTON "Search"). Call this after every browse/navigation and after every click/type/keypress to get the updated page state before deciding the next action.',
             parameters: { type: 'object', properties: {} },
             execute: async (args) => {
                 return `BROWSER_GET_DOM: REQUEST`;
@@ -812,7 +812,7 @@ export class ToolService {
         // Tool: browser_screenshot
         this.register({
             name: 'browser_screenshot',
-            description: 'Captures a high-quality screenshot of the active web page in the center panel. Use this to verify visual state.',
+            description: 'Captures a screenshot of the current workspace browser page to verify visual state. Use to confirm navigation success or inspect visual layout.',
             parameters: { type: 'object', properties: {} },
             execute: async () => {
                 return `BROWSER_SCREENSHOT: REQUEST`;
@@ -822,7 +822,7 @@ export class ToolService {
         // Tool: search_web
         this.register({
             name: 'search_web',
-            description: 'Performs a web search to find information without navigating a browser visually. Returns a list of results (titles and URLs). Use this for general queries.',
+            description: 'Performs a web search to find information without opening the visual workspace browser. Returns a list of results (titles and URLs) only. Use browse instead if you need to visually navigate or interact with a page.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1431,7 +1431,8 @@ export class ToolService {
             memory_retrieval: ['mem0_search', 'retrieve_context', 'query_graph'],
             memory_write: ['mem0_add', 'manage_goals', 'task_plan', 'reflection_create_goal'],
             system_core: ['fs_read_text', 'fs_write_text', 'fs_list', 'shell_run'],
-            diagnostic: ['self_audit', 'reflection_clean', 'system_diagnose']
+            diagnostic: ['self_audit', 'reflection_clean', 'system_diagnose'],
+            browser_automation: ['browse', 'browser_get_dom', 'browser_click', 'browser_hover', 'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot'],
         };
 
         const allowAll = !allowedCapabilities || allowedCapabilities.includes('all');

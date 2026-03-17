@@ -190,6 +190,13 @@ export type TelemetryEventType =
     | 'a2ui_action_validated'
     | 'a2ui_action_executed'
     | 'a2ui_action_failed'
+    // Browser task mode
+    | 'browser_task_activated'
+    | 'browser_task_tools_filtered'
+    | 'browser_task_dom_fetched'
+    | 'browser_task_step'
+    | 'browser_task_finalized'
+    | 'browser_task_continuation'
     // Generic
     | 'operational'
     | 'developer_debug';

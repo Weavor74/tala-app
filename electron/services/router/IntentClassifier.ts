@@ -15,7 +15,7 @@
  * - Influences the `ModePolicyEngine` on which tools are allowed for the current turn.
  */
 
-export type IntentClass = 'greeting' | 'technical' | 'narrative' | 'coding' | 'lore' | 'action' | 'mixed' | 'unknown';
+export type IntentClass = 'greeting' | 'technical' | 'narrative' | 'coding' | 'lore' | 'action' | 'mixed' | 'browser' | 'unknown';
 
 /**
  * Structured result of an intent classification operation.
@@ -38,6 +38,21 @@ export class IntentClassifier {
         /^(howdy|sup|hiya)/i
     ];
 
+    private static readonly BROWSER_PATTERNS = [
+        // Explicit browser/navigation verbs
+        /\b(browse|browsing|navigate|navigating|open\s+(url|site|website|page|browser|workspace\s+browser)|go\s+to|visit|load\s+(page|site|url|website))\b/i,
+        // Web search / form interaction
+        /\b(search\s+(google|bing|web|for)|click\s+(the|a|on)?|type\s+(into|in|text|into\s+the)|fill\s+(in|the|a|form)|scroll\s+(the\s+)?(page|down|up)|press\s+(enter|escape|key))\b/i,
+        // URL detection
+        /https?:\/\//i,
+        // Domain shortcuts
+        /\b(google\.com|bing\.com|wikipedia\.org|youtube\.com|github\.com|stackoverflow\.com)\b/i,
+        // Workspace browser references
+        /\b(workspace\s+browser|built-in\s+browser|in\s+the\s+browser|browser\s+tab|web\s+page|webpage|website|web\s+search)\b/i,
+        // Page interaction keywords
+        /\b(click\s+result|5th\s+result|first\s+result|search\s+box|search\s+field|text\s+field|submit\s+the|submit\s+search)\b/i,
+    ];
+
     private static readonly TECHNICAL_PATTERNS = [
         /(how|why|what|when|where|can|could|help|explain|fix|debug|error|issue|bug|code|script|api|function|tool|terminal|file|path)/i,
         /(install|run|deploy|build|compile|test|verify)/i,
@@ -56,8 +71,20 @@ export class IntentClassifier {
         const hasGreeting = this.GREETING_PATTERNS.some(p => p.test(text.replace(/(\s+)?(baby|love|dear|sweetie|friend|tala|tally)$/i, '')));
         const hasTechnical = this.TECHNICAL_PATTERNS.some(p => p.test(text));
         const hasLore = this.LORE_PATTERNS.some(p => p.test(text));
+        const hasBrowser = this.BROWSER_PATTERNS.some(p => p.test(text));
 
-        // 2. Precedence Logic (Mixed Intent)
+        // 2. Browser intent takes high precedence — it is explicit and unambiguous
+        if (hasBrowser) {
+            console.log(`[IntentClassifier] Browser intent detected.`);
+            return {
+                class: 'browser',
+                confidence: 0.95,
+                subsystem: 'browser',
+                precedenceLog: 'Browser pattern matched'
+            };
+        }
+
+        // 3. Precedence Logic (Mixed Intent)
         if (hasGreeting && (hasTechnical || hasLore)) {
             const primarySubstantive = hasTechnical ? 'technical' : 'lore';
             console.log(`[IntentClassifier] Mixed intent detected. Content overrides greeting. Primary: ${primarySubstantive}`);
@@ -69,7 +96,7 @@ export class IntentClassifier {
             };
         }
 
-        // 3. Single Intent Resolution
+        // 4. Single Intent Resolution
         if (hasGreeting) {
             return { class: 'greeting', confidence: 0.95 };
         }
