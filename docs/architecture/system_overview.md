@@ -78,3 +78,38 @@ Maintenance state is exposed via:
 - `PreInferenceContextOrchestrator` — compact maintenance summary injected selectively on troubleshooting/technical turns
 
 See [`docs/architecture/phase4b_self_maintenance_foundation.md`](./phase4b_self_maintenance_foundation.md) for full details.
+
+
+## 9. A2UI Workspace Surfaces (Phase 4C)
+
+Phase 4C adds dynamic structured UI surfaces that open in the document/editor pane. These surfaces let the user inspect Tala's current cognitive, world-model, and maintenance state in a readable, actionable form without polluting the chat window.
+
+**Core rule:** A2UI surfaces render in the document/editor pane only. Chat receives lightweight notices only (e.g. "I opened the cognition surface in the workspace.").
+
+Key components:
+
+- **`A2UIWorkspaceRouter`** (`electron/services/A2UIWorkspaceRouter.ts`) — assembles surface payloads from diagnostics/read models and pushes them to the renderer via `agent-event: a2ui-surface-open`. Maintains an open-surface registry.
+- **`A2UIActionBridge`** (`electron/services/A2UIActionBridge.ts`) — validates and executes renderer-dispatched actions against a strict allowlist. Routes to runtime services.
+- **Surface mappers** — typed, bounded converters from diagnostics data to A2UI component trees:
+  - `CognitionSurfaceMapper` — maps `CognitiveDiagnosticsSnapshot` → A2UI
+  - `WorldSurfaceMapper` — maps `TalaWorldModel` → A2UI
+  - `MaintenanceSurfaceMapper` — maps `MaintenanceDiagnosticsSummary` → A2UI
+- **`A2UIWorkspaceSurface`** (`src/renderer/A2UIWorkspaceSurface.tsx`) — React renderer host for the document/editor pane. Uses the existing `BasicComponents` catalog.
+
+Named surfaces with stable tab IDs:
+
+| Surface | Tab ID | Shows |
+|---|---|---|
+| `cognition` | `a2ui:cognition` | Mode, memory, docs, emotional modulation, reflection notes |
+| `world` | `a2ui:world` | Workspace, repo, runtime/MCP, user goal |
+| `maintenance` | `a2ui:maintenance` | Issues, severity, actions, cooldown state |
+
+IPC surface:
+- `a2ui:openSurface(id)` — open/refresh a named surface
+- `a2ui:dispatchAction(action)` — allowlisted action dispatch
+- `a2ui:getCognitiveSnapshot()` — current cognitive diagnostics
+- `a2ui:getDiagnostics()` — surface/action diagnostics summary
+
+Telemetry events: `a2ui_surface_open_requested`, `a2ui_surface_opened`, `a2ui_surface_updated`, `a2ui_surface_failed`, `a2ui_action_received`, `a2ui_action_validated`, `a2ui_action_executed`, `a2ui_action_failed`.
+
+See [`docs/architecture/phase4c_a2ui_workspace_surfaces.md`](./phase4c_a2ui_workspace_surfaces.md) for full details.

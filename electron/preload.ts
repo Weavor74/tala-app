@@ -482,4 +482,24 @@ contextBridge.exposeInMainWorld('tala', {
         getCorrelationEntries: (args: { sessionId?: string, turnId?: string }) =>
             ipcRenderer.invoke('logs:getCorrelationEntries', args),
     },
+
+    // ─── A2UI Workspace Surfaces (Phase 4C) ──────────────────────
+    a2ui: {
+        /**
+         * Opens or refreshes a named A2UI workspace surface in the document/editor pane.
+         * The payload is pushed to the renderer via 'agent-event' with type 'a2ui-surface-open'.
+         */
+        openSurface: (surfaceId: 'cognition' | 'world' | 'maintenance', options?: { focus?: boolean }) =>
+            ipcRenderer.invoke('a2ui:openSurface', surfaceId, options),
+        /**
+         * Dispatches an allowlisted A2UI action to the main process.
+         * Invalid action names are rejected before execution.
+         */
+        dispatchAction: (action: { surfaceId: string; actionName: string; payload?: Record<string, unknown> }) =>
+            ipcRenderer.invoke('a2ui:dispatchAction', action),
+        /** Retrieves the current cognitive diagnostics snapshot. */
+        getCognitiveSnapshot: () => ipcRenderer.invoke('a2ui:getCognitiveSnapshot'),
+        /** Retrieves A2UI surface and action diagnostics summary. */
+        getDiagnostics: () => ipcRenderer.invoke('a2ui:getDiagnostics'),
+    },
 });
