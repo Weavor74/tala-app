@@ -180,6 +180,15 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
                 setIsLoading(false);
                 setStatus('LOADED');
                 setTimeout(() => setStatus('Ready'), 3000);
+
+                // Notify the agent that navigation is complete so waitForBrowserData
+                // resolves with real confirmation instead of timing out.
+                const loadedUrl = webview.getURL?.() || '';
+                console.log(`[BrowserSurface] navigation complete url=${loadedUrl}`);
+                const api = (window as any).tala;
+                if (api) {
+                    api.provideBrowserData('action-response', `Page loaded: ${loadedUrl}`);
+                }
             });
 
             webview.addEventListener('dom-ready', () => {
@@ -209,7 +218,8 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
 
         const handleAgentEvent = async (event: any) => {
             // Note: isActive check removed to allow background automation by AI
-            console.log(`[Browser Component] Received Agent Event: ${event.type}`, event.data);
+            const surfaceId = event.data?.surfaceId || 'workspace-browser-1';
+            console.log(`[BrowserSurface] received event type=${event.type} surface=${surfaceId}`);
             const webview = webviewRef.current;
             if (!webview) return;
 
