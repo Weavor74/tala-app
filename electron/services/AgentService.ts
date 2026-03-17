@@ -10,7 +10,8 @@ import { OllamaBrain } from '../brains/OllamaBrain';
 import { promptAuditService, type PromptAuditRecord } from './PromptAuditService';
 import { CloudBrain } from '../brains/CloudBrain';
 import { BackupService } from './BackupService';
-import type { IBrain, ChatMessage } from '../brains/IBrain';
+import type { IBrain, ChatMessage, BrainResponse } from '../brains/IBrain';
+import type { StreamInferenceResult } from '../../shared/inferenceProviderTypes';
 import { ToolService } from './ToolService';
 import { SystemService } from './SystemService';
 import { RagService } from './RagService';
@@ -54,6 +55,12 @@ import { telemetry } from './TelemetryService';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
+
+function isStreamInferenceResult(r: BrainResponse | StreamInferenceResult): r is StreamInferenceResult {
+    return 'streamStatus' in r;
+}
+
+type BrainUsage = { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 
 type McpToolSchema = {
     name: string;
@@ -1310,7 +1317,7 @@ Exported standalone package from Tala.
                 this.brain = ollama;
             } else {
                 // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
-                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: chosen.preferredModel });
+                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: chosen.preferredModel ?? '' });
             }
         } catch (e) { }
     }
@@ -2106,30 +2113,35 @@ Exported standalone package from Tala.
                     turnId: executionLog.turnId
                 });
 
-                if (response.metadata?.usage?.total_tokens) {
+                const responseUsage: BrainUsage | undefined = isStreamInferenceResult(response)
+                    ? (response.brainMetadata?.['usage'] as BrainUsage | undefined)
+                    : response.metadata?.usage;
+
+                if (responseUsage?.total_tokens) {
                     this.logViewerService?.logPerformanceMetric({
                         timestamp: new Date().toISOString(),
                         source: 'AgentService',
                         subsystem: 'inference',
                         metricType: 'counter',
                         name: 'token_usage_total',
-                        value: response.metadata.usage.total_tokens,
+                        value: responseUsage.total_tokens,
                         unit: 'tokens',
                         sessionId: this.activeSessionId,
                         turnId: executionLog.turnId
                     });
                 }
 
-                if (response.metadata?.usage) {
-                    cumulativeUsage.prompt_tokens += response.metadata.usage.prompt_tokens;
-                    cumulativeUsage.completion_tokens += response.metadata.usage.completion_tokens;
-                    cumulativeUsage.total_tokens += response.metadata.usage.total_tokens;
+                if (responseUsage) {
+                    cumulativeUsage.prompt_tokens += responseUsage.prompt_tokens;
+                    cumulativeUsage.completion_tokens += responseUsage.completion_tokens;
+                    cumulativeUsage.total_tokens += responseUsage.total_tokens;
                 }
 
                 const assistantMsg: ChatMessage = { role: 'assistant', content: response.content || "" };
 
                 // Tools-Only suppression for coding turns in Assistant mode
-                if (activeMode === 'assistant' && modeConfig.toolsOnlyCodingTurns && turnObject.intent.class === 'coding' && (response.toolCalls?.length || executionLog.executedToolCount > 0)) {
+                const responseToolCalls = isStreamInferenceResult(response) ? undefined : response.toolCalls;
+                if (activeMode === 'assistant' && modeConfig.toolsOnlyCodingTurns && turnObject.intent.class === 'coding' && (responseToolCalls?.length || executionLog.executedToolCount > 0)) {
                     assistantMsg.content = "";
                     console.log(`[AgentService] Suppressing assistant prose for tools-only coding turn.`);
                 }
@@ -2143,7 +2155,7 @@ Exported standalone package from Tala.
                     break;
                 }
 
-                let calls = (activeMode === 'rp') ? [] : (response.toolCalls || []);
+                let calls = (activeMode === 'rp') ? [] : (responseToolCalls || []);
 
                 // --- HARDENED ToolRequired Gate ---
                 const intentVerbs = ['create', 'write', 'edit', 'modify', 'delete', 'remove', 'add', 'update', 'patch', 'refactor', 'generate', 'scaffold', 'implement', 'fix', 'run', 'execute', 'lint', 'test', 'build', 'install', 'start'];
@@ -2169,7 +2181,7 @@ Failure to provide a tool call will result in system termination.`;
 
                     const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, filteredTools, retryOptions);
 
-                    calls = retryResponse.toolCalls || [];
+                    calls = (isStreamInferenceResult(retryResponse) ? undefined : retryResponse.toolCalls) || [];
                     if (calls.length === 0 && retryResponse.content) {
                         // --- ROBUST ENVELOPE EXTRACTION ---
                         // Use brace-depth scanner to find the JSON object with tool_calls

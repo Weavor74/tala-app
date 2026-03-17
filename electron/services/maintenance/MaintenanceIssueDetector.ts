@@ -83,28 +83,16 @@ export class MaintenanceIssueDetector {
         const inference = diagnostics.inference;
 
         // 1. Selected provider unavailable
-        const selectedId = inference.selectedProvider?.providerId;
+        const selectedId = inference.selectedProviderId;
         if (selectedId) {
-            const status = inference.selectedProvider?.status;
-            if (status === 'unavailable' || status === 'failed') {
+            if (!inference.selectedProviderReady) {
                 issues.push(this._makeIssue({
                     category: 'provider_unavailable',
                     severity: 'critical',
                     confidence: 0.95,
                     sourceSubsystem: 'inference',
                     affectedEntityId: selectedId,
-                    description: `Selected inference provider '${selectedId}' is ${status}.`,
-                    safeToAutoExecute: true,
-                    requiresApproval: false,
-                }));
-            } else if (status === 'degraded') {
-                issues.push(this._makeIssue({
-                    category: 'provider_degraded',
-                    severity: 'high',
-                    confidence: 0.9,
-                    sourceSubsystem: 'inference',
-                    affectedEntityId: selectedId,
-                    description: `Selected inference provider '${selectedId}' is degraded.`,
+                    description: `Selected inference provider '${selectedId}' is not ready.`,
                     safeToAutoExecute: true,
                     requiresApproval: false,
                 }));
@@ -112,7 +100,7 @@ export class MaintenanceIssueDetector {
         }
 
         // 2. No providers ready
-        const inv = inference.providerInventory;
+        const inv = inference.providerInventorySummary;
         if (inv && inv.ready === 0 && inv.total > 0) {
             issues.push(this._makeIssue({
                 category: 'provider_unavailable',
@@ -183,14 +171,13 @@ export class MaintenanceIssueDetector {
         // 6. Critical MCP services unavailable
         for (const svc of mcp.services ?? []) {
             if (svc.status === 'unavailable' || svc.status === 'failed') {
-                const isCritical = svc.capabilities?.length > 0;
                 issues.push(this._makeIssue({
                     category: 'mcp_service_unavailable',
-                    severity: isCritical ? 'high' : 'medium',
+                    severity: 'medium',
                     confidence: 0.9,
                     sourceSubsystem: 'mcp',
-                    affectedEntityId: svc.serverId,
-                    description: `MCP service '${svc.serverId}' is ${svc.status}.`,
+                    affectedEntityId: svc.serviceId,
+                    description: `MCP service '${svc.serviceId}' is ${svc.status}.`,
                     safeToAutoExecute: true,
                     requiresApproval: false,
                 }));
