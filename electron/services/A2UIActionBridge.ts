@@ -26,6 +26,7 @@ import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregato
 import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import type { MaintenanceMode } from '../../shared/maintenance/maintenanceTypes';
 import type { CognitiveInteractionEvent } from '../../shared/coordinationTypes';
+import type { RuntimeDiagnosticsSnapshot } from '../../shared/runtimeDiagnosticsTypes';
 import { telemetry } from './TelemetryService';
 
 /**
@@ -243,12 +244,7 @@ export class A2UIActionBridge {
                 if (snapshot) {
                     await svc.runCycle(snapshot, worldModel ?? undefined);
                 } else {
-                    // No snapshot available: still run cycle if the maintenance service
-                    // can operate independently (e.g. world-model-only check).
-                    await svc.runCycle(
-                        { timestamp: new Date().toISOString(), degradedSubsystems: [], recentFailures: { count: 0, failedEntityIds: [] } } as any,
-                        worldModel ?? undefined,
-                    );
+                    await svc.runCycle(_makeMinimalSnapshot(), worldModel ?? undefined);
                 }
                 const updated = await this._deps.router.openSurface('maintenance');
                 return {
@@ -330,6 +326,42 @@ export class A2UIActionBridge {
 }
 
 // ─── Interaction summary builder ──────────────────────────────────────────────
+
+/**
+ * Builds a minimal valid RuntimeDiagnosticsSnapshot for use when no live
+ * diagnostics aggregator is available (e.g. action bridge used standalone).
+ */
+function _makeMinimalSnapshot(): RuntimeDiagnosticsSnapshot {
+    const now = new Date().toISOString();
+    return {
+        timestamp: now,
+        inference: {
+            selectedProviderReady: false,
+            attemptedProviders: [],
+            fallbackApplied: false,
+            streamStatus: 'idle',
+            providerInventorySummary: { total: 0, ready: 0, unavailable: 0, degraded: 0 },
+            lastUpdated: now,
+        },
+        mcp: {
+            services: [],
+            totalConfigured: 0,
+            totalReady: 0,
+            totalDegraded: 0,
+            totalUnavailable: 0,
+            criticalUnavailable: false,
+            lastUpdated: now,
+        },
+        degradedSubsystems: [],
+        recentFailures: { count: 0, failedEntityIds: [] },
+        lastUpdatedPerSubsystem: {},
+        operatorActions: [],
+        providerHealthScores: [],
+        suppressedProviders: [],
+        recentProviderRecoveries: [],
+        recentMcpRestarts: [],
+    };
+}
 
 /**
  * Builds a bounded, sanitized human-readable summary of an A2UI action.
