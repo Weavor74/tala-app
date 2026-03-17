@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type {
     RuntimeDiagnosticsSnapshot,
     McpServiceDiagnostics,
-    ProviderHealthScore,
 } from '../../../shared/runtimeDiagnosticsTypes';
 
 /**
@@ -94,7 +93,7 @@ interface ProviderRowProps {
     busy: boolean;
 }
 
-function ProviderRow({ id, name, status, selected, suppressed, failureStreak, onRestart, onDisable, onEnable, onForceSelect, busy }: ProviderRowProps) {
+function ProviderRow({ name, status, selected, suppressed, failureStreak, onRestart, onDisable, onEnable, onForceSelect, busy }: ProviderRowProps) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid #374151' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -243,13 +242,8 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
         );
     }
 
-    const { inference, mcp, degradedSubsystems, recentFailures, providerHealthScores, suppressedProviders, operatorActions, recentProviderRecoveries, recentMcpRestarts } = snapshot;
+    const { inference, mcp, degradedSubsystems, recentFailures, providerHealthScores, suppressedProviders, operatorActions, recentProviderRecoveries } = snapshot;
     const selectedId = inference.selectedProviderId;
-
-    // Build provider health score lookup
-    const healthById = new Map<string, ProviderHealthScore>(
-        (providerHealthScores ?? []).map(s => [s.providerId, s])
-    );
 
     return (
         <div style={{ padding: '14px 16px', fontFamily: 'system-ui, sans-serif', color: '#e5e7eb', maxWidth: 560, fontSize: 13 }}>
