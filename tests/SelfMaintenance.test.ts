@@ -44,19 +44,23 @@ function makeMinimalSnapshot(overrides: Partial<RuntimeDiagnosticsSnapshot> = {}
     return {
         timestamp: now,
         inference: {
-            currentStatus: 'ready',
-            selectedProvider: { providerId: 'ollama', displayName: 'Ollama', status: 'ready' },
+            selectedProviderId: 'ollama',
+            selectedProviderName: 'Ollama',
+            selectedProviderReady: true,
+            attemptedProviders: [],
+            fallbackApplied: false,
             streamStatus: 'idle',
-            providerInventory: { total: 1, ready: 1, unavailable: 0, degraded: 0 },
-            lastUpdatedAt: now,
+            providerInventorySummary: { total: 1, ready: 1, unavailable: 0, degraded: 0 },
+            lastUpdated: now,
         },
         mcp: {
             services: [],
-            totalServices: 0,
-            readyServices: 0,
-            degradedServices: 0,
-            unavailableServices: 0,
-            lastUpdatedAt: now,
+            totalConfigured: 0,
+            totalReady: 0,
+            totalDegraded: 0,
+            totalUnavailable: 0,
+            criticalUnavailable: false,
+            lastUpdated: now,
         },
         degradedSubsystems: [],
         recentFailures: { count: 0, failedEntityIds: [] },
@@ -73,11 +77,14 @@ function makeMinimalSnapshot(overrides: Partial<RuntimeDiagnosticsSnapshot> = {}
 function makeUnavailableProviderSnapshot(): RuntimeDiagnosticsSnapshot {
     return makeMinimalSnapshot({
         inference: {
-            currentStatus: 'unavailable',
-            selectedProvider: { providerId: 'ollama', displayName: 'Ollama', status: 'unavailable' },
+            selectedProviderId: 'ollama',
+            selectedProviderName: 'Ollama',
+            selectedProviderReady: false,
+            attemptedProviders: ['ollama'],
+            fallbackApplied: false,
             streamStatus: 'idle',
-            providerInventory: { total: 1, ready: 0, unavailable: 1, degraded: 0 },
-            lastUpdatedAt: new Date().toISOString(),
+            providerInventorySummary: { total: 1, ready: 0, unavailable: 1, degraded: 0 },
+            lastUpdated: new Date().toISOString(),
         },
     });
 }
@@ -85,12 +92,25 @@ function makeUnavailableProviderSnapshot(): RuntimeDiagnosticsSnapshot {
 function makeDegradedProviderSnapshot(): RuntimeDiagnosticsSnapshot {
     return makeMinimalSnapshot({
         inference: {
-            currentStatus: 'degraded',
-            selectedProvider: { providerId: 'ollama', displayName: 'Ollama', status: 'degraded' },
+            selectedProviderId: 'ollama',
+            selectedProviderName: 'Ollama',
+            selectedProviderReady: false,
+            attemptedProviders: ['ollama'],
+            fallbackApplied: false,
             streamStatus: 'idle',
-            providerInventory: { total: 1, ready: 0, unavailable: 0, degraded: 1 },
-            lastUpdatedAt: new Date().toISOString(),
+            providerInventorySummary: { total: 1, ready: 0, unavailable: 0, degraded: 1 },
+            lastUpdated: new Date().toISOString(),
         },
+        providerHealthScores: [
+            {
+                providerId: 'ollama',
+                failureStreak: 5,
+                timeoutCount: 1,
+                fallbackCount: 2,
+                suppressed: false,
+                effectivePriority: 1,
+            },
+        ],
     });
 }
 
@@ -98,13 +118,23 @@ function makeFlappingMcpSnapshot(): RuntimeDiagnosticsSnapshot {
     return makeMinimalSnapshot({
         mcp: {
             services: [
-                { serverId: 'test-mcp', status: 'unavailable', capabilities: [], lastUpdatedAt: new Date().toISOString() },
+                {
+                    serviceId: 'test-mcp',
+                    displayName: 'Test MCP',
+                    kind: 'stdio',
+                    enabled: true,
+                    status: 'unavailable',
+                    degraded: false,
+                    ready: false,
+                    restartCount: 3,
+                },
             ],
-            totalServices: 1,
-            readyServices: 0,
-            degradedServices: 0,
-            unavailableServices: 1,
-            lastUpdatedAt: new Date().toISOString(),
+            totalConfigured: 1,
+            totalReady: 0,
+            totalDegraded: 0,
+            totalUnavailable: 1,
+            criticalUnavailable: false,
+            lastUpdated: new Date().toISOString(),
         },
         recentMcpRestarts: [
             { serviceId: 'test-mcp', timestamp: new Date().toISOString(), reason: 'crash' },
@@ -580,7 +610,7 @@ describe('MaintenanceLoopService — getCognitiveSummary', () => {
         await svc.runCycle(makeUnavailableProviderSnapshot());
         const cogSummary = svc.getCognitiveSummary();
         expect(cogSummary.highestSeverity).toBe('critical');
-        expect(cogSummary.topIssueDescription).toContain('unavailable');
+        expect(cogSummary.topIssueDescription).toContain('not ready');
     });
 
     it('hasActionableIssues returns true for critical issues', async () => {
