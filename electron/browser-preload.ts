@@ -356,10 +356,37 @@ try {
                     if (text.includes('\n')) {
                         el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
                     }
-                    ipcRenderer.sendToHost('agent-response', { type: 'type', result: `Typed into ${selector}` });
+                    ipcRenderer.sendToHost('agent-response', { type: 'type', result: `Typed ${text.length} characters into ${selector}` });
                 } else {
-                    ipcRenderer.sendToHost('agent-response', { type: 'type', result: `Element ${selector} not found` });
+                    ipcRenderer.sendToHost('agent-response', { type: 'error', error: `Element ${selector} not found` });
                 }
+            }
+            else if (type === 'hover') {
+                const { selector } = data;
+                let el = null;
+                if (/^\d+$/.test(selector)) el = document.querySelector(`[data-tala-id="${selector}"]`);
+                else el = document.querySelector(selector);
+
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const rect = el.getBoundingClientRect();
+                    const x = Math.round(rect.left + rect.width / 2);
+                    const y = Math.round(rect.top + rect.height / 2);
+                    cursor.style.transform = `translate(${x}px, ${y}px)`;
+                    el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                    ipcRenderer.sendToHost('agent-response', { type: 'hover', result: `Hovered element ${selector}` });
+                } else {
+                    ipcRenderer.sendToHost('agent-response', { type: 'error', error: `Element ${selector} not found` });
+                }
+            }
+            else if (type === 'press_key') {
+                const { key } = data;
+                const target = document.activeElement || document.body;
+                target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                target.dispatchEvent(new KeyboardEvent('keypress', { key, bubbles: true, cancelable: true }));
+                target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
+                ipcRenderer.sendToHost('agent-response', { type: 'press_key', result: `Pressed ${key}` });
             }
             else if (type === 'scroll') {
                 const direction = data.direction;
