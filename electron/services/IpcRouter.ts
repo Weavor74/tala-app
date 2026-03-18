@@ -1217,11 +1217,17 @@ export class IpcRouter {
     /** Returns the current workspace root path. */
     ipcMain.handle('get-root', () => fileService.getRoot());
 
-    /** Resolves the full disk path for a bundled asset file. */
+    /** Resolves the full disk path for a bundled asset file.
+     *
+     * IpcRouter compiles to dist-electron/electron/services/, but top-level
+     * electron assets (e.g. browser-preload.js) emit to dist-electron/electron/.
+     * Use __dirname/../ to anchor resolution at the electron output root.
+     */
     ipcMain.handle('get-asset-path', (event, filename) => {
-      const fullPath = path.join(__dirname, filename);
-      console.log(`[Main] Resolving Asset Path: '${filename}' -> '${fullPath}'`);
-      console.log(`[Main] Asset Exists? ${fs.existsSync(fullPath)}`);
+      const electronRoot = path.join(__dirname, '..');
+      const fullPath = path.join(electronRoot, filename);
+      const exists = fs.existsSync(fullPath);
+      console.log(`[Main] Resolving Asset Path: '${filename}' -> '${fullPath}' (exists: ${exists})`);
       return fullPath;
     });
 
