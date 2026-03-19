@@ -51,8 +51,17 @@ export class MemoryFilter {
     private static evaluate(m: MemoryItem, mode: Mode, intent: Intent): ExclusionResult {
         // 1. Mode Scope Isolation
         const mRole = m.metadata?.role || 'core';
-        if (mode === 'rp' && mRole !== 'rp' && intent.class !== 'narrative') {
-            return { allowed: false, reason: 'wrong_mode_scope (rp_isolation)' };
+
+        if (mode === 'rp') {
+            // RP mode allows:
+            //   - Memories explicitly tagged for RP (role='rp')
+            //   - General core memories (role='core') from RP-allowed sources
+            //     (e.g. mem0, graph, explicit user facts) for autobiographical grounding
+            // Memories with any other role tag (e.g. 'assistant', 'task') are excluded
+            // to prevent mode bleed. Source filtering (step 4) handles source enforcement.
+            if (mRole !== 'rp' && mRole !== 'core') {
+                return { allowed: false, reason: 'blocked_by_memory_read_policy (rp_role_mismatch)' };
+            }
         }
         if (mode === 'assistant' && mRole === 'rp') {
             return { allowed: false, reason: 'wrong_mode_scope (assistant_isolation)' };
@@ -60,14 +69,14 @@ export class MemoryFilter {
 
         // 2. Status Policy
         if (m.status === 'archived') {
-            return { allowed: false, reason: 'status_archived' };
+            return { allowed: false, reason: 'blocked_by_safety (archived)' };
         }
         if (m.status === 'superseded' && intent.class !== 'technical') {
-            return { allowed: false, reason: 'status_superseded' };
+            return { allowed: false, reason: 'blocked_by_safety (superseded)' };
         }
         if (m.status === 'contested' && mode !== 'assistant') {
-            // Contested memories are risky for RP/Hybrid unless technical
-            return { allowed: false, reason: 'status_contested_safety' };
+            // Contested memories are unsafe for RP/Hybrid — they carry unresolved accuracy risk
+            return { allowed: false, reason: 'blocked_by_safety (contested)' };
         }
 
         // 3. Greeting Suppression
@@ -79,7 +88,7 @@ export class MemoryFilter {
         if (!ModePolicyEngine.isSourceAllowed(mode, m.metadata?.source || 'unknown')) {
             // 'any' in hybrid allows all, but assistant/rp are strict
             if (mode !== 'hybrid') {
-                return { allowed: false, reason: `disallowed_source_${m.metadata?.source}` };
+                return { allowed: false, reason: `blocked_by_memory_read_policy (disallowed_source_${m.metadata?.source})` };
             }
         }
 
