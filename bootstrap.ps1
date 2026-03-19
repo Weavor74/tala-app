@@ -139,7 +139,7 @@ function Build-Venv {
     $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 
     if (-not (Test-Path $ReqFile)) {
-        Write-Host "      [SKIP] $ModulePath — no requirements.txt"
+        Write-Host "      [SKIP] $ModulePath -- no requirements.txt"
         return
     }
 
@@ -194,9 +194,9 @@ foreach ($Mod in $PythonModules) {
 Write-Host "`n=============================================" -ForegroundColor Cyan
 Write-Host "   BOOTSTRAP COMPLETE!                       " -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "You can now start TALA by running:"
-Write-Host "  > npm run dev"
-Write-Host ""
-Write-Host "To verify the environment is ready, run:"
-Write-Host "  > pwsh scripts\verify-setup.ps1"
-Write-Host ""
+Write-Host 'You can now start TALA by running:'
+Write-Host '  npm run dev'
+Write-Host ''
+Write-Host 'To verify the environment is ready, run:'
+Write-Host '  scripts\verify-setup.ps1'
+Write-Host ''
