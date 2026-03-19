@@ -3199,6 +3199,7 @@ Failure to provide a tool call will result in system termination.`;
         // Resolve the current provider selection so executeStream() has the correct metadata.
         const selection = this.inference.selectProvider({ fallbackAllowed: true, turnId: this.activeTurnId ?? 'unknown' });
         if (selection.success && selection.selectedProvider) {
+            console.log(`[AgentService] streamWithBrain — provider chosen: ${selection.selectedProvider.providerId} (${selection.selectedProvider.providerType}) turnId: ${this.activeTurnId ?? 'unknown'}`);
             const req: import('../../shared/inferenceProviderTypes').StreamInferenceRequest = {
                 provider: selection.selectedProvider,
                 turnId: this.activeTurnId ?? 'unknown',
@@ -3209,6 +3210,7 @@ Failure to provide a tool call will result in system termination.`;
             return this.inference.executeStream(brain, messages, systemPrompt, onChunk, req, tools, options);
         }
         // Fallback: if no provider is selected, call brain directly (preserves pre-existing behavior)
+        console.log(`[AgentService] streamWithBrain — no provider selected, calling brain directly turnId: ${this.activeTurnId ?? 'unknown'}`);
         return brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
     }
 

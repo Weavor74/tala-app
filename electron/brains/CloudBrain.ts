@@ -394,6 +394,9 @@ export class CloudBrain implements IBrain {
 
             const body = JSON.stringify(payload);
             let fullContent = "";
+            let firstTokenLogged = false;
+            let requestStartedAt = Date.now();
+            console.log(`[CloudBrain] Request started — url: ${url} model: ${this.config.model?.trim() || 'gpt-4o'}`);
 
             const req = lib.request(url, {
                 method: 'POST',
@@ -413,6 +416,8 @@ export class CloudBrain implements IBrain {
                     });
                     return;
                 }
+
+                console.log(`[CloudBrain] Stream started — status: ${res.statusCode} latency: ${Date.now() - requestStartedAt}ms`);
 
                 let usage: any = undefined;
                 let accumulatedToolCalls: any[] = [];
@@ -451,12 +456,20 @@ export class CloudBrain implements IBrain {
                                             onChunk('\n> *Thinking*: ');
                                             isReasoning = true;
                                         }
+                                        if (!firstTokenLogged) {
+                                            firstTokenLogged = true;
+                                            console.log(`[CloudBrain] First token received — latency: ${Date.now() - requestStartedAt}ms`);
+                                        }
                                         onChunk(reasoning);
                                         fullContent += reasoning;
                                     } else if (content) {
                                         if (isReasoning) {
                                             onChunk('\n\n'); // End thought block
                                             isReasoning = false;
+                                        }
+                                        if (!firstTokenLogged) {
+                                            firstTokenLogged = true;
+                                            console.log(`[CloudBrain] First token received — latency: ${Date.now() - requestStartedAt}ms`);
                                         }
                                         onChunk(content);
                                         fullContent += content;
@@ -503,11 +516,13 @@ export class CloudBrain implements IBrain {
                 });
 
                 res.on('end', () => {
+                    console.log(`[CloudBrain] Stream closed — total chars: ${fullContent.length} duration: ${Date.now() - requestStartedAt}ms`);
                     if (usage) {
                         console.log(`[CloudBrain] Completion Usage: ${JSON.stringify(usage, null, 2)}`);
                     }
                     // Filter out any holes in the array and ensure arguments are parsed/ready
                     const toolCalls = accumulatedToolCalls.filter(tc => tc && tc.function.name);
+                    console.log(`[CloudBrain] Response complete — content chars: ${fullContent.length} toolCalls: ${toolCalls.length}`);
                     resolve({
                         content: fullContent,
                         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
@@ -518,19 +533,33 @@ export class CloudBrain implements IBrain {
 
             req.on('error', (e: any) => {
                 if (e.code === 'ECONNRESET' && signal?.aborted) {
-                    console.log('[CloudBrain] Stream aborted by user.');
+                    console.log('[CloudBrain] Stream aborted — client disconnect (ECONNRESET on aborted signal).');
                     resolve({ content: fullContent || '' }); // Resolve partial on abort
                     return;
                 }
+                console.error(`[CloudBrain] Stream error — code: ${(e as any).code ?? 'unknown'} message: ${e.message}`);
                 reject(e);
             });
 
-            // Wire up abort signal to destroy the request
+            req.on('timeout', () => {
+                console.warn(`[CloudBrain] Request timed out after 60s — destroying (no response headers received).`);
+                req.destroy(new Error('CloudBrain request timeout (60s)'));
+            });
+
+            // Wire up abort signal to destroy the request.
+            // This fires for both user-initiated cancels (external signal) and
+            // per-attempt timeouts (InferenceService's per-attempt AbortController).
             if (signal) {
-                signal.addEventListener('abort', () => {
-                    console.log('[CloudBrain] Abort signal received, destroying request.');
+                if (signal.aborted) {
+                    // Signal was already aborted before the request started — cancel immediately.
+                    console.log('[CloudBrain] Abort signal already set before request start — destroying immediately.');
                     req.destroy();
-                }, { once: true });
+                } else {
+                    signal.addEventListener('abort', () => {
+                        console.log('[CloudBrain] Abort signal received — destroying request (client disconnect).');
+                        req.destroy();
+                    }, { once: true });
+                }
             }
 
             req.write(body);
