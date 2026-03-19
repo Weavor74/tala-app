@@ -141,6 +141,56 @@ export class InferenceService {
     }
 
     /**
+     * Counts total character length across all message content strings.
+     * Used to scale timeouts for very large prompts.
+     */
+    private static countPromptChars(messages: any[]): number {
+        return messages.reduce((acc: number, m: any) => {
+            const content = typeof m?.content === 'string' ? m.content : '';
+            return acc + content.length;
+        }, 0);
+    }
+
+    /**
+     * Resolves the stream-open timeout for a given provider.
+     *
+     * Policy (applied in order):
+     * 1. If `req.openTimeoutMs` is explicitly set, honour it unconditionally.
+     * 2. embedded_llamacpp (scope='embedded') — CPU inference is slow to produce the
+     *    first token, especially on a cold model load.  Give it 90 seconds.
+     *    For large prompts (>4 000 chars) this extends to 120 seconds.
+     * 3. Other local providers (scope='local') — 30 seconds (45 seconds for large prompts).
+     * 4. Cloud providers (scope='cloud') — 15 seconds (network round-trip only).
+     *
+     * The timeout only guards the pre-first-token window; once streaming has opened
+     * it is cleared regardless of how long the full response takes.
+     */
+    private static resolveOpenTimeout(
+        req: StreamInferenceRequest,
+        provider: import('../../shared/inferenceProviderTypes').InferenceProviderDescriptor,
+        messages: any[]
+    ): number {
+        if (req.openTimeoutMs !== undefined) return req.openTimeoutMs;
+
+        const promptChars = InferenceService.countPromptChars(messages);
+
+        // Embedded llama.cpp: generous timeout — cold model loads on CPU can exceed 30 s.
+        // Scale up slightly for very large prompts (>4 000 chars ≈ >1 000 tokens).
+        if (provider.scope === 'embedded' || provider.providerType === 'embedded_llamacpp') {
+            return promptChars > 4000 ? 120000 : 90000;
+        }
+
+        // Other local providers (Ollama, external llama.cpp, vLLM, koboldcpp):
+        // still local network, but usually warm — 30 seconds is sufficient.
+        if (provider.scope === 'local') {
+            return promptChars > 4000 ? 45000 : 30000;
+        }
+
+        // Cloud providers: only network latency matters — 15 seconds.
+        return 15000;
+    }
+
+    /**
      * Executes a streaming inference request through the canonical path.
      *
      * This is the authoritative streaming entry point for all TALA streaming requests.
@@ -254,6 +304,9 @@ export class InferenceService {
 
             attemptedProviders.push(currentProvider.providerId);
 
+            // Tracks when this specific provider attempt started — used to compute first-token latency.
+            let attemptStartedAt = 0;
+
             // Per-attempt AbortController: isolates each provider attempt's in-flight
             // HTTP request so it can be cancelled explicitly when the attempt times out
             // or falls back to another provider.  Without this, the underlying connection
@@ -273,7 +326,13 @@ export class InferenceService {
                     streamOpenedForCurrentProvider = true;
                     // Record that stream is now actively flowing
                     inferenceDiagnostics.recordStreamActive();
-                    console.log(`[InferenceService] First token received — provider: ${currentProvider.providerId} turnId: ${req.turnId}`);
+                    const firstTokenLatencyMs = Date.now() - attemptStartedAt;
+                    console.log(
+                        `[InferenceService] First token received` +
+                        ` — provider: ${currentProvider.providerId}` +
+                        ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
+                        ` turnId: ${req.turnId}`
+                    );
                     telemetry.operational(
                         'inference',
                         'stream_opened',
@@ -300,7 +359,9 @@ export class InferenceService {
             };
 
             try {
-                const openTimeoutMs = req.openTimeoutMs ?? 15000;
+                const openTimeoutMs = InferenceService.resolveOpenTimeout(req, currentProvider, messages);
+                const promptChars = InferenceService.countPromptChars(messages);
+                attemptStartedAt = Date.now();
 
                 // Race the brain stream call against an open-timeout.
                 // The timeout only applies before the first token is received (stream-open window).
@@ -316,7 +377,15 @@ export class InferenceService {
                     }, openTimeoutMs);
                 });
 
-                console.log(`[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length} — provider: ${currentProvider.providerId} turnId: ${req.turnId}`);
+                console.log(
+                    `[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length}` +
+                    ` — provider: ${currentProvider.providerId}` +
+                    ` scope: ${currentProvider.scope}` +
+                    ` type: ${currentProvider.providerType}` +
+                    ` openTimeout: ${openTimeoutMs}ms` +
+                    ` promptChars: ${promptChars}` +
+                    ` turnId: ${req.turnId}`
+                );
 
                 const streamPromise = brain.streamResponse(
                     messages,
