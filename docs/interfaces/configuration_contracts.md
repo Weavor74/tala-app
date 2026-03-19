@@ -41,7 +41,8 @@ This document defines the schema and mutation rules for the Tala configuration s
 Writes to `app_settings.json` are atomic. The `SettingsManager` writes to a `.tmp` file and performs a rename to prevent corruption during system crashes.
 
 ### 4.2. Immutability & Caching
--   **Cache TTL**: 2000ms. Identical reads within this window are served from memory.
+-   **Cache TTL**: 30000ms (30 seconds). Full-settings reads (`loadSettings`) that fall outside this window cause a disk reload; reads within the window are served from memory.
+-   **Mode reads are cache-presence-based**: `getActiveMode()` returns the in-memory value as long as any prior load has populated the cache, regardless of TTL age. Because `activeMode` can only change through `setActiveMode → saveSettings`, which always refreshes the cache, TTL-based invalidation is unnecessary for mode reads and would only generate log noise.
 -   **Deep Merge**: Updates are applied via deep merging to preserve existing keys that aren't explicitly modified.
 
 ### 4.3. Authoritative State

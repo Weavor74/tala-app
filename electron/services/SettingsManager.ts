@@ -20,10 +20,12 @@ import { app } from 'electron';
  *   `.bak`, and restores factory defaults.
  */
 
-// Module-level cache to collapse bursts of identical reads (e.g. from UI polling)
+// Module-level cache to collapse bursts of identical reads (e.g. from UI polling).
+// TTL governs full-settings consumers (loadSettings). getActiveMode uses presence-only
+// check because mode is only mutated via setActiveMode, which always refreshes the cache.
 let settingsCache: Record<string, any> | null = null;
 let lastCacheUpdate: number = 0;
-const CACHE_TTL_MS = 2000;
+const CACHE_TTL_MS = 30000; // 30 s – reduces steady-state disk reads from every 2 s to every 30 s
 
 function invalidateCache() {
     settingsCache = null;
@@ -184,7 +186,7 @@ export function deepMerge(target: any, source: any): any {
  * @param settingsPath - The absolute filesystem path to the settings file.
  * @returns A guaranteed-valid settings object.
  */
-export function loadSettings(settingsPath: string): Record<string, any> {
+export function loadSettings(settingsPath: string, caller: string = 'unknown'): Record<string, any> {
     const now = Date.now();
     if (settingsCache && (now - lastCacheUpdate) < CACHE_TTL_MS) {
         return JSON.parse(JSON.stringify(settingsCache)); // Return deep copy to prevent mutation
@@ -294,26 +296,46 @@ export function setActiveMode(settingsPath: string, mode: 'rp' | 'hybrid' | 'ass
     console.log(`[SettingsManager] writing activeMode=${mode} path=${settingsPath}`);
     const success = saveSettings(settingsPath, s);
 
-    // Verification read
-    const verify = loadSettings(settingsPath);
-    console.log(`[SettingsManager] verify after write activeMode=${verify.agentModes?.activeMode}`);
+    // Verification read – uses cache (saveSettings just refreshed it) so no extra disk I/O.
+    const verifiedMode = getActiveMode(settingsPath, 'setActiveMode.verify');
+    console.log(`[SettingsManager] verify after write activeMode=${verifiedMode}`);
 
     return success;
 }
 
 /**
- * Authoritatively gets the active mode. Uses cache if within TTL.
+ * Authoritatively gets the active mode.
+ *
+ * Uses a presence-only cache check: because the only mutation path is
+ * `setActiveMode → saveSettings`, which always refreshes `settingsCache`,
+ * TTL-based invalidation is unnecessary for mode reads and generates log
+ * spam on every UI poll.  A first-call lazy load from disk is still performed
+ * when the cache is cold (startup, or after explicit `invalidateCache()`).
  */
 export function getActiveMode(settingsPath: string, caller: string = 'unknown'): string {
-    const now = Date.now();
-    if (settingsCache && (now - lastCacheUpdate) < CACHE_TTL_MS) {
-        const mode = settingsCache.agentModes?.activeMode || 'assistant';
-        console.log(`[SettingsManager] getActiveMode caller=${caller} source=cache value=${mode}`);
-        return mode;
+    // If cache is populated, read it directly – mode cannot change without
+    // going through setActiveMode which keeps the cache up to date.
+    if (settingsCache) {
+        return settingsCache.agentModes?.activeMode || 'assistant';
     }
 
-    const s = loadSettings(settingsPath);
+    // Cold cache – load from disk once, which will warm the cache.
+    const s = loadSettings(settingsPath, caller);
     const mode = s.agentModes?.activeMode || 'assistant';
     console.log(`[SettingsManager] getActiveMode caller=${caller} source=disk value=${mode}`);
     return mode;
+}
+
+/**
+ * Forces a full reload from disk, bypassing the TTL cache.
+ *
+ * Use this only when an external process may have modified `app_settings.json`
+ * and you need the latest values immediately (e.g. an explicit IPC refresh
+ * command or a file-watch callback).  Normal steady-state reads should use
+ * `getActiveMode()` or `loadSettings()` instead.
+ */
+export function refreshSettingsFromDisk(settingsPath: string, caller: string = 'unknown'): Record<string, any> {
+    invalidateCache();
+    console.log(`[SettingsManager] refreshSettingsFromDisk caller=${caller}`);
+    return loadSettings(settingsPath, caller);
 }
