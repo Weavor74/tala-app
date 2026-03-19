@@ -56,6 +56,7 @@ The system uses standard FastMCP schemas for tool definitions:
 
 ## 5. Security & Isolation
 -   **Process Segregation**: Each MCP server runs in an isolated Python/Node process.
+-   **Per-Service Python Interpreter**: `igniteSoul()` in `AgentService.ts` resolves the Python executable independently for each MCP service. It checks `mcp-servers/<service>/venv/Scripts/python.exe` (Windows) or `mcp-servers/<service>/venv/bin/python3` (Linux/macOS) first. If the service-local venv is not present, it falls back to the shared bundled Python resolved by `SystemService.resolveMcpPythonPath()`. This means each service can be isolated in its own dependency set without requiring a single monolithic Python environment.
 -   **Capability Gating**: Agents can only access tools explicitly assigned to their profile in `app_settings.json`.
 -   **Stdout Redirection**: MCP servers must redirect all logs to `stderr` to avoid polluting the JSON-RPC stream on `stdout`.
 
