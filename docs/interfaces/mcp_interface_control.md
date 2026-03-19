@@ -22,8 +22,9 @@ This document defines the interface for the **Model Context Protocol (MCP)** int
 | `tala_rag_search` | `query: str`, `top_k: int` | `JSON` | Searches the local vector database. |
 | `tala_get_evidence` | `file_path: str` | `String` | Retrieves raw evidence from indexed files. |
 
-### 3.2. Astro Engine (`astro-engine`)
+### 3.2. Astro Engine (`astro-emotion`)
 **Purpose**: Astrological Emotional State calculation.
+**Invocation**: Must be launched in module mode (`python -m astro_emotion_engine.mcp_server`) with `cwd` set to `mcp-servers/astro-engine/`. Launching as a script (`python mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py`) causes `ModuleNotFoundError` because absolute package imports require the package root on `sys.path`.
 | Tool | Arguments | Returns | Description |
 |:---|:---|:---|:---|
 | `get_emotional_state` | `agent_id: str`, `context: str` | `String` | Returns formatted emotional vector and style fragment. |
