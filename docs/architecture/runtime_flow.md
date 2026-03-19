@@ -23,10 +23,11 @@ user input
   → IPC dispatch (tala:chat)
   → AgentService.chat()
   → TalaContextRouter.process()       [mode/context assembly]
-    → IntentClassifier.classify()     [intent detection]
+    → IntentClassifier.classify()     [intent detection; lore follow-up carryover if prior turn was lore]
     → MemoryService.search()          [memory retrieval, gated by mode]
-    → MemoryFilter.filter()           [mode-scope isolation]
-    → MemoryFilter.resolveContradictions()
+    → RagService.searchStructured()   [lore intent only — LTMF/canon lore candidates prepended first]
+    → MemoryFilter.filter()           [mode-scope isolation; RP mode allows source=rag for LTMF]
+    → MemoryFilter.resolveContradictions()  [lore-aware source ranking: diary/graph > rag > mem0 > chat]
     → ContextAssembler.assemble()     [prompt block construction]
     → resolveMemoryWritePolicy()      [mode-aware write decision]
     → auditLogger.info(turn_routed)   [structured telemetry]
@@ -68,9 +69,28 @@ Mode is enforced centrally by `TalaContextRouter.process()`, not scattered acros
 | Mode | Memory Retrieval | Memory Write | Tool Access |
 |------|-----------------|--------------|-------------|
 | `assistant` | Enabled (filtered by mode_scope) | short_term or long_term | All allowed |
-| `rp` | Blocked (RP isolation) | do_not_write | All blocked |
+| `rp` | Enabled for lore/RP turns; blocked for greetings | do_not_write | All blocked |
 | `hybrid` | Enabled | short_term | All allowed |
 | Greeting (any mode) | Suppressed | do_not_write | memory_retrieval blocked |
+
+## 3a. Lore / Autobiographical Retrieval Policy
+
+For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRouter.process()` applies a canon-first retrieval policy:
+
+1. **RAG/LTMF** (`RagService.searchStructured()`, filter `category=roleplay`) — canonical lore, up to 5 results. Converted to `MemoryItem` with `source=rag`, `role=rp`, `type=lore`.
+2. **mem0 / local conversational memory** (`MemoryService.search()`) — fallback, 10 results.
+3. RAG candidates are **prepended** to the candidate list before `MemoryFilter` so they enter the same deduplication and ranking pipeline.
+4. `MemoryFilter.resolveContradictions()` applies lore source ranking: `diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)`, ensuring canon lore outranks recent chat snippets regardless of composite score.
+5. RP mode `allowedSources` includes `'rag'` so LTMF lore items pass the source policy gate.
+
+**Follow-up carryover:** If the prior turn was `intent=lore` and the current turn matches a follow-up pattern (e.g. "you don't remember?", "what about that?"), the router carries over the lore retrieval domain for up to 5 minutes.
+
+**MemoryAudit log format for RAG candidates:**
+```
+[MemoryAudit] source=rag role=rp id=rag-lore-0-<ts> score=0.850 docId=ltmf-a00-0001.md
+[TalaRouter] Candidates before filter — rag:3, mem0:7 (total=10)
+[TalaRouter] Approved memories — rag:2, mem0:1 (total=3)
+```
 
 ## 4. Memory Write Policy
 

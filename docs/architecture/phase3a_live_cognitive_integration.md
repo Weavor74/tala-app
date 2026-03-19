@@ -174,7 +174,7 @@ This lets `RuntimeDiagnosticsAggregator.recordCognitiveContext()` store the live
 ## Known Limitations
 
 - **MCP pre-inference queries** are currently no-ops (`_queryMcpPreInference` returns `undefined`). The gating logic is in place; actual MCP tool queries can be added when specific cognitive state tools (e.g. astro MCP, memory graph diagnostic) are wired.
-- **RAG/doc retrieval** is handled through `TalaContextRouter`, which calls `DocumentationIntelligenceService.getRelevantContext()`. Full vector-DB-backed RAG retrieval goes through this same path. The orchestrator exposes `docContextText` from the router result.
+- **RAG/doc retrieval** is handled through `TalaContextRouter`. For `intent=lore`, `TalaContextRouter` now queries `RagService.searchStructured()` first (with `category: 'roleplay'` filter) to inject LTMF/canon lore candidates into the pipeline before mem0 results. Doc retrieval via `DocumentationIntelligenceService.getRelevantContext()` is unchanged for non-RP, doc-relevant turns.
 - **`getAstroState()` in AgentService** is no longer called from `chat()` but remains available for other callers (e.g. `getEmotionalStateSummary()`).
 
 ## Files Changed
