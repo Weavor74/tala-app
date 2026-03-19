@@ -155,11 +155,13 @@ export class McpService {
      * @returns `true` if connection established and handshake completed.
      */
     public async connect(config: McpServerConfig): Promise<boolean> {
-        if (this.connections.has(config.id)) {
-            // Already connected, maybe reconnect if config changed?
-            // For now, assume id persistence means same connection
+        const existing = this.connections.get(config.id);
+        if (existing && existing.state === ServerState.CONNECTED) {
+            // Already connected and healthy — skip reconnection.
             return true;
         }
+        // For DEGRADED or other non-CONNECTED states, fall through to perform
+        // a real reconnection attempt so the health loop gets an accurate result.
 
         // Preflight Check for Python stdio servers
         if (config.type === 'stdio' && (config.command === 'python' || config.command === this.pythonPath)) {
