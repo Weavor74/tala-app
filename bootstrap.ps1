@@ -180,7 +180,8 @@ $PythonModules = @(
     "mcp-servers\tala-core",
     "mcp-servers\mem0-core",
     "mcp-servers\astro-engine",
-    "mcp-servers\world-engine"
+    "mcp-servers\world-engine",
+    "mcp-servers\tala-memory-graph"
 )
 
 foreach ($Mod in $PythonModules) {
