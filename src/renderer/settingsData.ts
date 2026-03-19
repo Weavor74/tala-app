@@ -152,7 +152,7 @@ CORE CONSTRAINTS:
     mcpServers: [
         { id: 'filesystem', name: 'Filesystem', type: 'stdio', command: 'node', args: ['node_modules/@modelcontextprotocol/server-filesystem/dist/index.js', './'], enabled: true },
         { id: 'memory', name: 'Memory (Tala)', type: 'stdio', command: 'python', args: ['mcp-servers/mem0-core/server.py'], enabled: true },
-        { id: 'astro-emotion', name: 'Astro Emotion', type: 'stdio', command: 'python', args: ['mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py'], enabled: true },
+        { id: 'astro-emotion', name: 'Astro Emotion', type: 'stdio', command: 'python', args: ['-m', 'astro_emotion_engine.mcp_server'], cwd: 'mcp-servers/astro-engine', enabled: true },
         { id: 'tala-memory-graph', name: 'Memory Graph (Tala)', type: 'stdio', command: 'python', args: ['mcp-servers/tala-memory-graph/main.py'], enabled: true },
         { id: 'world-engine', name: 'World Engine', type: 'stdio', command: 'python', args: ['mcp-servers/world-engine/server.py'], enabled: true },
         { id: 'github', name: 'GitHub', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], enabled: false },
