@@ -93,12 +93,30 @@ interface InferenceProviderDescriptor {
 `AgentService.loadBrainConfig()` was refactored to:
 
 1. Build a `ProviderRegistryConfig` from the current settings `inference.instances` array.
-2. Call `InferenceService.reconfigureRegistry(config)` to update provider descriptors.
-3. Call `InferenceService.setSelectedProvider(preferredProviderId)` if a user preference exists.
-4. Call `InferenceService.selectProvider({ preferredProviderId, mode, fallbackAllowed })` to obtain a canonical `InferenceSelectionResult`.
-5. Configure the active brain (`OllamaBrain` or `CloudBrain`) from the selected provider's endpoint and model.
+2. **Always** register the embedded llama.cpp provider via `embeddedLlamaCpp` config, resolved from `localEngine.modelPath` or by scanning the `models/` directory.
+3. Call `InferenceService.reconfigureRegistry(config)` to update provider descriptors.
+4. Call `InferenceService.setSelectedProvider(preferredProviderId)` if a user preference exists.
+5. Call `InferenceService.selectProvider({ preferredProviderId, mode, fallbackAllowed })` to obtain a canonical `InferenceSelectionResult`.
+6. **If no viable provider is found**, call `InferenceService.ensureEmbeddedStarted(modelPath)` to start the Python-based embedded llama.cpp server, then re-probe and re-select.
+7. Configure the active brain from the selected provider:
+   - `ollama` → `OllamaBrain` (Ollama `/api/chat` protocol)
+   - `embedded_llamacpp` → `CloudBrain` (OpenAI-compatible `/v1/chat/completions`)
+   - `cloud` / all others → `CloudBrain` (OpenAI-compatible endpoint)
+
+**Important brain-binding rule:** `embedded_llamacpp` must use `CloudBrain`, not `OllamaBrain`. The embedded server exposes the OpenAI-compatible API at `/v1/chat/completions`. `OllamaBrain` targets the Ollama-specific `/api/chat` endpoint and will fail silently on an embedded server.
 
 The previous inline ad-hoc Ollama ping and llamacpp fallback logic has been removed. All fallback decisions are now auditable through the selection result's `attemptedProviders` and `fallbackApplied` fields.
+
+---
+
+## Embedded Provider — Guaranteed Local Baseline
+
+The embedded llama.cpp is not merely an emergency fallback. It is the **guaranteed local baseline** when no external local engine is present:
+
+- `probeEmbeddedLlamaCpp()` performs an **HTTP `/health` check first**, before checking binary or model file existence. This detects servers started via the Python venv (`local-inference/venv/Scripts/python.exe -m llama_cpp.server`) even when no native binary is tracked.
+- `InferenceService.ensureEmbeddedStarted(modelPath, options)` starts the Python-based server if it is not running, then polls `/health` until ready or timeout (default 60 s).
+- `InferenceService.resolveLocalInferencePython(repoRoot)` resolves the Python interpreter in priority order: `local-inference/venv`, project `venv`, bundled `bin/python-*`.
+- Auto-start fires whenever the canonical selection yields no viable provider — **even if internet or remote providers are also available**.
 
 ---
 
@@ -123,7 +141,7 @@ The previous inline ad-hoc Ollama ping and llamacpp fallback logic has been remo
 ## Known Limitations
 
 - Provider probes do not run automatically at startup — `InferenceService.refreshProviders()` must be called explicitly (e.g., from bootstrap or on settings open).
-- `AgentService.loadBrainConfig()` uses the registry's last-known status for selection, not a fresh probe. Call `refreshProviders()` first for accurate detection.
-- The embedded llama.cpp provider (`embedded_llamacpp`) probe checks for file existence and server health, but does not automatically start the engine if it is not running. That remains the responsibility of the IPC handlers (`local-engine-start`).
+- `AgentService.loadBrainConfig()` uses the registry's last-known status for selection, not a fresh probe. It calls `refreshProviders()` internally before selection.
+- The embedded llama.cpp auto-start only fires during `loadBrainConfig()`. Runtime recovery after a crash is handled by `ensureEmbeddedStarted()` called through IPC or diagnostics flows.
 
 > **Phase 1B Update:** Streaming telemetry (`stream_opened`, `stream_completed`, `stream_aborted`) and inference reflection signals are now fully wired. See `docs/architecture/phase1b_streaming_hardening.md` for the canonical streaming path documentation.

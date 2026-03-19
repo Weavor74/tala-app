@@ -590,6 +590,158 @@ export class InferenceService {
         return this.localEngine;
     }
 
+    /**
+     * Resolves the best available Python executable for running the embedded
+     * llama_cpp.server. Prioritises the project-local inference venv, then
+     * falls back to bundled binaries or a system Python.
+     *
+     * @param repoRoot - Repository root directory (defaults to process.cwd()).
+     */
+    public resolveLocalInferencePython(repoRoot?: string): string | undefined {
+        const root = repoRoot || (typeof app !== 'undefined' ? app.getAppPath() : process.cwd());
+        const isWin = process.platform === 'win32';
+
+        const candidates = [
+            // Project-local inference venv (preferred per design)
+            path.join(root, 'local-inference', 'venv', 'Scripts', 'python.exe'),
+            path.join(root, 'local-inference', 'venv', 'bin', 'python3'),
+            path.join(root, 'local-inference', 'venv', 'bin', 'python'),
+            // Generic project venv
+            path.join(root, 'venv', 'Scripts', 'python.exe'),
+            path.join(root, 'venv', 'bin', 'python3'),
+            path.join(root, 'venv', 'bin', 'python'),
+            // Bundled platform-specific Python
+            path.join(root, 'bin', 'python-win', 'python.exe'),
+            path.join(root, 'bin', 'python-mac', 'bin', 'python3'),
+            path.join(root, 'bin', 'python-linux', 'bin', 'python3'),
+            path.join(root, 'bin', 'python-portable', isWin ? 'python.exe' : 'python3'),
+            path.join(root, 'bin', 'python-portable', isWin ? 'python.exe' : path.join('bin', 'python3')),
+        ];
+
+        return candidates.find(p => fs.existsSync(p));
+    }
+
+    /**
+     * Ensures the embedded llama.cpp inference server is running.
+     *
+     * Behaviour:
+     * 1. Checks if the server is already up on the configured port.
+     * 2. If not, resolves the project-local Python interpreter and spawns
+     *    `python -m llama_cpp.server` with the given model.
+     * 3. Polls `/health` until the server is ready (up to startupTimeoutMs).
+     * 4. Returns true when the server is confirmed ready, false on failure.
+     *
+     * This is the guaranteed local-baseline path: it fires whenever no external
+     * local inference provider is viable, regardless of internet/cloud status.
+     */
+    public async ensureEmbeddedStarted(
+        modelPath: string,
+        options: {
+            port?: number;
+            contextSize?: number;
+            pythonPath?: string;
+            startupTimeoutMs?: number;
+        } = {}
+    ): Promise<boolean> {
+        const port = options.port ?? 8080;
+        const contextSize = options.contextSize ?? 4096;
+        const startupTimeoutMs = options.startupTimeoutMs ?? 60_000;
+
+        // 1. Check if the server is already running
+        const healthUrl = `http://127.0.0.1:${port}/health`;
+        const alreadyUp = await new Promise<boolean>((resolve) => {
+            const req = http.get(healthUrl, { timeout: 2000 }, (res) => {
+                res.resume();
+                resolve((res.statusCode ?? 0) < 400);
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => { req.destroy(); resolve(false); });
+        });
+
+        if (alreadyUp) {
+            telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
+                `Embedded server already running on port ${port}`, 'success', { payload: { port } });
+            return true;
+        }
+
+        // 2. Resolve Python executable
+        const pythonPath = options.pythonPath || this.resolveLocalInferencePython();
+        if (!pythonPath) {
+            telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
+                'Cannot start embedded inference: no Python interpreter found', 'failure', { payload: { port } });
+            return false;
+        }
+
+        // 3. Verify model file exists
+        if (!fs.existsSync(modelPath)) {
+            telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
+                `Cannot start embedded inference: model not found at ${modelPath}`, 'failure',
+                { payload: { port, modelPath } });
+            return false;
+        }
+
+        // 4. Spawn llama_cpp.server
+        telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
+            `Starting embedded llama.cpp via Python: ${pythonPath}`, 'success',
+            { payload: { port, modelPath, pythonPath } });
+
+        try {
+            const child = spawn(pythonPath, [
+                '-m', 'llama_cpp.server',
+                '--model', modelPath,
+                '--host', '127.0.0.1',
+                '--port', String(port),
+                '--n_ctx', String(contextSize),
+                '--n_gpu_layers', '0',
+            ], {
+                detached: false,
+                stdio: 'pipe',
+            });
+
+            child.on('error', (err) => {
+                telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
+                    `Embedded llama.cpp process error: ${err.message}`, 'failure',
+                    { payload: { port, error: err.message } });
+            });
+
+            if (child.stderr) {
+                child.stderr.on('data', (d: Buffer) => {
+                    const line = d.toString().trim();
+                    if (line) console.log(`[EmbeddedLlamaCpp] ${line}`);
+                });
+            }
+        } catch (spawnErr) {
+            const msg = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
+            telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
+                `Failed to spawn embedded llama.cpp: ${msg}`, 'failure', { payload: { port, error: msg } });
+            return false;
+        }
+
+        // 5. Poll until ready or timeout
+        const deadline = Date.now() + startupTimeoutMs;
+        while (Date.now() < deadline) {
+            await new Promise<void>(r => setTimeout(r, 1000));
+            const ready = await new Promise<boolean>((resolve) => {
+                const req = http.get(healthUrl, { timeout: 1500 }, (res) => {
+                    res.resume();
+                    resolve((res.statusCode ?? 0) < 400);
+                });
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => { req.destroy(); resolve(false); });
+            });
+            if (ready) {
+                telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
+                    `Embedded llama.cpp ready on port ${port}`, 'success', { payload: { port, modelPath } });
+                return true;
+            }
+        }
+
+        telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
+            `Embedded llama.cpp startup timed out after ${startupTimeoutMs}ms`, 'failure',
+            { payload: { port, modelPath, startupTimeoutMs } });
+        return false;
+    }
+
     // ─── Legacy — backward-compatible scan ───────────────────────────────────
 
     /**
