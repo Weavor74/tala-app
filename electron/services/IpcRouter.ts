@@ -395,7 +395,7 @@ export class IpcRouter {
 
     /** Returns the current active agent mode. */
     ipcMain.handle('settings:getActiveMode', async () => {
-      return getActiveMode(getSettingsPath());
+      return getActiveMode(getSettingsPath(), 'ipc.settings.getActiveMode');
     });
 
     /** Sets the active agent mode (rp, hybrid, assistant). Legacy - redirects to settings:setActiveMode */
@@ -410,7 +410,7 @@ export class IpcRouter {
 
     /** Returns the current active agent mode. Legacy - redirects to settings:getActiveMode */
     ipcMain.handle('agent:getActiveMode', async () => {
-      return getActiveMode(getSettingsPath());
+      return getActiveMode(getSettingsPath(), 'ipc.agent.getActiveMode');
     });
 
     /** Gets the configuration for a specific agent mode. */

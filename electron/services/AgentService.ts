@@ -20,7 +20,7 @@ import { AstroService } from './AstroService';
 import { TerminalService } from './TerminalService';
 import { FunctionService } from './FunctionService';
 import { OrchestratorService } from './OrchestratorService';
-import { loadSettings } from './SettingsManager';
+import { loadSettings, getActiveMode } from './SettingsManager';
 import { LogViewerService } from './LogViewerService';
 import { DocumentationIntelligenceService } from './DocumentationIntelligenceService';
 
@@ -3562,7 +3562,8 @@ Failure to provide a tool call will result in system termination.`;
     }
 
     public async addMemory(text: string) {
-        const mode = this.getActiveMode();
+        // Use module-level getActiveMode for a guaranteed cache-only read.
+        const mode = getActiveMode(this.settingsPath, 'AgentService.addMemory');
         return this.memory.add(text, {}, mode);
     }
 
