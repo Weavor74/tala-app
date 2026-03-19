@@ -17,6 +17,8 @@ env/
 # AI Artifacts & Data
 models/
 memory/
+!mcp-servers/**/src/memory/
+!mcp-servers/**/src/memory/**
 data/
 *.gguf
 *ltmf*
