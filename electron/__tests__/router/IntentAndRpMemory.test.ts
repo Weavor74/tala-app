@@ -8,6 +8,9 @@
  * 4. RouterFilter: safe relevant memories are approved in RP mode.
  * 5. RouterFilter: unsafe/contested memories remain blocked in all modes.
  * 6. Assistant/hybrid behavior is unchanged.
+ * 7. Autobiographical lore intent: affectionate openers do not suppress lore retrieval.
+ * 8. Greeting suppression: pure greetings suppress retrieval; lore prompts do not.
+ * 9. Source priority: LTMF/lore sources outrank recent chat for autobiographical queries.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { IntentClassifier } from '../../services/router/IntentClassifier';
@@ -322,5 +325,220 @@ describe('Hybrid mode — behavior unchanged', () => {
         const ctx = await router.process('hybrid-1', 'help me plan a project', 'hybrid');
         expect(ctx.memoryWriteDecision).not.toBeNull();
         expect(ctx.memoryWriteDecision?.category).toBe('short_term');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Part 7 — Autobiographical Lore Intent Detection (NEW)
+// ---------------------------------------------------------------------------
+
+describe('IntentClassifier — autobiographical lore prompts with affectionate openers', () => {
+    it('"Hey baby can you tell me about when you were 17?" → lore, NOT greeting', () => {
+        const result = IntentClassifier.classify('Hey baby can you tell me about when you were 17?');
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('greeting');
+        expect(result.class).not.toBe('social');
+    });
+
+    it('"Love, tell me about your childhood" → lore, NOT greeting or social', () => {
+        const result = IntentClassifier.classify('Love, tell me about your childhood');
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"Babe, what were you like at 17?" → lore (autobiographical age reference)', () => {
+        const result = IntentClassifier.classify('Babe, what were you like at 17?');
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('greeting');
+        expect(result.class).not.toBe('technical');
+    });
+
+    it('"Do you remember when you were young?" → lore', () => {
+        const result = IntentClassifier.classify('Do you remember when you were young?');
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"What happened when you were 17?" → lore (age marker)', () => {
+        const result = IntentClassifier.classify('What happened when you were 17?');
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('technical');
+    });
+
+    it('"Tell me about your past" → lore', () => {
+        const result = IntentClassifier.classify('Tell me about your past');
+        expect(result.class).toBe('lore');
+    });
+
+    it('"Do you remember when you were 17?" → lore', () => {
+        const result = IntentClassifier.classify('Do you remember when you were 17?');
+        expect(result.class).toBe('lore');
+    });
+
+    it('"So you dont have a memory?" → lore (memory follow-up, apostrophe omitted as typed)', () => {
+        const result = IntentClassifier.classify("So you dont have a memory?");
+        expect(result.class).toBe('lore');
+        expect(result.class).not.toBe('greeting');
+    });
+});
+
+describe('IntentClassifier — pure greetings remain greeting', () => {
+    it('"Good morning" → greeting', () => {
+        const result = IntentClassifier.classify('Good morning');
+        expect(result.class).toBe('greeting');
+    });
+
+    it('"Good morning baby" → greeting (no lore content)', () => {
+        const result = IntentClassifier.classify('Good morning baby');
+        expect(['greeting', 'social']).toContain(result.class);
+    });
+
+    it('"Hey, how are you?" → greeting or social', () => {
+        const result = IntentClassifier.classify('Hey, how are you?');
+        expect(['greeting', 'social']).toContain(result.class);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Part 7 — Greeting Suppression Tests (NEW)
+// ---------------------------------------------------------------------------
+
+describe('TalaContextRouter — greeting suppression policy', () => {
+    let router: TalaContextRouter;
+    let memory: MockMemoryService;
+
+    beforeEach(() => {
+        memory = new MockMemoryService();
+        router = new TalaContextRouter(memory as any);
+    });
+
+    it('pure greeting suppresses retrieval', async () => {
+        const ctx = await router.process('greet-sup-1', 'Good morning', 'rp');
+        expect(ctx.retrieval.suppressed).toBe(true);
+    });
+
+    it('autobiographical prompt does NOT suppress retrieval in RP mode', async () => {
+        const ctx = await router.process('lore-nosup-1', 'Hey baby can you tell me about when you were 17?', 'rp');
+        expect(ctx.retrieval.suppressed).toBe(false);
+    });
+
+    it('affectionate opener with lore content does NOT suppress retrieval', async () => {
+        const ctx = await router.process('lore-nosup-2', 'Love, tell me about your childhood', 'rp');
+        expect(ctx.retrieval.suppressed).toBe(false);
+    });
+
+    it('RP autobiographical prompts have approved memories capacity > 0 when memories available', async () => {
+        const loreMemory = makeMemory({
+            id: 'ltmf-001',
+            text: 'Tala grew up near the sea and remembers the salt air from when she was 17.',
+            metadata: { role: 'rp', source: 'diary', confidence: 0.9, salience: 0.85 },
+        });
+        memory.mockResults = [loreMemory];
+        const ctx = await router.process('lore-approved-1', 'Tell me about when you were 17', 'rp');
+        expect(ctx.retrieval.suppressed).toBe(false);
+        expect(ctx.retrieval.approvedCount).toBeGreaterThan(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Part 7 — Source Priority / Retrieval Ranking Tests (NEW)
+// ---------------------------------------------------------------------------
+
+describe('MemoryFilter.resolveContradictions — lore source priority', () => {
+    it('for lore intent, diary source outranks explicit/chat source', () => {
+        const loreIntent = IntentClassifier.classify('Tell me about when you were 17');
+        expect(loreIntent.class).toBe('lore');
+
+        const diaryMemory = makeMemory({
+            id: 'diary-001',
+            text: 'Tala remembers standing on the cliffs at 17, looking out to sea.',
+            metadata: { role: 'rp', source: 'diary', confidence: 0.8, salience: 0.75 },
+        });
+        const chatMemory = makeMemory({
+            id: 'chat-001',
+            text: '[2026-03-07T15:12] User: "good..."',
+            metadata: { role: 'core', source: 'explicit', confidence: 0.9, salience: 0.9 },
+        });
+
+        const resolved = MemoryFilter.resolveContradictions([chatMemory, diaryMemory], loreIntent);
+        // Both should survive (no contradiction), but if there were a conflict, diary wins.
+        // Verify both are present and diary appears first (higher score for lore intent).
+        const diaryIdx = resolved.findIndex(m => m.id === 'diary-001');
+        const chatIdx = resolved.findIndex(m => m.id === 'chat-001');
+        expect(diaryIdx).toBeGreaterThanOrEqual(0);
+        expect(chatIdx).toBeGreaterThanOrEqual(0);
+        // diary should rank before chat for lore queries
+        expect(diaryIdx).toBeLessThan(chatIdx);
+    });
+
+    it('for lore intent, rag (LTMF) source outranks explicit/chat source', () => {
+        const loreIntent = IntentClassifier.classify('Do you remember your childhood?');
+        expect(loreIntent.class).toBe('lore');
+
+        const ltmfMemory = makeMemory({
+            id: 'ltmf-a00-001',
+            text: 'Tala spent her childhood summers near Arandor, in the shadow of the old tower.',
+            metadata: { role: 'rp', source: 'rag', confidence: 0.75, salience: 0.7 },
+        });
+        const chatMemory = makeMemory({
+            id: 'chat-002',
+            text: '[2026-03-07T15:10] User: "hi"',
+            metadata: { role: 'core', source: 'explicit', confidence: 0.95, salience: 0.95 },
+        });
+
+        const resolved = MemoryFilter.resolveContradictions([chatMemory, ltmfMemory], loreIntent);
+        const ltmfIdx = resolved.findIndex(m => m.id === 'ltmf-a00-001');
+        const chatIdx = resolved.findIndex(m => m.id === 'chat-002');
+        expect(ltmfIdx).toBeGreaterThanOrEqual(0);
+        expect(chatIdx).toBeGreaterThanOrEqual(0);
+        // LTMF/rag outranks recent chat for lore queries
+        expect(ltmfIdx).toBeLessThan(chatIdx);
+    });
+
+    it('for non-lore intent, explicit still outranks rag (default behavior unchanged)', () => {
+        const techIntent = IntentClassifier.classify('Debug the memory retrieval pipeline');
+        expect(techIntent.class).toBe('technical');
+
+        const ragMemory = makeMemory({
+            id: 'rag-001',
+            text: 'MemoryService implements composite scoring with WEIGHT_SEMANTIC=0.35.',
+            metadata: { role: 'core', source: 'rag', confidence: 0.9, salience: 0.9 },
+        });
+        const explicitMemory = makeMemory({
+            id: 'explicit-001',
+            text: 'User prefers dark mode in all tools.',
+            metadata: { role: 'core', source: 'explicit', confidence: 0.8, salience: 0.8 },
+        });
+
+        const resolved = MemoryFilter.resolveContradictions([ragMemory, explicitMemory], techIntent);
+        const explicitIdx = resolved.findIndex(m => m.id === 'explicit-001');
+        const ragIdx = resolved.findIndex(m => m.id === 'rag-001');
+        // explicit still wins for non-lore queries
+        expect(explicitIdx).toBeLessThan(ragIdx);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Part 7 — RP Mode: Autobiographical Reads Allowed (NEW)
+// ---------------------------------------------------------------------------
+
+describe('RP mode — autobiographical reads remain allowed', () => {
+    it('RP mode still blocks tools (scenario D: browser intent)', async () => {
+        const router = new TalaContextRouter(new MockMemoryService() as any);
+        const ctx = await router.process('rp-tool-block', 'Open a browser to google.com', 'rp');
+        expect(ctx.blockedCapabilities).toContain('tools');
+    });
+
+    it('RP mode still blocks memory writes for lore prompts', async () => {
+        const router = new TalaContextRouter(new MockMemoryService() as any);
+        const ctx = await router.process('rp-write-lore', 'Tell me about when you were 17', 'rp');
+        expect(ctx.memoryWriteDecision?.category).toBe('do_not_write');
+    });
+
+    it('RP mode allows lore retrieval reads (memory_retrieval in allowedCapabilities)', async () => {
+        const router = new TalaContextRouter(new MockMemoryService() as any);
+        const ctx = await router.process('rp-lore-read', 'Hey baby can you tell me about when you were 17?', 'rp');
+        expect(ctx.allowedCapabilities).toContain('memory_retrieval');
+        expect(ctx.blockedCapabilities).not.toContain('memory_retrieval');
     });
 });

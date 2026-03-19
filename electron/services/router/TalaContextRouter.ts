@@ -51,6 +51,9 @@ export class TalaContextRouter {
         const retrievalSuppressed = isGreetingOnly; // Gating logic
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
+        if (intent.class === 'lore' && intent.precedenceLog?.includes('Greeting')) {
+            console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression — retrieval will run`);
+        }
 
         // 3. Retrieval Phase (Conditional)
         let resolved: MemoryItem[] = [];
@@ -70,9 +73,9 @@ export class TalaContextRouter {
             excludedCount = candidateCount - filtered.length;
 
             // 5. Contradiction Resolution
-            resolved = MemoryFilter.resolveContradictions(filtered);
+            resolved = MemoryFilter.resolveContradictions(filtered, intent);
         } else {
-            console.log(`[TalaRouter] Retrieval bypassed due to ${intent.class} intent.`);
+            console.log(`[TalaRouter] Retrieval bypassed — ${intent.class} intent (no lore/substantive override).`);
         }
 
         // 6. Documentation Retrieval Phase (NEW)

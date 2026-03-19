@@ -109,11 +109,35 @@ export class MemoryFilter {
      * 2. **Semantic Deduplication**: Identifies topically overlapping memories (keyword-based)
      *    and retains only the most authoritative version based on salience and source rank.
      */
-    public static resolveContradictions(candidates: MemoryItem[]): MemoryItem[] {
+    // Scoring weights for lore/autobiographical queries.
+    // Source identity is elevated to a primary signal so canonical lore sources
+    // (diary, rag/LTMF, graph) consistently outrank recent chat snippets.
+    private static readonly LORE_QUALITY_WEIGHT = 0.5;
+    private static readonly LORE_SOURCE_WEIGHT = 0.5;
+
+    public static resolveContradictions(candidates: MemoryItem[], intent?: Intent): MemoryItem[] {
         if (candidates.length < 2) return candidates;
+
+        // For autobiographical/lore queries, boost canonical lore sources (diary, graph, rag/LTMF)
+        // and de-prioritize recent conversational snippets so canon memory beats chat history.
+        const isLoreQuery = intent?.class === 'lore' || (intent?.class === 'mixed' && intent.subsystem === 'lore');
+        if (isLoreQuery) {
+            console.log('[MemoryFilter] Lore/autobiographical intent — source priority: diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)');
+        }
 
         // Sort candidates: explicit source first, then by confidence*salience, then recency
         const sourceRank = (source?: string): number => {
+            if (isLoreQuery) {
+                // Diary and graph entries are primary lore/RP canon sources
+                if (source === 'diary' || source === 'graph') return 4;
+                // RAG retrieval from LTMF/processed roleplay files
+                if (source === 'rag') return 3;
+                // Mem0 AI-extracted memories
+                if (source === 'mem0') return 2;
+                // Recent conversational snippets are fallback only for lore queries
+                if (source === 'explicit' || source === 'conversation') return 1;
+                return 0;
+            }
             if (source === 'explicit') return 3;
             if (source === 'mem0' || source === 'conversation') return 2;
             if (source === 'rag') return 1;
@@ -123,6 +147,12 @@ export class MemoryFilter {
         const sortScore = (m: MemoryItem): number => {
             const confidence = m.metadata?.confidence ?? 0.5;
             const salience = m.metadata?.salience ?? 0.5;
+            if (isLoreQuery) {
+                // For lore/autobiographical queries, source identity is a primary signal.
+                // Weight source rank at LORE_SOURCE_WEIGHT so canonical lore sources (diary, rag/LTMF, graph)
+                // consistently outrank recent chat snippets regardless of their quality scores.
+                return (confidence * salience * MemoryFilter.LORE_QUALITY_WEIGHT) + (sourceRank(m.metadata?.source) * MemoryFilter.LORE_SOURCE_WEIGHT);
+            }
             return (confidence * salience) + (sourceRank(m.metadata?.source) * 0.1);
         };
 

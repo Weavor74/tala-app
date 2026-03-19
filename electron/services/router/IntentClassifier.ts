@@ -79,6 +79,8 @@ export class IntentClassifier {
         /(who\s+are\s+you|tell\s+me\s+about|what\s+is\s+the)/i,
         // Autobiographical / personal-memory queries — grounded recall, not technical lookup
         /(do\s+you\s+remember|remember\s+when|childhood|your\s+favorite|personal\s+histor)/i,
+        // Extended autobiographical markers: age references, life history, memory follow-ups
+        /(when\s+you\s+were|at\s+(age\s+)?\d+\s*(years?\s*old)?|growing\s+up|what\s+were\s+you|your\s+life|your\s+memory|have\s+a\s+memory|back\s+then)/i,
     ];
 
     // Social / affectionate signals — high-confidence social context that should not be
@@ -112,7 +114,9 @@ export class IntentClassifier {
         // 3. Social signals override weak technical matches when no operational verb is present.
         // A prompt that is strongly affectionate or relational and lacks clear technical task verbs
         // should not be classified as technical.
-        if (hasSocial && !hasTechnical) {
+        // Exception: when the prompt also contains a strong lore/autobiographical signal, the
+        // substantive request overrides the social opener — retrieval must not be suppressed.
+        if (hasSocial && !hasTechnical && !hasLore) {
             const baseClass = hasGreeting ? 'greeting' : 'social';
             console.log(`[IntentClassifier] intent=${baseClass} confidence=0.92 reason=social_override`);
             return {
@@ -124,14 +128,24 @@ export class IntentClassifier {
         }
 
         // 4. Precedence Logic (Mixed Intent)
-        if (hasGreeting && (hasTechnical || hasLore)) {
-            const primarySubstantive = hasTechnical ? 'technical' : 'lore';
-            console.log(`[IntentClassifier] intent=mixed/${primarySubstantive} confidence=0.9 reason=content_overrides_greeting`);
+        // greeting + technical → mixed/technical (retrieval runs, technical domain)
+        // greeting + lore → lore with greeting tone (retrieval runs, autobiographical domain)
+        if (hasGreeting && hasTechnical) {
+            console.log(`[IntentClassifier] intent=mixed/technical confidence=0.9 reason=content_overrides_greeting`);
             return {
                 class: 'mixed',
                 confidence: 0.9,
-                subsystem: primarySubstantive,
-                precedenceLog: `Content(${primarySubstantive}) > Greeting`
+                subsystem: 'technical',
+                precedenceLog: 'Content(technical) > Greeting'
+            };
+        }
+        if (hasGreeting && hasLore) {
+            console.log(`[IntentClassifier] intent=lore tone=greeting confidence=0.9 reason=autobiographical_request_overrode_social_opener`);
+            return {
+                class: 'lore',
+                confidence: 0.9,
+                subsystem: 'lore',
+                precedenceLog: 'Lore > Greeting (autobiographical opener)'
             };
         }
 
