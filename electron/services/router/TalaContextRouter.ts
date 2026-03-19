@@ -41,6 +41,27 @@ export class TalaContextRouter {
     private static readonly LORE_CARRYOVER_MS = 5 * 60 * 1000;
 
     /**
+     * Maximum number of RAG/LTMF/canon lore candidates to inject for a lore turn.
+     * These occupy the primary slots in the approved memory set.
+     */
+    private static readonly LORE_PRIMARY_CANDIDATE_LIMIT = 5;
+
+    /**
+     * Maximum number of explicit/chat fallback candidates allowed in the approved
+     * set when canon lore candidates are present.  Set to 1 so recent greetings and
+     * conversational snippets do not crowd out autobiographical lore.
+     */
+    private static readonly LORE_FALLBACK_CAP = 1;
+
+    /**
+     * Sources treated as "canon lore" for the purposes of source-bucket composition.
+     * Candidates from any of these sources fill the primary slots first.
+     */
+    private static readonly LORE_CANON_SOURCES = new Set([
+        'rag', 'diary', 'graph', 'core_bio', 'lore',
+    ]);
+
+    /**
      * Patterns that indicate a short follow-up query referencing a prior lore turn.
      * These are matched in addition to IntentClassifier to handle underspecified
      * replies like "you don't remember?" that may not fire the main lore patterns.
@@ -127,8 +148,11 @@ export class TalaContextRouter {
             //     Requires ragService to be injected (wired in AgentService).
             if (intent.class === 'lore' && this.ragService) {
                 const ragResults = await this.ragService.searchStructured(query, {
-                    limit: 5,
-                    filter: { category: 'roleplay' },
+                    limit: TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT,
+                    // No category filter — fetch top-k canon lore by semantic similarity.
+                    // A category filter (e.g. {category:'roleplay'}) can silently reduce
+                    // results to 1 when most LTMF documents carry different metadata.
+                    // Semantic relevance alone is the correct gate for lore retrieval.
                 });
                 if (ragResults.length > 0) {
                     console.log(`[TalaRouter] Lore intent — injecting ${ragResults.length} RAG/LTMF candidates`);
@@ -196,7 +220,39 @@ export class TalaContextRouter {
             // 5. Contradiction Resolution
             resolved = MemoryFilter.resolveContradictions(filtered, intent);
 
-            // Log approved source composition
+            // 5a. Source-bucket composition for lore intent.
+            //
+            //     When autobiographical/lore intent is active and canon lore candidates
+            //     exist (rag, diary, graph, core_bio, lore), enforce a canon-first approved
+            //     set so recent chat/explicit snippets cannot dominate:
+            //
+            //       primary slots  → up to LORE_PRIMARY_CANDIDATE_LIMIT canon lore items
+            //       fallback slots → up to LORE_FALLBACK_CAP explicit/chat items
+            //
+            //     Fallback behavior is preserved: if no canon candidates exist, the full
+            //     resolved set (explicit/chat/mem0) passes through unchanged.
+            if (intent.class === 'lore' && resolved.length > 0) {
+                const loreSources = TalaContextRouter.LORE_CANON_SOURCES;
+                const loreBucket = resolved.filter(m => loreSources.has(m.metadata?.source ?? ''));
+                const fallbackBucket = resolved.filter(m => !loreSources.has(m.metadata?.source ?? ''));
+
+                console.log(
+                    `[TalaRouter] Lore composition — loreCandidates=${loreBucket.length} explicitCandidates=${fallbackBucket.length} fallbackCap=${TalaContextRouter.LORE_FALLBACK_CAP}`
+                );
+
+                if (loreBucket.length > 0) {
+                    const primary = loreBucket.slice(0, TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT);
+                    const fallback = fallbackBucket.slice(0, TalaContextRouter.LORE_FALLBACK_CAP);
+                    const suppressed = fallbackBucket.length - fallback.length;
+                    if (suppressed > 0) {
+                        console.log(`[TalaRouter] Suppressed explicit/chat candidates for canon-first composition: ${suppressed}`);
+                    }
+                    resolved = [...primary, ...fallback];
+                }
+                // else: no canon lore — fallback bucket passes through unchanged (all resolved items kept)
+            }
+
+            // Log final approved source composition
             if (resolved.length > 0) {
                 const approvedSummary = resolved.reduce<Record<string, number>>((acc, c) => {
                     const src = c.metadata?.source ?? 'unknown';

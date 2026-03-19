@@ -185,7 +185,17 @@ export class MemoryFilter {
             }
         }
 
-        // Pass 2: Semantic deduplication for memories without explicit associations
+        // Pass 2: Semantic deduplication for memories without explicit associations.
+        //
+        // For lore/autobiographical queries this pass is intentionally skipped.
+        // Multiple distinct facts about the same life period (e.g. "at seventeen Tala
+        // played violin" and "at seventeen Tala lived by the sea") share common keywords
+        // and would be incorrectly collapsed to a single survivor.  Source-bucket
+        // composition in TalaContextRouter handles quality selection for lore turns instead.
+        if (isLoreQuery) {
+            return approved;
+        }
+
         // Detect likely topical conflicts by looking for short, overlapping keyword sets
         const finalApproved: MemoryItem[] = [];
         const topicGroups = new Map<string, MemoryItem>();
