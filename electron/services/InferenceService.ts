@@ -69,6 +69,9 @@ export class InferenceService {
     /** Deterministic provider selection policy. */
     private selectionService: ProviderSelectionService;
 
+    /** Reference to the embedded llama.cpp child process, kept to prevent GC and allow cleanup. */
+    private _embeddedChild: import('child_process').ChildProcess | null = null;
+
     constructor(registryConfig?: ProviderRegistryConfig) {
         this.localInferenceManager = new LocalInferenceManager(this.localEngine);
         this.registry = new InferenceProviderRegistry(registryConfig ?? {});
@@ -645,7 +648,8 @@ export class InferenceService {
     ): Promise<boolean> {
         const port = options.port ?? 8080;
         const contextSize = options.contextSize ?? 4096;
-        const startupTimeoutMs = options.startupTimeoutMs ?? 60_000;
+        // 120 s gives large GGUF models on slow disks enough time to load.
+        const startupTimeoutMs = options.startupTimeoutMs ?? 120_000;
 
         // 1. Check if the server is already running
         const healthUrl = `http://127.0.0.1:${port}/health`;
@@ -685,6 +689,7 @@ export class InferenceService {
             `Starting embedded llama.cpp via Python: ${pythonPath}`, 'success',
             { payload: { port, modelPath, pythonPath } });
 
+        let processExited = false;
         try {
             const child = spawn(pythonPath, [
                 '-m', 'llama_cpp.server',
@@ -698,11 +703,28 @@ export class InferenceService {
                 stdio: 'pipe',
             });
 
+            // Retain the reference so the child process is not prematurely garbage-collected
+            // and so it can be cleaned up on shutdown.
+            this._embeddedChild = child;
+
             child.on('error', (err) => {
+                processExited = true;
                 telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
                     `Embedded llama.cpp process error: ${err.message}`, 'failure',
                     { payload: { port, error: err.message } });
             });
+
+            child.on('exit', (code, signal) => {
+                processExited = true;
+                console.warn(`[EmbeddedLlamaCpp] Process exited early — code=${code} signal=${signal}`);
+            });
+
+            if (child.stdout) {
+                child.stdout.on('data', (d: Buffer) => {
+                    const line = d.toString().trim();
+                    if (line) console.log(`[EmbeddedLlamaCpp] ${line}`);
+                });
+            }
 
             if (child.stderr) {
                 child.stderr.on('data', (d: Buffer) => {
@@ -720,6 +742,13 @@ export class InferenceService {
         // 5. Poll until ready or timeout
         const deadline = Date.now() + startupTimeoutMs;
         while (Date.now() < deadline) {
+            // Fail fast if the process exited before it became reachable.
+            if (processExited) {
+                telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
+                    `Embedded llama.cpp process exited before becoming reachable on port ${port}`, 'failure',
+                    { payload: { port, modelPath } });
+                return false;
+            }
             await new Promise<void>(r => setTimeout(r, 1000));
             const ready = await new Promise<boolean>((resolve) => {
                 const req = http.get(healthUrl, { timeout: 1500 }, (res) => {
@@ -740,6 +769,17 @@ export class InferenceService {
             `Embedded llama.cpp startup timed out after ${startupTimeoutMs}ms`, 'failure',
             { payload: { port, modelPath, startupTimeoutMs } });
         return false;
+    }
+
+    /**
+     * Terminates the embedded llama.cpp child process if it is running.
+     * Safe to call multiple times; a no-op if no process was spawned.
+     */
+    public killEmbedded(): void {
+        if (this._embeddedChild && !this._embeddedChild.killed) {
+            this._embeddedChild.kill();
+            this._embeddedChild = null;
+        }
     }
 
     // ─── Legacy — backward-compatible scan ───────────────────────────────────

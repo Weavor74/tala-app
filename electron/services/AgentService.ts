@@ -140,6 +140,8 @@ type TurnExecutionLog = {
 export class AgentService {
     /** The active inference engine implementation (Ollama, Cloud, etc.). */
     private brain: IBrain;
+    /** True only when loadBrainConfig() has successfully bound a real provider. */
+    private brainIsReady = false;
     /** Current context for notebook-style interactions. */
     private activeNotebookContext: { id: string | null, sourcePaths: string[] } = { id: null, sourcePaths: [] };
     /** Flag indicating if all sub-services are initialized and ready. */
@@ -1223,6 +1225,11 @@ Exported standalone package from Tala.
     }
 
     private async loadBrainConfig() {
+        // Clear brain readiness at the start of every config attempt.
+        // Intentional: any in-flight chat() calls during reconfiguration will receive a clear
+        // "no provider" error rather than routing through a potentially stale or mismatched brain.
+        // The flag is re-set to true only after a provider is successfully bound below.
+        this.brainIsReady = false;
         try {
             const settings = loadSettings(this.settingsPath);
 
@@ -1333,19 +1340,23 @@ Exported standalone package from Tala.
                     apiKey: cloudInst.apiKey ?? chosen.apiKey,
                     model: selection.resolvedModel ?? cloudInst.model ?? chosen.preferredModel,
                 });
+                this.brainIsReady = true;
             } else if (chosen.providerType === 'ollama') {
                 const ollama = new OllamaBrain();
                 ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
                 this.brain = ollama;
+                this.brainIsReady = true;
             } else if (chosen.providerType === 'embedded_llamacpp') {
                 // Embedded llama.cpp exposes an OpenAI-compatible API (/v1/chat/completions).
                 // Use CloudBrain (OpenAI-compat), NOT OllamaBrain (which hits /api/chat).
                 const modelName = selection.resolvedModel ?? chosen.preferredModel ?? path.basename(embeddedModelPath ?? 'embedded-model');
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: modelName });
+                this.brainIsReady = true;
                 console.log(`[AgentService] Bound embedded llama.cpp brain → endpoint=${chosen.endpoint} model=${modelName}`);
             } else {
                 // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: selection.resolvedModel ?? chosen.preferredModel ?? '' });
+                this.brainIsReady = true;
             }
         } catch (e) {
             console.error('[AgentService] loadBrainConfig error:', e);
@@ -1433,6 +1444,16 @@ Exported standalone package from Tala.
             const ss = this.systemInfo?.systemService as SystemService;
             const mcpPython = ss?.resolveMcpPythonPath({}, this.systemInfo as any) || pythonPath;
 
+            // Per-service Python resolver: prefers the service-local venv over the shared
+            // bundled Python so each MCP server runs in its own isolated environment.
+            const isWin = process.platform === 'win32';
+            const resolveServicePython = (serviceName: string): string => {
+                const venvPython = isWin
+                    ? path.join(mcpServersDir, serviceName, 'venv', 'Scripts', 'python.exe')
+                    : path.join(mcpServersDir, serviceName, 'venv', 'bin', 'python3');
+                return fs.existsSync(venvPython) ? venvPython : mcpPython;
+            };
+
             // Preflight Checks (Throws on failure, aborting ignition)
             if (ss) {
                 ss.preflightCheck(mcpPython);
@@ -1450,44 +1471,51 @@ Exported standalone package from Tala.
                 PYTHONUNBUFFERED: '1'
             };
 
-            console.log(`[AgentService] Using Python for MCP services: ${mcpPython}`);
+            console.log(`[AgentService] Using Python for MCP services (shared baseline): ${mcpPython}`);
 
             await Promise.all([
                 (async () => {
-                    console.log(`[MCP] tala-core python=${mcpPython}`);
-                    await this.rag.ignite(mcpPython, ragScript, isolatedEnv);
+                    const svcPython = resolveServicePython('tala-core');
+                    console.log(`[MCP] tala-core python=${svcPython}`);
+                    await this.rag.ignite(svcPython, ragScript, isolatedEnv);
                 })(),
                 (async () => {
                     if (this.memory) {
-                        console.log(`[MCP] mem0-core python=${mcpPython}`);
-                        await this.memory.ignite(mcpPython, memoryScript, isolatedEnv).catch(err => console.error('Memory ignition failed:', err));
+                        const svcPython = resolveServicePython('mem0-core');
+                        console.log(`[MCP] mem0-core python=${svcPython}`);
+                        await this.memory.ignite(svcPython, memoryScript, isolatedEnv).catch(err => console.error('Memory ignition failed:', err));
                     }
                 })(),
                 (async () => {
                     if (this.astro) {
-                        console.log(`[MCP] astro-engine python=${mcpPython}`);
-                        await this.astro.ignite(mcpPython, astroScript, isolatedEnv).catch(err => console.error('Astro ignition failed:', err));
+                        const svcPython = resolveServicePython('astro-engine');
+                        console.log(`[MCP] astro-engine python=${svcPython}`);
+                        await this.astro.ignite(svcPython, astroScript, isolatedEnv).catch(err => console.error('Astro ignition failed:', err));
                     }
                 })(),
                 (async () => {
                     if (this.world) {
-                        console.log(`[MCP] world-engine python=${mcpPython}`);
-                        await this.world.ignite(mcpPython, worldScript, isolatedEnv).catch(err => console.error('World ignition failed:', err));
+                        const svcPython = resolveServicePython('world-engine');
+                        console.log(`[MCP] world-engine python=${svcPython}`);
+                        await this.world.ignite(svcPython, worldScript, isolatedEnv).catch(err => console.error('World ignition failed:', err));
                     }
                 })(),
                 (async () => {
                     if (this.mcpService) {
                         try {
-                            console.log(`[MCP] tala-memory-graph python=${mcpPython}`);
+                            const svcPython = resolveServicePython('tala-memory-graph');
+                            console.log(`[MCP] tala-memory-graph python=${svcPython}`);
                             if (typeof this.mcpService.setPythonPath === 'function') {
-                                this.mcpService.setPythonPath(mcpPython);
+                                this.mcpService.setPythonPath(svcPython);
                             }
                             if (typeof (this.mcpService as any).connect === 'function') {
                                 await (this.mcpService as any).connect({
                                     id: 'tala-memory-graph',
                                     name: 'Memory Graph',
                                     type: 'stdio',
-                                    command: 'python', // McpService.connect will resolve this to mcpPython
+                                    // Pass the resolved per-service executable directly so
+                                    // McpService does not re-resolve it via its shared pythonPath.
+                                    command: svcPython,
                                     args: [graphScript],
                                     enabled: true,
                                     env: isolatedEnv
@@ -2209,6 +2237,16 @@ Exported standalone package from Tala.
                 });
 
                 const requestStart = Date.now();
+
+                // Guard: if loadBrainConfig never succeeded, refuse to route through the
+                // default/stale OllamaBrain rather than hitting localhost:11434 silently.
+                if (!this.brainIsReady) {
+                    const errMsg = 'No inference provider is configured or reachable. Chat is disabled until a provider becomes available.';
+                    console.warn(`[AgentService] ${errMsg}`);
+                    onToken?.(errMsg);
+                    return { message: errMsg, artifact: null, suppressChatContent: false };
+                }
+
                 const response = await this.streamWithBrain(this.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
 
