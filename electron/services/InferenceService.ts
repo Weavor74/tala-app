@@ -1,5 +1,6 @@
 import http from 'http';
 import https from 'https';
+import net from 'net';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -651,8 +652,10 @@ export class InferenceService {
         // 120 s gives large GGUF models on slow disks enough time to load.
         const startupTimeoutMs = options.startupTimeoutMs ?? 120_000;
 
-        // 1. Check if the server is already running
+        // 1. Check if a server is already running on this port
         const healthUrl = `http://127.0.0.1:${port}/health`;
+        const modelsUrl = `http://127.0.0.1:${port}/v1/models`;
+
         const alreadyUp = await new Promise<boolean>((resolve) => {
             const req = http.get(healthUrl, { timeout: 2000 }, (res) => {
                 res.resume();
@@ -666,6 +669,53 @@ export class InferenceService {
             telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
                 `Embedded server already running on port ${port}`, 'success', { payload: { port } });
             return true;
+        }
+
+        // 1b. /health did not respond positively — check TCP to see if the port is actually occupied
+        // by another process before attempting to spawn a new server that would fail to bind.
+        const portOccupied = await new Promise<boolean>((resolve) => {
+            const socket = new net.Socket();
+            // 500 ms is sufficient to detect an active local listener without meaningfully
+            // delaying startup when the port is free.
+            socket.setTimeout(500);
+            socket.once('connect', () => { socket.destroy(); resolve(true); });
+            socket.once('error', () => { socket.destroy(); resolve(false); });
+            socket.once('timeout', () => { socket.destroy(); resolve(false); });
+            try {
+                socket.connect(port, '127.0.0.1');
+            } catch {
+                socket.destroy();
+                resolve(false);
+            }
+        });
+
+        if (portOccupied) {
+            // Port is in use but /health returned a non-success status. Try /v1/models to determine
+            // whether the occupant is a valid OpenAI-compatible inference server (e.g. LM Studio,
+            // text-generation-webui) that TALA can adopt without spawning a duplicate.
+            const inferenceReachable = await new Promise<boolean>((resolve) => {
+                const req = http.get(modelsUrl, { timeout: 2000 }, (res) => {
+                    res.resume();
+                    resolve((res.statusCode ?? 0) < 400);
+                });
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => { req.destroy(); resolve(false); });
+            });
+
+            if (inferenceReachable) {
+                telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
+                    `Port ${port} occupied by existing inference service (responded to /v1/models) — adopting as embedded provider`,
+                    'success', { payload: { port } });
+                return true;
+            }
+
+            // Port is occupied by a non-inference service — spawning another server would fail
+            // immediately with a bind error. Surface a deterministic failure instead.
+            telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
+                `Port ${port} is already in use by a non-inference service — cannot start embedded llama.cpp`,
+                'failure', { payload: { port } });
+            console.error(`[EmbeddedLlamaCpp] Port ${port} is occupied by a non-inference service. Resolve the port conflict before starting TALA's embedded inference.`);
+            return false;
         }
 
         // 2. Resolve Python executable

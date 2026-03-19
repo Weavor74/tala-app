@@ -179,10 +179,16 @@ export async function probeEmbeddedLlamaCpp(
     // Always check if the server is already running FIRST — regardless of binary/model file state.
     // The server may have been started externally (e.g. via launch-inference.bat using a Python venv)
     // in which case there is no native binary tracked by binaryPath but the HTTP endpoint is live.
-    const { ok } = await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/health`, 2000);
+    const { ok: healthOk } = await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/health`, 2000);
+
+    // Fallback: some OpenAI-compatible servers (e.g. LM Studio, text-generation-webui, koboldcpp) do
+    // not expose /health or return 404 for it. Detect them via /v1/models instead.
+    const serverRunning = healthOk ||
+        (await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/v1/models`, 2000)).ok;
+
     const responseTimeMs = Date.now() - start;
 
-    if (ok) {
+    if (serverRunning) {
         // Server is live — discover its models via OpenAI-compat endpoint
         const liveModels = await fetchJsonModels(`http://127.0.0.1:${enginePort}`, '/v1/models', 'data', 2000);
         const fallbackModelName = modelPath ? path.basename(modelPath) : 'embedded-model';
