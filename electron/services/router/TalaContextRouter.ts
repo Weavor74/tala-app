@@ -4,6 +4,7 @@ import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
 import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory } from './ContextAssembler';
 import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
+import { RagService } from '../RagService';
 import { auditLogger } from '../AuditLogger';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -16,20 +17,45 @@ import { v4 as uuidv4 } from 'uuid';
  * 
  * **Pipeline Logic:**
  * 1. **Intent Classification**: Analyzes the query to identify the user's goal.
- * 2. **Retrieval Gating**: Bypasses memory search for simple intents (e.g., greetings).
- * 3. **Memory Retrieval**: Searches the `MemoryService` using mode-scoped weights.
- * 4. **Policy Enforcement**: Filters memories based on security and mode constraints.
- * 5. **Contradiction Resolution**: Merges conflicting memory state.
- * 6. **Prompt Assembly**: Generates the final instruction blocks via the `ContextAssembler`.
- * 7. **Capability Resolution**: Maps the current state to allowed system tools.
- * 8. **Memory Write Policy**: Determines whether this turn's output may be persisted.
- * 9. **Audit Emission**: Emits structured telemetry for the full routing decision.
+ * 2. **Lore Follow-up Carryover**: For underspecified follow-ups after a lore turn,
+ *    carries over autobiographical retrieval context for up to 5 minutes.
+ * 3. **Retrieval Gating**: Bypasses memory search for simple intents (e.g., greetings).
+ * 4. **Memory Retrieval**: Searches the `MemoryService` using mode-scoped weights.
+ *    For lore intent: also queries `RagService` for LTMF/canon lore candidates first.
+ * 5. **Policy Enforcement**: Filters memories based on security and mode constraints.
+ * 6. **Contradiction Resolution**: Merges conflicting memory state with source-priority ranking.
+ * 7. **Prompt Assembly**: Generates the final instruction blocks via the `ContextAssembler`.
+ * 8. **Capability Resolution**: Maps the current state to allowed system tools.
+ * 9. **Memory Write Policy**: Determines whether this turn's output may be persisted.
+ * 10. **Audit Emission**: Emits structured telemetry for the full routing decision.
  */
 export class TalaContextRouter {
     private memoryService: MemoryService;
+    /** Optional RAG service — injected so lore turns can query LTMF/canon lore first. */
+    private ragService?: RagService;
 
-    constructor(memoryService: MemoryService) {
+    /**
+     * How long (ms) after a lore turn that a follow-up underspecified query
+     * inherits the autobiographical retrieval domain.
+     */
+    private static readonly LORE_CARRYOVER_MS = 5 * 60 * 1000;
+
+    /**
+     * Patterns that indicate a short follow-up query referencing a prior lore turn.
+     * These are matched in addition to IntentClassifier to handle underspecified
+     * replies like "you don't remember?" that may not fire the main lore patterns.
+     */
+    private static readonly LORE_FOLLOWUP_PATTERNS = [
+        /\b(so\s+you\s+(don'?t|do\s+not)|you\s+(don'?t|do\s+not))\s+(have|remember|recall|know)/i,
+        /\b(what\s+about\s+(that|then|it)|and\s+that|but\s+that)\b/i,
+    ];
+
+    /** Timestamp of the most recent lore-classified turn (for carryover logic). */
+    private lastLoreQueryTs: number = 0;
+
+    constructor(memoryService: MemoryService, ragService?: RagService) {
         this.memoryService = memoryService;
+        this.ragService = ragService;
     }
 
     /**
@@ -46,13 +72,40 @@ export class TalaContextRouter {
 
         // 1. Resolve Mode (Handled by input)
         // 2. Classify Intent
-        const intent = IntentClassifier.classify(query);
+        const rawIntent = IntentClassifier.classify(query);
+
+        // 2a. Lore follow-up carryover: if this turn is underspecified and follows a recent
+        //     lore turn, treat it as lore so autobiographical retrieval stays active.
+        const isWithinLoreWindow = (Date.now() - this.lastLoreQueryTs) < TalaContextRouter.LORE_CARRYOVER_MS;
+        const isLoreFollowUp =
+            isWithinLoreWindow &&
+            rawIntent.class !== 'lore' &&
+            TalaContextRouter.LORE_FOLLOWUP_PATTERNS.some(p => p.test(query));
+
+        const intent: Intent = isLoreFollowUp
+            ? {
+                class: 'lore',
+                confidence: 0.75,
+                subsystem: 'lore',
+                precedenceLog: 'Lore carryover from previous turn (follow-up detected)',
+            }
+            : rawIntent;
+
+        if (isLoreFollowUp) {
+            console.log(`[TalaRouter] Lore follow-up detected — carrying over autobiographical retrieval context`);
+        }
+
         const isGreetingOnly = intent.class === 'greeting';
         const retrievalSuppressed = isGreetingOnly; // Gating logic
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
-        if (intent.class === 'lore' && intent.precedenceLog?.includes('Greeting')) {
+        if (intent.class === 'lore' && rawIntent.precedenceLog?.includes('Greeting')) {
             console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression — retrieval will run`);
+        }
+
+        // Update lore timestamp so follow-up carryover works on the next turn
+        if (intent.class === 'lore') {
+            this.lastLoreQueryTs = Date.now();
         }
 
         // 3. Retrieval Phase (Conditional)
@@ -63,7 +116,75 @@ export class TalaContextRouter {
         if (!retrievalSuppressed) {
             // We query the MemoryService which already implements weighted ranking and association expansion
             // strictly for the requested mode.
-            const candidates = await this.memoryService.search(query, 10, mode);
+            let candidates: MemoryItem[] = await this.memoryService.search(query, 10, mode);
+
+            // 3a. Lore/autobiographical intent — query RAG/LTMF canon lore first.
+            //
+            //     RAG results are prepended to the candidate list so MemoryFilter sees them,
+            //     and the lore-aware sourceRank in resolveContradictions() elevates them over
+            //     recent chat snippets regardless of composite score ordering.
+            //
+            //     Requires ragService to be injected (wired in AgentService).
+            if (intent.class === 'lore' && this.ragService) {
+                const ragResults = await this.ragService.searchStructured(query, {
+                    limit: 5,
+                    filter: { category: 'roleplay' },
+                });
+                if (ragResults.length > 0) {
+                    console.log(`[TalaRouter] Lore intent — injecting ${ragResults.length} RAG/LTMF candidates`);
+                    const now = Date.now();
+                    const ragMemoryItems: MemoryItem[] = ragResults.map((r, idx) => {
+                        const score = r.score ?? 0.5;
+                        return {
+                            id: `rag-lore-${idx}-${now}`,
+                            text: r.text,
+                            metadata: {
+                                source: 'rag',
+                                role: 'rp',
+                                type: 'lore',
+                                category: 'roleplay',
+                                confidence: score,
+                                salience: score,
+                                docId: r.docId,
+                            },
+                            score,
+                            compositeScore: score,
+                            timestamp: now,
+                            salience: score,
+                            confidence: score,
+                            created_at: now,
+                            last_accessed_at: null,
+                            last_reinforced_at: null,
+                            access_count: 0,
+                            associations: [],
+                            status: 'active' as const,
+                        };
+                    });
+                    // Audit log each RAG candidate before merging
+                    for (const item of ragMemoryItems) {
+                        console.log(
+                            `[MemoryAudit] source=rag role=rp id=${item.id} score=${item.score?.toFixed(3)} docId=${item.metadata?.docId ?? 'n/a'}`
+                        );
+                    }
+                    // RAG lore items go first; mem0 candidates follow as fallback
+                    candidates = [...ragMemoryItems, ...candidates];
+                } else {
+                    console.log('[TalaRouter] Lore intent — RAG returned no results; mem0/local used as fallback');
+                }
+            }
+
+            // Log candidate source composition for audit visibility
+            if (candidates.length > 0) {
+                const sourceSummary = candidates.reduce<Record<string, number>>((acc, c) => {
+                    const src = c.metadata?.source ?? 'unknown';
+                    acc[src] = (acc[src] ?? 0) + 1;
+                    return acc;
+                }, {});
+                console.log(
+                    `[TalaRouter] Candidates before filter — ${Object.entries(sourceSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${candidates.length})`
+                );
+            }
+
             candidateCount = candidates.length;
 
             // 4. Validation & Policy Enforcement
@@ -74,6 +195,18 @@ export class TalaContextRouter {
 
             // 5. Contradiction Resolution
             resolved = MemoryFilter.resolveContradictions(filtered, intent);
+
+            // Log approved source composition
+            if (resolved.length > 0) {
+                const approvedSummary = resolved.reduce<Record<string, number>>((acc, c) => {
+                    const src = c.metadata?.source ?? 'unknown';
+                    acc[src] = (acc[src] ?? 0) + 1;
+                    return acc;
+                }, {});
+                console.log(
+                    `[TalaRouter] Approved memories — ${Object.entries(approvedSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${resolved.length})`
+                );
+            }
         } else {
             console.log(`[TalaRouter] Retrieval bypassed — ${intent.class} intent (no lore/substantive override).`);
         }

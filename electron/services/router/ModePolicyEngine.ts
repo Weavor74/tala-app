@@ -39,7 +39,7 @@ export class ModePolicyEngine {
             forbiddenPatterns: ['json_protocols', 'system_internal_ids']
         },
         rp: {
-            allowedSources: ['mem0', 'graph', 'astro', 'diary', 'explicit'],
+            allowedSources: ['mem0', 'rag', 'graph', 'astro', 'diary', 'explicit'],
             preferredTypes: ['lore', 'roleplay_scene', 'relationship', 'emotional'],
             exclusionTypes: ['technical_debug', 'system_logs', 'task_memory'],
             astroWeight: 0.8,
