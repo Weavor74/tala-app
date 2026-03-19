@@ -1,6 +1,6 @@
 # Contract: userProfile.ts
 
-**Source**: [shared/userProfile.ts](../../shared/userProfile.ts)
+**Source**: [shared\userProfile.ts](../../shared/userProfile.ts)
 
 ## Interfaces
 

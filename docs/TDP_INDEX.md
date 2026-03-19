@@ -17,6 +17,18 @@
 - [Component Model](architecture/component_model.md)
 - [Data Flow](architecture/data_flow.md)
 - [Deployment Topology](architecture/deployment_topology.md)
+- [Phase 1 Coherence Hardening](architecture/phase1_coherence_hardening.md)
+- [Phase 1B — Canonical Streaming Integration + Inference Reflection Signals](architecture/phase1b_streaming_hardening.md)
+- [Phase 2 Trustworthiness Hardening](architecture/phase2_trustworthiness_hardening.md)
+- [Phase 2B Runtime Control and Diagnostics](architecture/phase2b_runtime_control.md)
+- [Phase 3 — Live Inference Path Integration](architecture/phase3_inference_integration.md)
+- [Phase 3A: Live Cognitive Path Integration + Pre-Inference MCP Orchestration](architecture/phase3a_live_cognitive_integration.md)
+- [Phase 3B: Small-Model Cognitive Compaction](architecture/phase3b_cognitive_compaction.md)
+- [Phase 3C Completion Report: Cognitive Behavior Validation and Small-Model Tuning](architecture/phase3c_completion_report.md)
+- [Phase 3C: Cognitive Behavior Validation and Small-Model Tuning](architecture/phase3c_cognitive_validation.md)
+- [Phase 4A: World Model Foundation — Architecture Notes](architecture/phase4a_world_model.md)
+- [Phase 4B: Self-Maintenance Foundation](architecture/phase4b_self_maintenance_foundation.md)
+- [Phase 4C — A2UI Workspace Surfaces](architecture/phase4c_a2ui_workspace_surfaces.md)
 - [Runtime Flow](architecture/runtime_flow.md)
 - [Service Interactions](architecture/service_interactions.md)
 - [System Architecture Overview](architecture/overview.md)
@@ -45,6 +57,18 @@
 - [Tala Requirement and Usage Report](audit/requirement_report.md)
 - [Tala Service Index](audit/service_index.md)
 
+## build
+
+- [Build Instructions — Tala System](build/build_instructions.md)
+- [Dependency Management — Tala System](build/dependency_management.md)
+- [Deployment Procedures — Tala System](build/deployment_procedures.md)
+- [Disaster Recovery — Tala System](build/disaster_recovery.md)
+- [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
+- [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
+- [Offline / Portable Build — Tala System](build/offline_portable_build.md)
+- [Release Packaging — Tala System](build/release_packaging.md)
+- [Update and Upgrade Process — Tala System](build/update_and_upgrade_process.md)
+
 ## compliance
 
 - [Dependency License Inventory — Tala System](compliance/dependency_license_inventory.md)
@@ -55,9 +79,16 @@
 
 ## contracts
 
+- [Contract: a2uiTypes.ts](contracts/a2uiTypes.md)
+- [Contract: cognitiveTurnTypes.ts](contracts/cognitiveTurnTypes.md)
+- [Contract: inferenceProviderTypes.ts](contracts/inferenceProviderTypes.md)
 - [Contract: logs.ts](contracts/logs.md)
+- [Contract: modelCapabilityTypes.ts](contracts/modelCapabilityTypes.md)
+- [Contract: runtimeDiagnosticsTypes.ts](contracts/runtimeDiagnosticsTypes.md)
 - [Contract: settings.ts](contracts/settings.md)
+- [Contract: telemetry.ts](contracts/telemetry.md)
 - [Contract: userProfile.ts](contracts/userProfile.md)
+- [Contract: worldModelTypes.ts](contracts/worldModelTypes.md)
 - [Shared Contracts Index](contracts/README.md)
 
 ## contributing
@@ -98,6 +129,24 @@
 - [System Lifecycle Plan — Tala System](lifecycle/system_lifecycle_plan.md)
 - [Update Policy — Tala System](lifecycle/update_policy.md)
 
+## logs
+
+- [Architecture Generation Log](architecture/logs/architecture_generation_log.md)
+- [Audit Actions Log](audit/logs/audit_actions.md)
+- [Build Generation Log — Pass 8](build/logs/build_generation_log.md)
+- [Compliance Generation Log — Pass 9](compliance/logs/compliance_generation_log.md)
+- [Deep Catalog Generation Log](audit/logs/deep_catalog_generation_log.md)
+- [File Documentation Generation Log](audit/logs/file_doc_generation_log.md)
+- [Government-Grade Inventory Generation Log](audit/logs/government_inventory_generation_log.md)
+- [Interface Generation Log — Pass 6](interfaces/logs/interface_generation_log.md)
+- [Lifecycle Generation Log — Tala System](lifecycle/logs/lifecycle_generation_log.md)
+- [Requirements Validation Log](audit/logs/requirements_validation_log.md)
+- [requirements_generation_log.md](audit/logs/requirements_generation_log.md)
+- [Review Generation Log — Pass 7.5](review/logs/review_generation_log.md)
+- [Security Generation Log — Pass 7](security/logs/security_generation_log.md)
+- [Traceability Generation Log — Tala System](traceability/logs/traceability_generation_log.md)
+- [Unresolved Items Log](audit/logs/unresolved_items.md)
+
 ## requirements
 
 - [Nonfunctional Requirements — Tala System](requirements/nonfunctional_requirements.md)
@@ -128,6 +177,10 @@
 - [Threat Model — Tala System](security/threat_model.md)
 - [Trust Boundaries — Tala System](security/trust_boundaries.md)
 
+## setup
+
+- [TALA Bootstrap and Setup Guide](setup/bootstrap.md)
+
 ## subsystems
 
 - [Backend Services Index](subsystems/SERVICES.md)
@@ -135,6 +188,8 @@
 - [MCP Server: tala-core](subsystems/mcp-tala-core.md)
 - [MCP Server: world-engine](subsystems/mcp-world-engine.md)
 - [MCP Tools Index](subsystems/MCP_TOOLS.md)
+- [Service: A2UIActionBridge.ts](subsystems/service-A2UIActionBridge.md)
+- [Service: A2UIWorkspaceRouter.ts](subsystems/service-A2UIWorkspaceRouter.md)
 - [Service: AgentService.ts](subsystems/service-AgentService.md)
 - [Service: AnnotationParser.ts](subsystems/service-AnnotationParser.md)
 - [Service: ArtifactRouter.ts](subsystems/service-ArtifactRouter.md)
@@ -154,22 +209,28 @@
 - [Service: GitService.ts](subsystems/service-GitService.md)
 - [Service: GuardrailService.ts](subsystems/service-GuardrailService.md)
 - [Service: HybridMemoryManager.ts](subsystems/service-HybridMemoryManager.md)
+- [Service: InferenceDiagnosticsService.ts](subsystems/service-InferenceDiagnosticsService.md)
 - [Service: InferenceService.ts](subsystems/service-InferenceService.md)
 - [Service: IngestionService.ts](subsystems/service-IngestionService.md)
 - [Service: IpcRouter.ts](subsystems/service-IpcRouter.md)
 - [Service: LocalEngineService.ts](subsystems/service-LocalEngineService.md)
+- [Service: LocalInferenceManager.ts](subsystems/service-LocalInferenceManager.md)
 - [Service: log_redact.ts](subsystems/service-log_redact.md)
 - [Service: LogViewerService.ts](subsystems/service-LogViewerService.md)
+- [Service: McpLifecycleManager.ts](subsystems/service-McpLifecycleManager.md)
 - [Service: McpService.ts](subsystems/service-McpService.md)
 - [Service: MemoryService.ts](subsystems/service-MemoryService.md)
 - [Service: OrchestratorService.ts](subsystems/service-OrchestratorService.md)
 - [Service: PromptAuditService.ts](subsystems/service-PromptAuditService.md)
 - [Service: RagService.ts](subsystems/service-RagService.md)
+- [Service: RuntimeControlService.ts](subsystems/service-RuntimeControlService.md)
+- [Service: RuntimeDiagnosticsAggregator.ts](subsystems/service-RuntimeDiagnosticsAggregator.md)
 - [Service: RuntimeSafety.ts](subsystems/service-RuntimeSafety.md)
 - [Service: SelfMaintenanceService.ts](subsystems/service-SelfMaintenanceService.md)
 - [Service: SettingsManager.ts](subsystems/service-SettingsManager.md)
 - [Service: SmartRouterService.ts](subsystems/service-SmartRouterService.md)
 - [Service: SystemService.ts](subsystems/service-SystemService.md)
+- [Service: TelemetryService.ts](subsystems/service-TelemetryService.md)
 - [Service: TerminalService.ts](subsystems/service-TerminalService.md)
 - [Service: ToolService.ts](subsystems/service-ToolService.md)
 - [Service: UserProfileService.ts](subsystems/service-UserProfileService.md)

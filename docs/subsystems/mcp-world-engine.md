@@ -1,6 +1,6 @@
 # MCP Server: world-engine
 
-**Source**: [mcp-servers/world-engine/server.py](../../mcp-servers/world-engine/server.py)
+**Source**: [mcp-servers\world-engine\server.py](../../mcp-servers/world-engine/server.py)
 
 ### Tool: `analyze_structure`
 

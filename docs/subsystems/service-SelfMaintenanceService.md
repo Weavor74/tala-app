@@ -1,6 +1,6 @@
 # Service: SelfMaintenanceService.ts
 
-**Source**: [electron/services/SelfMaintenanceService.ts](../../electron/services/SelfMaintenanceService.ts)
+**Source**: [electron\services\SelfMaintenanceService.ts](../../electron/services/SelfMaintenanceService.ts)
 
 ## Class: `SelfMaintenanceService`
 

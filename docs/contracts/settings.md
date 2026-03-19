@@ -1,6 +1,6 @@
 # Contract: settings.ts
 
-**Source**: [shared/settings.ts](../../shared/settings.ts)
+**Source**: [shared\settings.ts](../../shared/settings.ts)
 
 ## Interfaces
 
