@@ -103,7 +103,8 @@ $PythonModules = @(
     "mcp-servers\tala-core",
     "mcp-servers\mem0-core",
     "mcp-servers\astro-engine",
-    "mcp-servers\world-engine"
+    "mcp-servers\world-engine",
+    "mcp-servers\tala-memory-graph"
 )
 foreach ($Mod in $PythonModules) {
     $ModPath   = Join-Path $RepoRoot $Mod
@@ -129,10 +130,10 @@ Write-Host "[6] Local inference (llama.cpp / llama-cpp-python)" -ForegroundColor
 # Check for bundled Python runtimes used by launch-inference.bat
 $BundledPythonFound = $false
 $BundledPythonPaths = @(
+    "local-inference\venv\Scripts\python.exe",
     "bin\python-win\python.exe",
     "bin\python-portable\python.exe",
-    "bin\python\python.exe",
-    "local-inference\venv\Scripts\python.exe"
+    "bin\python\python.exe"
 )
 foreach ($P in $BundledPythonPaths) {
     $FullP = Join-Path $RepoRoot $P
