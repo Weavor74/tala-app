@@ -85,11 +85,48 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 
 **Follow-up carryover:** If the prior turn was `intent=lore` and the current turn matches a follow-up pattern (e.g. "you don't remember?", "what about that?"), the router carries over the lore retrieval domain for up to 5 minutes.
 
+## 3b. Memory-Grounded Response Mode
+
+When `intent=lore` and approved lore memories are present, `TalaContextRouter.process()` activates a **memory-grounded response mode** so the model anchors its answer to the retrieved memories rather than improvising around them.
+
+### Mode selection
+
+| User query contains | Mode activated |
+|---|---|
+| Plain lore query (no precision trigger) | `memory_grounded_soft` (default) |
+| "exactly", "don't make anything up", "strictly from memory", "what specifically", "what does the memory say", "quote the memory", "just what happened" | `memory_grounded_strict` |
+| No lore memories retrieved | No mode activated |
+
+The `responseMode` value is stored on `TurnContext.responseMode` for downstream audit.
+
+### Prompt format (lore grounded turns)
+
+`ContextAssembler.assemble()` emits two additional blocks for grounded lore turns (replacing the standard `[MEMORY CONTEXT]` block):
+
+1. **`[CANON LORE MEMORIES — HIGH PRIORITY]`** — Memories formatted with per-entry source labels:
+   ```
+   Memory 1:
+   Source: LTMF
+   Content: <memory text>
+   ```
+   Source label mapping: `rag` → `LTMF`, `core_bio` → `core_biographical`, `mem0` → `autobiographical`, etc.
+
+2. **`[MEMORY GROUNDED RECALL — SOFT]`** or **`[MEMORY GROUNDED RECALL — STRICT]`** — Grounding instruction block placed immediately after the memories.
+
+### Soft mode intent
+
+Tala recalls like a human: partial, emotional, impressionistic, fuzzy at the edges. She must stay anchored to what is actually present in retrieved memory. She may describe feeling, impression, atmosphere, and uncertainty. She must not invent major events, people, causes, or locations not supported by the retrieved memories.
+
+### Strict mode intent
+
+Tala stays tightly factual. Only details supported by retrieved memories. If a detail is absent, she says she does not recall it clearly. Minimal extrapolation.
+
 **MemoryAudit log format for RAG candidates:**
 ```
 [MemoryAudit] source=rag role=rp id=rag-lore-0-<ts> score=0.850 docId=ltmf-a00-0001.md
 [TalaRouter] Candidates before filter — rag:3, mem0:7 (total=10)
 [TalaRouter] Approved memories — rag:2, mem0:1 (total=3)
+[TalaRouter] Memory-grounded response mode: memory_grounded_soft
 ```
 
 ## 4. Memory Write Policy
