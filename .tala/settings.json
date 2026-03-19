@@ -201,9 +201,11 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
+        "-m",
+        "astro_emotion_engine.mcp_server"
       ],
-      "enabled": true
+      "enabled": true,
+      "cwd": "mcp-servers/astro-engine"
     },
     {
       "id": "tala-memory-graph",
