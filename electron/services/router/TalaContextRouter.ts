@@ -2,7 +2,7 @@ import { MemoryService, MemoryItem } from '../MemoryService';
 import { Mode, ModePolicyEngine } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
-import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory } from './ContextAssembler';
+import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory, ResponseMode } from './ContextAssembler';
 import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
 import { RagService } from '../RagService';
 import { auditLogger } from '../AuditLogger';
@@ -69,6 +69,21 @@ export class TalaContextRouter {
     private static readonly LORE_FOLLOWUP_PATTERNS = [
         /\b(so\s+you\s+(don'?t|do\s+not)|you\s+(don'?t|do\s+not))\s+(have|remember|recall|know)/i,
         /\b(what\s+about\s+(that|then|it)|and\s+that|but\s+that)\b/i,
+    ];
+
+    /**
+     * Phrases that signal the user wants strict factual fidelity and minimal
+     * extrapolation.  When any of these appear in a lore-intent query that has
+     * approved memories, the response mode is escalated to `memory_grounded_strict`.
+     */
+    private static readonly STRICT_GROUNDING_PATTERNS = [
+        /\bexactly\b/i,
+        /\bjust\s+what\s+happened\b/i,
+        /\bdon'?t\s+make\s+(anything|it)\s+up\b/i,
+        /\bstrictly\s+from\s+memory\b/i,
+        /\bwhat\s+specifically\b/i,
+        /\bwhat\s+does\s+the\s+memory\s+say\b/i,
+        /\bquote\s+the\s+memory\b/i,
     ];
 
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
@@ -276,8 +291,19 @@ export class TalaContextRouter {
         }
 
         // 7. Assembly & Handoff
+        // Derive response grounding mode for lore turns with approved memories.
+        // Strict mode is activated when the user's query contains precision-demanding
+        // phrases; soft mode is the default for all other lore/autobiographical turns.
+        let responseMode: ResponseMode | undefined;
+        if (intent.class === 'lore' && resolved.length > 0) {
+            const isStrictGrounding = TalaContextRouter.STRICT_GROUNDING_PATTERNS.some(p => p.test(query));
+            responseMode = isStrictGrounding ? 'memory_grounded_strict' : 'memory_grounded_soft';
+            console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
+        }
+
         // Pass retrievalSuppressed flag to tell assembler not to emit a fallback block when retrieval was intentionally gated.
-        const promptBlocks = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed, docContext).blocks;
+        const assemblyResult = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed, docContext, responseMode);
+        const promptBlocks = assemblyResult.blocks;
         const fallbackUsed = promptBlocks.some((b: import('./ContextAssembler').ContextBlock) => b.header.includes('FALLBACK CONTRACT'));
 
         // 8. Capability Resolution (done here so TurnContext is self-contained)
@@ -336,6 +362,7 @@ export class TalaContextRouter {
             },
             errorState: null,
             resolvedMemories: resolved,
+            responseMode,
         };
 
         // Emit structured routing telemetry
@@ -350,6 +377,7 @@ export class TalaContextRouter {
             allowedCapabilities,
             blockedCapabilities,
             memoryWriteCategory: memoryWriteDecision.category,
+            responseMode: responseMode ?? 'none',
             correlationId
         });
 

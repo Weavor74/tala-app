@@ -18,6 +18,20 @@
 import { MemoryItem } from '../MemoryService';
 
 /**
+ * Response grounding mode for lore/autobiographical turns.
+ *
+ *  memory_grounded_soft   — default for LTMF/autobiographical memory. Tala recalls
+ *                           naturally: partial, emotional, impressionistic. She may be
+ *                           uncertain at the edges, but stays anchored to what is actually
+ *                           present in the retrieved memory. No unsupported fabrication.
+ *
+ *  memory_grounded_strict — optional, activated by explicit user wording ("exactly",
+ *                           "don't make anything up", etc.). Tala stays tightly factual,
+ *                           minimal extrapolation, and plainly says what she does not recall.
+ */
+export type ResponseMode = 'memory_grounded_soft' | 'memory_grounded_strict';
+
+/**
  * A discrete block of text to be injected into the system prompt.
  */
 export interface ContextBlock {
@@ -149,6 +163,15 @@ export interface TurnContext {
      * Used by PreInferenceContextOrchestrator to feed CognitiveTurnAssembler.
      */
     resolvedMemories?: MemoryItem[];
+
+    /**
+     * Response grounding mode for lore/autobiographical turns.
+     * Set to 'memory_grounded_soft' by default when lore memories are present.
+     * Set to 'memory_grounded_strict' when the user's query contains explicit
+     * precision-demanding phrases ("exactly", "don't make anything up", etc.).
+     * Undefined for non-lore turns or when no lore memories were retrieved.
+     */
+    responseMode?: ResponseMode;
 }
 
 interface AssemblyResult {
@@ -156,6 +179,7 @@ interface AssemblyResult {
     intent: string;
     blocks: ContextBlock[];
     retrievalSuppressed: boolean;
+    responseMode?: ResponseMode;
 }
 
 export class ContextAssembler {
@@ -167,7 +191,12 @@ export class ContextAssembler {
      * 
      * **Assembly Phases:**
      * 1. **Documentation Injection**: Adds project documentation chunks if relevant.
-     * 2. **Memory Injection**: Compiles retrieved `MemoryItem`s into a `[MEMORY CONTEXT]` block.
+     * 2. **Memory Injection**: Compiles retrieved `MemoryItem`s into a context block.
+     *    - For lore/autobiographical turns (`responseMode` set), memories are formatted
+     *      as labeled canon entries (`[CANON LORE MEMORIES — HIGH PRIORITY]`) and a
+     *      dedicated grounding instruction block is appended so the model anchors its
+     *      response to retrieved memory rather than generalising around it.
+     *    - For all other turns, the standard `[MEMORY CONTEXT]` format is used.
      * 3. **Safety Enforcement**: Injects a `[FALLBACK CONTRACT]` if substantive queries have 0 memories.
      * 4. **Sanitization**: Filters internal service names and leaky metadata from all blocks.
      * 
@@ -176,9 +205,17 @@ export class ContextAssembler {
      * @param intent - The classified intent of the user turn.
      * @param retrievalSuppressed - Whether memory retrieval was bypassed for this turn.
      * @param docContext - Optional relevant documentation context.
+     * @param responseMode - Optional grounding mode for lore turns (soft or strict).
      * @returns A structured context handoff for the downstream prompt engines.
      */
-    public static assemble(memories: MemoryItem[], mode: string, intent: string, retrievalSuppressed: boolean, docContext?: string): AssemblyResult {
+    public static assemble(
+        memories: MemoryItem[],
+        mode: string,
+        intent: string,
+        retrievalSuppressed: boolean,
+        docContext?: string,
+        responseMode?: ResponseMode,
+    ): AssemblyResult {
         const blocks: ContextBlock[] = [];
 
         // 1. Documentation Block
@@ -193,16 +230,51 @@ export class ContextAssembler {
 
         // 2. Memory Block
         if (memories.length > 0) {
-            blocks.push({
-                header: '[MEMORY CONTEXT]',
-                source: 'router',
-                priority: 'normal',
-                content: memories.map(m => m.text).join('\n'),
-                metadata: {
-                    memory_ids: memories.map(m => m.id),
-                    count: memories.length
-                }
-            });
+            if (responseMode) {
+                // Lore/autobiographical turn — use labeled canon format so the model
+                // treats these entries as lived history rather than background context.
+                const labeledContent = memories
+                    .map((m, idx) => {
+                        const sourceLabel = ContextAssembler.loreSourceLabel(m.metadata?.source);
+                        return `Memory ${idx + 1}:\nSource: ${sourceLabel}\nContent: ${m.text}`;
+                    })
+                    .join('\n\n');
+
+                blocks.push({
+                    header: '[CANON LORE MEMORIES — HIGH PRIORITY]',
+                    source: 'router',
+                    priority: 'high',
+                    content: labeledContent,
+                    metadata: {
+                        memory_ids: memories.map(m => m.id),
+                        count: memories.length
+                    }
+                });
+
+                // Grounding instruction block — placed immediately after the memories
+                // so the model sees the rule right next to the content it applies to.
+                blocks.push({
+                    header: responseMode === 'memory_grounded_strict'
+                        ? '[MEMORY GROUNDED RECALL — STRICT]'
+                        : '[MEMORY GROUNDED RECALL — SOFT]',
+                    source: 'system',
+                    priority: 'high',
+                    content: responseMode === 'memory_grounded_strict'
+                        ? ContextAssembler.STRICT_GROUNDING_BLOCK
+                        : ContextAssembler.SOFT_GROUNDING_BLOCK,
+                });
+            } else {
+                blocks.push({
+                    header: '[MEMORY CONTEXT]',
+                    source: 'router',
+                    priority: 'normal',
+                    content: memories.map(m => m.text).join('\n'),
+                    metadata: {
+                        memory_ids: memories.map(m => m.id),
+                        count: memories.length
+                    }
+                });
+            }
         }
 
         // 2. Persona/Identity Block (Placeholder for future expansion)
@@ -225,11 +297,58 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
             mode,
             intent,
             blocks: this.sanitize(blocks),
-            retrievalSuppressed
+            retrievalSuppressed,
+            responseMode,
         };
 
         return handoff;
     }
+
+    /**
+     * Maps an internal memory source identifier to a human-readable label for
+     * use in the canon lore memory format presented to the model.
+     */
+    private static loreSourceLabel(source?: string): string {
+        switch (source) {
+            case 'rag':      return 'LTMF';
+            case 'diary':    return 'diary';
+            case 'graph':    return 'graph';
+            case 'core_bio': return 'core_biographical';
+            case 'lore':     return 'lore';
+            case 'mem0':     return 'autobiographical';
+            default:         return source ?? 'unknown';
+        }
+    }
+
+    /**
+     * Soft grounding instruction — default for LTMF/autobiographical lore.
+     * Tala recalls like a human: partial, emotional, with natural uncertainty.
+     * Anchored to retrieved content; unsupported concrete fabrication is disallowed.
+     */
+    private static readonly SOFT_GROUNDING_BLOCK =
+        `You are answering from retrieved autobiographical memory. Treat the retrieved memories above as your lived history.\n\n` +
+        `Rules:\n` +
+        `- Base your answer on the retrieved memory content above.\n` +
+        `- Recall it like a real person would: partial, emotional, impressionistic, or slightly fuzzy at the edges.\n` +
+        `- Do not invent major events, people, causes, or locations not present in the retrieved memories.\n` +
+        `- If some details are unclear, say they are hazy or hard to recall clearly — do not fill gaps with invented specifics.\n` +
+        `- You may describe how something felt, the impression or atmosphere, and natural connective phrasing between recalled facts.\n` +
+        `- Do not replace a specific retrieved memory with generic filler or abstract metaphor.\n` +
+        `- If multiple memories describe the same period, weave them together carefully without inventing contradictions.`;
+
+    /**
+     * Strict grounding instruction — activated by explicit user precision requests
+     * ("exactly", "don't make anything up", "strictly from memory", etc.).
+     * Tala stays tightly factual; minimal extrapolation; plainly states absent details.
+     */
+    private static readonly STRICT_GROUNDING_BLOCK =
+        `You are answering from retrieved autobiographical memory. Treat the retrieved memories above as factual canon.\n\n` +
+        `Rules:\n` +
+        `- Use only details supported by the retrieved memories above.\n` +
+        `- Do not invent new events, people, causes, or locations.\n` +
+        `- If a detail is not present in memory, say you do not recall it clearly.\n` +
+        `- Prefer precision over flourish.\n` +
+        `- Do not generalize vague themes when specific memory content is available.`;
 
     private static sanitize(blocks: ContextBlock[]): ContextBlock[] {
         return blocks.map(block => {
