@@ -28,17 +28,21 @@ if %ERRORLEVEL% equ 0 (
 )
 
 set "N_CTX=16384"
-set "PYTHON_EXE=bin\python-win\python.exe"
+
+:: Prefer project-local inference venv (installed by bootstrap.ps1)
+set "PYTHON_EXE=local-inference\venv\Scripts\python.exe"
 
 if not exist "%PYTHON_EXE%" (
-    :: Fallback to other possible locations
-    if exist "bin\python-portable\python.exe" (
+    :: Fallback to bundled platform Python
+    if exist "bin\python-win\python.exe" (
+        set "PYTHON_EXE=bin\python-win\python.exe"
+    ) else if exist "bin\python-portable\python.exe" (
         set "PYTHON_EXE=bin\python-portable\python.exe"
     ) else if exist "bin\python\python.exe" (
         set "PYTHON_EXE=bin\python\python.exe"
     ) else (
         echo [ERROR] No Python runtime found.
-        echo Expected at: %REPO_ROOT%\bin\python-win\python.exe
+        echo Expected at: %REPO_ROOT%\local-inference\venv\Scripts\python.exe
         echo Run bootstrap.ps1 first to set up the Python environment.
         popd
         pause

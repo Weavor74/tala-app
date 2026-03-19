@@ -1241,19 +1241,24 @@ Exported standalone package from Tala.
             for (const inst of instances) {
                 if (inst.engine === 'ollama') {
                     registryConfig.ollama = { endpoint: inst.endpoint ?? 'http://127.0.0.1:11434', enabled: true };
-                } else if (inst.engine === 'llamacpp' && inst.source === 'local') {
-                    registryConfig.embeddedLlamaCpp = {
-                        port: 8080,
-                        modelPath: inst.modelPath ?? inferenceSettings?.localEngine?.modelPath,
-                        binaryPath: inferenceSettings?.localEngine?.binaryPath,
-                        enabled: true,
-                    };
                 } else if (inst.engine === 'vllm') {
                     registryConfig.vllm = { endpoint: inst.endpoint, enabled: true };
                 } else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'custom'].includes(inst.engine) && inst.source !== 'local') {
                     registryConfig.cloud = { endpoint: inst.endpoint, apiKey: inst.apiKey, model: inst.model, enabled: true };
                 }
+                // Note: external llamacpp (source !== 'local') is handled above via cloud path.
+                // Embedded llamacpp is always registered below from localEngine settings.
             }
+
+            // ── Always register the embedded llama.cpp provider ─────────────────
+            // Resolve model path: prefer localEngine.modelPath, then scan models/ directory
+            const embeddedModelPath = this._resolveEmbeddedModelPath(inferenceSettings);
+            registryConfig.embeddedLlamaCpp = {
+                port: inferenceSettings?.localEngine?.options?.port ?? 8080,
+                modelPath: embeddedModelPath,
+                binaryPath: inferenceSettings?.localEngine?.binaryPath,
+                enabled: true,
+            };
 
             this.inference.reconfigureRegistry(registryConfig);
             await this.inference.refreshProviders(); // Ensure inventory is fresh AFTER registry is configured
@@ -1278,7 +1283,7 @@ Exported standalone package from Tala.
             }
 
             // ── Step 3: Select provider via canonical policy ────────────────────
-            const selection = this.inference.selectProvider({
+            let selection = this.inference.selectProvider({
                 preferredProviderId,
                 preferredModelId,
                 mode: routingMode,
@@ -1287,15 +1292,38 @@ Exported standalone package from Tala.
                 agentMode: 'system',
             });
 
+            // ── Step 4: Auto-start embedded when no viable local/external provider ──
+            // Per design: embedded is the guaranteed local baseline when no external
+            // local engine is running, regardless of internet or cloud provider status.
             if (!selection.success || !selection.selectedProvider) {
-                // No viable provider — keep existing brain but log
-                console.warn('[AgentService] No viable inference provider found during brain config:', selection.reason);
-                return;
+                if (embeddedModelPath) {
+                    console.log('[AgentService] No viable provider found — attempting to start embedded llama.cpp...');
+                    const started = await this.inference.ensureEmbeddedStarted(embeddedModelPath, {
+                        port: inferenceSettings?.localEngine?.options?.port ?? 8080,
+                        contextSize: inferenceSettings?.localEngine?.options?.contextSize ?? 4096,
+                    });
+
+                    if (started) {
+                        // Re-probe to mark embedded as ready, then re-select
+                        await this.inference.refreshProviders();
+                        selection = this.inference.selectProvider({
+                            mode: routingMode,
+                            fallbackAllowed: true,
+                            turnId: 'brain-config-retry',
+                            agentMode: 'system',
+                        });
+                    }
+                }
+
+                if (!selection.success || !selection.selectedProvider) {
+                    console.warn('[AgentService] No viable inference provider found during brain config:', selection.reason);
+                    return;
+                }
             }
 
             const chosen = selection.selectedProvider;
 
-            // ── Step 4: Configure brain based on selected provider ──────────────
+            // ── Step 5: Configure brain based on selected provider ──────────────
             if (chosen.scope === 'cloud' || chosen.providerType === 'cloud') {
                 const cloudInst = instances.find((i: any) =>
                     ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(i.engine) && i.source !== 'local'
@@ -1310,20 +1338,55 @@ Exported standalone package from Tala.
                 ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
                 this.brain = ollama;
             } else if (chosen.providerType === 'embedded_llamacpp') {
-                // Start the embedded engine if not already running
-                const local = this.inference.getLocalEngine();
-                if (!local.getStatus().isRunning) {
-                    const modelPath = path.join(process.cwd(), 'models', inferenceSettings?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
-                    local.ensureReady().then(() => local.ignite(modelPath, inferenceSettings?.localEngine?.options)).catch(() => { });
-                }
-                const ollama = new OllamaBrain();
-                ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
-                this.brain = ollama;
+                // Embedded llama.cpp exposes an OpenAI-compatible API (/v1/chat/completions).
+                // Use CloudBrain (OpenAI-compat), NOT OllamaBrain (which hits /api/chat).
+                const modelName = selection.resolvedModel ?? chosen.preferredModel ?? path.basename(embeddedModelPath ?? 'embedded-model');
+                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: modelName });
+                console.log(`[AgentService] Bound embedded llama.cpp brain → endpoint=${chosen.endpoint} model=${modelName}`);
             } else {
                 // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: selection.resolvedModel ?? chosen.preferredModel ?? '' });
             }
-        } catch (e) { }
+        } catch (e) {
+            console.error('[AgentService] loadBrainConfig error:', e);
+        }
+    }
+
+    /**
+     * Resolves the absolute path to the embedded GGUF model file.
+     * Checks localEngine.modelPath, then scans the models/ directory.
+     */
+    private _resolveEmbeddedModelPath(inferenceSettings: any): string | undefined {
+        const roots = [
+            typeof app !== 'undefined' ? app.getAppPath() : undefined,
+            process.cwd(),
+        ].filter(Boolean) as string[];
+
+        const configuredName: string | undefined = inferenceSettings?.localEngine?.modelPath;
+
+        for (const root of roots) {
+            if (configuredName) {
+                // Try as absolute path first, then relative to models/
+                if (path.isAbsolute(configuredName) && fs.existsSync(configuredName)) {
+                    return configuredName;
+                }
+                const candidate = path.join(root, 'models', configuredName);
+                if (fs.existsSync(candidate)) return candidate;
+                // Also try directly under root (in case name includes subdirectory)
+                const direct = path.join(root, configuredName);
+                if (fs.existsSync(direct)) return direct;
+            }
+
+            // Scan models/ directory for any .gguf file
+            const modelsDir = path.join(root, 'models');
+            try {
+                const entries = fs.readdirSync(modelsDir) as string[];
+                const gguf = entries.find((f: string) => f.endsWith('.gguf'));
+                if (gguf) return path.join(modelsDir, gguf);
+            } catch { /* models dir may not exist */ }
+        }
+
+        return undefined;
     }
 
 

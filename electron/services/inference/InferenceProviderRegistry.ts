@@ -176,11 +176,44 @@ export async function probeEmbeddedLlamaCpp(
 ): Promise<ProviderProbeResult> {
     const start = Date.now();
 
+    // Always check if the server is already running FIRST — regardless of binary/model file state.
+    // The server may have been started externally (e.g. via launch-inference.bat using a Python venv)
+    // in which case there is no native binary tracked by binaryPath but the HTTP endpoint is live.
+    const { ok } = await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/health`, 2000);
+    const responseTimeMs = Date.now() - start;
+
+    if (ok) {
+        // Server is live — discover its models via OpenAI-compat endpoint
+        const liveModels = await fetchJsonModels(`http://127.0.0.1:${enginePort}`, '/v1/models', 'data', 2000);
+        const fallbackModelName = modelPath ? path.basename(modelPath) : 'embedded-model';
+        return {
+            providerId: 'embedded_llamacpp',
+            reachable: true,
+            health: 'healthy',
+            status: 'ready',
+            models: liveModels.length > 0 ? liveModels : [fallbackModelName],
+            responseTimeMs,
+        };
+    }
+
+    // Server is not running — fall back to file-existence checks to determine if it can be started
+    if (!binaryExists && !modelExists) {
+        return {
+            providerId: 'embedded_llamacpp',
+            reachable: false,
+            health: 'unavailable',
+            status: 'not_running',
+            models: modelPath ? [path.basename(modelPath)] : [],
+            responseTimeMs: Date.now() - start,
+            error: 'Embedded server not running and no binary or model configured',
+        };
+    }
+
     if (!binaryExists || !modelExists) {
         return {
             providerId: 'embedded_llamacpp',
             reachable: false,
-            health: binaryExists || modelExists ? 'degraded' : 'unavailable',
+            health: 'degraded',
             status: 'not_running',
             models: modelPath ? [path.basename(modelPath)] : [],
             responseTimeMs: Date.now() - start,
@@ -188,28 +221,14 @@ export async function probeEmbeddedLlamaCpp(
         };
     }
 
-    // Check if server is already running
-    const { ok } = await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/health`, 2000);
-    const responseTimeMs = Date.now() - start;
-    if (ok) {
-        return {
-            providerId: 'embedded_llamacpp',
-            reachable: true,
-            health: 'healthy',
-            status: 'ready',
-            models: modelPath ? [path.basename(modelPath)] : ['embedded-model'],
-            responseTimeMs,
-        };
-    }
-
-    // Not running but binary + model are present — it can be launched
+    // Binary + model present but not yet running — it can be started
     return {
         providerId: 'embedded_llamacpp',
         reachable: false,
         health: 'degraded',
         status: 'not_running',
         models: modelPath ? [path.basename(modelPath)] : [],
-        responseTimeMs,
+        responseTimeMs: Date.now() - start,
     };
 }
 
