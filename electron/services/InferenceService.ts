@@ -254,12 +254,26 @@ export class InferenceService {
 
             attemptedProviders.push(currentProvider.providerId);
 
+            // Per-attempt AbortController: isolates each provider attempt's in-flight
+            // HTTP request so it can be cancelled explicitly when the attempt times out
+            // or falls back to another provider.  Without this, the underlying connection
+            // to the local ASGI inference server is abandoned (orphaned) until GC or
+            // process shutdown, which causes the server to log
+            // "ASGI callable returned without completing response".
+            const attemptController = new AbortController();
+            // Combine the per-attempt signal with any external signal from the caller.
+            // AbortSignal.any() fires as soon as the first of the provided signals fires.
+            const combinedAttemptSignals: AbortSignal[] = [attemptController.signal];
+            if (req.signal) combinedAttemptSignals.push(req.signal);
+            const combinedSignal = AbortSignal.any(combinedAttemptSignals);
+
             // Wrapped token callback — tracks whether stream actually opened
             const wrappedOnToken = (chunk: string) => {
                 if (!streamOpenedForCurrentProvider) {
                     streamOpenedForCurrentProvider = true;
                     // Record that stream is now actively flowing
                     inferenceDiagnostics.recordStreamActive();
+                    console.log(`[InferenceService] First token received — provider: ${currentProvider.providerId} turnId: ${req.turnId}`);
                     telemetry.operational(
                         'inference',
                         'stream_opened',
@@ -302,11 +316,13 @@ export class InferenceService {
                     }, openTimeoutMs);
                 });
 
+                console.log(`[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length} — provider: ${currentProvider.providerId} turnId: ${req.turnId}`);
+
                 const streamPromise = brain.streamResponse(
                     messages,
                     systemPrompt,
                     wrappedOnToken,
-                    req.signal,
+                    combinedSignal,
                     tools,
                     options
                 ).finally(() => {
@@ -397,11 +413,24 @@ export class InferenceService {
             } catch (err: any) {
                 lastError = err instanceof Error ? err : new Error(String(err));
 
+                // Explicitly cancel the in-flight HTTP request for this attempt so the
+                // underlying TCP connection to the local ASGI inference server is closed
+                // immediately rather than being orphaned until GC.  An orphaned connection
+                // causes the Python server to log "ASGI callable returned without completing
+                // response" when it eventually tries to write to the dead socket.
+                if (!attemptController.signal.aborted) {
+                    console.log(
+                        `[InferenceService] Cancelling in-flight request for attempt ${attempt + 1} ` +
+                        `— provider: ${currentProvider.providerId}, reason: ${lastError.name}: ${lastError.message}, turnId: ${req.turnId}`
+                    );
+                    attemptController.abort(lastError);
+                }
+
                 // If stream opened before error (partial output), do not attempt fallback
                 if (streamOpenedForCurrentProvider && tokensEmitted > 0) {
                     const completedAt = new Date().toISOString();
                     const durationMs = Date.now() - new Date(startedAt).getTime();
-                    const isAbort = req.signal?.aborted || lastError.name === 'AbortError';
+                    const isAbort = combinedSignal.aborted || lastError.name === 'AbortError';
                     const isTimeout = !isAbort && (lastError.name === 'StreamOpenTimeoutError' || lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT'));
 
                     const streamStatus: StreamInferenceResult['streamStatus'] =
