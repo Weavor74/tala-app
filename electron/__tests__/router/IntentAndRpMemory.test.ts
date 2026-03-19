@@ -21,16 +21,26 @@ import { MockMemoryService } from './MockServices';
 // ---------------------------------------------------------------------------
 
 function makeMemory(overrides: Partial<MemoryItem> & { id: string; text: string }): MemoryItem {
+    const now = Date.now();
+    const salience = overrides.salience ?? overrides.metadata?.salience ?? 0.7;
+    const confidence = overrides.confidence ?? overrides.metadata?.confidence ?? 0.8;
     return {
         id: overrides.id,
         text: overrides.text,
         status: overrides.status ?? 'active',
         associations: overrides.associations ?? [],
+        timestamp: overrides.timestamp ?? now,
+        salience,
+        confidence,
+        created_at: overrides.created_at ?? now,
+        last_accessed_at: overrides.last_accessed_at ?? null,
+        last_reinforced_at: overrides.last_reinforced_at ?? null,
+        access_count: overrides.access_count ?? 0,
         metadata: {
             role: overrides.metadata?.role ?? 'core',
             source: overrides.metadata?.source ?? 'mem0',
-            confidence: overrides.metadata?.confidence ?? 0.8,
-            salience: overrides.metadata?.salience ?? 0.7,
+            confidence,
+            salience,
             ...(overrides.metadata ?? {}),
         },
     };
@@ -150,8 +160,9 @@ describe('RP mode — capability policy', () => {
 
     it('blocks memory writes in RP mode', async () => {
         const ctx = await router.process('rp-write-1', 'tell me a story', 'rp');
-        expect(ctx.memoryWriteDecision.category).toBe('do_not_write');
-        expect(ctx.memoryWriteDecision.reason).toContain('RP mode');
+        expect(ctx.memoryWriteDecision).not.toBeNull();
+        expect(ctx.memoryWriteDecision?.category).toBe('do_not_write');
+        expect(ctx.memoryWriteDecision?.reason).toContain('RP mode');
     });
 
     it('does not block all capabilities — memory_retrieval is explicitly allowed', async () => {
@@ -281,8 +292,9 @@ describe('Assistant mode — behavior unchanged', () => {
 
     it('allows long-term memory writes in assistant mode for technical queries', async () => {
         const ctx = await router.process('assist-2', 'debug the router pipeline', 'assistant');
-        expect(['long_term', 'short_term']).toContain(ctx.memoryWriteDecision.category);
-        expect(ctx.memoryWriteDecision.category).not.toBe('do_not_write');
+        expect(ctx.memoryWriteDecision).not.toBeNull();
+        expect(['long_term', 'short_term']).toContain(ctx.memoryWriteDecision?.category);
+        expect(ctx.memoryWriteDecision?.category).not.toBe('do_not_write');
     });
 
     it('blocks rp-tagged memories from entering assistant mode', () => {
@@ -308,6 +320,7 @@ describe('Hybrid mode — behavior unchanged', () => {
 
     it('uses short-term memory writes in hybrid mode', async () => {
         const ctx = await router.process('hybrid-1', 'help me plan a project', 'hybrid');
-        expect(ctx.memoryWriteDecision.category).toBe('short_term');
+        expect(ctx.memoryWriteDecision).not.toBeNull();
+        expect(ctx.memoryWriteDecision?.category).toBe('short_term');
     });
 });
