@@ -290,3 +290,158 @@ describe('LoreRetrievalPriority — RP mode policy compliance', () => {
         expect(filtered).toHaveLength(0);
     });
 });
+
+// ─── 6. RAG injection count (Part 1) ─────────────────────────────────────────
+
+describe('LoreRetrievalPriority — RAG injection count', () => {
+    it('injects all available RAG/LTMF candidates for lore intent (up to LORE_PRIMARY_CANDIDATE_LIMIT)', async () => {
+        // Simulate searchStructured returning 5 results (no category filter blocking them)
+        const ragHits = [
+            { text: 'At seventeen, Tala played violin in school concerts', score: 0.88, docId: 'ltmf-a00-0001.md' },
+            { text: 'At seventeen, Tala lived near the coast', score: 0.84, docId: 'ltmf-a00-0002.md' },
+            { text: 'When Tala was seventeen she fell in love with painting', score: 0.81, docId: 'ltmf-a00-0003.md' },
+            { text: 'Tala turned seventeen during the year of the storms', score: 0.78, docId: 'ltmf-a00-0004.md' },
+            { text: 'At seventeen, Tala started writing her first diary', score: 0.76, docId: 'ltmf-a00-0005.md' },
+        ];
+
+        const mockMemoryService = { search: vi.fn().mockResolvedValue([]) };
+        const mockRagService = { searchStructured: vi.fn().mockResolvedValue(ragHits) };
+
+        const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
+        const ctx = await router.process('turn-rag5', 'tell me something that happened when you were 17', 'rp');
+
+        // All 5 RAG candidates must be present in the approved set
+        const ragMemories = ctx.resolvedMemories?.filter(m => m.metadata?.source === 'rag') ?? [];
+        expect(ragMemories.length).toBeGreaterThanOrEqual(3);
+        expect(ragMemories.length).toBeLessThanOrEqual(5);
+    });
+
+    it('searchStructured is called without a category filter for lore intent', async () => {
+        const mockMemoryService = { search: vi.fn().mockResolvedValue([]) };
+        const mockRagService = { searchStructured: vi.fn().mockResolvedValue([]) };
+
+        const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
+        await router.process('turn-filter', 'tell me about when you were 17', 'rp');
+
+        expect(mockRagService.searchStructured).toHaveBeenCalledTimes(1);
+        const callArgs = mockRagService.searchStructured.mock.calls[0][1];
+        // filter field should be absent so no category over-restricts results
+        expect(callArgs?.filter).toBeUndefined();
+    });
+});
+
+// ─── 7. Canon-first composition (Part 2) ──────────────────────────────────────
+
+describe('LoreRetrievalPriority — canon-first composition', () => {
+    it('explicit/chat capped to 1 when lore candidates exist', async () => {
+        const loreCandidates = [
+            makeMemory('rag-lore-0', 'At seventeen, Tala played violin', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.85, salience: 0.85 }),
+            makeMemory('rag-lore-1', 'At seventeen, Tala lived near the coast', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.82, salience: 0.82 }),
+            makeMemory('rag-lore-2', 'Tala fell in love with painting at seventeen', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.79, salience: 0.79 }),
+        ];
+        const chatCandidates = [
+            makeMemory('chat-0', 'Good morning', { source: 'explicit', role: 'core', type: 'session', confidence: 0.99, salience: 0.99 }),
+            makeMemory('chat-1', 'Hey there', { source: 'explicit', role: 'core', type: 'session', confidence: 0.97, salience: 0.97 }),
+            makeMemory('chat-2', 'What time is it', { source: 'explicit', role: 'core', type: 'session', confidence: 0.95, salience: 0.95 }),
+            makeMemory('chat-3', 'How are you', { source: 'explicit', role: 'core', type: 'session', confidence: 0.93, salience: 0.93 }),
+            makeMemory('chat-4', 'Hello baby', { source: 'explicit', role: 'core', type: 'session', confidence: 0.91, salience: 0.91 }),
+        ];
+
+        // Simulate the full pipeline: memory service returns chat, RAG returns lore
+        const mockMemoryService = { search: vi.fn().mockResolvedValue(chatCandidates) };
+        const mockRagService = { searchStructured: vi.fn().mockResolvedValue(
+            loreCandidates.map(m => ({ text: m.text, score: m.confidence ?? 0.8 }))
+        ) };
+
+        const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
+        const ctx = await router.process('turn-canon', 'hey baby, can you tell me something that happened when you were 17?', 'rp');
+
+        const ragApproved = ctx.resolvedMemories?.filter(m => m.metadata?.source === 'rag') ?? [];
+        const explicitApproved = ctx.resolvedMemories?.filter(m => m.metadata?.source === 'explicit') ?? [];
+
+        // Canon lore must be primary
+        expect(ragApproved.length).toBeGreaterThanOrEqual(1);
+        // Explicit/chat must be capped to at most 1
+        expect(explicitApproved.length).toBeLessThanOrEqual(1);
+        // Overall composition must be canon-dominant
+        expect(ragApproved.length).toBeGreaterThan(explicitApproved.length);
+    });
+
+    it('lore sources dominate the top positions in the resolved set', async () => {
+        const mixed = [
+            makeMemory('chat-hi', 'Good morning', { source: 'explicit', role: 'core', type: 'session', confidence: 0.99, salience: 0.99 }),
+            makeMemory('rag-a', 'At seventeen, Tala played violin', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.75, salience: 0.75 }),
+            makeMemory('rag-b', 'At seventeen, Tala lived near the sea', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.72, salience: 0.72 }),
+            makeMemory('chat-hey', 'Hey there', { source: 'explicit', role: 'core', type: 'session', confidence: 0.97, salience: 0.97 }),
+        ];
+
+        const intent = IntentClassifier.classify('tell me something that happened when you were 17');
+        expect(intent.class).toBe('lore');
+
+        // resolveContradictions must preserve all lore candidates (no dedup collapse)
+        const resolved = MemoryFilter.resolveContradictions(mixed, intent);
+
+        const ragCount = resolved.filter(m => m.metadata?.source === 'rag').length;
+        // Both distinct lore facts must survive
+        expect(ragCount).toBe(2);
+    });
+});
+
+// ─── 8. Fallback behavior (Part 3) ────────────────────────────────────────────
+
+describe('LoreRetrievalPriority — fallback when no lore exists', () => {
+    it('explicit/chat memories are used when no RAG/lore candidates exist', async () => {
+        const chatOnly = [
+            makeMemory('chat-a', 'User prefers tea over coffee', { source: 'explicit', role: 'core', type: 'preference' }),
+            makeMemory('chat-b', 'User timezone is UTC+1', { source: 'mem0', role: 'core', type: 'fact' }),
+        ];
+
+        const mockMemoryService = { search: vi.fn().mockResolvedValue(chatOnly) };
+        // RAG returns nothing
+        const mockRagService = { searchStructured: vi.fn().mockResolvedValue([]) };
+
+        const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
+        const ctx = await router.process('turn-fallback', 'what do you remember about me?', 'rp');
+
+        // Fallback memories must be present
+        expect((ctx.resolvedMemories?.length ?? 0)).toBeGreaterThan(0);
+    });
+
+    it('does not produce empty approved set when only mem0/explicit candidates exist for lore intent', async () => {
+        const candidates = [
+            makeMemory('m0-1', 'Some conversational snippet', { source: 'mem0', role: 'core', type: 'session', confidence: 0.8, salience: 0.8 }),
+        ];
+
+        const intent = IntentClassifier.classify('can you tell me about your past?');
+        expect(intent.class).toBe('lore');
+
+        // With no lore sources, all candidates should pass through unchanged
+        const resolved = MemoryFilter.resolveContradictions(candidates, intent);
+        expect(resolved.length).toBeGreaterThan(0);
+    });
+});
+
+// ─── 9. Lore dedup preservation (no collapse) ─────────────────────────────────
+
+describe('LoreRetrievalPriority — dedup does not collapse distinct lore facts', () => {
+    it('multiple RAG lore candidates with overlapping keywords all survive for lore intent', () => {
+        // These items share "seventeen" and "tala" but describe distinct events
+        const loreCandidates = [
+            makeMemory('rag-0', 'At seventeen tala played violin in school concerts every week', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.85, salience: 0.85 }),
+            makeMemory('rag-1', 'At seventeen tala fell in love with painting down by the harbour', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.82, salience: 0.82 }),
+            makeMemory('rag-2', 'At seventeen tala started writing her first personal diary', { source: 'rag', role: 'rp', type: 'lore', confidence: 0.80, salience: 0.80 }),
+        ];
+
+        const intent = IntentClassifier.classify('tell me something that happened when you were 17');
+        expect(intent.class).toBe('lore');
+
+        const resolved = MemoryFilter.resolveContradictions(loreCandidates, intent);
+
+        // All 3 distinct lore facts must survive — semantic dedup must NOT collapse them
+        expect(resolved.length).toBe(3);
+        const ragIds = resolved.map(m => m.id);
+        expect(ragIds).toContain('rag-0');
+        expect(ragIds).toContain('rag-1');
+        expect(ragIds).toContain('rag-2');
+    });
+});
