@@ -98,6 +98,9 @@ function classifyMemoryCategory(memory: MemoryItem): MemoryContributionCategory 
         type === 'technical' ||
         type === 'task_state' ||
         type === 'factual' ||
+        type === 'lore' ||
+        type === 'autobiographical' ||
+        type === 'roleplay_scene' ||
         tags.includes('task')
     ) {
         return 'task_relevant';

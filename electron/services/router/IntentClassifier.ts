@@ -81,6 +81,8 @@ export class IntentClassifier {
         /(do\s+you\s+remember|remember\s+when|childhood|your\s+favorite|personal\s+histor)/i,
         // Extended autobiographical markers: age references, life history, memory follow-ups
         /(when\s+you\s+were|at\s+(age\s+)?\d+\s*(years?\s*old)?|growing\s+up|what\s+were\s+you|your\s+life|your\s+memory|have\s+a\s+memory|back\s+then)/i,
+        // Follow-up lore references: queries that confirm or challenge a prior autobiographical turn
+        /(you\s+(don'?t|do\s+not)\s+(have|remember|recall)|can'?t\s+(recall|remember)(\s+that)?|don'?t\s+you\s+remember)/i,
     ];
 
     // Social / affectionate signals — high-confidence social context that should not be

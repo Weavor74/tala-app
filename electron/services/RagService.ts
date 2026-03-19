@@ -112,6 +112,82 @@ export class RagService {
     }
 
     /**
+     * Structured RAG search result — a single retrieved document chunk with its score.
+     */
+    // (exposed as return type of searchStructured, defined inline to avoid circular imports)
+
+    /**
+     * Searches long-term narrative memory and returns structured result objects.
+     *
+     * Unlike `search()` which returns a formatted string, this method returns the raw
+     * parsed array so callers can construct typed MemoryItem objects for injection
+     * into the retrieval pipeline (e.g. TalaContextRouter lore retrieval).
+     *
+     * @param {string} query - The search query.
+     * @param {object} [options] - Optional limit and metadata filter.
+     * @returns {Promise<Array<{text: string, score: number, docId?: string}>>}
+     */
+    async searchStructured(
+        query: string,
+        options?: { limit?: number; filter?: Record<string, string> }
+    ): Promise<Array<{ text: string; score: number; docId?: string }>> {
+        if (!this.isReady || !this.client) {
+            console.warn('[RagService] SearchStructured skipped: Service not ready');
+            return [];
+        }
+
+        try {
+            const args: { query: string; limit?: number; filter_json?: string } = { query };
+            if (options?.limit) args.limit = options.limit;
+            if (options?.filter) args.filter_json = JSON.stringify(options.filter);
+
+            console.log(`[RagService] SearchStructured: "${query}" filter=${args.filter_json || 'none'}`);
+
+            const start = Date.now();
+            const result = await this.client.callTool({ name: 'search_memory', arguments: args });
+            const latency = Date.now() - start;
+
+            this.logViewerService?.logPerformanceMetric({
+                timestamp: new Date().toISOString(),
+                source: 'RagService',
+                subsystem: 'rag',
+                metricType: 'latency',
+                name: 'rag_query_time_ms',
+                value: latency,
+                unit: 'ms'
+            });
+
+            if (result.content && Array.isArray(result.content) && result.content.length > 0) {
+                const raw = result.content[0] as { text?: string };
+                if (raw && 'text' in raw) {
+                    try {
+                        const parsed = JSON.parse(raw.text ?? '') as
+                            | Array<{ text: string; score?: number; doc_id?: string }>
+                            | { text: string; score?: number; doc_id?: string };
+                        if (Array.isArray(parsed)) {
+                            return parsed.map(r => ({
+                                text: r.text,
+                                score: r.score ?? 0.5,
+                                docId: r.doc_id,
+                            }));
+                        } else if (typeof parsed === 'object' && parsed !== null && 'text' in parsed) {
+                            return [{ text: parsed.text, score: parsed.score ?? 0.5, docId: parsed.doc_id }];
+                        }
+                    } catch {
+                        // Non-JSON single text block — wrap as one result at moderate score
+                        if (raw.text) return [{ text: raw.text, score: 0.5 }];
+                    }
+                }
+            }
+            console.warn('[RagService] SearchStructured: no parseable content in result');
+            return [];
+        } catch (error) {
+            console.warn('[RagService] SearchStructured failed:', error);
+            return [];
+        }
+    }
+
+    /**
      * Searches the long-term narrative memory for content relevant to the query.
      * 
      * Calls the `search_memory` MCP tool on the RAG server.

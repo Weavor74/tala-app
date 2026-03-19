@@ -251,14 +251,27 @@ describe('RP mode — RouterFilter still blocks unsafe memories', () => {
         expect(filtered).toHaveLength(0);
     });
 
-    it('blocks memories from non-RP sources (e.g. rag) in RP mode', () => {
+    it('allows rag-source memories in RP mode (LTMF/canon lore is retrieved via RAG)', () => {
+        // RAG is now in RP allowedSources because LTMF canon lore is ingested via RagService.
+        // This memory has role=core (allowed in RP) and source=rag (now allowed in RP).
         const ragMemory = makeMemory({
-            id: 'mem-bad-3',
-            text: 'Technical documentation snippet from RAG.',
-            metadata: { role: 'core', source: 'rag', confidence: 0.8, salience: 0.7 },
+            id: 'mem-rag-rp',
+            text: 'At seventeen, Tala played violin in school concerts.',
+            metadata: { role: 'rp', source: 'rag', confidence: 0.8, salience: 0.7, type: 'lore' },
         });
         const intent = IntentClassifier.classify('tell me about yourself');
         const filtered = MemoryFilter.filter([ragMemory], 'rp', intent);
+        expect(filtered).toHaveLength(1);
+    });
+
+    it('blocks system/tool_result-source memories in RP mode (non-lore sources still excluded)', () => {
+        const sysMemory = makeMemory({
+            id: 'mem-bad-3',
+            text: 'System tool result from task execution.',
+            metadata: { role: 'core', source: 'system', confidence: 0.8, salience: 0.7 },
+        });
+        const intent = IntentClassifier.classify('tell me about yourself');
+        const filtered = MemoryFilter.filter([sysMemory], 'rp', intent);
         expect(filtered).toHaveLength(0);
     });
 

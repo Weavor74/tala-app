@@ -235,7 +235,7 @@ export class AgentService {
         this.systemInfo = null;
 
         this.router = new SmartRouterService(this.brain, this.brain);
-        this.talaRouter = new TalaContextRouter(this.memory);
+        this.talaRouter = new TalaContextRouter(this.memory, this.rag);
 
         this.workflows = new WorkflowRegistry(this.tools);
 
