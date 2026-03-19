@@ -156,10 +156,11 @@ describe('Mode Gating — capability enforcement', () => {
         router = new TalaContextRouter(memory as any);
     });
 
-    it('blocks all capabilities in RP mode', async () => {
+    it('blocks tools (not all) in RP mode and allows memory_retrieval', async () => {
         const ctx = await router.process('rp-gate-1', makeRpTurn(), 'rp');
 
-        expect(ctx.blockedCapabilities).toContain('all');
+        expect(ctx.blockedCapabilities).toContain('tools');
+        expect(ctx.allowedCapabilities).toContain('memory_retrieval');
         expect(ctx.allowedCapabilities).not.toContain('all');
     });
 

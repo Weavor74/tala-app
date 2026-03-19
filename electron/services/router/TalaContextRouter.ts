@@ -93,8 +93,12 @@ export class TalaContextRouter {
         const allowedCapabilities: string[] = [];
 
         if (mode === 'rp') {
-            // RP mode: no external memory/system tools at all
-            blockedCapabilities.push('all');
+            // RP mode: block tool execution but explicitly allow memory retrieval reads.
+            // Memory writes remain blocked (enforced separately by memoryWriteDecision).
+            // This keeps RP operationally isolated while allowing autobiographical grounding.
+            blockedCapabilities.push('tools');
+            allowedCapabilities.push('memory_retrieval');
+            console.log(`[TalaRouter] RP mode policy — tools=false, memoryReads=true, memoryWrites=false`);
         } else if (retrievalSuppressed) {
             // Greeting suppression: block only memory retrieval tools
             blockedCapabilities.push('memory_retrieval');

@@ -15,7 +15,7 @@
  * - Influences the `ModePolicyEngine` on which tools are allowed for the current turn.
  */
 
-export type IntentClass = 'greeting' | 'technical' | 'narrative' | 'coding' | 'lore' | 'action' | 'mixed' | 'browser' | 'unknown';
+export type IntentClass = 'greeting' | 'technical' | 'narrative' | 'coding' | 'lore' | 'action' | 'mixed' | 'browser' | 'social' | 'unknown';
 
 /**
  * Structured result of an intent classification operation.
@@ -54,14 +54,38 @@ export class IntentClassifier {
     ];
 
     private static readonly TECHNICAL_PATTERNS = [
-        /(how|why|what|when|where|can|could|help|explain|fix|debug|error|issue|bug|code|script|api|function|tool|terminal|file|path)/i,
+        // Operational / technical task verbs and nouns.
+        // Generic question words (how, why, what, where, can, help) are intentionally excluded
+        // to prevent social/conversational queries from being misclassified as technical.
+        /(fix|debug|error|issue|bug|code|script|api|function|tool|terminal|file|path|repo|codebase|settings|config|configuration|explain)/i,
+        // Deployment / execution verbs — also used as the OPERATIONAL_VERB_PATTERNS check
         /(install|run|deploy|build|compile|test|verify)/i,
-        /(memory|router|system|context|agent|model|inference)/i
+        // System / architecture nouns — 'memory' excluded (too ambiguous; personal use is common)
+        /(router|system|context|agent|model|inference)/i,
+    ];
+
+    /**
+     * Operational verb patterns used to distinguish a genuine technical task from a lore/personal
+     * query that incidentally matches a technical noun (e.g. "tell me about the router" is lore,
+     * but "build and deploy the router" is technical). This is a named alias for TECHNICAL_PATTERNS[1]
+     * so the index dependency is explicit and stable.
+     */
+    private static readonly OPERATIONAL_VERB_PATTERNS = [
+        /(install|run|deploy|build|compile|test|verify)/i,
     ];
 
     private static readonly LORE_PATTERNS = [
-        /(lore|history|world|story|character|relationship|past|background|setting|universe|backstory)/i,
-        /(who\s+are\s+you|tell\s+me\s+about|what\s+is\s+the)/i
+        /(lore|history|world|story|character|relationship|past|background|\bsetting\b|universe|backstory)/i,
+        /(who\s+are\s+you|tell\s+me\s+about|what\s+is\s+the)/i,
+        // Autobiographical / personal-memory queries — grounded recall, not technical lookup
+        /(do\s+you\s+remember|remember\s+when|childhood|your\s+favorite|personal\s+histor)/i,
+    ];
+
+    // Social / affectionate signals — high-confidence social context that should not be
+    // overridden by weak technical matches when no operational verb is present.
+    private static readonly SOCIAL_PATTERNS = [
+        /\b(baby|love|dear|sweetie|honey|darling|miss\s+you|happy\s+(you|to)|glad\s+(you|to)|how\s+are\s+you|how\s+have\s+you\s+been)\b/i,
+        /\b(i\s+(love|miss|need|want)\s+you|you\s+mean|feeling|emotions?|affection)\b/i,
     ];
 
     public static classify(input: string): Intent {
@@ -72,10 +96,11 @@ export class IntentClassifier {
         const hasTechnical = this.TECHNICAL_PATTERNS.some(p => p.test(text));
         const hasLore = this.LORE_PATTERNS.some(p => p.test(text));
         const hasBrowser = this.BROWSER_PATTERNS.some(p => p.test(text));
+        const hasSocial = this.SOCIAL_PATTERNS.some(p => p.test(text));
 
         // 2. Browser intent takes high precedence — it is explicit and unambiguous
         if (hasBrowser) {
-            console.log(`[IntentClassifier] Browser intent detected.`);
+            console.log(`[IntentClassifier] intent=browser confidence=0.95`);
             return {
                 class: 'browser',
                 confidence: 0.95,
@@ -84,10 +109,24 @@ export class IntentClassifier {
             };
         }
 
-        // 3. Precedence Logic (Mixed Intent)
+        // 3. Social signals override weak technical matches when no operational verb is present.
+        // A prompt that is strongly affectionate or relational and lacks clear technical task verbs
+        // should not be classified as technical.
+        if (hasSocial && !hasTechnical) {
+            const baseClass = hasGreeting ? 'greeting' : 'social';
+            console.log(`[IntentClassifier] intent=${baseClass} confidence=0.92 reason=social_override`);
+            return {
+                class: baseClass,
+                confidence: 0.92,
+                subsystem: 'social',
+                precedenceLog: 'Social(affectionate/relational) > Technical (no operational verb)'
+            };
+        }
+
+        // 4. Precedence Logic (Mixed Intent)
         if (hasGreeting && (hasTechnical || hasLore)) {
             const primarySubstantive = hasTechnical ? 'technical' : 'lore';
-            console.log(`[IntentClassifier] Mixed intent detected. Content overrides greeting. Primary: ${primarySubstantive}`);
+            console.log(`[IntentClassifier] intent=mixed/${primarySubstantive} confidence=0.9 reason=content_overrides_greeting`);
             return {
                 class: 'mixed',
                 confidence: 0.9,
@@ -96,19 +135,38 @@ export class IntentClassifier {
             };
         }
 
-        // 4. Single Intent Resolution
+        // 5. Single Intent Resolution
         if (hasGreeting) {
+            console.log(`[IntentClassifier] intent=greeting confidence=0.95`);
             return { class: 'greeting', confidence: 0.95 };
         }
 
+        if (hasLore) {
+            // Lore/autobiographical content: if technical also fires, prefer lore when the prompt
+            // reads as a personal/narrative request with no explicit deployment/execution verb.
+            const hasOperationalVerb = this.OPERATIONAL_VERB_PATTERNS.some(p => p.test(text));
+            if (hasTechnical && !hasOperationalVerb) {
+                console.log(`[IntentClassifier] intent=lore confidence=0.88 reason=autobiographical_preferred_over_weak_technical`);
+                return {
+                    class: 'lore',
+                    confidence: 0.88,
+                    subsystem: 'lore',
+                    precedenceLog: 'Lore > Technical (no operational verb in lore-primary prompt)'
+                };
+            }
+        }
+
         if (hasTechnical) {
+            console.log(`[IntentClassifier] intent=technical confidence=0.85`);
             return { class: 'technical', confidence: 0.85 };
         }
 
         if (hasLore) {
+            console.log(`[IntentClassifier] intent=lore confidence=0.85`);
             return { class: 'lore', confidence: 0.85 };
         }
 
+        console.log(`[IntentClassifier] intent=unknown confidence=0.5 reason=no_signal_matched`);
         return { class: 'unknown', confidence: 0.5 };
     }
 }
