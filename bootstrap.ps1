@@ -187,13 +187,13 @@ $PackageJson = Join-Path $RepoRoot "package.json"
 if (Test-Path $PackageJson) {
     $LockFile = Join-Path $RepoRoot "package-lock.json"
     if (Test-Path $LockFile) {
-        Write-Host "      package-lock.json found — running npm ci for deterministic install."
+        Write-Host "      package-lock.json found  -  running npm ci for deterministic install."
         # --ignore-scripts prevents arbitrary postinstall scripts from running during bootstrap.
         # Note: node-pty requires native build tools (node-gyp) to run its install script;
         # if needed, run: npm rebuild node-pty  after initial installation.
         npm ci --ignore-scripts
     } else {
-        Write-Host "      No package-lock.json — running npm install."
+        Write-Host "      No package-lock.json  -  running npm install."
         npm install --ignore-scripts
     }
     if ($LASTEXITCODE -ne 0) {
@@ -288,7 +288,7 @@ if (Test-Path $PgHelper) {
         exit 1
     }
 } else {
-    Write-Host "      [WARN] scripts\bootstrap-postgres.ps1 not found — skipping PostgreSQL provisioning." -ForegroundColor Yellow
+    Write-Host "      [WARN] scripts\bootstrap-postgres.ps1 not found  -  skipping PostgreSQL provisioning." -ForegroundColor Yellow
 }
 
 Write-Host "`n=============================================" -ForegroundColor Cyan
