@@ -1,8 +1,8 @@
 """
 src.memory — high-level pydantic-based memory API for tala-memory-graph.
 
-Wraps the lower-level GraphStore (src.memory_graph.graph_store) and exposes a
-clean interface using validated NodeV1 / EdgeV1 models.
+Wraps the lower-level graph store (GraphStore or PostgresGraphStore) and
+exposes a clean interface using validated NodeV1 / EdgeV1 models.
 """
 
 from __future__ import annotations
@@ -118,14 +118,29 @@ def _edge_to_row_args(edge: EdgeV1) -> tuple:
 
 class MemorySystem:
     """
-    High-level memory interface backed by GraphStore.
+    High-level memory interface backed by a graph store.
+
+    Accepts either an explicit *store* instance (preferred) or a *db_path*
+    string for backwards-compatible SQLite initialisation.  When neither is
+    supplied an error is raised so misconfigured callers fail loudly.
 
     All public methods accept and return pydantic models (NodeV1, EdgeV1) so
     callers never have to deal with raw SQL rows or JSON serialisation.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._store = GraphStore(db_path)
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        store: Optional[Any] = None,
+    ) -> None:
+        if store is not None:
+            self._store = store
+        elif db_path is not None:
+            self._store = GraphStore(db_path)
+        else:
+            raise ValueError(
+                "MemorySystem requires either a 'store' instance or a 'db_path' string."
+            )
 
     # ------------------------------------------------------------------
     # Identity

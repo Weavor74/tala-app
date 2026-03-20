@@ -1,9 +1,8 @@
 import os
-from .graph_store import GraphStore
+from .store_factory import create_store
 
-# Initialize store with production path
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'memory_graph', 'memory_graph.sqlite')
-store = GraphStore(DB_PATH)
+# Initialize store via factory (PostgreSQL preferred, SQLite fallback).
+store = create_store()
 
 def graph_upsert_node(node_id: str, type: str, name: str, attrs_json: str = '{}'):
     """Upserts a node into the graph."""
