@@ -343,33 +343,83 @@ if (($dbOut -join "").Trim() -eq "1") {
 # -----------------------------------------------------------------------
 PG-Info "Enabling pgvector extension in '$DbName'..."
 
-$old = $env:PGPASSWORD
-$env:PGPASSWORD = $DbPassword
-$vecOut  = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
-               -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>&1
-$vecCode = $LASTEXITCODE
-$env:PGPASSWORD = $old
+# Helper: attempt CREATE EXTENSION IF NOT EXISTS vector as the app user.
+# Stores output in $Script:VecErrText; returns $true on success.
+$Script:VecErrText = ""
+function Try-EnableVectorExtension {
+    if (-not $Script:PsqlExe) { return $false }
+    $old = $env:PGPASSWORD
+    $env:PGPASSWORD = $DbPassword
+    $out  = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
+                -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>&1
+    $code = $LASTEXITCODE
+    $env:PGPASSWORD = $old
+    $Script:VecErrText = ($out -join " ")
+    return ($code -eq 0)
+}
 
-if ($vecCode -eq 0) {
+# Quick probe: already enabled? (avoids DDL noise if already present)
+# Treat a probe failure as "not yet enabled" — Try-EnableVectorExtension will
+# expose the real error if the extension truly cannot be created.
+$extProbeAlreadyEnabled = $false
+$extProbe = Invoke-Psql -Sql "SELECT 1 FROM pg_extension WHERE extname = 'vector';" `
+                        -Database $DbName -User $DbUser -Pass $DbPassword
+if ($Script:PsqlCode -eq 0 -and ($extProbe -join "").Trim() -eq "1") {
+    $extProbeAlreadyEnabled = $true
+}
+
+if ($extProbeAlreadyEnabled) {
+    PG-Ok "pgvector extension already enabled in '$DbName'."
+} elseif (Try-EnableVectorExtension) {
     PG-Ok "pgvector extension is enabled in database '$DbName'."
 } else {
-    $errText = ($vecOut -join " ")
-    if ($errText -match "control file" -or $errText -match "No such file" -or
-        $errText -match "could not open") {
-        PG-Warn "pgvector extension files are not installed for this PostgreSQL instance."
-        PG-Warn ""
-        PG-Warn "To install pgvector on Windows, choose one of:"
-        PG-Warn "  1. Pre-built binaries (recommended):"
-        PG-Warn "     https://github.com/pgvector/pgvector/releases"
-        PG-Warn "     Copy vector.dll  -> <PG install>\lib\"
-        PG-Warn "     Copy vector.control + vector*.sql -> <PG install>\share\extension\"
-        PG-Warn "  2. Build from source with MSVC:"
-        PG-Warn "     https://github.com/pgvector/pgvector#windows"
-        PG-Warn "  3. Use the Docker stack (already has pgvector built in):"
-        PG-Warn "     npm run memory:up"
-        PG-Warn ""
-        PG-Warn "After installing pgvector, re-run: .\bootstrap.ps1"
-        PG-Warn "Memory store will run in degraded mode until pgvector is available."
+    $errText     = $Script:VecErrText
+    $filesMissing = $errText -match "control file" -or
+                    $errText -match "No such file"  -or
+                    $errText -match "could not open"
+
+    if ($filesMissing -and $Script:PsqlExe) {
+        # --- Attempt automatic installation via helper script ---
+        PG-Info "pgvector extension files missing — attempting automatic installation..."
+        $pgvHelper = Join-Path $PSScriptRoot "install-pgvector-windows.ps1"
+
+        if (-not (Test-Path $pgvHelper)) {
+            PG-Warn "install-pgvector-windows.ps1 not found at: $pgvHelper"
+            PG-Warn "Cannot attempt automatic pgvector installation."
+        } else {
+            & $pgvHelper -PsqlExe $Script:PsqlExe -RepoRoot (Split-Path $PSScriptRoot -Parent)
+            $installCode = $LASTEXITCODE
+
+            if ($installCode -eq 0) {
+                # Files are now in place — retry enabling the extension
+                PG-Info "pgvector files installed — retrying CREATE EXTENSION..."
+                if (Try-EnableVectorExtension) {
+                    PG-Ok "pgvector extension is enabled in database '$DbName'."
+                } else {
+                    PG-Warn "CREATE EXTENSION still failed after bundle installation."
+                    PG-Warn "Error: $($Script:VecErrText)"
+                    PG-Warn "This may require a PostgreSQL service restart to load the new library."
+                    PG-Warn "Try:"
+                    PG-Warn "  Restart-Service -Name postgresql*  (as Administrator)"
+                    PG-Warn "  Then re-run: .\bootstrap.ps1"
+                    PG-Warn "Memory store will run in degraded mode until pgvector is available."
+                }
+            } else {
+                # Helper reported failure; it already printed detailed diagnostics
+                PG-Warn "Automatic pgvector installation did not complete."
+                PG-Warn ""
+                PG-Warn "To install pgvector manually, place a prebuilt bundle in:"
+                PG-Warn "  installers\pgvector\windows\postgres-<version>\"
+                PG-Warn "Required files: vector.dll, vector.control, vector--*.sql"
+                PG-Warn "(Download from https://github.com/pgvector/pgvector/releases)"
+                PG-Warn ""
+                PG-Warn "Or use the Docker stack which includes pgvector:"
+                PG-Warn "  npm run memory:up"
+                PG-Warn ""
+                PG-Warn "After resolving, re-run: .\bootstrap.ps1"
+                PG-Warn "Memory store will run in degraded mode until pgvector is available."
+            }
+        }
     } else {
         PG-Warn "pgvector extension could not be enabled: $errText"
         PG-Warn "Memory store may run in degraded mode."
