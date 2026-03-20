@@ -189,6 +189,124 @@ foreach ($F in $KeyFiles) {
 }
 
 # -------------------------------------------------------
+# 8. PostgreSQL
+# -------------------------------------------------------
+Write-Host "[8] PostgreSQL" -ForegroundColor Yellow
+
+# Skip checks when caller supplies an external connection string
+if ($env:TALA_DB_CONNECTION_STRING) {
+    Pass "TALA_DB_CONNECTION_STRING is set — external DB in use, skipping local checks"
+} else {
+    $DbHost = if ($env:TALA_DB_HOST) { $env:TALA_DB_HOST } else { "localhost" }
+    $DbPort = if ($env:TALA_DB_PORT) { $env:TALA_DB_PORT } else { "5432" }
+    $DbName = if ($env:TALA_DB_NAME) { $env:TALA_DB_NAME } else { "tala" }
+    $DbUser = if ($env:TALA_DB_USER) { $env:TALA_DB_USER } else { "tala" }
+    $DbPass = if ($env:TALA_DB_PASSWORD)      { $env:TALA_DB_PASSWORD }      else { "tala" }
+    $AdminP = if ($env:TALA_PG_SUPERPASSWORD) { $env:TALA_PG_SUPERPASSWORD } else { "postgres" }
+
+    # Validate identifier overrides before embedding in psql commands
+    $SafeIdPattern = '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+    if ($DbName -notmatch $SafeIdPattern) { Fail "TALA_DB_NAME '$DbName' is not a valid PostgreSQL identifier"; $DbName = "tala" }
+    if ($DbUser -notmatch $SafeIdPattern) { Fail "TALA_DB_USER '$DbUser' is not a valid PostgreSQL identifier"; $DbUser = "tala" }
+
+    # --- psql binary ---
+    $PsqlExe = $null
+    $inPath  = Get-Command psql -ErrorAction SilentlyContinue
+    if ($inPath) {
+        $PsqlExe = $inPath.Source
+        Pass "psql in PATH: $PsqlExe"
+    } else {
+        $bases = @("${env:ProgramFiles}\PostgreSQL", "C:\Program Files\PostgreSQL")
+        foreach ($base in $bases) {
+            if (-not (Test-Path $base)) { continue }
+            $versions = Get-ChildItem -Path $base -Directory -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -match '^\d+' } |
+                        Sort-Object   { [int]($_.Name -replace '[^\d].*', '') } -Descending
+            foreach ($ver in $versions) {
+                $cand = Join-Path $ver.FullName "bin\psql.exe"
+                if (Test-Path $cand) { $PsqlExe = $cand; break }
+            }
+            if ($PsqlExe) { break }
+        }
+        if ($PsqlExe) { Pass "psql found: $PsqlExe" }
+        else           { Fail  "psql not found — run: .\bootstrap.ps1" }
+    }
+
+    # --- Windows service ---
+    $pgSvc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pgSvc) {
+        if ($pgSvc.Status -eq 'Running') { Pass  "PostgreSQL service '$($pgSvc.Name)' is Running" }
+        else                              { Fail  "PostgreSQL service '$($pgSvc.Name)' is $($pgSvc.Status) — run: Start-Service '$($pgSvc.Name)'" }
+    } else {
+        Warn "No PostgreSQL Windows service detected (may be a portable install)"
+    }
+
+    # --- TCP reachability ---
+    try {
+        $tcp     = New-Object System.Net.Sockets.TcpClient
+        $conn    = $tcp.BeginConnect($DbHost, [int]$DbPort, $null, $null)
+        $reached = $conn.AsyncWaitHandle.WaitOne(3000)
+        $tcp.Close()
+        if ($reached) { Pass  "PostgreSQL reachable at ${DbHost}:${DbPort}" }
+        else           { Fail  "PostgreSQL not reachable at ${DbHost}:${DbPort} — ensure service is running" }
+    } catch {
+        Fail "PostgreSQL TCP check failed: $_"
+        $reached = $false
+    }
+
+    # --- DB / role / pgvector checks (only if psql is available and DB is reachable) ---
+    if ($PsqlExe -and $reached) {
+        # tala role
+        $env:PGPASSWORD = $AdminP
+        $roleOut = & $PsqlExe -h $DbHost -p $DbPort -U postgres -d postgres `
+                               -c "SELECT 1 FROM pg_roles WHERE rolname='$DbUser';" `
+                               -t -A -X 2>&1
+        $roleCode = $LASTEXITCODE
+        $env:PGPASSWORD = $null
+
+        if ($roleCode -eq 0 -and ($roleOut -join "").Trim() -eq "1") {
+            Pass "PostgreSQL role '$DbUser' exists"
+        } elseif ($roleCode -ne 0) {
+            Warn "Could not query pg_roles (psql exit $roleCode) — check superuser password (TALA_PG_SUPERPASSWORD)"
+        } else {
+            Fail "PostgreSQL role '$DbUser' not found — run: .\bootstrap.ps1"
+        }
+
+        # tala database
+        $env:PGPASSWORD = $AdminP
+        $dbOut = & $PsqlExe -h $DbHost -p $DbPort -U postgres -d postgres `
+                             -c "SELECT 1 FROM pg_database WHERE datname='$DbName';" `
+                             -t -A -X 2>&1
+        $dbCode = $LASTEXITCODE
+        $env:PGPASSWORD = $null
+
+        if ($dbCode -eq 0 -and ($dbOut -join "").Trim() -eq "1") {
+            Pass "PostgreSQL database '$DbName' exists"
+        } elseif ($dbCode -ne 0) {
+            Warn "Could not query pg_database (psql exit $dbCode)"
+        } else {
+            Fail "PostgreSQL database '$DbName' not found — run: .\bootstrap.ps1"
+        }
+
+        # pgvector
+        $env:PGPASSWORD = $DbPass
+        $vecOut = & $PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
+                              -c "SELECT extname FROM pg_extension WHERE extname='vector';" `
+                              -t -A -X 2>&1
+        $vecCode = $LASTEXITCODE
+        $env:PGPASSWORD = $null
+
+        if ($vecCode -eq 0 -and ($vecOut -join "").Trim() -eq "vector") {
+            Pass "pgvector extension enabled in '$DbName'"
+        } elseif ($vecCode -ne 0) {
+            Warn "Could not query pg_extension in '$DbName' (psql exit $vecCode)"
+        } else {
+            Warn "pgvector extension not yet enabled in '$DbName' — run: .\bootstrap.ps1"
+        }
+    }
+}
+
+# -------------------------------------------------------
 # Summary
 # -------------------------------------------------------
 Write-Host ""
