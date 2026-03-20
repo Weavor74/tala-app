@@ -1,3 +1,5 @@
+import type { DatabaseConfig } from './dbConfig';
+
 /**
  * Application Settings Schema Definitions
  * 
@@ -267,4 +269,5 @@ export interface AppSettings {
     workflows: WorkflowConfig;
     notebooks: Notebook[];
     firewall: FirewallConfig;
+    database?: Partial<DatabaseConfig>;
 }

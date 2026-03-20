@@ -43,6 +43,7 @@ import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggre
 import { RuntimeControlService } from './services/RuntimeControlService';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
+import { initCanonicalMemory, shutdownCanonicalMemory } from './services/db/initMemoryStore';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -250,6 +251,16 @@ const createWindow = () => {
 
 app.on('ready', async () => {
   createWindow();
+
+  // ─── Canonical Memory Store (Phase A) ───────────────────────────────────────
+  // Initialize PostgreSQL-backed canonical memory. Failures are non-fatal;
+  // the app continues without canonical memory until the DB is available.
+  try {
+    await initCanonicalMemory();
+  } catch (err) {
+    console.warn('[Main] Canonical memory store unavailable — continuing without it:', err);
+  }
+
   const info = await systemService.detectEnv(fileService.getRoot());
   const agentPythonPath = info.pythonEnvPath || info.pythonPath;
   agent.setSystemInfo(info);
@@ -280,6 +291,7 @@ app.on('before-quit', async (event: any) => {
   try {
     await agent.shutdown();
     await mcpService.shutdown();
+    await shutdownCanonicalMemory();
   } catch (e) {
   } finally {
     app.exit(0);
