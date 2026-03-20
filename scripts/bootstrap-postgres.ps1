@@ -181,36 +181,47 @@ if (-not $pgInstalled) {
             exit 1
         }
 
-        # --- Detect best available winget package id for PostgreSQL ---
-        # Run 'winget search PostgreSQL' and pick the first recognized id.
-        # This avoids hardcoding a stale package id that may no longer exist.
-        # PostgreSQL.PostgreSQL is preferred because it tracks the latest stable version;
-        # versioned ids (17, 16, ...) are fallbacks when only that specific version is listed.
+        # --- Helper: probe each candidate with 'winget show'; return all that succeed ---
+        # Versioned ids are tried first because the generic id is not always present
+        # in public winget sources while the versioned manifests reliably are.
+        function Get-ValidatedWingetIds {
+            param([string[]]$Candidates)
+            $valid = @()
+            foreach ($id in $Candidates) {
+                PG-Info "  Probing winget package id: $id"
+                & winget show --id $id --exact 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    PG-Info "  Validated: $id"
+                    $valid += $id
+                }
+                else {
+                    PG-Info "  Not available (winget show exit $LASTEXITCODE): $id"
+                }
+            }
+            return $valid
+        }
+
         $preferredIds = @(
-            "PostgreSQL.PostgreSQL",
             "PostgreSQL.PostgreSQL.17",
             "PostgreSQL.PostgreSQL.16",
             "PostgreSQL.PostgreSQL.15",
-            "PostgreSQL.PostgreSQL.14"
+            "PostgreSQL.PostgreSQL.14",
+            "PostgreSQL.PostgreSQL"
         )
 
-        PG-Info "Searching winget for available PostgreSQL packages..."
-        $searchOutput = & winget search PostgreSQL 2>&1
-        $searchText = ($searchOutput -join "`n")
-        $packageId = $null
-        foreach ($id in $preferredIds) {
-            if ($searchText -match [regex]::Escape($id)) {
-                $packageId = $id
-                break
-            }
-        }
+        # Refresh winget sources so manifests are current.
+        PG-Info "Updating winget sources..."
+        & winget source update 2>&1 | ForEach-Object { PG-Info "  [winget] $_" }
 
-        if (-not $packageId) {
-            PG-Fail "winget search did not find any recognized PostgreSQL package id."
-            PG-Fail "Recognized ids checked (in preference order):"
+        PG-Info "Probing winget for installable PostgreSQL package ids..."
+        $validatedIds = Get-ValidatedWingetIds -Candidates $preferredIds
+
+        if ($validatedIds.Count -eq 0) {
+            PG-Fail "No installable PostgreSQL winget package id was found."
+            PG-Fail "Candidate ids checked (in preference order):"
             foreach ($id in $preferredIds) { PG-Fail "  $id" }
             PG-Fail ""
-            PG-Fail "To diagnose, run:  winget search PostgreSQL"
+            PG-Fail "To see what is currently listed, run:  winget search PostgreSQL"
             PG-Fail "Then choose one of:"
             PG-Fail "  1. Install PostgreSQL manually: https://www.postgresql.org/download/windows/"
             PG-Fail "     Then re-run: .\bootstrap.ps1"
@@ -219,31 +230,54 @@ if (-not $pgInstalled) {
             exit 1
         }
 
-        PG-Info "Installing PostgreSQL via winget (package: $packageId)..."
-        PG-Info "NOTE: Installation may require administrator privileges."
-        PG-Info "      If this fails, re-run PowerShell as Administrator and try again."
-
-        # We pass --override to set the superuser password and port in unattended mode.
-        # NOTE: passing the password via --override embeds it in the command line, which
-        # may be visible in process listings during the install. This is a known limitation
-        # of the PostgreSQL Windows installer (including EDB-packaged releases). The password
-        # is the local bootstrap superuser password (TALA_PG_SUPERPASSWORD), not the app's
-        # own password.
+        # winget exit 0 = success; -1978335135 (0x8A150021) = already installed (also fine).
+        # -1978335212 means the package was not found despite show succeeding -- rare but
+        # possible during source sync lag.  Continue to the next validated candidate.
+        $wingetAlreadyInstalled = -1978335135
+        $wingetNotFound         = -1978335212
         $overrideArgs = "--mode unattended --superpassword $AdminPass --serverport $DbPort"
-        & winget install --id $packageId --silent `
-            --accept-source-agreements --accept-package-agreements `
-            --override $overrideArgs 2>&1 | ForEach-Object { PG-Info $_ }
 
-        # winget exit 0 = success; -1978335135 (0x8A150021) = already installed (also fine)
-        $wec = $LASTEXITCODE
-        if ($wec -ne 0 -and $wec -ne -1978335135) {
-            PG-Fail "winget install returned exit code $wec."
-            PG-Fail "Possible causes: not running as Administrator, no internet, package unavailable."
-            PG-Fail "Manual install: https://www.postgresql.org/download/windows/"
-            PG-Fail "After installing, re-run: .\bootstrap.ps1"
+        $installSucceeded = $false
+        $packageId = $null
+        foreach ($id in $validatedIds) {
+            PG-Info "Installing PostgreSQL via winget (package: $id)..."
+            PG-Info "NOTE: Installation may require administrator privileges."
+            PG-Info "      If this fails, re-run PowerShell as Administrator and try again."
+
+            # --override embeds the superuser password in the command line; this is a known
+            # limitation of the EDB Windows installer in unattended mode.  The password is
+            # TALA_PG_SUPERPASSWORD (local bootstrap only), not the app's own credential.
+            & winget install --id $id --exact --silent `
+                --accept-source-agreements --accept-package-agreements `
+                --override $overrideArgs 2>&1 | ForEach-Object { PG-Info $_ }
+
+            $wec = $LASTEXITCODE
+            if ($wec -eq 0 -or $wec -eq $wingetAlreadyInstalled) {
+                PG-Ok "PostgreSQL installed via winget (package: $id)."
+                $installSucceeded = $true
+                $packageId = $id
+                break
+            }
+            elseif ($wec -eq $wingetNotFound) {
+                PG-Warn "winget install reported package not found for '$id' (exit $wec). Trying next candidate..."
+            }
+            else {
+                PG-Warn "winget install returned exit code $wec for '$id'. Trying next candidate..."
+            }
+        }
+
+        if (-not $installSucceeded) {
+            PG-Fail "winget install failed for all validated PostgreSQL package ids."
+            PG-Fail "Validated ids attempted:"
+            foreach ($id in $validatedIds) { PG-Fail "  $id" }
+            PG-Fail "Possible causes: not running as Administrator, no internet, source sync lag."
+            PG-Fail "Choose one of:"
+            PG-Fail "  1. Install PostgreSQL manually: https://www.postgresql.org/download/windows/"
+            PG-Fail "     Then re-run: .\bootstrap.ps1"
+            PG-Fail "  2. Set TALA_PG_INSTALLER_PATH to a downloaded EDB .exe installer."
+            PG-Fail "  3. Use Docker: npm run memory:up  (requires Docker Desktop)"
             exit 1
         }
-        PG-Ok "PostgreSQL installed via winget (package: $packageId)."
     }
 
     # Refresh PATH for this process so pg_* tools become available
