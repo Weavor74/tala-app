@@ -8,13 +8,13 @@ into the correct PostgreSQL directories (lib\ and share\extension\). No compiler
 build tools are required.
 
 Bundle source resolution order (first valid source wins):
-  1. TALA_PGVECTOR_PATH env var  — a directory containing extracted pgvector files,
+  1. TALA_PGVECTOR_PATH env var   -  a directory containing extracted pgvector files,
                                    or a .zip archive
-  2. Repo-local extracted dir    — installers\pgvector\windows\postgres-<major>\
+  2. Repo-local extracted dir     -  installers\pgvector\windows\postgres-<major>\
                                    or installers\pgvector\windows\
-  3. Repo-local zip archive      — installers\pgvector\windows\pgvector-pg<major>-x64.zip
+  3. Repo-local zip archive       -  installers\pgvector\windows\pgvector-pg<major>-x64.zip
                                    or installers\pgvector\windows\pgvector-windows.zip
-  4. Download URL                — TALA_PGVECTOR_DOWNLOAD_URL env var (optional;
+  4. Download URL                 -  TALA_PGVECTOR_DOWNLOAD_URL env var (optional;
                                    only attempted when the env var is explicitly set)
 
 Parameters:
@@ -23,12 +23,12 @@ Parameters:
              Defaults to the parent directory of this script's location (scripts\).
 
 Environment variable overrides (all optional):
-  TALA_PGVECTOR_PATH          — path to bundle dir or zip (source priority 1)
-  TALA_PGVECTOR_DOWNLOAD_URL  — direct download URL for a pgvector Windows zip (source 4)
+  TALA_PGVECTOR_PATH           -  path to bundle dir or zip (source priority 1)
+  TALA_PGVECTOR_DOWNLOAD_URL   -  direct download URL for a pgvector Windows zip (source 4)
 
 Exit codes:
-  0 — pgvector files successfully installed (or were already in place).
-  1 — Installation failed; diagnostic messages emitted above.
+  0  -  pgvector files successfully installed (or were already in place).
+  1  -  Installation failed; diagnostic messages emitted above.
 #>
 
 param(
@@ -41,7 +41,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # -----------------------------------------------------------------------
-# Logging helpers — consistent with bootstrap.ps1 / bootstrap-postgres.ps1
+# Logging helpers  -  consistent with bootstrap.ps1 / bootstrap-postgres.ps1
 # -----------------------------------------------------------------------
 function PGV-Ok   { param($msg) Write-Host "         [OK] $msg"    -ForegroundColor Green  }
 function PGV-Info { param($msg) Write-Host "         $msg"                                 }
@@ -105,7 +105,7 @@ PGV-Info "Target lib dir:       $PgLibDir"
 PGV-Info "Target extension dir: $PgExtDir"
 
 # -----------------------------------------------------------------------
-# 3. Idempotency check — skip if pgvector files are already in place
+# 3. Idempotency check  -  skip if pgvector files are already in place
 # -----------------------------------------------------------------------
 function Test-PgvectorInstalled {
     $dll     = Join-Path $PgLibDir "vector.dll"
@@ -114,7 +114,7 @@ function Test-PgvectorInstalled {
 }
 
 if (Test-PgvectorInstalled) {
-    PGV-Ok "pgvector files already present in PostgreSQL installation — nothing to do."
+    PGV-Ok "pgvector files already present in PostgreSQL installation  -  nothing to do."
     exit 0
 }
 
@@ -268,7 +268,7 @@ function Install-BundleFiles {
         $dest = Join-Path $PgLibDir $f.Name
         try {
             Copy-Item -Path $f.FullName -Destination $dest -Force
-            PGV-Info "  Copied: $($f.Name)  ->  lib\"
+            PGV-Info "  Copied: $($f.Name)  ->  $PgLibDir"
         } catch {
             PGV-Fail "  Failed to copy $($f.Name): $_"
             $errors++
@@ -279,7 +279,7 @@ function Install-BundleFiles {
         $dest = Join-Path $PgExtDir $f.Name
         try {
             Copy-Item -Path $f.FullName -Destination $dest -Force
-            PGV-Info "  Copied: $($f.Name)  ->  share\extension\"
+            PGV-Info "  Copied: $($f.Name)  ->  $PgExtDir"
         } catch {
             PGV-Fail "  Failed to copy $($f.Name): $_"
             $errors++
@@ -300,17 +300,17 @@ $isTempBundle = $false
 if (-not $bundleDir) {
     PGV-Fail "No pgvector bundle found. Searched:"
     PGV-Fail "  [env]  TALA_PGVECTOR_PATH"
-    PGV-Fail "  [dir]  $RepoRoot\installers\pgvector\windows\postgres-$PgMajor\"
-    PGV-Fail "  [dir]  $RepoRoot\installers\pgvector\windows\"
+    PGV-Fail ("  [dir]  " + $RepoRoot + "\installers\pgvector\windows\postgres-" + $PgMajor + "\")
+    PGV-Fail ("  [dir]  " + $RepoRoot + "\installers\pgvector\windows\")
     PGV-Fail "  [zip]  $RepoRoot\installers\pgvector\windows\pgvector-pg${PgMajor}-x64.zip"
     PGV-Fail "  [zip]  $RepoRoot\installers\pgvector\windows\pgvector-windows.zip"
     PGV-Fail "  [env]  TALA_PGVECTOR_DOWNLOAD_URL"
     PGV-Fail ""
     PGV-Fail "To supply a bundle, choose one of:"
-    PGV-Fail "  1. Download a prebuilt pgvector Windows bundle for PostgreSQL $PgMajor:"
+    PGV-Fail "  1. Download a prebuilt pgvector Windows bundle for PostgreSQL ${PgMajor}:"
     PGV-Fail "       https://github.com/pgvector/pgvector/releases"
     PGV-Fail "     Extract and place files in:"
-    PGV-Fail "       installers\pgvector\windows\postgres-$PgMajor\"
+    PGV-Fail ("       installers\pgvector\windows\postgres-" + $PgMajor + "\")
     PGV-Fail "     Expected files: vector.dll, vector.control, vector--*.sql"
     PGV-Fail "  2. Set TALA_PGVECTOR_PATH to the extracted directory or .zip file."
     PGV-Fail "  3. Set TALA_PGVECTOR_DOWNLOAD_URL to a direct .zip download URL."
@@ -350,6 +350,6 @@ if (-not (Test-PgvectorInstalled)) {
 }
 
 PGV-Ok "pgvector files installed successfully."
-PGV-Info "  vector.dll     -> $PgLibDir\"
-PGV-Info "  vector.control -> $PgExtDir\"
+PGV-Info ("  vector.dll     -> " + $PgLibDir + "\")
+PGV-Info ("  vector.control -> " + $PgExtDir + "\")
 exit 0
