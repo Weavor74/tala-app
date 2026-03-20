@@ -10,7 +10,6 @@
  */
 
 import { PostgresMemoryRepository } from './PostgresMemoryRepository';
-import { resolveDatabaseConfig } from './resolveDatabaseConfig';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
 import type { MemoryRepository } from '../../../shared/memory/MemoryRepository';
 
@@ -38,12 +37,9 @@ export async function initCanonicalMemory(
     return _repository;
   }
 
-  const config = resolveDatabaseConfig(options.dbConfig);
-  console.log(
-    `[initCanonicalMemory] Connecting to PostgreSQL at ${config.connectionString ? '(connection string)' : `${config.host}:${config.port}/${config.database}`}`
-  );
-
   const repo = new PostgresMemoryRepository(options.dbConfig, options.migrationsDir);
+  const resolvedHost = repo.getConfigSummary();
+  console.log(`[initCanonicalMemory] Connecting to PostgreSQL at ${resolvedHost}`);
 
   try {
     await repo.initialize();

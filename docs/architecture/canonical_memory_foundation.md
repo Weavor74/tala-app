@@ -117,7 +117,8 @@ Database connection is configured via:
 2. **`app_settings.json`** `database` section
 3. **Defaults**: `localhost:5432/tala` user `tala` password `tala`
 
-Configuration is resolved in `shared/dbConfig.ts`.
+Configuration is resolved in `electron/services/db/resolveDatabaseConfig.ts`
+(types and defaults are in `shared/dbConfig.ts`).
 
 ## Startup Integration
 

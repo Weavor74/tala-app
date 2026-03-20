@@ -44,6 +44,12 @@ export class PostgresMemoryRepository implements MemoryRepository {
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
+  /** Return a safe summary of the resolved config for logging (no passwords). */
+  getConfigSummary(): string {
+    if (this.config.connectionString) return '(connection string)';
+    return `${this.config.host}:${this.config.port}/${this.config.database}`;
+  }
+
   async initialize(): Promise<void> {
     if (this.pool) return;
 
