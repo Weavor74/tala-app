@@ -181,18 +181,56 @@ if (-not $pgInstalled) {
             exit 1
         }
 
-        PG-Info "Installing PostgreSQL via winget (this may take a few minutes)..."
+        # --- Detect best available winget package id for PostgreSQL ---
+        # Run 'winget search PostgreSQL' and pick the first recognized id.
+        # This avoids hardcoding a stale package id that may no longer exist.
+        # PostgreSQL.PostgreSQL is preferred because it tracks the latest stable version;
+        # versioned ids (17, 16, ...) are fallbacks when only that specific version is listed.
+        $preferredIds = @(
+            "PostgreSQL.PostgreSQL",
+            "PostgreSQL.PostgreSQL.17",
+            "PostgreSQL.PostgreSQL.16",
+            "PostgreSQL.PostgreSQL.15",
+            "PostgreSQL.PostgreSQL.14"
+        )
+
+        PG-Info "Searching winget for available PostgreSQL packages..."
+        $searchOutput = & winget search PostgreSQL 2>&1
+        $searchText = ($searchOutput -join "`n")
+        $packageId = $null
+        foreach ($id in $preferredIds) {
+            if ($searchText -match [regex]::Escape($id)) {
+                $packageId = $id
+                break
+            }
+        }
+
+        if (-not $packageId) {
+            PG-Fail "winget search did not find any recognized PostgreSQL package id."
+            PG-Fail "Recognized ids checked (in preference order):"
+            foreach ($id in $preferredIds) { PG-Fail "  $id" }
+            PG-Fail ""
+            PG-Fail "To diagnose, run:  winget search PostgreSQL"
+            PG-Fail "Then choose one of:"
+            PG-Fail "  1. Install PostgreSQL manually: https://www.postgresql.org/download/windows/"
+            PG-Fail "     Then re-run: .\bootstrap.ps1"
+            PG-Fail "  2. Set TALA_PG_INSTALLER_PATH to a downloaded EDB .exe installer."
+            PG-Fail "  3. Use Docker: npm run memory:up  (requires Docker Desktop)"
+            exit 1
+        }
+
+        PG-Info "Installing PostgreSQL via winget (package: $packageId)..."
         PG-Info "NOTE: Installation may require administrator privileges."
         PG-Info "      If this fails, re-run PowerShell as Administrator and try again."
 
-        # EDB.PostgreSQL.16 is the winget package for PostgreSQL 16 (from EnterpriseDB).
         # We pass --override to set the superuser password and port in unattended mode.
         # NOTE: passing the password via --override embeds it in the command line, which
         # may be visible in process listings during the install. This is a known limitation
-        # of the EDB unattended installer on Windows. The password is the local bootstrap
-        # superuser password (TALA_PG_SUPERPASSWORD), not the app's own password.
+        # of the PostgreSQL Windows installer (including EDB-packaged releases). The password
+        # is the local bootstrap superuser password (TALA_PG_SUPERPASSWORD), not the app's
+        # own password.
         $overrideArgs = "--mode unattended --superpassword $AdminPass --serverport $DbPort"
-        winget install --id EDB.PostgreSQL.16 --silent `
+        & winget install --id $packageId --silent `
             --accept-source-agreements --accept-package-agreements `
             --override $overrideArgs 2>&1 | ForEach-Object { PG-Info $_ }
 
@@ -205,7 +243,7 @@ if (-not $pgInstalled) {
             PG-Fail "After installing, re-run: .\bootstrap.ps1"
             exit 1
         }
-        PG-Ok "PostgreSQL installed via winget."
+        PG-Ok "PostgreSQL installed via winget (package: $packageId)."
     }
 
     # Refresh PATH for this process so pg_* tools become available
@@ -262,10 +300,7 @@ if ($pgService) {
         exit 1
     }
 } else {
-    # No Windows service found  -  verify TCP reachability before proceeding
-}
-else {
-    # No Windows service found — verify TCP reachability before proceeding
+    # No Windows service found - verify TCP reachability before proceeding
     PG-Warn "No PostgreSQL Windows service detected."
     PG-Info "Checking TCP reachability at ${DbHost}:${DbPort}..."
     try {
@@ -392,7 +427,6 @@ else {
 
     if ($filesMissing -and $Script:PsqlExe) {
         # --- Attempt automatic installation via helper script ---
-        PG-Info "pgvector extension files missing  -  attempting automatic installation..."
         PG-Info "pgvector extension files missing - attempting automatic installation..."
         $pgvHelper = Join-Path $PSScriptRoot "install-pgvector-windows.ps1"
 
@@ -405,8 +439,6 @@ else {
             $installCode = $LASTEXITCODE
 
             if ($installCode -eq 0) {
-                # Files are now in place  -  retry enabling the extension
-                PG-Info "pgvector files installed  -  retrying CREATE EXTENSION..."
                 # Files are now in place - retry enabling the extension
                 PG-Info "pgvector files installed - retrying CREATE EXTENSION..."
                 if (Try-EnableVectorExtension) {
@@ -443,7 +475,6 @@ else {
         PG-Warn "pgvector extension could not be enabled: $errText"
         PG-Warn "Memory store may run in degraded mode."
     }
-    # Not fatal  -  the app handles degraded mode gracefully.
     # Not fatal - the app handles degraded mode gracefully.
 }
 
