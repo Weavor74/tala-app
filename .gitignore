@@ -19,6 +19,8 @@ models/
 memory/
 !mcp-servers/**/src/memory/
 !mcp-servers/**/src/memory/**
+!shared/memory/
+!shared/memory/**
 data/
 *.gguf
 *ltmf*
