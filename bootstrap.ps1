@@ -53,7 +53,8 @@ foreach ($RelPath in $RequiredFiles) {
     if (-not (Test-Path $FullPath)) {
         $missingFiles += $RelPath
         Write-Host "      [MISSING] $RelPath" -ForegroundColor Red
-    } else {
+    }
+    else {
         Write-Host "      [OK]      $RelPath" -ForegroundColor Green
     }
 }
@@ -72,7 +73,7 @@ if ($missingFiles.Count -gt 0) {
 Write-Host "`n[0b/8] Validating package.json Node.js Dependencies..." -ForegroundColor Yellow
 
 $PackageJsonPath = Join-Path $RepoRoot "package.json"
-$packageContent  = Get-Content $PackageJsonPath -Raw | ConvertFrom-Json
+$packageContent = Get-Content $PackageJsonPath -Raw | ConvertFrom-Json
 
 $RequiredDeps = [ordered]@{
     "pg"        = "dependencies"
@@ -83,15 +84,17 @@ $RequiredDeps = [ordered]@{
 $missingDeps = @()
 foreach ($dep in $RequiredDeps.Keys) {
     $section = $RequiredDeps[$dep]
-    $found   = $false
+    $found = $false
     if ($section -eq "dependencies" -and $packageContent.dependencies.PSObject.Properties[$dep]) {
         $found = $true
-    } elseif ($section -eq "devDependencies" -and $packageContent.devDependencies.PSObject.Properties[$dep]) {
+    }
+    elseif ($section -eq "devDependencies" -and $packageContent.devDependencies.PSObject.Properties[$dep]) {
         $found = $true
     }
     if ($found) {
         Write-Host "      [OK] $dep ($section)" -ForegroundColor Green
-    } else {
+    }
+    else {
         $missingDeps += "$dep (expected in $section)"
         Write-Host "      [MISSING] $dep (expected in $section)" -ForegroundColor Red
     }
@@ -114,7 +117,8 @@ Write-Host "`n[1/8] Checking Prerequisites..." -ForegroundColor Yellow
 try {
     $nodeVer = node --version
     Write-Host "      [OK] Node.js found: $nodeVer" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "      [ERROR] Node.js is not installed or not in PATH." -ForegroundColor Red
     Write-Host "      Please install Node.js (v18+) from https://nodejs.org/"
     exit 1
@@ -124,7 +128,8 @@ try {
 try {
     $npmVer = npm --version
     Write-Host "      [OK] npm found: $npmVer" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "      [ERROR] npm is not installed or not in PATH." -ForegroundColor Red
     exit 1
 }
@@ -138,7 +143,8 @@ try {
         exit 1
     }
     Write-Host "      [OK] Python found: $pyVer" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "      [ERROR] Python is not installed or not in PATH." -ForegroundColor Red
     Write-Host "      Please install Python 3.10+ from https://python.org/"
     Write-Host "      IMPORTANT: Ensure 'Add Python to PATH' is checked during installation."
@@ -156,7 +162,8 @@ foreach ($Dir in $Dirs) {
     if (-not (Test-Path $FullPath)) {
         New-Item -ItemType Directory -Path $FullPath -Force | Out-Null
         Write-Host "      Created: $Dir"
-    } else {
+    }
+    else {
         Write-Host "      Exists: $Dir"
     }
 }
@@ -174,7 +181,8 @@ if (-not (Test-Path $ModelDest)) {
     Write-Host "      This is a ~2GB file and may take a few minutes depending on your connection."
     Invoke-WebRequest -Uri $ModelUrl -OutFile $ModelDest -UseBasicParsing
     Write-Host "      [OK] Model downloaded successfully." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "      [OK] Model already exists. Skipping download." -ForegroundColor Green
 }
 
@@ -194,6 +202,9 @@ if (Test-Path $PackageJson) {
         npm ci --ignore-scripts
     } else {
         Write-Host "      No package-lock.json  -  running npm install."
+    }
+    else {
+        Write-Host "      No package-lock.json — running npm install."
         npm install --ignore-scripts
     }
     if ($LASTEXITCODE -ne 0) {
@@ -201,7 +212,8 @@ if (Test-Path $PackageJson) {
         exit 1
     }
     Write-Host "      [OK] Node packages installed." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "      [ERROR] package.json not found at $RepoRoot" -ForegroundColor Red
     exit 1
 }
@@ -217,8 +229,8 @@ function Build-Venv {
     param([string]$ModulePath)
 
     $FullPath = Join-Path $RepoRoot $ModulePath
-    $ReqFile  = Join-Path $FullPath "requirements.txt"
-    $VenvDir  = Join-Path $FullPath "venv"
+    $ReqFile = Join-Path $FullPath "requirements.txt"
+    $VenvDir = Join-Path $FullPath "venv"
     $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 
     if (-not (Test-Path $ReqFile)) {
@@ -245,7 +257,8 @@ function Build-Venv {
     if ($ModulePath -like "*local-inference*") {
         Write-Host "         Fetching pre-built wheels for llama-cpp-python..."
         & $PythonExe -m pip install -r $ReqFile --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet
-    } else {
+    }
+    else {
         & $PythonExe -m pip install -r $ReqFile --quiet
     }
 
@@ -291,16 +304,17 @@ if (Test-Path $PgHelper) {
     Write-Host "      [WARN] scripts\bootstrap-postgres.ps1 not found  -  skipping PostgreSQL provisioning." -ForegroundColor Yellow
 }
 
-Write-Host "`n=============================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "   BOOTSTRAP COMPLETE!                       " -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host 'You can now start TALA by running:'
-Write-Host '  npm run dev'
-Write-Host ''
-Write-Host 'PostgreSQL + Tala DB provisioning:'
-Write-Host "  The 'tala' database and 'tala' user were created (or already existed)."
-Write-Host '  Schema (tables/indexes) will be created by Tala''s migration runner on first startup.'
-Write-Host ''
-Write-Host 'To verify the full environment, run:'
-Write-Host '  scripts\verify-setup.ps1'
-Write-Host ''
+Write-Host "You can now start TALA by running:"
+Write-Host "  npm run dev"
+Write-Host ""
+Write-Host "PostgreSQL + Tala DB provisioning:"
+Write-Host "  The `"tala`" database and `"tala`" user were created (or already existed)."
+Write-Host "  Schema (tables/indexes) will be created by Tala's migration runner on first startup."
+Write-Host ""
+Write-Host "To verify the full environment, run:"
+Write-Host "  scripts\verify-setup.ps1"
+Write-Host ""
