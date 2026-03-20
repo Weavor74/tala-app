@@ -14,19 +14,19 @@ Schema creation (tables, indexes) is NOT performed here. Tala's migration
 runner handles that on first app startup.
 
 Environment variable overrides (all optional):
-  TALA_DB_CONNECTION_STRING  — if set, skip all local provisioning entirely
-  TALA_DB_HOST               — PostgreSQL host  (default: localhost)
-  TALA_DB_PORT               — PostgreSQL port  (default: 5432)
-  TALA_DB_NAME               — Database name    (default: tala)
-  TALA_DB_USER               — App role name    (default: tala)
-  TALA_DB_PASSWORD           — App role password (default: tala)
-  TALA_PG_SUPERPASSWORD      — postgres superuser password (default: postgres)
-  TALA_PG_INSTALLER_PATH     — full path to an EDB .exe installer (optional;
+  TALA_DB_CONNECTION_STRING   -  if set, skip all local provisioning entirely
+  TALA_DB_HOST                -  PostgreSQL host  (default: localhost)
+  TALA_DB_PORT                -  PostgreSQL port  (default: 5432)
+  TALA_DB_NAME                -  Database name    (default: tala)
+  TALA_DB_USER                -  App role name    (default: tala)
+  TALA_DB_PASSWORD            -  App role password (default: tala)
+  TALA_PG_SUPERPASSWORD       -  postgres superuser password (default: postgres)
+  TALA_PG_INSTALLER_PATH      -  full path to an EDB .exe installer (optional;
                                 used instead of winget when provided)
 
 Exit codes:
-  0 — Provisioning succeeded (or was already complete).
-  1 — Fatal error that must be resolved before the app can use the DB.
+  0  -  Provisioning succeeded (or was already complete).
+  1  -  Fatal error that must be resolved before the app can use the DB.
 #>
 
 param()
@@ -34,7 +34,7 @@ param()
 $ErrorActionPreference = "Stop"
 
 # -----------------------------------------------------------------------
-# Logging helpers — consistent with bootstrap.ps1 style
+# Logging helpers  -  consistent with bootstrap.ps1 style
 # -----------------------------------------------------------------------
 function PG-Ok   { param($msg) Write-Host "      [OK] $msg"    -ForegroundColor Green  }
 function PG-Info { param($msg) Write-Host "      $msg"                                 }
@@ -45,7 +45,7 @@ function PG-Fail { param($msg) Write-Host "      [ERROR] $msg" -ForegroundColor 
 # 0. Skip if caller supplies an external DB connection string
 # -----------------------------------------------------------------------
 if ($env:TALA_DB_CONNECTION_STRING) {
-    PG-Ok "TALA_DB_CONNECTION_STRING is set — skipping local PostgreSQL provisioning."
+    PG-Ok "TALA_DB_CONNECTION_STRING is set  -  skipping local PostgreSQL provisioning."
     exit 0
 }
 
@@ -77,7 +77,7 @@ foreach ($pair in @(
 PG-Info "PostgreSQL target: ${DbHost}:${DbPort}  db=$DbName  user=$DbUser"
 
 # -----------------------------------------------------------------------
-# Helper: find psql.exe — checks PATH then common EDB install dirs
+# Helper: find psql.exe  -  checks PATH then common EDB install dirs
 # -----------------------------------------------------------------------
 function Find-Psql {
     $inPath = Get-Command psql -ErrorAction SilentlyContinue
@@ -258,7 +258,7 @@ if ($pgService) {
         exit 1
     }
 } else {
-    # No Windows service found — verify TCP reachability before proceeding
+    # No Windows service found  -  verify TCP reachability before proceeding
     PG-Warn "No PostgreSQL Windows service detected."
     PG-Info "Checking TCP reachability at ${DbHost}:${DbPort}..."
     try {
@@ -359,7 +359,7 @@ function Try-EnableVectorExtension {
 }
 
 # Quick probe: already enabled? (avoids DDL noise if already present)
-# Treat a probe failure as "not yet enabled" — Try-EnableVectorExtension will
+# Treat a probe failure as "not yet enabled"  -  Try-EnableVectorExtension will
 # expose the real error if the extension truly cannot be created.
 $extProbeAlreadyEnabled = $false
 $extProbe = Invoke-Psql -Sql "SELECT 1 FROM pg_extension WHERE extname = 'vector';" `
@@ -380,7 +380,7 @@ if ($extProbeAlreadyEnabled) {
 
     if ($filesMissing -and $Script:PsqlExe) {
         # --- Attempt automatic installation via helper script ---
-        PG-Info "pgvector extension files missing — attempting automatic installation..."
+        PG-Info "pgvector extension files missing  -  attempting automatic installation..."
         $pgvHelper = Join-Path $PSScriptRoot "install-pgvector-windows.ps1"
 
         if (-not (Test-Path $pgvHelper)) {
@@ -391,8 +391,8 @@ if ($extProbeAlreadyEnabled) {
             $installCode = $LASTEXITCODE
 
             if ($installCode -eq 0) {
-                # Files are now in place — retry enabling the extension
-                PG-Info "pgvector files installed — retrying CREATE EXTENSION..."
+                # Files are now in place  -  retry enabling the extension
+                PG-Info "pgvector files installed  -  retrying CREATE EXTENSION..."
                 if (Try-EnableVectorExtension) {
                     PG-Ok "pgvector extension is enabled in database '$DbName'."
                 } else {
@@ -424,7 +424,7 @@ if ($extProbeAlreadyEnabled) {
         PG-Warn "pgvector extension could not be enabled: $errText"
         PG-Warn "Memory store may run in degraded mode."
     }
-    # Not fatal — the app handles degraded mode gracefully.
+    # Not fatal  -  the app handles degraded mode gracefully.
 }
 
 # -----------------------------------------------------------------------
