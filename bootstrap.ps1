@@ -34,7 +34,7 @@ Write-Host ""
 # ---------------------------------------------------------
 # 1. Environment Checks
 # ---------------------------------------------------------
-Write-Host "[1/5] Checking Prerequisites..." -ForegroundColor Yellow
+Write-Host "[1/6] Checking Prerequisites..." -ForegroundColor Yellow
 
 # Check Node
 try {
@@ -74,7 +74,7 @@ try {
 # ---------------------------------------------------------
 # 2. Create Missing Folders
 # ---------------------------------------------------------
-Write-Host "`n[2/5] Creating Runtime Directories..." -ForegroundColor Yellow
+Write-Host "`n[2/6] Creating Runtime Directories..." -ForegroundColor Yellow
 
 $Dirs = @("models", "data", "bin\python-win", "memory")
 foreach ($Dir in $Dirs) {
@@ -90,7 +90,7 @@ foreach ($Dir in $Dirs) {
 # ---------------------------------------------------------
 # 3. Download LLM (.gguf)
 # ---------------------------------------------------------
-Write-Host "`n[3/5] Downloading Default Local LLM..." -ForegroundColor Yellow
+Write-Host "`n[3/6] Downloading Default Local LLM..." -ForegroundColor Yellow
 
 $ModelUrl = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 $ModelDest = Join-Path $RepoRoot "models\Llama-3.2-3B-Instruct-Q4_K_M.gguf"
@@ -107,7 +107,7 @@ if (-not (Test-Path $ModelDest)) {
 # ---------------------------------------------------------
 # 4. Install Node Libraries
 # ---------------------------------------------------------
-Write-Host "`n[4/5] Installing Node.js Dependencies..." -ForegroundColor Yellow
+Write-Host "`n[4/6] Installing Node.js Dependencies..." -ForegroundColor Yellow
 
 $PackageJson = Join-Path $RepoRoot "package.json"
 if (Test-Path $PackageJson) {
@@ -126,7 +126,7 @@ if (Test-Path $PackageJson) {
 # ---------------------------------------------------------
 # 5. Setup Python Virtual Envs & MCP Servers
 # ---------------------------------------------------------
-Write-Host "`n[5/5] Building Python Virtual Environments..." -ForegroundColor Yellow
+Write-Host "`n[5/6] Building Python Virtual Environments..." -ForegroundColor Yellow
 
 # Function to build a venv and install requirements
 # $ModulePath is relative to $RepoRoot
@@ -191,12 +191,33 @@ foreach ($Mod in $PythonModules) {
     }
 }
 
+# ---------------------------------------------------------
+# 6. Provision PostgreSQL (install/start/create DB + pgvector)
+# ---------------------------------------------------------
+Write-Host "`n[6/6] Provisioning PostgreSQL..." -ForegroundColor Yellow
+
+$PgHelper = Join-Path $RepoRoot "scripts\bootstrap-postgres.ps1"
+if (Test-Path $PgHelper) {
+    & $PgHelper
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "      [ERROR] PostgreSQL provisioning failed. See errors above." -ForegroundColor Red
+        Write-Host "      Resolve the issue, then re-run: .\bootstrap.ps1"
+        exit 1
+    }
+} else {
+    Write-Host "      [WARN] scripts\bootstrap-postgres.ps1 not found — skipping PostgreSQL provisioning." -ForegroundColor Yellow
+}
+
 Write-Host "`n=============================================" -ForegroundColor Cyan
 Write-Host "   BOOTSTRAP COMPLETE!                       " -ForegroundColor Green
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host 'You can now start TALA by running:'
 Write-Host '  npm run dev'
 Write-Host ''
-Write-Host 'To verify the environment is ready, run:'
+Write-Host 'PostgreSQL + Tala DB provisioning:'
+Write-Host "  The 'tala' database and 'tala' user were created (or already existed)."
+Write-Host '  Schema (tables/indexes) will be created by Tala''s migration runner on first startup.'
+Write-Host ''
+Write-Host 'To verify the full environment, run:'
 Write-Host '  scripts\verify-setup.ps1'
 Write-Host ''
