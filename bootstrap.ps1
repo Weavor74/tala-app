@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Bootstrap Script for TALA (The Autonomous Local Agent)
 
@@ -189,35 +189,37 @@ else {
 # ---------------------------------------------------------
 # 4. Install Node Libraries
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# 4. Install Node Libraries
+# ---------------------------------------------------------
 Write-Host "`n[4/8] Installing Node.js Dependencies..." -ForegroundColor Yellow
 
 $PackageJson = Join-Path $RepoRoot "package.json"
 if (Test-Path $PackageJson) {
     $LockFile = Join-Path $RepoRoot "package-lock.json"
     if (Test-Path $LockFile) {
-        Write-Host "      package-lock.json found  -  running npm ci for deterministic install."
+        Write-Host "      package-lock.json found - running npm ci for deterministic install."
         # --ignore-scripts prevents arbitrary postinstall scripts from running during bootstrap.
         # Note: node-pty requires native build tools (node-gyp) to run its install script;
-        # if needed, run: npm rebuild node-pty  after initial installation.
+        # if needed, run: npm rebuild node-pty after initial installation.
         npm ci --ignore-scripts
-    } else {
-        Write-Host "      No package-lock.json  -  running npm install."
     }
     else {
-        Write-Host "      No package-lock.json — running npm install."
+        Write-Host "      No package-lock.json - running npm install."
         npm install --ignore-scripts
     }
+
     if ($LASTEXITCODE -ne 0) {
         Write-Host "      [ERROR] npm dependency installation failed." -ForegroundColor Red
         exit 1
     }
+
     Write-Host "      [OK] Node packages installed." -ForegroundColor Green
 }
 else {
     Write-Host "      [ERROR] package.json not found at $RepoRoot" -ForegroundColor Red
     exit 1
 }
-
 # ---------------------------------------------------------
 # 5. Setup Python Virtual Envs & MCP Servers
 # ---------------------------------------------------------
@@ -300,10 +302,10 @@ if (Test-Path $PgHelper) {
         Write-Host "      Resolve the issue, then re-run: .\bootstrap.ps1"
         exit 1
     }
-} else {
+}
+else {
     Write-Host "      [WARN] scripts\bootstrap-postgres.ps1 not found  -  skipping PostgreSQL provisioning." -ForegroundColor Yellow
 }
-
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "   BOOTSTRAP COMPLETE!                       " -ForegroundColor Green
@@ -312,7 +314,7 @@ Write-Host "You can now start TALA by running:"
 Write-Host "  npm run dev"
 Write-Host ""
 Write-Host "PostgreSQL + Tala DB provisioning:"
-Write-Host "  The `"tala`" database and `"tala`" user were created (or already existed)."
+Write-Host '  The "tala" database and "tala" user were created (or already existed).'
 Write-Host "  Schema (tables/indexes) will be created by Tala's migration runner on first startup."
 Write-Host ""
 Write-Host "To verify the full environment, run:"
