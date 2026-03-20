@@ -11,17 +11,22 @@ from mcp.server.fastmcp import FastMCP
 from src.memory import MemorySystem, NodeType, EdgeType, ConfidenceBasis
 from src.memory.schema import NodeV1, EdgeV1, Provenance, Confidence
 from src.memory_graph.router import MemoryRouter
+from src.memory_graph.store_factory import create_store
 
 sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: imports complete\n")
 
 # Initialize FastMCP server
 mcp = FastMCP("Tala Memory Graph")
 
-# Initialize the memory system
-DB_PATH = os.environ.get("TALA_MEMORY_DB", "tala_memory_v1.db")
-sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: initializing MemorySystem with {DB_PATH}\n")
-
-memory = MemorySystem(DB_PATH)
+# Initialize store and memory system via factory.
+# PostgreSQL is used when TALA_PG_DSN or TALA_DATABASE_URL is set.
+# SQLite fallback is available when TALA_MEMORY_DB is set explicitly.
+sys.stderr.write(f"[{datetime.now().isoformat()}] tala-memory-graph: initializing store\n")
+_store = create_store()
+sys.stderr.write(
+    f"[{datetime.now().isoformat()}] tala-memory-graph: store={type(_store).__name__}\n"
+)
+memory = MemorySystem(store=_store)
 router = MemoryRouter()
 
 # Identity Migration & Unification
