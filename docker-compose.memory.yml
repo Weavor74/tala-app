@@ -1,0 +1,49 @@
+# Tala Local Memory Stack
+#
+# Provisions a local PostgreSQL + pgvector instance for the canonical
+# memory store. Use via the npm scripts:
+#
+#   npm run memory:up      — start (or create) the memory stack
+#   npm run memory:down    — stop the memory stack
+#   npm run memory:logs    — tail container logs
+#   npm run memory:reset   — destroy volume and recreate (wipes all data)
+#
+# Or run the cross-platform bootstrap scripts directly:
+#   bash scripts/bootstrap-memory.sh     (Linux / macOS)
+#   .\scripts\bootstrap-memory.ps1       (Windows PowerShell)
+#
+# Environment variable override:
+#   Set TALA_DB_CONNECTION_STRING to skip this stack and use a remote DB.
+#
+# Default credentials (local-only, not secret):
+#   host:     localhost
+#   port:     5432
+#   database: tala
+#   user:     tala
+#   password: tala
+
+version: "3.9"
+
+services:
+  tala-memory-db:
+    image: pgvector/pgvector:pg16
+    container_name: tala-memory-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tala
+      POSTGRES_USER: tala
+      POSTGRES_PASSWORD: tala
+    ports:
+      - "5432:5432"
+    volumes:
+      - tala_memory_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tala -d tala"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  tala_memory_data:
+    driver: local
