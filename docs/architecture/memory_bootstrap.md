@@ -1,44 +1,84 @@
-# Memory Bootstrap — Local Docker-Based PostgreSQL + pgvector
+# Memory Bootstrap — Native-First Local PostgreSQL Runtime
 
 ## Purpose
 
 This document describes how Tala provisions and manages its local canonical
-memory store (PostgreSQL + pgvector) during development and bootstrap.
+memory store (PostgreSQL + pgvector) during startup.
 
-The goal is **local-first, zero-prerequisite memory** — developers should not
-need to install or configure PostgreSQL manually. Docker is used as the
-canonical local provisioning mechanism when no other DB is configured.
+**Primary goal: local-first, zero-prerequisite memory without requiring Docker.**
+
+The default bootstrap path is a Tala-managed native PostgreSQL runtime. Docker
+is supported as an optional developer convenience, not as a required dependency.
+
+---
+
+## Bootstrap Priority Order
+
+```
+1. TALA_DB_CONNECTION_STRING set?
+   → Yes: use it directly (external / remote / CI database)
+
+2. bootstrapMode === 'external-only'?
+   → Yes: use env/settings config as-is, no local runtime startup
+
+3. Tala-managed native runtime (primary local-first path)
+   → Check binary assets present in runtime root
+   → initdb on first run (creates the cluster)
+   → Start postgres process (localhost:5432 only)
+   → Wait for readiness
+   → Run migrations via MigrationRunner
+
+4. Docker fallback
+   → Only attempted if allowDockerFallback === true (opt-in)
+   → Does NOT start Docker — only probes for an already-running instance
+   → To start: npm run memory:up (developer workflow)
+
+5. Degraded mode
+   → No viable path found
+   → App continues; memory features unavailable
+   → Clear warning logged
+```
+
+Docker is **not started automatically** by the app. It remains an explicit
+developer tool, not a startup dependency.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  bootstrap-memory.sh / bootstrap-memory.ps1         │
-│  (scripts layer — runs before app)                  │
-│                                                     │
-│  1. TALA_DB_CONNECTION_STRING set?                  │
-│     → yes: skip, use external DB                    │
-│     → no:  check-db-reachable.js                    │
-│            reachable? → skip                        │
-│            not reachable? → docker compose up       │
-│                             wait for healthcheck    │
-│                             app starts normally     │
-└─────────────────────────────────────────────────────┘
-        ↓ (DB ready or degraded)
-┌─────────────────────────────────────────────────────┐
-│  Electron main.ts — initCanonicalMemory()           │
-│  (app layer — runs connection + migrations)         │
-│                                                     │
-│  PostgresMemoryRepository → MigrationRunner         │
-│  resolveDatabaseConfig() → env/settings/defaults   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  electron/main.ts — app.on('ready')                                  │
+│                                                                       │
+│  await initCanonicalMemory()                                          │
+└─────────────────────────────────────────────────────────────────────┘
+         ↓ (non-fatal: failure → degraded mode)
+┌─────────────────────────────────────────────────────────────────────┐
+│  electron/services/db/initMemoryStore.ts                             │
+│                                                                       │
+│  1. If explicit dbConfig provided → skip coordinator                 │
+│  2. Otherwise → DatabaseBootstrapCoordinator.bootstrap()             │
+│  3. Use resulting DatabaseConfig                                      │
+│  4. PostgresMemoryRepository.initialize()                            │
+│  5. MigrationRunner.runAll()                                         │
+└─────────────────────────────────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  electron/services/db/DatabaseBootstrapCoordinator.ts                │
+│                                                                       │
+│  resolveDatabaseBootstrapPlan()  ←  env vars + settings              │
+│                                                                       │
+│  path: native-runtime                                                 │
+│    LocalDatabaseRuntime  → platform paths + connection config        │
+│    PostgresProcessManager → initdb / start / waitReady / stop       │
+│                                                                       │
+│  path: docker-fallback (opt-in)                                      │
+│    probeTcpPort(host, port) → reachable? use it : degraded          │
+│                                                                       │
+│  path: external / local-configured                                    │
+│    resolveDatabaseConfig() → env/settings/defaults                   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
-
-Bootstrap is strictly a **pre-app provisioning concern**. It never runs
-migrations. Migrations remain the app's responsibility via `MigrationRunner`
-and `initCanonicalMemory()` in `electron/main.ts`.
 
 ---
 
@@ -47,13 +87,72 @@ and `initCanonicalMemory()` in `electron/main.ts`.
 | Priority | Source |
 |---|---|
 | 1 (highest) | `TALA_DB_CONNECTION_STRING` environment variable |
-| 2 | `TALA_DB_HOST` / `TALA_DB_PORT` / `TALA_DB_NAME` / `TALA_DB_USER` / `TALA_DB_PASSWORD` env vars |
-| 3 | `database` section in `app_settings.json` |
-| 4 (default) | `localhost:5432/tala` (user: tala, password: tala) |
+| 2 | `TALA_DB_BOOTSTRAP_MODE` environment variable (`auto`\|`native`\|`docker`\|`external-only`) |
+| 3 | `TALA_DB_ALLOW_DOCKER_FALLBACK` environment variable (`true`\|`1`) |
+| 4 | `databaseBootstrap` section in `app_settings.json` |
+| 5 | `TALA_DB_HOST` / `TALA_DB_PORT` / `TALA_DB_NAME` / `TALA_DB_USER` / `TALA_DB_PASSWORD` env vars |
+| 6 (default) | Tala-managed native runtime on `127.0.0.1:5432` |
 
-When `TALA_DB_CONNECTION_STRING` is set, the bootstrap scripts exit
-immediately without touching Docker. This is the recommended path for remote
-or CI databases.
+---
+
+## Native Runtime Platform Paths
+
+The Tala-managed native runtime uses platform-appropriate storage roots:
+
+| Platform | App data root |
+|---|---|
+| Windows | `%APPDATA%\Tala\` |
+| macOS | `~/Library/Application Support/Tala/` |
+| Linux | `~/.local/share/Tala/` |
+
+Under each root:
+
+| Subdirectory | Purpose |
+|---|---|
+| `postgres-runtime/` | Bundled PostgreSQL binaries (read-only in production) |
+| `data/postgres/` | PostgreSQL cluster data directory (writable) |
+| `logs/postgres/` | PostgreSQL server log output (writable) |
+
+Path resolution is handled by `LocalDatabaseRuntime` and can be overridden via
+`databaseBootstrap.localRuntime.runtimePathOverride` / `dataPathOverride` in
+settings, or via env vars.
+
+---
+
+## Native Runtime Connection Defaults
+
+The Tala-managed runtime uses these local-only defaults:
+
+| Setting | Value |
+|---|---|
+| host | `127.0.0.1` (localhost only, never network-exposed) |
+| port | `5432` (overridable via `portOverride`) |
+| database | `tala` |
+| user | `tala` |
+| password | `tala_local` |
+| SSL | disabled |
+
+---
+
+## Runtime Assets
+
+The native runtime requires PostgreSQL binaries and the pgvector extension to
+be present in the runtime root directory.
+
+**Current status:** The runtime manager architecture and all bootstrap code
+paths are implemented. Platform-specific binary packaging (bundling PostgreSQL
+binaries into the app distribution) is a separate delivery milestone.
+
+Until platform binaries are bundled:
+- The native runtime path will log a clear `MissingRuntimeAssetsError` with
+  actionable guidance.
+- The app falls back to degraded mode (or Docker if explicitly enabled).
+- Developers can use `npm run memory:up` (Docker) or set
+  `TALA_DB_CONNECTION_STRING` to use an existing PostgreSQL instance.
+
+pgvector is required for canonical memory embeddings. If the runtime bundle
+includes PostgreSQL but not pgvector, a warning is surfaced during bootstrap
+(the process starts; migrations will fail when creating the `vector` extension).
 
 ---
 
@@ -61,159 +160,106 @@ or CI databases.
 
 | File | Purpose |
 |---|---|
-| `docker-compose.memory.yml` | Defines the local PostgreSQL + pgvector container |
-| `scripts/bootstrap-memory.sh` | Bootstrap entrypoint (Linux / macOS) |
-| `scripts/bootstrap-memory.ps1` | Bootstrap entrypoint (Windows PowerShell) |
-| `scripts/stop-memory.sh` | Stop local memory stack (Linux / macOS) |
-| `scripts/stop-memory.ps1` | Stop local memory stack (Windows PowerShell) |
-| `scripts/check-db-reachable.js` | Node.js TCP probe — tests whether configured DB port is open |
-| `scripts/memory-cmd.js` | Cross-platform dispatcher invoked by npm scripts |
+| `electron/services/db/DatabaseBootstrapCoordinator.ts` | Orchestrates the full bootstrap flow |
+| `electron/services/db/resolveDatabaseBootstrapPlan.ts` | Determines bootstrap path from env/config |
+| `electron/services/db/LocalDatabaseRuntime.ts` | Platform path resolution and connection config |
+| `electron/services/db/PostgresProcessManager.ts` | postgres process lifecycle (initdb, start, stop) |
+| `electron/services/db/initMemoryStore.ts` | Entry point: wires coordinator → repository → migrations |
+| `electron/services/db/resolveDatabaseConfig.ts` | Env/settings → DatabaseConfig resolution |
+| `shared/dbBootstrapConfig.ts` | Bootstrap configuration types (shared, renderer-safe) |
+| `shared/dbConfig.ts` | DatabaseConfig types and defaults |
+| `docker-compose.memory.yml` | Optional Docker-based local PostgreSQL + pgvector |
+| `scripts/memory-cmd.js` | Cross-platform dispatcher for Docker memory commands |
 
 ---
 
-## Docker Compose Stack
+## Docker Support (Optional Developer Convenience)
 
-File: `docker-compose.memory.yml`
-
-- **Image**: `pgvector/pgvector:pg16` — PostgreSQL 16 with pgvector extension
-- **Container**: `tala-memory-db`
-- **Default credentials** (local-only, not secrets):
-  - host: `localhost`
-  - port: `5432`
-  - database: `tala`
-  - user: `tala`
-  - password: `tala`
-- **Volume**: `tala_memory_data` — named persistent volume, survives restarts
-- **Healthcheck**: `pg_isready -U tala -d tala` (5 s interval, 10 retries)
-- **Restart policy**: `unless-stopped`
-
----
-
-## npm Commands
+Docker remains supported as an explicit developer workflow. It is **not** used
+during standard app startup.
 
 | Command | Description |
 |---|---|
-| `npm run memory:up` | Bootstrap local memory stack (idempotent) |
-| `npm run memory:down` | Stop local memory stack (data preserved) |
-| `npm run memory:logs` | Tail container logs |
-| `npm run memory:reset` | Destroy volume + restart (wipes all local memory) |
-| `npm run dev:with-memory` | Bootstrap memory, then launch normal dev flow |
+| `npm run memory:up` | Start Docker-based PostgreSQL + pgvector stack |
+| `npm run memory:down` | Stop Docker-based stack (data preserved) |
+| `npm run memory:logs` | Tail Docker container logs |
+| `npm run memory:reset` | Destroy Docker volume + recreate (wipes all data) |
+| `npm run dev:with-memory` | Start Docker memory stack then launch dev |
 
----
-
-## Developer Workflows
-
-### Start dev with automatic memory provisioning
+To allow the app to fall back to a running Docker instance during bootstrap:
 
 ```bash
-npm run dev:with-memory
+TALA_DB_ALLOW_DOCKER_FALLBACK=true npm run dev
 ```
 
-This is the recommended daily-driver command. It:
-1. Runs `bootstrap-memory.sh` (or `.ps1` on Windows via shell)
-2. Starts the DB container if not already running
-3. Waits for the DB to be healthy
-4. Launches `npm run dev` normally
-
-### Start memory stack independently
-
-```bash
-npm run memory:up
-```
-
-### Stop memory stack (keep data)
-
-```bash
-npm run memory:down
-```
-
-### Inspect memory container logs
-
-```bash
-npm run memory:logs
-```
-
-### Reset memory (wipe all data)
-
-```bash
-npm run memory:reset
-```
-
-**Warning**: This destroys the `tala_memory_data` Docker volume. All stored
-memories, entities, episodes, and observations will be lost. Migrations will
-re-run on next app start.
-
-### Use a remote or custom PostgreSQL
-
-Set the environment variable before starting:
-
-```bash
-export TALA_DB_CONNECTION_STRING="postgresql://user:pass@my-db-host:5432/tala"
-npm run dev
-```
-
-The bootstrap scripts detect this variable and skip Docker provisioning
-entirely. The app connects to the specified DB as normal.
-
----
-
-## Degraded Mode
-
-If Docker is unavailable or the container fails to start, the bootstrap
-scripts **exit 0 with a warning** rather than crashing. This preserves the
-existing behavior of `initCanonicalMemory()` in `electron/main.ts`, which is
-already non-fatal — the app starts and the memory store is simply unavailable.
-
-Log messages are prefixed with `[memory-bootstrap]` for easy identification.
-
-When running in degraded mode:
-- The app starts normally
-- Memory operations (store/retrieve) fail gracefully
-- The inference and chat flows continue without memory context
-
-To diagnose:
-
-```bash
-npm run memory:logs
-# or
-docker inspect tala-memory-db
-```
-
----
-
-## Reachability Probe
-
-`scripts/check-db-reachable.js` — pure Node.js TCP probe (no npm dependencies).
-
-Resolves the target from:
-1. `TALA_DB_CONNECTION_STRING` (parsed for host/port)
-2. `TALA_DB_HOST` / `TALA_DB_PORT` env vars
-3. Default: `localhost:5432`
-
-Opens a socket with a 3-second timeout. Exit 0 = reachable, exit 1 = not reachable.
-
-This probe is also usable standalone:
-
-```bash
-node scripts/check-db-reachable.js && echo "DB up" || echo "DB down"
+Or via settings:
+```json
+{ "databaseBootstrap": { "allowDockerFallback": true } }
 ```
 
 ---
 
 ## Remote PostgreSQL Support
 
-No local assumptions are hardcoded into the repository or app code.
-
-To use a managed/remote PostgreSQL:
+Set `TALA_DB_CONNECTION_STRING` to bypass all local runtime logic:
 
 ```bash
-export TALA_DB_CONNECTION_STRING="postgresql://user:pass@host:5432/tala"
+export TALA_DB_CONNECTION_STRING="postgresql://user:pass@my-db-host:5432/tala"
+npm run dev
 ```
 
-The bootstrap scripts skip Docker provisioning. The app's `resolveDatabaseConfig()`
-reads this variable at the highest priority.
+The bootstrap coordinator detects this variable at the highest priority and
+skips native runtime startup entirely.
 
-For production or staging environments, this is the expected configuration path.
+---
+
+## Bootstrap Configuration Reference
+
+`shared/dbBootstrapConfig.ts` defines `DatabaseBootstrapConfig`:
+
+```typescript
+{
+  // 'auto'          — native first, Docker fallback if allowed, then degraded
+  // 'native'        — native runtime only
+  // 'docker'        — Docker only (developer override)
+  // 'external-only' — use env/settings config, no local runtime
+  bootstrapMode: 'auto' | 'native' | 'docker' | 'external-only';
+
+  // Whether Docker is probed as a fallback (auto mode only). Default: false.
+  allowDockerFallback: boolean;
+
+  localRuntime: {
+    enabled: boolean;              // Default: true
+    portOverride?: number;         // Default: 5432
+    runtimePathOverride?: string;  // Override binary root
+    dataPathOverride?: string;     // Override data directory
+  };
+}
+```
+
+In `app_settings.json`:
+```json
+{
+  "databaseBootstrap": {
+    "bootstrapMode": "auto",
+    "allowDockerFallback": false,
+    "localRuntime": { "enabled": true }
+  }
+}
+```
+
+---
+
+## Degraded Mode
+
+If no viable bootstrap path is found the coordinator logs a structured warning
+and returns a degraded result. `initCanonicalMemory()` in `electron/main.ts` is
+called non-fatally; the app starts and memory operations fail gracefully.
+
+To diagnose:
+- Check `logs/postgres/postgres.log` in the platform data root
+- Check the Electron main-process log for `[DatabaseBootstrapCoordinator]` entries
+- Run `npm run memory:check` for a memory subsystem audit
 
 ---
 
@@ -221,24 +267,29 @@ For production or staging environments, this is the expected configuration path.
 
 | Layer | Responsibility |
 |---|---|
-| `docker-compose.memory.yml` | Container definition only — no schema, no init SQL |
-| `bootstrap-memory.sh/.ps1` | Provision container; wait for readiness |
-| `check-db-reachable.js` | TCP-level DB probe |
-| `electron/services/db/initMemoryStore.ts` | App-level connection + migration |
-| `electron/services/db/MigrationRunner.ts` | Schema migrations |
-| `electron/services/db/resolveDatabaseConfig.ts` | Config resolution from env/settings/defaults |
+| `resolveDatabaseBootstrapPlan` | Determine bootstrap path from env/config |
+| `LocalDatabaseRuntime` | Platform path resolution, connection config |
+| `PostgresProcessManager` | postgres process lifecycle (initdb, start, stop, probe) |
+| `DatabaseBootstrapCoordinator` | Orchestrate bootstrap flow, native runtime lifetime |
+| `initMemoryStore.ts` | Wire coordinator → repository → migrations |
+| `MigrationRunner` | Schema migrations (always app responsibility, never bootstrap scripts) |
+| `docker-compose.memory.yml` | Optional Docker container definition only |
+| `scripts/memory-cmd.js` | Developer CLI for Docker-based memory stack |
 
-Migrations are **never** run from bootstrap scripts. They remain the app's
-responsibility via `initCanonicalMemory()` in `electron/main.ts`.
+Migrations are **never** run from bootstrap scripts or Docker init SQL.
+They remain the app's responsibility via `MigrationRunner` and
+`initCanonicalMemory()` in `electron/main.ts`.
 
 ---
 
 ## Related Files
 
 - `shared/dbConfig.ts` — `DatabaseConfig` interface and defaults
+- `shared/dbBootstrapConfig.ts` — `DatabaseBootstrapConfig` interface and defaults
 - `electron/services/db/resolveDatabaseConfig.ts` — runtime config resolver
 - `electron/services/db/PostgresMemoryRepository.ts` — repository implementation
 - `electron/services/db/MigrationRunner.ts` — migration runner
 - `electron/migrations/` — SQL migration files
-- `electron/main.ts` (lines 46–51) — `initCanonicalMemory()` call site
+- `electron/main.ts` (lines ~258–262) — `initCanonicalMemory()` call site
 - `docs/architecture/canonical_memory_foundation.md` — Phase A memory architecture
+
