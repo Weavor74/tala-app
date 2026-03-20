@@ -5,11 +5,13 @@ Bootstrap Script for TALA (The Autonomous Local Agent)
 .DESCRIPTION
 This script is designed to be downloaded and run on a fresh machine.
 It will:
-1. Check for prerequisite software (Python and Node.js).
-2. Create all necessary runtime directories (models, data).
-3. Download a default, lightweight Llama 3.2 3B Instruct model (Q4_K_M).
-4. Install all Node.js frontend and framework dependencies.
-5. Create Python virtual environments and install all requirements, prioritizing
+1. Validate that required source files exist in the repository.
+2. Validate that package.json declares all required Node.js dependencies.
+3. Check for prerequisite software (Python and Node.js).
+4. Create all necessary runtime directories (models, data).
+5. Download a default, lightweight Llama 3.2 3B Instruct model (Q4_K_M).
+6. Install Node.js dependencies (npm ci when package-lock.json exists, otherwise npm install).
+7. Create Python virtual environments and install all requirements, prioritizing
    pre-built binary wheels for llama-cpp-python to bypass C++ compilation.
 
 .NOTES
@@ -32,9 +34,81 @@ Write-Host "      Repo root: $RepoRoot"
 Write-Host ""
 
 # ---------------------------------------------------------
+# 0. Validate Required Source Files
+# ---------------------------------------------------------
+Write-Host "[0/8] Validating Required Repository Source Files..." -ForegroundColor Yellow
+
+$RequiredFiles = @(
+    "shared/memory/MemoryRepository.ts",
+    "shared/memory/memoryTypes.ts",
+    "electron/services/db/PostgresMemoryRepository.ts",
+    "electron/services/db/MigrationRunner.ts",
+    "electron/services/db/initMemoryStore.ts",
+    "package.json"
+)
+
+$missingFiles = @()
+foreach ($RelPath in $RequiredFiles) {
+    $FullPath = Join-Path $RepoRoot $RelPath
+    if (-not (Test-Path $FullPath)) {
+        $missingFiles += $RelPath
+        Write-Host "      [MISSING] $RelPath" -ForegroundColor Red
+    } else {
+        Write-Host "      [OK]      $RelPath" -ForegroundColor Green
+    }
+}
+
+if ($missingFiles.Count -gt 0) {
+    Write-Host ""
+    Write-Host "      [ERROR] $($missingFiles.Count) required source file(s) are missing." -ForegroundColor Red
+    Write-Host "      Bootstrap cannot continue without these files." -ForegroundColor Red
+    Write-Host "      Please ensure the repository is fully cloned and all source files are present."
+    exit 1
+}
+
+# ---------------------------------------------------------
+# 0b. Validate Required Node.js Dependencies in package.json
+# ---------------------------------------------------------
+Write-Host "`n[0b/8] Validating package.json Node.js Dependencies..." -ForegroundColor Yellow
+
+$PackageJsonPath = Join-Path $RepoRoot "package.json"
+$packageContent  = Get-Content $PackageJsonPath -Raw | ConvertFrom-Json
+
+$RequiredDeps = [ordered]@{
+    "pg"        = "dependencies"
+    "pgvector"  = "dependencies"
+    "@types/pg" = "devDependencies"
+}
+
+$missingDeps = @()
+foreach ($dep in $RequiredDeps.Keys) {
+    $section = $RequiredDeps[$dep]
+    $found   = $false
+    if ($section -eq "dependencies" -and $packageContent.dependencies.PSObject.Properties[$dep]) {
+        $found = $true
+    } elseif ($section -eq "devDependencies" -and $packageContent.devDependencies.PSObject.Properties[$dep]) {
+        $found = $true
+    }
+    if ($found) {
+        Write-Host "      [OK] $dep ($section)" -ForegroundColor Green
+    } else {
+        $missingDeps += "$dep (expected in $section)"
+        Write-Host "      [MISSING] $dep (expected in $section)" -ForegroundColor Red
+    }
+}
+
+if ($missingDeps.Count -gt 0) {
+    Write-Host ""
+    Write-Host "      [ERROR] package.json is missing required dependencies:" -ForegroundColor Red
+    foreach ($d in $missingDeps) { Write-Host "        - $d" -ForegroundColor Red }
+    Write-Host "      Add them with: npm install pg pgvector && npm install --save-dev @types/pg"
+    exit 1
+}
+
+# ---------------------------------------------------------
 # 1. Environment Checks
 # ---------------------------------------------------------
-Write-Host "[1/6] Checking Prerequisites..." -ForegroundColor Yellow
+Write-Host "`n[1/8] Checking Prerequisites..." -ForegroundColor Yellow
 
 # Check Node
 try {
@@ -74,7 +148,7 @@ try {
 # ---------------------------------------------------------
 # 2. Create Missing Folders
 # ---------------------------------------------------------
-Write-Host "`n[2/6] Creating Runtime Directories..." -ForegroundColor Yellow
+Write-Host "`n[2/8] Creating Runtime Directories..." -ForegroundColor Yellow
 
 $Dirs = @("models", "data", "bin\python-win", "memory")
 foreach ($Dir in $Dirs) {
@@ -90,7 +164,7 @@ foreach ($Dir in $Dirs) {
 # ---------------------------------------------------------
 # 3. Download LLM (.gguf)
 # ---------------------------------------------------------
-Write-Host "`n[3/6] Downloading Default Local LLM..." -ForegroundColor Yellow
+Write-Host "`n[3/8] Downloading Default Local LLM..." -ForegroundColor Yellow
 
 $ModelUrl = "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 $ModelDest = Join-Path $RepoRoot "models\Llama-3.2-3B-Instruct-Q4_K_M.gguf"
@@ -107,14 +181,23 @@ if (-not (Test-Path $ModelDest)) {
 # ---------------------------------------------------------
 # 4. Install Node Libraries
 # ---------------------------------------------------------
-Write-Host "`n[4/6] Installing Node.js Dependencies..." -ForegroundColor Yellow
+Write-Host "`n[4/8] Installing Node.js Dependencies..." -ForegroundColor Yellow
 
 $PackageJson = Join-Path $RepoRoot "package.json"
 if (Test-Path $PackageJson) {
-    Write-Host "      Running npm install in: $RepoRoot"
-    npm install
+    $LockFile = Join-Path $RepoRoot "package-lock.json"
+    if (Test-Path $LockFile) {
+        Write-Host "      package-lock.json found — running npm ci for deterministic install."
+        # --ignore-scripts prevents arbitrary postinstall scripts from running during bootstrap.
+        # Note: node-pty requires native build tools (node-gyp) to run its install script;
+        # if needed, run: npm rebuild node-pty  after initial installation.
+        npm ci --ignore-scripts
+    } else {
+        Write-Host "      No package-lock.json — running npm install."
+        npm install --ignore-scripts
+    }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "      [ERROR] npm install failed." -ForegroundColor Red
+        Write-Host "      [ERROR] npm dependency installation failed." -ForegroundColor Red
         exit 1
     }
     Write-Host "      [OK] Node packages installed." -ForegroundColor Green
@@ -126,7 +209,7 @@ if (Test-Path $PackageJson) {
 # ---------------------------------------------------------
 # 5. Setup Python Virtual Envs & MCP Servers
 # ---------------------------------------------------------
-Write-Host "`n[5/6] Building Python Virtual Environments..." -ForegroundColor Yellow
+Write-Host "`n[5/8] Building Python Virtual Environments..." -ForegroundColor Yellow
 
 # Function to build a venv and install requirements
 # $ModulePath is relative to $RepoRoot
@@ -194,7 +277,7 @@ foreach ($Mod in $PythonModules) {
 # ---------------------------------------------------------
 # 6. Provision PostgreSQL (install/start/create DB + pgvector)
 # ---------------------------------------------------------
-Write-Host "`n[6/6] Provisioning PostgreSQL..." -ForegroundColor Yellow
+Write-Host "`n[6/8] Provisioning PostgreSQL..." -ForegroundColor Yellow
 
 $PgHelper = Join-Path $RepoRoot "scripts\bootstrap-postgres.ps1"
 if (Test-Path $PgHelper) {
