@@ -184,6 +184,8 @@ if (-not $pgInstalled) {
         # --- Detect best available winget package id for PostgreSQL ---
         # Run 'winget search PostgreSQL' and pick the first recognized id.
         # This avoids hardcoding a stale package id that may no longer exist.
+        # PostgreSQL.PostgreSQL is preferred because it tracks the latest stable version;
+        # versioned ids (17, 16, ...) are fallbacks when only that specific version is listed.
         $preferredIds = @(
             "PostgreSQL.PostgreSQL",
             "PostgreSQL.PostgreSQL.17",
@@ -224,8 +226,9 @@ if (-not $pgInstalled) {
         # We pass --override to set the superuser password and port in unattended mode.
         # NOTE: passing the password via --override embeds it in the command line, which
         # may be visible in process listings during the install. This is a known limitation
-        # of the EDB unattended installer on Windows. The password is the local bootstrap
-        # superuser password (TALA_PG_SUPERPASSWORD), not the app's own password.
+        # of the PostgreSQL Windows installer (including EDB-packaged releases). The password
+        # is the local bootstrap superuser password (TALA_PG_SUPERPASSWORD), not the app's
+        # own password.
         $overrideArgs = "--mode unattended --superpassword $AdminPass --serverport $DbPort"
         & winget install --id $packageId --silent `
             --accept-source-agreements --accept-package-agreements `
