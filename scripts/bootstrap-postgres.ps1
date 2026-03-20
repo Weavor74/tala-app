@@ -116,12 +116,23 @@ function Invoke-Psql {
         [string]$User = $AdminUser,
         [string]$Pass = $AdminPass
     )
+    # Windows PowerShell 5.1 + native stderr + $ErrorActionPreference = Stop can abort
+    # the script before recovery logic runs.  Redirect stderr to a temp file so it is
+    # captured as plain text without being promoted to a terminating PowerShell error record.
+    $stderrFile = [System.IO.Path]::GetTempFileName()
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $Pass
-    $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $User -d $Database `
-        -c $Sql -t -A -X 2>&1
-    $Script:PsqlCode = $LASTEXITCODE
-    $env:PGPASSWORD = $old
+    $out = $null
+    try {
+        $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $User -d $Database `
+            -c $Sql -t -A -X 2>$stderrFile
+        $Script:PsqlCode = $LASTEXITCODE
+        $stderrText = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+        if ($stderrText) { $out = @($out) + @($stderrText.TrimEnd()) }
+    } finally {
+        $env:PGPASSWORD = $old
+        Remove-Item $stderrFile -ErrorAction SilentlyContinue
+    }
     return $out
 }
 
@@ -427,13 +438,24 @@ PG-Info "Enabling pgvector extension in '$DbName'..."
 $Script:VecErrText = ""
 function Try-EnableVectorExtension {
     if (-not $Script:PsqlExe) { return $false }
+    # Windows PowerShell 5.1 + native stderr + $ErrorActionPreference = Stop can abort
+    # the script before recovery logic runs.  Redirect stderr to a temp file so it is
+    # captured as plain text without being promoted to a terminating PowerShell error record.
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    $code = 1
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $DbPassword
-    $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
-        -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>&1
-    $code = $LASTEXITCODE
-    $env:PGPASSWORD = $old
-    $Script:VecErrText = ($out -join " ")
+    $out = $null
+    try {
+        $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
+            -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>$stderrFile
+        $code = $LASTEXITCODE
+        $stderrText = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+        $Script:VecErrText = ((@($out) + @($stderrText)) -join " ").Trim()
+    } finally {
+        $env:PGPASSWORD = $old
+        Remove-Item $stderrFile -ErrorAction SilentlyContinue
+    }
     return ($code -eq 0)
 }
 
