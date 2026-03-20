@@ -1,4 +1,5 @@
 import type { DatabaseConfig } from './dbConfig';
+import type { DatabaseBootstrapConfig } from './dbBootstrapConfig';
 
 /**
  * Application Settings Schema Definitions
@@ -270,4 +271,5 @@ export interface AppSettings {
     notebooks: Notebook[];
     firewall: FirewallConfig;
     database?: Partial<DatabaseConfig>;
+    databaseBootstrap?: Partial<DatabaseBootstrapConfig>;
 }
