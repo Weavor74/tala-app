@@ -36,10 +36,10 @@ $ErrorActionPreference = "Stop"
 # -----------------------------------------------------------------------
 # Logging helpers — consistent with bootstrap.ps1 style
 # -----------------------------------------------------------------------
-function PG-Ok   { param($msg) Write-Host "      [OK] $msg"    -ForegroundColor Green  }
-function PG-Info { param($msg) Write-Host "      $msg"                                 }
+function PG-Ok { param($msg) Write-Host "      [OK] $msg"    -ForegroundColor Green }
+function PG-Info { param($msg) Write-Host "      $msg" }
 function PG-Warn { param($msg) Write-Host "      [WARN] $msg"  -ForegroundColor Yellow }
-function PG-Fail { param($msg) Write-Host "      [ERROR] $msg" -ForegroundColor Red    }
+function PG-Fail { param($msg) Write-Host "      [ERROR] $msg" -ForegroundColor Red }
 
 # -----------------------------------------------------------------------
 # 0. Skip if caller supplies an external DB connection string
@@ -52,21 +52,21 @@ if ($env:TALA_DB_CONNECTION_STRING) {
 # -----------------------------------------------------------------------
 # Resolve configuration with env overrides
 # -----------------------------------------------------------------------
-$DbHost      = if ($env:TALA_DB_HOST)          { $env:TALA_DB_HOST }          else { "localhost" }
-$DbPort      = if ($env:TALA_DB_PORT)          { $env:TALA_DB_PORT }          else { "5432" }
-$DbName      = if ($env:TALA_DB_NAME)          { $env:TALA_DB_NAME }          else { "tala" }
-$DbUser      = if ($env:TALA_DB_USER)          { $env:TALA_DB_USER }          else { "tala" }
-$DbPassword  = if ($env:TALA_DB_PASSWORD)      { $env:TALA_DB_PASSWORD }      else { "tala" }
-$AdminPass   = if ($env:TALA_PG_SUPERPASSWORD) { $env:TALA_PG_SUPERPASSWORD } else { "postgres" }
-$AdminUser   = "postgres"
+$DbHost = if ($env:TALA_DB_HOST) { $env:TALA_DB_HOST }          else { "localhost" }
+$DbPort = if ($env:TALA_DB_PORT) { $env:TALA_DB_PORT }          else { "5432" }
+$DbName = if ($env:TALA_DB_NAME) { $env:TALA_DB_NAME }          else { "tala" }
+$DbUser = if ($env:TALA_DB_USER) { $env:TALA_DB_USER }          else { "tala" }
+$DbPassword = if ($env:TALA_DB_PASSWORD) { $env:TALA_DB_PASSWORD }      else { "tala" }
+$AdminPass = if ($env:TALA_PG_SUPERPASSWORD) { $env:TALA_PG_SUPERPASSWORD } else { "postgres" }
+$AdminUser = "postgres"
 
 # Validate identifier-type overrides against a safe pattern (alphanumeric + underscore)
 # to prevent shell/SQL injection via env vars before they are embedded in psql commands.
 $SafeIdPattern = '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
 foreach ($pair in @(
-    @{ Name = "TALA_DB_NAME (resolved: '$DbName')"; Value = $DbName },
-    @{ Name = "TALA_DB_USER (resolved: '$DbUser')"; Value = $DbUser }
-)) {
+        @{ Name = "TALA_DB_NAME (resolved: '$DbName')"; Value = $DbName },
+        @{ Name = "TALA_DB_USER (resolved: '$DbUser')"; Value = $DbUser }
+    )) {
     if ($pair.Value -notmatch $SafeIdPattern) {
         PG-Fail "$($pair.Name) is not a valid PostgreSQL identifier."
         PG-Fail "Allowed: letters, digits, underscores; must start with a letter or underscore; max 63 chars."
@@ -92,8 +92,8 @@ function Find-Psql {
     foreach ($base in $bases) {
         if (-not (Test-Path $base)) { continue }
         $versions = Get-ChildItem -Path $base -Directory -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match '^\d+' } |
-                    Sort-Object   { [int]($_.Name -replace '[^\d].*', '') } -Descending
+        Where-Object { $_.Name -match '^\d+' } |
+        Sort-Object { [int]($_.Name -replace '[^\d].*', '') } -Descending
         foreach ($ver in $versions) {
             $candidate = Join-Path $ver.FullName "bin\psql.exe"
             if (Test-Path $candidate) { return $candidate }
@@ -113,15 +113,15 @@ function Invoke-Psql {
     param(
         [string]$Sql,
         [string]$Database = "postgres",
-        [string]$User     = $AdminUser,
-        [string]$Pass     = $AdminPass
+        [string]$User = $AdminUser,
+        [string]$Pass = $AdminPass
     )
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $Pass
     $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $User -d $Database `
-                              -c $Sql -t -A -X 2>&1
+        -c $Sql -t -A -X 2>&1
     $Script:PsqlCode = $LASTEXITCODE
-    $env:PGPASSWORD  = $old
+    $env:PGPASSWORD = $old
     return $out
 }
 
@@ -131,20 +131,20 @@ function Invoke-Psql {
 PG-Info "Detecting PostgreSQL..."
 
 $Script:PsqlExe = Find-Psql
-$pgService      = $null
-$pgServices     = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
+$pgService = $null
+$pgServices = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
 if ($pgServices) {
     # Prefer an already-running service; fall back to any found service
     $pgService = $pgServices |
-                 Sort-Object { if ($_.Status -eq 'Running') { 0 } else { 1 } } |
-                 Select-Object -First 1
+    Sort-Object { if ($_.Status -eq 'Running') { 0 } else { 1 } } |
+    Select-Object -First 1
     PG-Info "PostgreSQL service found: '$($pgService.Name)' (Status: $($pgService.Status))"
 }
 
 $pgInstalled = ($null -ne $Script:PsqlExe) -or ($null -ne $pgService)
 if ($pgInstalled) {
     if ($Script:PsqlExe) { PG-Ok "psql found: $($Script:PsqlExe)" }
-    else                  { PG-Info "psql not yet in PATH; service detected." }
+    else { PG-Info "psql not yet in PATH; service detected." }
 }
 
 # -----------------------------------------------------------------------
@@ -158,16 +158,17 @@ if (-not $pgInstalled) {
     if ($localInstaller -and (Test-Path $localInstaller)) {
         PG-Info "Using local installer: $localInstaller"
         $installArgs = @(
-            "--mode",            "unattended",
-            "--superpassword",   $AdminPass,
-            "--servicename",     "postgresql",
+            "--mode", "unattended",
+            "--superpassword", $AdminPass,
+            "--servicename", "postgresql",
             "--servicepassword", "postgres",
-            "--serverport",      $DbPort
+            "--serverport", $DbPort
         )
         Start-Process -FilePath $localInstaller -ArgumentList $installArgs -Wait -NoNewWindow
         PG-Ok "Installer completed."
 
-    } else {
+    }
+    else {
         # --- Option B: winget ---
         $wingetExe = Get-Command winget -ErrorAction SilentlyContinue
         if (-not $wingetExe) {
@@ -192,8 +193,8 @@ if (-not $pgInstalled) {
         # superuser password (TALA_PG_SUPERPASSWORD), not the app's own password.
         $overrideArgs = "--mode unattended --superpassword $AdminPass --serverport $DbPort"
         winget install --id EDB.PostgreSQL.16 --silent `
-              --accept-source-agreements --accept-package-agreements `
-              --override $overrideArgs 2>&1 | ForEach-Object { PG-Info $_ }
+            --accept-source-agreements --accept-package-agreements `
+            --override $overrideArgs 2>&1 | ForEach-Object { PG-Info $_ }
 
         # winget exit 0 = success; -1978335135 (0x8A150021) = already installed (also fine)
         $wec = $LASTEXITCODE
@@ -209,7 +210,7 @@ if (-not $pgInstalled) {
 
     # Refresh PATH for this process so pg_* tools become available
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
+    [System.Environment]::GetEnvironmentVariable("Path", "User")
 
     $Script:PsqlExe = Find-Psql
     if (-not $Script:PsqlExe) {
@@ -225,10 +226,11 @@ if (-not $pgInstalled) {
     $pgServices = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
     if ($pgServices) {
         $pgService = $pgServices |
-                     Sort-Object { if ($_.Status -eq 'Running') { 0 } else { 1 } } |
-                     Select-Object -First 1
+        Sort-Object { if ($_.Status -eq 'Running') { 0 } else { 1 } } |
+        Select-Object -First 1
     }
-} else {
+}
+else {
     PG-Ok "PostgreSQL already installed."
 }
 
@@ -242,7 +244,8 @@ if ($pgService) {
             Start-Service -Name $pgService.Name -ErrorAction Stop
             Start-Sleep -Seconds 3
             $pgService.Refresh()
-        } catch {
+        }
+        catch {
             PG-Fail "Could not start service '$($pgService.Name)': $_"
             PG-Fail "Try manually:"
             PG-Fail "  Start-Service '$($pgService.Name)'"
@@ -253,22 +256,25 @@ if ($pgService) {
 
     if ($pgService.Status -eq 'Running') {
         PG-Ok "PostgreSQL service '$($pgService.Name)' is running."
-    } else {
+    }
+    else {
         PG-Fail "Service '$($pgService.Name)' did not reach Running state (current: $($pgService.Status))."
         exit 1
     }
-} else {
+}
+else {
     # No Windows service found — verify TCP reachability before proceeding
     PG-Warn "No PostgreSQL Windows service detected."
     PG-Info "Checking TCP reachability at ${DbHost}:${DbPort}..."
     try {
-        $tcp     = New-Object System.Net.Sockets.TcpClient
+        $tcp = New-Object System.Net.Sockets.TcpClient
         $connect = $tcp.BeginConnect($DbHost, [int]$DbPort, $null, $null)
-        $ok      = $connect.AsyncWaitHandle.WaitOne(3000)
+        $ok = $connect.AsyncWaitHandle.WaitOne(3000)
         $tcp.Close()
         if (-not $ok) { throw "timeout" }
         PG-Ok "PostgreSQL is reachable at ${DbHost}:${DbPort}."
-    } catch {
+    }
+    catch {
         PG-Fail "PostgreSQL is not reachable at ${DbHost}:${DbPort} and no service was found."
         PG-Fail "Ensure PostgreSQL is running, then re-run: .\bootstrap.ps1"
         exit 1
@@ -290,7 +296,8 @@ if ($Script:PsqlCode -ne 0) {
 
 if (($roleOut -join "").Trim() -eq "1") {
     PG-Ok "Role '$DbUser' already exists."
-} else {
+}
+else {
     PG-Info "Creating role '$DbUser'..."
     # NOTE: psql -c does not support parameterized queries, so the password is embedded
     # directly in the SQL string. PostgreSQL logs DDL statements (CREATE ROLE) at log_min_
@@ -323,7 +330,8 @@ if ($Script:PsqlCode -ne 0) {
 
 if (($dbOut -join "").Trim() -eq "1") {
     PG-Ok "Database '$DbName' already exists."
-} else {
+}
+else {
     PG-Info "Creating database '$DbName' owned by '$DbUser'..."
     $createDb = Invoke-Psql -Sql "CREATE DATABASE $DbName OWNER $DbUser;"
     if ($Script:PsqlCode -ne 0) {
@@ -350,8 +358,8 @@ function Try-EnableVectorExtension {
     if (-not $Script:PsqlExe) { return $false }
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $DbPassword
-    $out  = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
-                -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>&1
+    $out = & $Script:PsqlExe -h $DbHost -p $DbPort -U $DbUser -d $DbName `
+        -c "CREATE EXTENSION IF NOT EXISTS vector;" -t -A -X 2>&1
     $code = $LASTEXITCODE
     $env:PGPASSWORD = $old
     $Script:VecErrText = ($out -join " ")
@@ -363,39 +371,43 @@ function Try-EnableVectorExtension {
 # expose the real error if the extension truly cannot be created.
 $extProbeAlreadyEnabled = $false
 $extProbe = Invoke-Psql -Sql "SELECT 1 FROM pg_extension WHERE extname = 'vector';" `
-                        -Database $DbName -User $DbUser -Pass $DbPassword
+    -Database $DbName -User $DbUser -Pass $DbPassword
 if ($Script:PsqlCode -eq 0 -and ($extProbe -join "").Trim() -eq "1") {
     $extProbeAlreadyEnabled = $true
 }
 
 if ($extProbeAlreadyEnabled) {
     PG-Ok "pgvector extension already enabled in '$DbName'."
-} elseif (Try-EnableVectorExtension) {
+}
+elseif (Try-EnableVectorExtension) {
     PG-Ok "pgvector extension is enabled in database '$DbName'."
-} else {
-    $errText     = $Script:VecErrText
+}
+else {
+    $errText = $Script:VecErrText
     $filesMissing = $errText -match "control file" -or
-                    $errText -match "No such file"  -or
-                    $errText -match "could not open"
+    $errText -match "No such file" -or
+    $errText -match "could not open"
 
     if ($filesMissing -and $Script:PsqlExe) {
         # --- Attempt automatic installation via helper script ---
-        PG-Info "pgvector extension files missing — attempting automatic installation..."
+        PG-Info "pgvector extension files missing - attempting automatic installation..."
         $pgvHelper = Join-Path $PSScriptRoot "install-pgvector-windows.ps1"
 
         if (-not (Test-Path $pgvHelper)) {
             PG-Warn "install-pgvector-windows.ps1 not found at: $pgvHelper"
             PG-Warn "Cannot attempt automatic pgvector installation."
-        } else {
+        }
+        else {
             & $pgvHelper -PsqlExe $Script:PsqlExe -RepoRoot (Split-Path $PSScriptRoot -Parent)
             $installCode = $LASTEXITCODE
 
             if ($installCode -eq 0) {
-                # Files are now in place — retry enabling the extension
-                PG-Info "pgvector files installed — retrying CREATE EXTENSION..."
+                # Files are now in place - retry enabling the extension
+                PG-Info "pgvector files installed - retrying CREATE EXTENSION..."
                 if (Try-EnableVectorExtension) {
                     PG-Ok "pgvector extension is enabled in database '$DbName'."
-                } else {
+                }
+                else {
                     PG-Warn "CREATE EXTENSION still failed after bundle installation."
                     PG-Warn "Error: $($Script:VecErrText)"
                     PG-Warn "This may require a PostgreSQL service restart to load the new library."
@@ -404,7 +416,8 @@ if ($extProbeAlreadyEnabled) {
                     PG-Warn "  Then re-run: .\bootstrap.ps1"
                     PG-Warn "Memory store will run in degraded mode until pgvector is available."
                 }
-            } else {
+            }
+            else {
                 # Helper reported failure; it already printed detailed diagnostics
                 PG-Warn "Automatic pgvector installation did not complete."
                 PG-Warn ""
@@ -420,11 +433,12 @@ if ($extProbeAlreadyEnabled) {
                 PG-Warn "Memory store will run in degraded mode until pgvector is available."
             }
         }
-    } else {
+    }
+    else {
         PG-Warn "pgvector extension could not be enabled: $errText"
         PG-Warn "Memory store may run in degraded mode."
     }
-    # Not fatal — the app handles degraded mode gracefully.
+    # Not fatal - the app handles degraded mode gracefully.
 }
 
 # -----------------------------------------------------------------------
