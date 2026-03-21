@@ -28,6 +28,9 @@ import type {
   CreateMemoryLinkInput,
   EmbeddingRecord,
   CreateEmbeddingInput,
+  UpsertEmbeddingInput,
+  SimilaritySearchOptions,
+  SemanticSearchResult,
 } from './memoryTypes';
 
 export type {
@@ -47,6 +50,9 @@ export type {
   CreateMemoryLinkInput,
   EmbeddingRecord,
   CreateEmbeddingInput,
+  UpsertEmbeddingInput,
+  SimilaritySearchOptions,
+  SemanticSearchResult,
 };
 
 export interface MemoryRepository {
@@ -104,4 +110,33 @@ export interface MemoryRepository {
    * to avoid returning large vectors in standard responses.
    */
   createEmbedding(input: CreateEmbeddingInput): Promise<EmbeddingRecord>;
+
+  /**
+   * Upsert a vector embedding keyed on (owner_kind, owner_id, chunk_index, embedding_model).
+   *
+   * If an embedding for that composite key already exists, updates the content,
+   * content_hash, embedding vector, and metadata in place. Otherwise inserts a new row.
+   * The returned record has embedding: null to avoid large payloads.
+   *
+   * Requires migration 007_embeddings_upsert_key.sql to be applied.
+   */
+  upsertEmbedding(input: UpsertEmbeddingInput): Promise<EmbeddingRecord>;
+
+  /**
+   * Search observations by semantic similarity to a query embedding.
+   *
+   * Performs a nearest-neighbor search over the embeddings index using pgvector
+   * cosine distance (<=>), joins back to the observations table, and returns
+   * the top-K matching ObservationRecord instances ranked by similarity.
+   *
+   * Only embeddings with owner_kind = 'observation' and a non-null vector are
+   * considered. Results below minSimilarity (if set) are excluded.
+   *
+   * @param queryEmbedding - vector(1536) query vector
+   * @param options - model filter, topK, minSimilarity
+   */
+  searchObservationsBySimilarity(
+    queryEmbedding: number[],
+    options?: SimilaritySearchOptions,
+  ): Promise<SemanticSearchResult<ObservationRecord>[]>;
 }
