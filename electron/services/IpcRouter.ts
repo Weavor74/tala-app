@@ -25,6 +25,8 @@ import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
 import { A2UIActionBridge } from './A2UIActionBridge';
 import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
 import { getResearchRepository } from './db/initMemoryStore';
+import { getRetrievalOrchestrator, refreshExternalProvider } from './retrieval/RetrievalOrchestratorRegistry';
+import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 
 export interface IpcRouterContext {
   app: any;
@@ -1507,6 +1509,52 @@ export class IpcRouter {
       try {
         const scope = await repo.resolveNotebookScope(notebookId);
         return { ok: true, scope };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    // ─── Retrieval Orchestration ────────────────────────────────────────────────
+
+    /**
+     * Execute a canonical retrieval request via RetrievalOrchestrator.
+     * Supports local and external providers; provider selection via providerIds.
+     * Returns a RetrievalResponse with merged, deduplicated, sorted results.
+     */
+    ipcMain.handle('retrieval:retrieve', async (_e, request: RetrievalRequest) => {
+      const orchestrator = getRetrievalOrchestrator();
+      if (!orchestrator) {
+        return { ok: false, error: 'RetrievalOrchestrator not initialized' };
+      }
+      try {
+        const response = await orchestrator.retrieve(request);
+        return { ok: true, response };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** List all currently registered retrieval providers. */
+    ipcMain.handle('retrieval:listProviders', async () => {
+      const orchestrator = getRetrievalOrchestrator();
+      if (!orchestrator) {
+        return { ok: false, error: 'RetrievalOrchestrator not initialized' };
+      }
+      const providers = orchestrator.listProviders().map(p => ({
+        id: p.id,
+        supportedModes: p.supportedModes,
+      }));
+      return { ok: true, providers };
+    });
+
+    /**
+     * Refresh the external search provider registration from current settings.
+     * Call after user applies settings changes in the Search tab.
+     */
+    ipcMain.handle('retrieval:refreshExternalProvider', async () => {
+      try {
+        refreshExternalProvider(getSettingsPath());
+        return { ok: true };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
       }

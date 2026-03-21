@@ -44,7 +44,8 @@ import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggre
 import { RuntimeControlService } from './services/RuntimeControlService';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
-import { initCanonicalMemory, shutdownCanonicalMemory } from './services/db/initMemoryStore';
+import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository } from './services/db/initMemoryStore';
+import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchestratorRegistry';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -260,6 +261,19 @@ app.on('ready', async () => {
     await initCanonicalMemory();
   } catch (err) {
     console.warn('[Main] Canonical memory store unavailable — continuing without it:', err);
+  }
+
+  // ─── Retrieval Orchestrator ──────────────────────────────────────────────────
+  // Wire LocalSearchProvider and ExternalApiSearchProvider (from Settings).
+  // Non-fatal: if settings are unavailable the local provider still works.
+  try {
+    initRetrievalOrchestrator({
+      fileService,
+      researchRepo: getResearchRepository() ?? undefined,
+      settingsPath: SETTINGS_PATH,
+    });
+  } catch (err) {
+    console.warn('[Main] RetrievalOrchestrator init failed — retrieval degraded:', err);
   }
 
   const info = await systemService.detectEnv(fileService.getRoot());
