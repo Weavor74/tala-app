@@ -402,6 +402,14 @@ contextBridge.exposeInMainWorld('tala', {
     /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
     researchResolveNotebookScope: (notebookId: string) => ipcRenderer.invoke('research:resolveNotebookScope', notebookId),
 
+    // ─── Content Ingestion ────────────────────────────────────────────────────
+    /** Ingest all notebook items in a notebook into source_documents and document_chunks. */
+    ingestNotebook: (notebookId: string, options?: Record<string, unknown>, refetch?: boolean) =>
+        ipcRenderer.invoke('ingestion:ingestNotebook', notebookId, options, refetch),
+    /** Ingest a list of notebook items by item_key into source_documents and document_chunks. */
+    ingestItems: (itemKeys: string[], notebookId?: string, options?: Record<string, unknown>, refetch?: boolean) =>
+        ipcRenderer.invoke('ingestion:ingestItems', itemKeys, notebookId, options, refetch),
+
     // ─── Retrieval Orchestration ──────────────────────────────────────────────
     /** Execute a canonical retrieval request via RetrievalOrchestrator. */
     retrievalRetrieve: (request: import('../shared/retrieval/retrievalTypes').RetrievalRequest) => ipcRenderer.invoke('retrieval:retrieve', request),

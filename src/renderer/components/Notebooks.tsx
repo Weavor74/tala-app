@@ -456,6 +456,34 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                             >
                                 INGEST SELECTED
                             </button>
+                            {/* Ingest Notebook — explicit ingestion of all notebook items into source_documents. */}
+                            <button
+                                onClick={async () => {
+                                    if (!dbAvailable || !api?.ingestNotebook) {
+                                        alert('Ingestion requires a database connection.');
+                                        return;
+                                    }
+                                    if (!confirm(`Ingest all items in this notebook into the content store?\nThis fetches full content and creates document chunks for retrieval.`)) return;
+                                    const res = await api.ingestNotebook(selectedNotebookId);
+                                    if (res?.ok) {
+                                        const r = res.result;
+                                        const msg = [
+                                            `Ingestion complete.`,
+                                            `Documents created: ${r.documentsCreated}`,
+                                            `Documents skipped (unchanged): ${r.documentsSkipped}`,
+                                            `Chunks created: ${r.chunksCreated}`,
+                                            r.warnings?.length ? `Warnings:\n${r.warnings.join('\n')}` : '',
+                                        ].filter(Boolean).join('\n');
+                                        alert(msg);
+                                    } else {
+                                        alert(`Ingestion failed: ${res?.error ?? 'Unknown error'}`);
+                                    }
+                                }}
+                                title="Fetch full content for all notebook items and store as document chunks"
+                                style={{ background: '#1a4d8c', border: 'none', color: 'white', padding: '6px 15px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                            >
+                                INGEST NOTEBOOK
+                            </button>
                             <button
                                 onClick={async () => {
                                     if (api?.setActiveNotebookContext) {
