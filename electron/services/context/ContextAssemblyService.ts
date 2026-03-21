@@ -17,8 +17,9 @@
  * DESIGN PRINCIPLES:
  *   - Evidence-first: evidence items are always selected before any other class.
  *   - Deterministic: same inputs always produce the same outputs.
- *   - No graph fabrication: graph_context section is structurally supported but
- *     always empty in this pass (graph runtime does not exist yet).
+ *   - Graph context via GraphTraversalService: graph_context items are derived
+ *     from evidence seeds by GraphTraversalService and inserted after evidence
+ *     mapping but before budget enforcement. Empty when traversal is disabled.
  *   - No silent discards: overflow evidence moves to 'latent', not dropped.
  *   - Citation/provenance metadata survives from retrieval into assembled context.
  *   - Backend-owned: this service must not be imported by renderer code.
@@ -36,6 +37,7 @@ import type {
   MemorySelectionClass,
 } from '../../../shared/policy/memoryPolicyTypes';
 import { MemoryPolicyService } from '../policy/MemoryPolicyService';
+import { GraphTraversalService } from '../graph/GraphTraversalService';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
@@ -49,6 +51,7 @@ export class ContextAssemblyService {
   constructor(
     private readonly orchestrator: RetrievalOrchestrator,
     private readonly policyService: MemoryPolicyService = new MemoryPolicyService(),
+    private readonly graphTraversalService: GraphTraversalService = new GraphTraversalService(),
   ) {}
 
   // ─── Primary Entry Point ─────────────────────────────────────────────────
@@ -92,11 +95,30 @@ export class ContextAssemblyService {
       this._mapResultToItem(result, index),
     );
 
+    // 3.5. Expand graph context from evidence candidates (when traversal is enabled).
+    //      Runs after evidence mapping but before budget enforcement so that
+    //      graph_context items can be capped independently from evidence items.
+    let graphContextItems: ContextAssemblyItem[] = [];
+    if (policy.graphTraversal.enabled && policy.groundingMode !== 'strict') {
+      try {
+        const graphCandidates = await this.graphTraversalService.expandFromEvidence({
+          evidenceItems: candidates,
+          policy,
+        });
+        // Apply the graph_context class budget cap.
+        const graphCap = policy.contextBudget.maxItemsPerClass?.graph_context ?? 0;
+        graphContextItems = graphCandidates.slice(0, graphCap);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Graph traversal failed: ${msg}`);
+      }
+    }
+
     // 4. Enforce evidence budget and produce latent overflow.
     const { injected, latent } = this._selectItems(candidates, policy, warnings);
 
-    // 5. Combine injected (evidence) + latent items.
-    const allItems: ContextAssemblyItem[] = [...injected, ...latent];
+    // 5. Combine injected (evidence) + graph_context + latent items.
+    const allItems: ContextAssemblyItem[] = [...injected, ...graphContextItems, ...latent];
 
     // 6. Build class counts.
     const itemCountByClass: Partial<Record<MemorySelectionClass, number>> = {};
