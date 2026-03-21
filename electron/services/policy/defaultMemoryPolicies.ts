@@ -80,7 +80,7 @@ export const DEFAULT_GRAPH_ASSISTED_POLICY: MemoryPolicy = {
       topic: 4,
       document_chunk: 4,
     },
-    minEdgeTrustLevel: 'derived',
+    minEdgeTrustLevel: 'derived',   // edges must be at least derived (rule-based) to traverse
     allowedEdgeTypes: ['supports', 'cites', 'related_to', 'mentions', 'about'],
   },
   contextBudget: {
@@ -119,7 +119,7 @@ export const DEFAULT_EXPLORATORY_POLICY: MemoryPolicy = {
       topic: 6,
       document_chunk: 6,
     },
-    minEdgeTrustLevel: 'inferred_low',
+    minEdgeTrustLevel: 'inferred_low', // permissive: allow low-confidence inferred edges in exploratory mode
     allowedEdgeTypes: [
       'supports',
       'cites',

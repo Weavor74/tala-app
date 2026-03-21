@@ -266,6 +266,10 @@ export class ContextAssemblyService {
     const evidenceCap = Math.min(maxTotal, evidenceClassCap);
 
     // Derive per-document chunk cap from evidence cap.
+    // Per-document chunk cap: ceil(evidenceCap / 2).
+    // Dividing by 2 ensures no single document consumes more than half the
+    // evidence budget, preventing one large document from crowding out all
+    // other sources while still allowing meaningful multi-chunk representation.
     const maxChunksPerDoc = Math.max(1, Math.ceil(evidenceCap / 2));
 
     const injected: ContextAssemblyItem[] = [];
