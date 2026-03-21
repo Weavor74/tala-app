@@ -189,6 +189,12 @@ interface WorkflowConfig {
 ```
 
 ### `Notebook`
+
+> **Deprecated legacy format.** Notebooks are now persisted in PostgreSQL via the `notebooks` table
+> (migration `008_research_collections.sql`). The settings-based `notebooks[]` array is retained only
+> as a fallback when the database is unavailable. New notebook creation goes to PostgreSQL first.
+> See `docs/features/research_collections.md` for the canonical data model.
+
 ```typescript
 interface Notebook {
     id: string;
