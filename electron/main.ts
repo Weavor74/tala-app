@@ -12,6 +12,7 @@
  * 4. Spawns the main UI window.
  * 5. Starts background schedulers (Workflows, Backups).
  */
+import 'dotenv/config'
 import './bootstrap';
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
