@@ -21,6 +21,7 @@
 import { PostgresMemoryRepository } from './PostgresMemoryRepository';
 import { DatabaseBootstrapCoordinator } from './DatabaseBootstrapCoordinator';
 import { ResearchRepository } from './ResearchRepository';
+import { ContentRepository } from './ContentRepository';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
 import type { DatabaseBootstrapConfig } from '../../../shared/dbBootstrapConfig';
 import type { MemoryRepository } from '../../../shared/memory/MemoryRepository';
@@ -30,6 +31,9 @@ let _repository: MemoryRepository | null = null;
 
 /** Singleton research repository — shares pool with _repository once initialized. */
 let _researchRepository: ResearchRepository | null = null;
+
+/** Singleton content repository — shares pool with _repository once initialized. */
+let _contentRepository: ContentRepository | null = null;
 
 /**
  * Singleton coordinator reference.
@@ -120,6 +124,7 @@ export async function initCanonicalMemory(
 
     _repository = repo;
     _researchRepository = new ResearchRepository(repo.getSharedPool());
+    _contentRepository = new ContentRepository(repo.getSharedPool());
     console.log('[initCanonicalMemory] Canonical memory store ready.');
     return _repository;
   } catch (err) {
@@ -151,6 +156,14 @@ export function getResearchRepository(): ResearchRepository | null {
 }
 
 /**
+ * Get the initialized content repository.
+ * Returns null if not yet initialized (canonical memory init must succeed first).
+ */
+export function getContentRepository(): ContentRepository | null {
+  return _contentRepository;
+}
+
+/**
  * Shut down the canonical memory store and any managed runtime.
  *
  * Closes the database connection pool and, if the Tala-managed native
@@ -161,6 +174,7 @@ export async function shutdownCanonicalMemory(): Promise<void> {
     await _repository.close();
     _repository = null;
     _researchRepository = null;
+    _contentRepository = null;
     console.log('[initCanonicalMemory] Canonical memory store shut down.');
   }
 

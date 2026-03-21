@@ -24,7 +24,8 @@ import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
 import { A2UIActionBridge } from './A2UIActionBridge';
 import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
-import { getResearchRepository } from './db/initMemoryStore';
+import { getResearchRepository, getContentRepository } from './db/initMemoryStore';
+import { ContentIngestionService } from './ingestion/ContentIngestionService';
 import { getRetrievalOrchestrator, refreshExternalProvider } from './retrieval/RetrievalOrchestratorRegistry';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 
@@ -1521,6 +1522,42 @@ export class IpcRouter {
       try {
         const scope = await repo.resolveNotebookScope(notebookId);
         return { ok: true, scope };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    // ─── Content Ingestion ──────────────────────────────────────────────────────
+
+    /**
+     * Ingest all notebook items in a notebook into source_documents and document_chunks.
+     * Ingestion is always explicit — never triggered automatically.
+     */
+    ipcMain.handle('ingestion:ingestNotebook', async (_e, notebookId: string, options?: Record<string, unknown>, refetch?: boolean) => {
+      const research = getResearchRepository();
+      const content = getContentRepository();
+      if (!research || !content) return { ok: false, error: 'Repositories not initialized' };
+      try {
+        const svc = new ContentIngestionService(research, content);
+        const result = await svc.ingestNotebook(notebookId, options as any, refetch ?? false);
+        return { ok: true, result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /**
+     * Ingest a list of notebook items by item_key into source_documents and document_chunks.
+     * Ingestion is always explicit — never triggered automatically.
+     */
+    ipcMain.handle('ingestion:ingestItems', async (_e, itemKeys: string[], notebookId?: string, options?: Record<string, unknown>, refetch?: boolean) => {
+      const research = getResearchRepository();
+      const content = getContentRepository();
+      if (!research || !content) return { ok: false, error: 'Repositories not initialized' };
+      try {
+        const svc = new ContentIngestionService(research, content);
+        const result = await svc.ingestItems(itemKeys, notebookId, options as any, refetch ?? false);
+        return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
       }
