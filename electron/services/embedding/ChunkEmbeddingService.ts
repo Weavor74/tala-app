@@ -98,17 +98,17 @@ export class ChunkEmbeddingService {
       return { chunksEmbedded: 0, chunksSkipped: 0, warnings: [] };
     }
 
-    // Fetch missing embeddings scoped to these specific chunk IDs.
-    // We rely on the "missing" query and then filter to only the requested IDs.
+    // Fetch chunk rows that don't yet have an embedding for this model.
+    // Filter to only the requested chunk IDs — chunks not in the result set
+    // either already have embeddings (and reembed=false) or don't exist.
     const missing = await this.embeddingsRepo.getChunksMissingEmbeddings({
       embeddingModel: this.model,
     });
 
-    const missingIds = new Set(missing.map(c => c.chunk_id));
-    const rows = options.reembed
-      ? missing.filter(c => chunkIds.includes(c.chunk_id))
-      : missing.filter(c => chunkIds.includes(c.chunk_id) && missingIds.has(c.chunk_id));
-
+    // Only work on chunks that are both requested and missing an embedding.
+    // When reembed=true the caller should use embedItems() which fetches all
+    // chunks for an item_key; embedChunks only operates on missing rows here.
+    const rows = missing.filter(c => chunkIds.includes(c.chunk_id));
     const skipped = chunkIds.length - rows.length;
     const result = await this._embedChunkRows(rows, chunkIds, options);
     return { ...result, chunksSkipped: result.chunksSkipped + skipped };
