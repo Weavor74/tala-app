@@ -1442,6 +1442,18 @@ export class IpcRouter {
       }
     });
 
+    /** Remove multiple items from a notebook in a single operation. */
+    ipcMain.handle('research:removeNotebookItems', async (_e, notebookId: string, itemKeys: string[]) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const removedCount = await repo.removeNotebookItems(notebookId, itemKeys);
+        return { ok: true, removedCount };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
     /** Create a search run record and store its results. */
     ipcMain.handle('research:createSearchRun', async (_e, input: { query_text: string; notebook_id?: string }) => {
       const repo = getResearchRepository();

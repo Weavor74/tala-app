@@ -158,6 +158,21 @@ export class ResearchRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * Remove multiple items from a notebook in a single query.
+   * Returns the number of rows actually deleted.
+   * Empty or whitespace-only keys are filtered out before the query.
+   */
+  async removeNotebookItems(notebookId: string, itemKeys: string[]): Promise<number> {
+    const validKeys = itemKeys.filter(k => k && k.trim().length > 0);
+    if (validKeys.length === 0) return 0;
+    const result = await this.pool.query(
+      `DELETE FROM notebook_items WHERE notebook_id = $1 AND item_key = ANY($2)`,
+      [notebookId, validKeys]
+    );
+    return result.rowCount ?? 0;
+  }
+
   async listNotebookItems(notebookId: string): Promise<NotebookItemRecord[]> {
     const result = await this.pool.query<NotebookItemRecord>(
       `SELECT * FROM notebook_items WHERE notebook_id = $1 ORDER BY added_at DESC`,

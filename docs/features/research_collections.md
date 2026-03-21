@@ -38,7 +38,8 @@ All handlers are exposed on `window.tala` via `electron/preload.ts` as `research
 | `research:deleteNotebook` | Delete a notebook and its items |
 | `research:listNotebookItems` | List items in a notebook |
 | `research:addItemsToNotebook` | Add items to a notebook |
-| `research:removeNotebookItem` | Remove an item from a notebook |
+| `research:removeNotebookItem` | Remove a single item from a notebook |
+| `research:removeNotebookItems` | Remove multiple items from a notebook in one operation |
 | `research:createSearchRun` | Register a search run |
 | `research:addSearchRunResults` | Store results for a search run |
 | `research:getSearchRunResults` | Get results for a search run |
@@ -97,6 +98,16 @@ Notebook membership is the curation gate. Ingestion is a separate explicit step.
 ## My Notebooks Sidebar
 
 The "My Notebooks" section in the Research sidebar is populated by `researchListNotebooks()` which queries the `notebooks` PostgreSQL table. Notebooks persist across app restarts.
+
+## Notebook Item Actions
+
+Each notebook item card has a per-item **×** remove button (calls `researchRemoveNotebookItem`). Removing an item also removes it from the `activeSources` set immediately.
+
+When one or more items are selected (checked), a **REMOVE SELECTED (N)** button appears in the items toolbar. Clicking it:
+1. Bulk-removes all selected items from `notebook_items` via `researchRemoveNotebookItems` (single SQL `DELETE ... WHERE item_key = ANY(...)`)
+2. If any selected items have a `source_path` (scraped/downloaded content), the user is prompted whether to also remove that content from the RAG store via `rag-delete` / `api.deleteMemory(path)`
+3. RAG deletion failures are reported as a warning (items are still removed from the notebook)
+4. `activeSources` is cleared after removal
 
 ## Retrieval Scoping (RAG Foundation)
 
