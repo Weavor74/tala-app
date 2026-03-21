@@ -17,7 +17,7 @@ ContextAssemblyRequest
   │
   ├─► MemoryPolicyService.resolvePolicy()
   │     └─► selects base policy from defaultMemoryPolicies.ts
-  │         merges caller overrides
+  │         merges caller overrides (including affectiveModulation)
   │         derives scope (notebook/global from notebookId)
   │         returns resolved MemoryPolicy
   │
@@ -29,15 +29,24 @@ ContextAssemblyRequest
         ├─► _mapResultToItem()                           ← preserves all citation/provenance
         │     returns evidence candidates (all selectionClass='evidence')
         │
-        ├─► GraphTraversalService.expandFromEvidence()   ← Step 6A insertion point
+        ├─► GraphTraversalService.expandFromEvidence()   ← Step 6A: structural graph_context
         │     accepts evidence candidates as seeds
         │     derives graph_context candidates from shared documentId (co-occurrence)
         │     enforces policy.graphTraversal constraints
         │     returns graph_context items with edge type + trust labels
         │     (empty when traversal disabled or strict mode)
         │
+        ├─► AffectiveGraphService.getActiveAffectiveContext()  ← affective graph_context
+        │     reads policy.affectiveModulation
+        │     calls AstroService.getEmotionalState() via AstroServiceSeam
+        │     returns bounded, labeled graph_context items (selectionClass='graph_context')
+        │     items carry graphEdgeType='modulates', graphEdgeTrust='session_only'
+        │     items carry metadata.affective=true and optional disclaimer label
+        │     (empty in strict mode, when disabled, or when astro engine unavailable)
+        │     See: docs/architecture/affective_graph_modulation.md
+        │
         ├─► _selectItems()                               ← enforces evidence budget
-        │     applies maxItemsPerClass.graph_context cap to graph candidates
+        │     applies maxItemsPerClass.graph_context cap to all graph candidates
         │
         └─► ContextAssemblyResult
               items: ContextAssemblyItem[]     ← evidence + graph_context + latent
@@ -53,8 +62,9 @@ The assembly layers are kept strictly separate:
 | Layer | File | Responsibility |
 |---|---|---|
 | Retrieval | `RetrievalOrchestrator.ts` | Fetch, merge, deduplicate candidates |
-| Policy | `MemoryPolicyService.ts` | Resolve active policy from request |
-| Graph Traversal | `GraphTraversalService.ts` | Expand evidence seeds into graph_context candidates |
+| Policy | `MemoryPolicyService.ts` | Resolve active policy from request (including affectiveModulation) |
+| Graph Traversal | `GraphTraversalService.ts` | Expand evidence seeds into structural graph_context candidates |
+| Affective Modulation | `AffectiveGraphService.ts` | Produce bounded, labeled affective graph_context from astro/emotional state |
 | Assembly | `ContextAssemblyService.ts` | Select, classify, budget, format |
 
 Policy does not call retrieval. Retrieval does not know about policy. Graph traversal receives only evidence items and policy — it does not call retrieval. The assembler is the only layer that calls all others.
