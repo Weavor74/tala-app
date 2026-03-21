@@ -29,7 +29,11 @@ import type {
   CreateMemoryLinkInput,
   EmbeddingRecord,
   CreateEmbeddingInput,
+  UpsertEmbeddingInput,
+  SimilaritySearchOptions,
+  SemanticSearchResult,
 } from '../../../shared/memory/memoryTypes';
+import { TALA_EMBEDDING_MODEL, EMBEDDING_OWNER_KIND_OBSERVATION } from '../../../shared/memory/embeddingConstants';
 
 export class PostgresMemoryRepository implements MemoryRepository {
   private pool: Pool | null = null;
@@ -241,7 +245,30 @@ export class PostgresMemoryRepository implements MemoryRepository {
         JSON.stringify(metadata),
       ]
     );
-    return result.rows[0];
+
+    const observation = result.rows[0];
+
+    // When an embedding vector is provided, upsert it into the embeddings index
+    // in a follow-up query. The observation is committed first; the embedding
+    // upsert is a separate (non-transactional) write that makes the observation
+    // available for semantic similarity search without requiring a separate call.
+    if (input.embedding && input.embedding.length > 0) {
+      const model = input.embedding_model ?? TALA_EMBEDDING_MODEL;
+      const content = [input.predicate, input.object_text]
+        .filter(x => x !== null && x !== undefined)
+        .join(': ');
+      await this.upsertEmbedding({
+        owner_kind: EMBEDDING_OWNER_KIND_OBSERVATION,
+        owner_id: id,
+        chunk_index: 0,
+        embedding_model: model,
+        content,
+        content_hash: simpleContentHash(content),
+        embedding: input.embedding,
+      });
+    }
+
+    return observation;
   }
 
   // ─── Relationship ───────────────────────────────────────────────────────────
@@ -347,4 +374,94 @@ export class PostgresMemoryRepository implements MemoryRepository {
     // Don't return the full vector in the response to avoid large payloads
     return { ...result.rows[0], embedding: null };
   }
+
+  async upsertEmbedding(input: UpsertEmbeddingInput): Promise<EmbeddingRecord> {
+    const pool = this.getPool();
+    const id = uuidv4();
+    const metadata = input.metadata ?? {};
+    const embeddingValue = pgvectorToSql(input.embedding);
+
+    // ON CONFLICT key: idx_embeddings_upsert_key on
+    //   (owner_kind, owner_id, chunk_index, embedding_model)
+    // Applied by migration 007_embeddings_upsert_key.sql.
+    const result = await pool.query<EmbeddingRecord>(
+      `INSERT INTO embeddings (id, owner_kind, owner_id, chunk_index, embedding_model,
+                                content, content_hash, metadata, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (owner_kind, owner_id, chunk_index, embedding_model) DO UPDATE SET
+         content       = EXCLUDED.content,
+         content_hash  = EXCLUDED.content_hash,
+         metadata      = EXCLUDED.metadata,
+         embedding     = EXCLUDED.embedding
+       RETURNING id, owner_kind, owner_id, chunk_index, embedding_model,
+                 content, content_hash, metadata, created_at`,
+      [
+        id,
+        input.owner_kind,
+        input.owner_id,
+        input.chunk_index ?? 0,
+        input.embedding_model,
+        input.content,
+        input.content_hash,
+        JSON.stringify(metadata),
+        embeddingValue,
+      ]
+    );
+
+    return { ...result.rows[0], embedding: null };
+  }
+
+  async searchObservationsBySimilarity(
+    queryEmbedding: number[],
+    options?: SimilaritySearchOptions,
+  ): Promise<SemanticSearchResult<ObservationRecord>[]> {
+    const pool = this.getPool();
+    const topK = options?.topK ?? 10;
+    const minSimilarity = options?.minSimilarity ?? 0;
+    const model = options?.model ?? TALA_EMBEDDING_MODEL;
+    const queryVec = pgvectorToSql(queryEmbedding);
+
+    // Cosine distance: (embedding <=> query). Similarity = 1 - distance.
+    // The HNSW index (idx_embeddings_vector) accelerates this query.
+    const result = await pool.query<ObservationRecord & { _similarity: string; _embedding_id: string }>(
+      `SELECT o.*,
+              (1 - (e.embedding <=> $1::vector)) AS _similarity,
+              e.id AS _embedding_id
+         FROM embeddings e
+         JOIN observations o ON o.id = e.owner_id
+        WHERE e.owner_kind = $2
+          AND e.embedding_model = $3
+          AND e.embedding IS NOT NULL
+          AND (1 - (e.embedding <=> $1::vector)) >= $4
+        ORDER BY e.embedding <=> $1::vector
+        LIMIT $5`,
+      [queryVec, EMBEDDING_OWNER_KIND_OBSERVATION, model, minSimilarity, topK]
+    );
+
+    return result.rows.map(row => {
+      const { _similarity, _embedding_id, ...observation } = row;
+      return {
+        record: observation as ObservationRecord,
+        similarity: parseFloat(_similarity),
+        embedding_id: _embedding_id,
+      };
+    });
+  }
+}
+
+// ─── Internal Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Lightweight deterministic content hash using a djb2a-style XOR variant.
+ * Used only as a change-detection key for embeddings; not cryptographic.
+ * Avoids a Node.js `crypto` dependency so this can stay close to the DB layer.
+ * Algorithm: h = ((h << 5) + h) ^ charCode  (djb2a, XOR variant of djb2)
+ */
+function simpleContentHash(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) {
+    h = ((h << 5) + h) ^ text.charCodeAt(i);
+    h = h >>> 0; // keep unsigned 32-bit
+  }
+  return h.toString(16).padStart(8, '0');
 }
