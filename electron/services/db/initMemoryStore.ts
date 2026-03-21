@@ -20,12 +20,16 @@
 
 import { PostgresMemoryRepository } from './PostgresMemoryRepository';
 import { DatabaseBootstrapCoordinator } from './DatabaseBootstrapCoordinator';
+import { ResearchRepository } from './ResearchRepository';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
 import type { DatabaseBootstrapConfig } from '../../../shared/dbBootstrapConfig';
 import type { MemoryRepository } from '../../../shared/memory/MemoryRepository';
 
 /** Singleton repository reference. Null until initCanonicalMemory() succeeds. */
 let _repository: MemoryRepository | null = null;
+
+/** Singleton research repository — shares pool with _repository once initialized. */
+let _researchRepository: ResearchRepository | null = null;
 
 /**
  * Singleton coordinator reference.
@@ -115,6 +119,7 @@ export async function initCanonicalMemory(
     }
 
     _repository = repo;
+    _researchRepository = new ResearchRepository(repo.getSharedPool());
     console.log('[initCanonicalMemory] Canonical memory store ready.');
     return _repository;
   } catch (err) {
@@ -138,6 +143,14 @@ export function getCanonicalMemoryRepository(): MemoryRepository | null {
 }
 
 /**
+ * Get the initialized research repository.
+ * Returns null if not yet initialized (canonical memory init must succeed first).
+ */
+export function getResearchRepository(): ResearchRepository | null {
+  return _researchRepository;
+}
+
+/**
  * Shut down the canonical memory store and any managed runtime.
  *
  * Closes the database connection pool and, if the Tala-managed native
@@ -147,6 +160,7 @@ export async function shutdownCanonicalMemory(): Promise<void> {
   if (_repository) {
     await _repository.close();
     _repository = null;
+    _researchRepository = null;
     console.log('[initCanonicalMemory] Canonical memory store shut down.');
   }
 

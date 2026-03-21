@@ -8,6 +8,10 @@
  * Web results can be selected and bulk-scraped into the RAG database
  * using `search-scrape`, which downloads, converts to markdown, and ingests.
  *
+ * Each search creates a `search_run` record in PostgreSQL, and results are
+ * registered in `search_run_results`. From there users can save results into
+ * a Notebook (persisted in `notebook_items`).
+ *
  * Results display with clickable titles that either open local files
  * or launch URLs in the embedded browser.
  */
@@ -48,6 +52,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
     const [notebooks, setNotebooks] = useState<any[]>([]);
     const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || '');
+    /** The search_run id from the most recent search, used to register notebook items. */
+    const [currentSearchRunId, setCurrentSearchRunId] = useState<string | null>(null);
 
     const api = (window as any).tala;
 
@@ -60,8 +66,43 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         let successCount = 0;
         let failCount = 0;
 
-        // 1. Ingest files
-        const ingestedPaths: string[] = [];
+        // 1. Determine target notebook id (may need to create one)
+        let targetId = selectedNotebookId;
+        if (selectedNotebookId === 'CREATE_NEW_NB') {
+            const name = prompt("Enter New Notebook Name:");
+            if (!name) {
+                setScraping(null);
+                setLoading(false);
+                return;
+            }
+            // Try PostgreSQL-backed creation first
+            if (api?.researchCreateNotebook) {
+                const res = await api.researchCreateNotebook({ name });
+                if (res?.ok && res.notebook) {
+                    targetId = res.notebook.id;
+                }
+            }
+            if (targetId === 'CREATE_NEW_NB') {
+                // Fallback: settings-based
+                const settings = await api.getSettings();
+                const newNb = {
+                    id: `nb-${Math.random().toString(36).substring(2, 11)}`,
+                    name,
+                    sourcePaths: [],
+                    createdAt: Date.now()
+                };
+                const nbs = [...(settings.notebooks || []), newNb];
+                await api.saveSettings({ ...settings, notebooks: nbs });
+                targetId = newNb.id;
+            }
+        }
+
+        // 2. Ingest files and collect notebook items
+        const notebookItems: Array<{
+            item_key: string; item_type: string;
+            source_path?: string; title?: string; uri?: string; snippet?: string;
+        }> = [];
+
         for (const url of urls) {
             const resItem = results.find(r => r.url === url);
             const title = resItem?.title || 'Web Resource';
@@ -70,7 +111,14 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                 const res = await api.scrapeUrl(url, title);
                 if (res.success && res.path) {
                     successCount++;
-                    ingestedPaths.push(res.path);
+                    notebookItems.push({
+                        item_key: url,
+                        item_type: 'web',
+                        source_path: res.path,
+                        title: resItem?.title ?? url,
+                        uri: url,
+                        snippet: resItem?.snippet ?? undefined,
+                    });
                     setSelectedUrls(prev => {
                         const next = new Set(prev);
                         next.delete(url);
@@ -84,37 +132,22 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             }
         }
 
-        // 2. Update Notebook
-        if (ingestedPaths.length > 0) {
+        // 3. Persist notebook items to PostgreSQL
+        if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
+            await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+        } else if (notebookItems.length > 0 && api?.getSettings) {
+            // Fallback: settings-based
             const settings = await api.getSettings();
-            let nbs = [...(settings.notebooks || [])];
-            let targetId = selectedNotebookId;
-
-            if (selectedNotebookId === 'CREATE_NEW_NB') {
-                const name = prompt("Enter New Notebook Name:");
-                if (!name) {
-                    setScraping(null);
-                    setLoading(false);
-                    return;
-                }
-                const newNb = {
-                    id: `nb-${Math.random().toString(36).substr(2, 9)}`,
-                    name,
-                    sourcePaths: ingestedPaths,
-                    createdAt: Date.now()
-                };
-                nbs.push(newNb);
-                targetId = newNb.id;
-            } else {
-                const nbIdx = nbs.findIndex((n: any) => n.id === targetId);
-                if (nbIdx >= 0) {
-                    nbs[nbIdx].sourcePaths = Array.from(new Set([...nbs[nbIdx].sourcePaths, ...ingestedPaths]));
-                }
+            const nbs = [...(settings.notebooks || [])];
+            const nbIdx = nbs.findIndex((n: any) => n.id === targetId);
+            if (nbIdx >= 0) {
+                const paths = notebookItems.map(i => i.source_path).filter(Boolean) as string[];
+                nbs[nbIdx].sourcePaths = Array.from(new Set([...(nbs[nbIdx].sourcePaths || []), ...paths]));
+                await api.saveSettings({ ...settings, notebooks: nbs });
             }
-            await api.saveSettings({ ...settings, notebooks: nbs });
-            setSelectedNotebookId(targetId);
         }
 
+        setSelectedNotebookId(targetId);
         setScraping(null);
         setLoading(false);
         alert(`Notebook Updated.\nAdded: ${successCount}\nFailed: ${failCount}`);
@@ -122,6 +155,17 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     };
 
     const loadNotebooks = async () => {
+        if (api?.researchListNotebooks) {
+            const res = await api.researchListNotebooks();
+            if (res?.ok) {
+                setNotebooks(res.notebooks || []);
+                if (res.notebooks?.length > 0 && !selectedNotebookId) {
+                    setSelectedNotebookId(res.notebooks[0].id);
+                }
+                return;
+            }
+        }
+        // Fallback: settings-based
         if (api?.getSettings) {
             const settings = await api.getSettings();
             setNotebooks(settings.notebooks || []);
@@ -139,16 +183,42 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         if (!query.trim()) return;
         setLoading(true);
         setSelectedUrls(new Set()); // Clear selection on new search
+        setCurrentSearchRunId(null);
 
         if (!api) return;
 
         try {
+            let fetchedResults: Result[] = [];
+
             if (mode === 'local') {
-                const res = await api.searchFiles(query);
-                setResults(res || []);
+                fetchedResults = (await api.searchFiles(query)) || [];
             } else {
-                const res = await api.searchRemote(query);
-                setResults(res || []);
+                fetchedResults = (await api.searchRemote(query)) || [];
+            }
+
+            setResults(fetchedResults);
+
+            // Register the search run + results in PostgreSQL (best-effort, non-blocking)
+            if (api.researchCreateSearchRun && fetchedResults.length > 0) {
+                try {
+                    const runRes = await api.researchCreateSearchRun({ query_text: query });
+                    if (runRes?.ok && runRes.searchRun?.id) {
+                        const searchRunId: string = runRes.searchRun.id;
+                        setCurrentSearchRunId(searchRunId);
+
+                        const runResults = fetchedResults.map((r, i) => ({
+                            item_key: r.url || r.path || `result-${i}`,
+                            item_type: mode === 'local' ? 'local_file' : 'web',
+                            source_path: r.path ?? undefined,
+                            title: r.title ?? r.path ?? undefined,
+                            uri: r.url ?? undefined,
+                            snippet: (r.snippet || r.content)?.slice(0, 500) ?? undefined,
+                        }));
+                        await api.researchAddSearchRunResults(searchRunId, runResults);
+                    }
+                } catch {
+                    // Non-fatal: search still succeeds even if run registration fails
+                }
             }
         } catch (e) {
             console.error("Search failed", e);
@@ -275,6 +345,59 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             }}
                         >
                             ADD TO NOTEBOOK
+                        </button>
+                    </div>
+                )}
+
+                {/* Save All Results toolbar (shown when search run was registered) */}
+                {currentSearchRunId && results.length > 0 && selectedUrls.size === 0 && (
+                    <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#1e2d1e', padding: '5px 10px', borderRadius: 4, border: '1px solid #2a4a2a' }}>
+                        <span style={{ fontSize: 11, opacity: 0.7, flex: 1 }}>Save all {results.length} results to notebook</span>
+                        <select
+                            value={selectedNotebookId}
+                            onChange={e => setSelectedNotebookId(e.target.value)}
+                            style={{ background: '#1e1e1e', border: '1px solid #444', color: '#fff', fontSize: 11, padding: '2px 5px', borderRadius: 2 }}
+                        >
+                            <option value="">Select Notebook...</option>
+                            <option value="CREATE_NEW_NB">+ Create New Notebook from Search</option>
+                            {notebooks.map(nb => (
+                                <option key={nb.id} value={nb.id}>{nb.name}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={async () => {
+                                if (!selectedNotebookId || !currentSearchRunId) return;
+                                if (selectedNotebookId === 'CREATE_NEW_NB') {
+                                    const name = prompt("Notebook name:");
+                                    if (!name?.trim()) return;
+                                    if (!api?.researchCreateNotebookFromSearchRun) return;
+                                    const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name.trim());
+                                    if (res?.ok) {
+                                        alert(`Notebook "${name.trim()}" created with ${res.itemCount} items.`);
+                                        if (onAdd) onAdd();
+                                    }
+                                } else {
+                                    if (!api?.researchAddSearchRunResultsToNotebook) return;
+                                    const res = await api.researchAddSearchRunResultsToNotebook(currentSearchRunId, selectedNotebookId);
+                                    if (res?.ok) {
+                                        alert(`Added ${res.itemCount} items to notebook.`);
+                                        if (onAdd) onAdd();
+                                    }
+                                }
+                            }}
+                            disabled={!selectedNotebookId}
+                            style={{
+                                background: selectedNotebookId ? '#1a8c3e' : '#444',
+                                border: 'none',
+                                color: 'white',
+                                fontSize: 11,
+                                padding: '4px 10px',
+                                borderRadius: 2,
+                                cursor: selectedNotebookId ? 'pointer' : 'default',
+                                whiteSpace: 'nowrap'
+                            }}
+                        >
+                            SAVE ALL
                         </button>
                     </div>
                 )}
