@@ -117,6 +117,11 @@ export class PostgresMemoryRepository implements MemoryRepository {
     return this.pool;
   }
 
+  /** Expose the shared connection pool for sibling repositories (e.g. ResearchRepository). */
+  getSharedPool(): Pool {
+    return this.getPool();
+  }
+
   // ─── Entity ─────────────────────────────────────────────────────────────────
 
   async upsertEntity(input: CreateEntityInput): Promise<EntityRecord> {

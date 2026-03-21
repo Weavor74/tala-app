@@ -370,6 +370,36 @@ contextBridge.exposeInMainWorld('tala', {
     /** Scrapes a URL and returns its text content. */
     scrapeUrl: (url: string, title?: string) => ipcRenderer.invoke('search-scrape', { url, title }),
 
+    // ─── Research Collections ─────────────────────────────────────
+    /** List all notebooks from PostgreSQL. */
+    researchListNotebooks: () => ipcRenderer.invoke('research:listNotebooks'),
+    /** Get a single notebook by id. */
+    researchGetNotebook: (id: string) => ipcRenderer.invoke('research:getNotebook', id),
+    /** Create a new notebook. */
+    researchCreateNotebook: (input: { name: string; description?: string }) => ipcRenderer.invoke('research:createNotebook', input),
+    /** Update an existing notebook. */
+    researchUpdateNotebook: (id: string, input: Record<string, unknown>) => ipcRenderer.invoke('research:updateNotebook', id, input),
+    /** Delete a notebook. */
+    researchDeleteNotebook: (id: string) => ipcRenderer.invoke('research:deleteNotebook', id),
+    /** List items in a notebook. */
+    researchListNotebookItems: (notebookId: string) => ipcRenderer.invoke('research:listNotebookItems', notebookId),
+    /** Add items to a notebook. */
+    researchAddItemsToNotebook: (notebookId: string, items: unknown[], searchRunId?: string) => ipcRenderer.invoke('research:addItemsToNotebook', notebookId, items, searchRunId),
+    /** Remove an item from a notebook. */
+    researchRemoveNotebookItem: (notebookId: string, itemKey: string) => ipcRenderer.invoke('research:removeNotebookItem', notebookId, itemKey),
+    /** Create a search run and return its id. */
+    researchCreateSearchRun: (input: { query_text: string; notebook_id?: string }) => ipcRenderer.invoke('research:createSearchRun', input),
+    /** Add results to a search run. */
+    researchAddSearchRunResults: (searchRunId: string, results: unknown[]) => ipcRenderer.invoke('research:addSearchRunResults', searchRunId, results),
+    /** Get results for a search run. */
+    researchGetSearchRunResults: (searchRunId: string) => ipcRenderer.invoke('research:getSearchRunResults', searchRunId),
+    /** Create a notebook from all results in a search run. */
+    researchCreateNotebookFromSearchRun: (searchRunId: string, notebookName: string, description?: string) => ipcRenderer.invoke('research:createNotebookFromSearchRun', searchRunId, notebookName, description),
+    /** Copy all results from a search run into an existing notebook. */
+    researchAddSearchRunResultsToNotebook: (searchRunId: string, notebookId: string) => ipcRenderer.invoke('research:addSearchRunResultsToNotebook', searchRunId, notebookId),
+    /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
+    researchResolveNotebookScope: (notebookId: string) => ipcRenderer.invoke('research:resolveNotebookScope', notebookId),
+
     // ─── Browser Data Relay ───────────────────────────────────────
     /**
      * Sends browser data (DOM or screenshot) from the renderer back to the

@@ -24,6 +24,7 @@ import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
 import { A2UIActionBridge } from './A2UIActionBridge';
 import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
+import { getResearchRepository } from './db/initMemoryStore';
 
 export interface IpcRouterContext {
   app: any;
@@ -1339,6 +1340,176 @@ export class IpcRouter {
     /** Sets the active notebook context for the agent. */
     ipcMain.handle('set-active-notebook-context', async (event, { id, sourcePaths }) => {
       return agent.setActiveNotebookContext(id, sourcePaths);
+    });
+
+    // ─── Research Collections ──────────────────────────────────────────────────
+
+    /** List all notebooks from PostgreSQL. */
+    ipcMain.handle('research:listNotebooks', async () => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const notebooks = await repo.listNotebooks();
+        return { ok: true, notebooks };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Get a single notebook by id. */
+    ipcMain.handle('research:getNotebook', async (_e, id: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const notebook = await repo.getNotebook(id);
+        return { ok: true, notebook };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Create a new notebook. */
+    ipcMain.handle('research:createNotebook', async (_e, input: { name: string; description?: string }) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const notebook = await repo.createNotebook(input);
+        return { ok: true, notebook };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Update an existing notebook. */
+    ipcMain.handle('research:updateNotebook', async (_e, id: string, input: Record<string, unknown>) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const notebook = await repo.updateNotebook(id, input);
+        return { ok: true, notebook };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Delete a notebook. */
+    ipcMain.handle('research:deleteNotebook', async (_e, id: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const ok = await repo.deleteNotebook(id);
+        return { ok };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** List items in a notebook. */
+    ipcMain.handle('research:listNotebookItems', async (_e, notebookId: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const items = await repo.listNotebookItems(notebookId);
+        return { ok: true, items };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Add items to an existing notebook. */
+    ipcMain.handle('research:addItemsToNotebook', async (_e, notebookId: string, items: unknown[], searchRunId?: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const added = await repo.addItemsToNotebook(notebookId, items as any, searchRunId);
+        return { ok: true, added };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Remove an item from a notebook. */
+    ipcMain.handle('research:removeNotebookItem', async (_e, notebookId: string, itemKey: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const ok = await repo.removeNotebookItem(notebookId, itemKey);
+        return { ok };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Create a search run record and store its results. */
+    ipcMain.handle('research:createSearchRun', async (_e, input: { query_text: string; notebook_id?: string }) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const searchRun = await repo.createSearchRun(input);
+        return { ok: true, searchRun };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Add results to an existing search run. */
+    ipcMain.handle('research:addSearchRunResults', async (_e, searchRunId: string, results: unknown[]) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const added = await repo.addSearchRunResults(searchRunId, results as any);
+        return { ok: true, added };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Get results for a search run. */
+    ipcMain.handle('research:getSearchRunResults', async (_e, searchRunId: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const results = await repo.getSearchRunResults(searchRunId);
+        return { ok: true, results };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Create a new notebook from all results in a search run. */
+    ipcMain.handle('research:createNotebookFromSearchRun', async (_e, searchRunId: string, notebookName: string, description?: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const result = await repo.createNotebookFromSearchRun(searchRunId, notebookName, description);
+        return { ok: true, ...result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Copy all results from a search run into an existing notebook. */
+    ipcMain.handle('research:addSearchRunResultsToNotebook', async (_e, searchRunId: string, notebookId: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const result = await repo.addSearchRunResultsToNotebook(searchRunId, notebookId);
+        return { ok: true, ...result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
+    ipcMain.handle('research:resolveNotebookScope', async (_e, notebookId: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const scope = await repo.resolveNotebookScope(notebookId);
+        return { ok: true, scope };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
     });
 
     /** Returns the persisted chat history for UI restoration on reload. */
