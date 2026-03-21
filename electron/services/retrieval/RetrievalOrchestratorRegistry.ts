@@ -28,9 +28,11 @@ import {
   ExternalApiSearchProvider,
   resolveActiveSearchProviderConfig,
 } from './providers/ExternalApiSearchProvider';
+import { SemanticSearchProvider } from './providers/SemanticSearchProvider';
 import { loadSettings } from '../SettingsManager';
 import type { FileService } from '../FileService';
 import type { ResearchRepository } from '../db/ResearchRepository';
+import type { EmbeddingsRepository } from '../db/EmbeddingsRepository';
 import type { SearchConfig } from '../../../shared/settings';
 
 let _orchestrator: RetrievalOrchestrator | null = null;
@@ -41,6 +43,11 @@ export interface InitRetrievalOrchestratorOptions {
   fileService: FileService;
   /** Optional ResearchRepository for notebook scope resolution. */
   researchRepo?: ResearchRepository;
+  /**
+   * Optional EmbeddingsRepository for SemanticSearchProvider.
+   * When provided, SemanticSearchProvider is registered with the orchestrator.
+   */
+  embeddingsRepo?: EmbeddingsRepository;
   /**
    * Path to the app_settings.json file.
    * Used to read the active external search provider configuration.
@@ -63,6 +70,16 @@ export function initRetrievalOrchestrator(
 
   // Register local provider
   orchestrator.registerProvider(new LocalSearchProvider(opts.fileService));
+
+  // Register semantic provider (if embeddings repository is available)
+  if (opts.embeddingsRepo) {
+    orchestrator.registerProvider(new SemanticSearchProvider(opts.embeddingsRepo));
+    console.log('[RetrievalOrchestratorRegistry] Registered semantic provider.');
+  } else {
+    console.log(
+      '[RetrievalOrchestratorRegistry] No EmbeddingsRepository provided; semantic provider not registered.',
+    );
+  }
 
   // Register external provider (if configured)
   const settings = tryLoadSettings(opts.settingsPath);

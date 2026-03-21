@@ -410,6 +410,17 @@ contextBridge.exposeInMainWorld('tala', {
     ingestItems: (itemKeys: string[], notebookId?: string, options?: Record<string, unknown>, refetch?: boolean) =>
         ipcRenderer.invoke('ingestion:ingestItems', itemKeys, notebookId, options, refetch),
 
+    // ─── Chunk Embeddings ─────────────────────────────────────────────────────
+    /** Embed all document_chunks for items in a notebook into chunk_embeddings. */
+    embedNotebook: (notebookId: string, options?: { reembed?: boolean }) =>
+        ipcRenderer.invoke('embeddings:embedNotebook', notebookId, options),
+    /** Embed document_chunks for a list of item_keys into chunk_embeddings. */
+    embedItems: (itemKeys: string[], options?: { reembed?: boolean }) =>
+        ipcRenderer.invoke('embeddings:embedItems', itemKeys, options),
+    /** Embed a list of document_chunks by their chunk IDs. */
+    embedChunks: (chunkIds: string[], options?: { reembed?: boolean }) =>
+        ipcRenderer.invoke('embeddings:embedChunks', chunkIds, options),
+
     // ─── Retrieval Orchestration ──────────────────────────────────────────────
     /** Execute a canonical retrieval request via RetrievalOrchestrator. */
     retrievalRetrieve: (request: import('../shared/retrieval/retrievalTypes').RetrievalRequest) => ipcRenderer.invoke('retrieval:retrieve', request),

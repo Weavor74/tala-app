@@ -27,6 +27,8 @@ import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
 import { getResearchRepository, getContentRepository } from './db/initMemoryStore';
 import { ContentIngestionService } from './ingestion/ContentIngestionService';
 import { getRetrievalOrchestrator, refreshExternalProvider } from './retrieval/RetrievalOrchestratorRegistry';
+import { getEmbeddingsRepository } from './db/initMemoryStore';
+import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 
 export interface IpcRouterContext {
@@ -1557,6 +1559,57 @@ export class IpcRouter {
       try {
         const svc = new ContentIngestionService(research, content);
         const result = await svc.ingestItems(itemKeys, notebookId, options as any, refetch ?? false);
+        return { ok: true, result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    // ─── Chunk Embeddings ────────────────────────────────────────────────────────
+
+    /**
+     * Embed all document_chunks for items in a notebook into chunk_embeddings.
+     * Requires items to have been ingested first (source_documents + document_chunks).
+     */
+    ipcMain.handle('embeddings:embedNotebook', async (_e, notebookId: string, options?: { reembed?: boolean }) => {
+      const research = getResearchRepository();
+      const embeddingsRepo = getEmbeddingsRepository();
+      if (!research || !embeddingsRepo) return { ok: false, error: 'Repositories not initialized' };
+      try {
+        const items = await research.listNotebookItems(notebookId);
+        const itemKeys = items.map((i: { item_key: string }) => i.item_key);
+        const svc = new ChunkEmbeddingService(embeddingsRepo);
+        const result = await svc.embedNotebook(itemKeys, options);
+        return { ok: true, result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /**
+     * Embed document_chunks for a list of item_keys into chunk_embeddings.
+     */
+    ipcMain.handle('embeddings:embedItems', async (_e, itemKeys: string[], options?: { reembed?: boolean }) => {
+      const embeddingsRepo = getEmbeddingsRepository();
+      if (!embeddingsRepo) return { ok: false, error: 'EmbeddingsRepository not initialized' };
+      try {
+        const svc = new ChunkEmbeddingService(embeddingsRepo);
+        const result = await svc.embedItems(itemKeys, options);
+        return { ok: true, result };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /**
+     * Embed a list of document_chunks by their chunk IDs.
+     */
+    ipcMain.handle('embeddings:embedChunks', async (_e, chunkIds: string[], options?: { reembed?: boolean }) => {
+      const embeddingsRepo = getEmbeddingsRepository();
+      if (!embeddingsRepo) return { ok: false, error: 'EmbeddingsRepository not initialized' };
+      try {
+        const svc = new ChunkEmbeddingService(embeddingsRepo);
+        const result = await svc.embedChunks(chunkIds, options);
         return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
