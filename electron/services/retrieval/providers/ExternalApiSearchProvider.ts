@@ -190,7 +190,7 @@ function doHttpRequest(opts: HttpRequestOptions): Promise<string> {
 // ─── Main provider ────────────────────────────────────────────────────────────
 
 export class ExternalApiSearchProvider implements SearchProvider {
-  readonly supportedModes: RetrievalMode[] = ['keyword'];
+  readonly supportedModes: RetrievalMode[] = ['keyword', 'hybrid'];
 
   private _id: string;
   private _config: SettingsSearchProvider | null;

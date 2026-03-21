@@ -27,6 +27,12 @@ import type {
   NormalizedSearchResult,
 } from '../../../shared/retrieval/retrievalTypes';
 
+// ─── Hybrid scoring constants ─────────────────────────────────────────────────
+
+const SEMANTIC_WEIGHT = 0.6;
+const KEYWORD_WEIGHT = 0.4;
+const NOTEBOOK_BOOST = 0.1;
+
 export class RetrievalOrchestrator {
   private readonly providers = new Map<string, SearchProvider>();
 
@@ -90,7 +96,7 @@ export class RetrievalOrchestrator {
     );
 
     // 4. Merge and deduplicate
-    const results = this.mergeResults(providerResults, request.topK);
+    const results = this.mergeResults(providerResults, request.mode, scopeResolved, request.topK);
 
     return {
       query: request.query,
@@ -210,13 +216,23 @@ export class RetrievalOrchestrator {
   // ─── Result Merging ───────────────────────────────────────────────────────
 
   /**
-   * Merge provider results, deduplicate by itemKey (first occurrence wins),
-   * sort by score descending (nulls last), and cap at topK.
+   * Merge provider results.
+   *
+   * - For 'hybrid' mode: applies score normalization, weighted fusion scoring,
+   *   URI/contentHash-based deduplication, and optional notebook boost.
+   * - For all other modes: deduplicate by itemKey (first occurrence wins),
+   *   sort by score descending, cap at topK.
    */
   private mergeResults(
     providerResults: SearchProviderResult[],
+    mode: import('../../../shared/retrieval/retrievalTypes').RetrievalMode,
+    scope: RetrievalScopeResolved,
     topK?: number,
   ): NormalizedSearchResult[] {
+    if (mode === 'hybrid') {
+      return this.hybridMergeResults(providerResults, scope, topK);
+    }
+
     const seen = new Set<string>();
     const merged: NormalizedSearchResult[] = [];
 
@@ -238,10 +254,154 @@ export class RetrievalOrchestrator {
 
     return topK != null ? merged.slice(0, topK) : merged;
   }
+
+  // ─── Hybrid Fusion ────────────────────────────────────────────────────────
+
+  /**
+   * Merge results from semantic and keyword providers using weighted score fusion.
+   *
+   * Steps:
+   *   1. Normalize scores to [0,1] per provider type.
+   *   2. Deduplicate across providers by itemKey, URI, or contentHash.
+   *   3. Compute fusedScore = (SEMANTIC_WEIGHT * semanticScore) + (KEYWORD_WEIGHT * keywordScore).
+   *   4. Apply notebook boost (+NOTEBOOK_BOOST) when scopeType === 'notebook'.
+   *   5. Sort by fusedScore descending; apply topK.
+   *   6. Emit semanticScore, keywordScore, fusedScore, sourceProviders in metadata.
+   */
+  private hybridMergeResults(
+    providerResults: SearchProviderResult[],
+    scope: RetrievalScopeResolved,
+    topK?: number,
+  ): NormalizedSearchResult[] {
+    type MergeCandidate = {
+      result: NormalizedSearchResult;
+      semanticScore: number;
+      keywordScore: number;
+      sourceProviders: string[];
+    };
+
+    const mergeMap = new Map<string, MergeCandidate>();
+    // Secondary lookup tables: URI → canonical itemKey, contentHash → canonical itemKey
+    const uriToKey = new Map<string, string>();
+    const hashToKey = new Map<string, string>();
+
+    const findExistingKey = (result: NormalizedSearchResult): string | undefined => {
+      if (mergeMap.has(result.itemKey)) return result.itemKey;
+      if (result.uri) {
+        const k = uriToKey.get(result.uri);
+        if (k !== undefined) return k;
+      }
+      if (result.contentHash) {
+        const k = hashToKey.get(result.contentHash);
+        if (k !== undefined) return k;
+      }
+      return undefined;
+    };
+
+    for (const pr of providerResults) {
+      const isSemantic = this.isSemanticProviderById(pr.providerId);
+
+      for (const result of pr.results) {
+        const normalizedScore = normalizeScore(result.score);
+        const existingKey = findExistingKey(result);
+
+        if (existingKey !== undefined) {
+          // Merge into existing candidate
+          const cand = mergeMap.get(existingKey)!;
+          if (isSemantic) {
+            cand.semanticScore = Math.max(cand.semanticScore, normalizedScore);
+          } else {
+            cand.keywordScore = Math.max(cand.keywordScore, normalizedScore);
+          }
+          // Keep best title (prefer non-key titles)
+          if (
+            (cand.result.title === cand.result.itemKey || !cand.result.title) &&
+            result.title &&
+            result.title !== result.itemKey
+          ) {
+            cand.result = { ...cand.result, title: result.title };
+          }
+          // Keep first non-null snippet
+          if (!cand.result.snippet && result.snippet) {
+            cand.result = { ...cand.result, snippet: result.snippet };
+          }
+          if (!cand.sourceProviders.includes(pr.providerId)) {
+            cand.sourceProviders.push(pr.providerId);
+          }
+        } else {
+          // New entry
+          const cand: MergeCandidate = {
+            result: { ...result },
+            semanticScore: isSemantic ? normalizedScore : 0,
+            keywordScore: isSemantic ? 0 : normalizedScore,
+            sourceProviders: [pr.providerId],
+          };
+          mergeMap.set(result.itemKey, cand);
+          if (result.uri) uriToKey.set(result.uri, result.itemKey);
+          if (result.contentHash) hashToKey.set(result.contentHash, result.itemKey);
+        }
+      }
+    }
+
+    // Compute fusedScore and build final results
+    const isNotebook = scope.scopeType === 'notebook';
+    const merged: NormalizedSearchResult[] = [];
+
+    for (const [, cand] of mergeMap) {
+      const fused =
+        SEMANTIC_WEIGHT * cand.semanticScore + KEYWORD_WEIGHT * cand.keywordScore;
+      const fusedScore = isNotebook ? Math.min(1, fused + NOTEBOOK_BOOST) : fused;
+
+      merged.push({
+        ...cand.result,
+        score: fusedScore,
+        metadata: {
+          ...cand.result.metadata,
+          semanticScore: cand.semanticScore,
+          keywordScore: cand.keywordScore,
+          fusedScore,
+          sourceProviders: cand.sourceProviders,
+        },
+      });
+    }
+
+    // Sort by fusedScore descending
+    merged.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+
+    return topK != null ? merged.slice(0, topK) : merged;
+  }
+
+  /**
+   * Returns true if the provider identified by `id` is a semantic provider.
+   *
+   * A provider is considered semantic when it supports 'semantic' mode but not
+   * 'keyword' mode.  This capability-based check avoids relying on a hardcoded
+   * provider ID and remains correct if multiple semantic backends are registered.
+   */
+  private isSemanticProviderById(id: string): boolean {
+    const provider = this.providers.get(id);
+    if (!provider) return false;
+    return (
+      provider.supportedModes.includes('semantic') &&
+      !provider.supportedModes.includes('keyword')
+    );
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function emptyGlobalScope(): RetrievalScopeResolved {
   return { scopeType: 'global', uris: [], sourcePaths: [], itemKeys: [] };
+}
+
+/**
+ * Normalize a raw provider score to the [0,1] range.
+ *
+ * Both semantic (cosine similarity) and keyword scores may exceed [0,1] in
+ * some implementations. Clamp to ensure the fusion formula is consistent.
+ * If no score is provided, fall back to a default of 0.5.
+ */
+function normalizeScore(score: number | null | undefined): number {
+  if (score == null) return 0.5;
+  return Math.max(0, Math.min(1, score));
 }
