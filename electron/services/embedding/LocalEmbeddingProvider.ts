@@ -5,7 +5,7 @@
  * Reads the endpoint from the active InferenceInstance so it stays consistent
  * with the rest of Tala's inference configuration.
  *
- * - Default model: embeddinggemma:300m
+ * - Default model: embeddinggemma
  * - Uses Ollama's /api/embeddings endpoint
  * - Falls back to http://127.0.0.1:11434 when no active instance is found
  *
@@ -17,7 +17,7 @@ import http from 'http';
 import type { InferenceInstance } from '../../../shared/settings';
 
 export const LOCAL_EMBEDDING_PROVIDER_ID = 'local-embedding';
-export const DEFAULT_EMBEDDING_MODEL = 'embeddinggemma:300m';
+export const DEFAULT_EMBEDDING_MODEL = 'embeddinggemma';
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434';
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
