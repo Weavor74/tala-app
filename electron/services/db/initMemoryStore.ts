@@ -22,6 +22,7 @@ import { PostgresMemoryRepository } from './PostgresMemoryRepository';
 import { DatabaseBootstrapCoordinator } from './DatabaseBootstrapCoordinator';
 import { ResearchRepository } from './ResearchRepository';
 import { ContentRepository } from './ContentRepository';
+import { EmbeddingsRepository } from './EmbeddingsRepository';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
 import type { DatabaseBootstrapConfig } from '../../../shared/dbBootstrapConfig';
 import type { MemoryRepository } from '../../../shared/memory/MemoryRepository';
@@ -34,6 +35,9 @@ let _researchRepository: ResearchRepository | null = null;
 
 /** Singleton content repository — shares pool with _repository once initialized. */
 let _contentRepository: ContentRepository | null = null;
+
+/** Singleton embeddings repository — shares pool with _repository once initialized. */
+let _embeddingsRepository: EmbeddingsRepository | null = null;
 
 /**
  * Singleton coordinator reference.
@@ -125,6 +129,7 @@ export async function initCanonicalMemory(
     _repository = repo;
     _researchRepository = new ResearchRepository(repo.getSharedPool());
     _contentRepository = new ContentRepository(repo.getSharedPool());
+    _embeddingsRepository = new EmbeddingsRepository(repo.getSharedPool());
     console.log('[initCanonicalMemory] Canonical memory store ready.');
     return _repository;
   } catch (err) {
@@ -164,6 +169,14 @@ export function getContentRepository(): ContentRepository | null {
 }
 
 /**
+ * Get the initialized embeddings repository.
+ * Returns null if not yet initialized (canonical memory init must succeed first).
+ */
+export function getEmbeddingsRepository(): EmbeddingsRepository | null {
+  return _embeddingsRepository;
+}
+
+/**
  * Shut down the canonical memory store and any managed runtime.
  *
  * Closes the database connection pool and, if the Tala-managed native
@@ -175,6 +188,7 @@ export async function shutdownCanonicalMemory(): Promise<void> {
     _repository = null;
     _researchRepository = null;
     _contentRepository = null;
+    _embeddingsRepository = null;
     console.log('[initCanonicalMemory] Canonical memory store shut down.');
   }
 

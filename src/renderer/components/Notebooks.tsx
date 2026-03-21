@@ -484,6 +484,33 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                             >
                                 INGEST NOTEBOOK
                             </button>
+                            {/* Embed Notebook — generate pgvector embeddings for document_chunks in this notebook. */}
+                            <button
+                                onClick={async () => {
+                                    if (!dbAvailable || !api?.embedNotebook) {
+                                        alert('Embedding requires a database connection.');
+                                        return;
+                                    }
+                                    if (!confirm(`Generate semantic embeddings for all chunks in this notebook?\nRequires Ollama with model embeddinggemma running.`)) return;
+                                    const res = await api.embedNotebook(selectedNotebookId);
+                                    if (res?.ok) {
+                                        const r = res.result;
+                                        const msg = [
+                                            `Embedding complete.`,
+                                            `Chunks embedded: ${r.chunksEmbedded}`,
+                                            `Chunks skipped (already embedded): ${r.chunksSkipped}`,
+                                            r.warnings?.length ? `Warnings:\n${r.warnings.join('\n')}` : '',
+                                        ].filter(Boolean).join('\n');
+                                        alert(msg);
+                                    } else {
+                                        alert(`Embedding failed: ${res?.error ?? 'Unknown error'}`);
+                                    }
+                                }}
+                                title="Generate semantic embeddings for all document chunks in this notebook (requires Ollama + embeddinggemma)"
+                                style={{ background: '#4a1a8c', border: 'none', color: 'white', padding: '6px 15px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontWeight: 'bold' }}
+                            >
+                                EMBED NOTEBOOK
+                            </button>
                             <button
                                 onClick={async () => {
                                     if (api?.setActiveNotebookContext) {

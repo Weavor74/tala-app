@@ -44,7 +44,7 @@ import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggre
 import { RuntimeControlService } from './services/RuntimeControlService';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
-import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository } from './services/db/initMemoryStore';
+import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository, getEmbeddingsRepository } from './services/db/initMemoryStore';
 import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchestratorRegistry';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -270,6 +270,7 @@ app.on('ready', async () => {
     initRetrievalOrchestrator({
       fileService,
       researchRepo: getResearchRepository() ?? undefined,
+      embeddingsRepo: getEmbeddingsRepository() ?? undefined,
       settingsPath: SETTINGS_PATH,
     });
   } catch (err) {
