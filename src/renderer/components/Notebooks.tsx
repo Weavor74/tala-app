@@ -12,6 +12,14 @@
  * **Agent Interaction:**
  * - **Context Sync**: `UPDATE AGENT CONTEXT` sends selected sources to TALA's RAG system.
  * - **Synthesis**: "GENERATE SUMMARY" triggers a chain-of-thought analysis over the selected notebook data.
+ * - **Ingest Selected** (placeholder): Future `ingestItems(itemKeys)` call to create source_documents
+ *   and document_chunks from selected notebook_items. Ingestion is always an explicit step — never
+ *   triggered automatically when items are saved.
+ * 
+ * **Curated Research Architecture:**
+ * - search results = candidate discovery items (found in Search & Add)
+ * - notebook_items = curated saved references (the curation gate)
+ * - ingestion = explicit later step (source_documents / document_chunks)
  * 
  * Notebooks are persisted in PostgreSQL via the research:* IPC handlers.
  */
@@ -149,6 +157,60 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
     const handleRemoveItem = async (itemKey: string) => {
         if (!selectedNotebookId || !dbAvailable || !api?.researchRemoveNotebookItem) return;
         await api.researchRemoveNotebookItem(selectedNotebookId, itemKey);
+        setActiveSources(prev => { const n = new Set(prev); n.delete(itemKey); return n; });
+        await loadNotebookItems(selectedNotebookId);
+    };
+
+    /**
+     * Remove all selected (activeSources) notebook items from the notebook.
+     * Optionally also removes scraped/ingested local content from the RAG store
+     * for items that have a source_path.
+     */
+    const handleRemoveSelected = async () => {
+        if (activeSources.size === 0 || !selectedNotebookId) return;
+
+        const keys = Array.from(activeSources);
+        const itemsToRemove = notebookItems.filter(i => activeSources.has(i.item_key));
+        const scrapedPaths = itemsToRemove
+            .map(i => i.source_path)
+            .filter((p): p is string => !!p);
+
+        // Determine whether to also delete ingested content from RAG store
+        const alsoDeleteIngested =
+            scrapedPaths.length > 0 &&
+            confirm(
+                `Remove ${keys.length} item(s) from this notebook?\n\n` +
+                `${scrapedPaths.length} item(s) also have downloaded content.\n` +
+                `Click OK to also remove that content from the RAG index.\n` +
+                `Click Cancel to remove from notebook only.`
+            );
+
+        // Remove from notebook
+        if (dbAvailable && api?.researchRemoveNotebookItems) {
+            await api.researchRemoveNotebookItems(selectedNotebookId, keys);
+        } else {
+            // Fallback: single-item loop
+            for (const key of keys) {
+                if (api?.researchRemoveNotebookItem) {
+                    await api.researchRemoveNotebookItem(selectedNotebookId, key);
+                }
+            }
+        }
+
+        // Optionally remove ingested content from RAG store
+        if (alsoDeleteIngested && api?.deleteMemory) {
+            const ragFailures: string[] = [];
+            for (const path of scrapedPaths) {
+                try { await api.deleteMemory(path); } catch {
+                    ragFailures.push(path);
+                }
+            }
+            if (ragFailures.length > 0) {
+                alert(`Removed from notebook, but failed to delete RAG content for ${ragFailures.length} file(s):\n${ragFailures.join('\n')}`);
+            }
+        }
+
+        setActiveSources(new Set());
         await loadNotebookItems(selectedNotebookId);
     };
 
@@ -276,6 +338,15 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
                                 <span style={{ fontWeight: 'bold', fontSize: 11, color: '#888' }}>ITEMS ({notebookItems.length})</span>
                                 <div style={{ display: 'flex', gap: 10 }}>
+                                    {activeSources.size > 0 && (
+                                        <button
+                                            onClick={handleRemoveSelected}
+                                            style={{ background: '#5a1a1a', border: '1px solid #8b2020', color: '#ff8080', padding: '4px 10px', borderRadius: 2, fontSize: 10, cursor: 'pointer' }}
+                                            title={`Remove ${activeSources.size} selected item(s) from notebook`}
+                                        >
+                                            REMOVE SELECTED ({activeSources.size})
+                                        </button>
+                                    )}
                                     <button
                                         onClick={async () => {
                                             if (activeSources.size === 0) {
@@ -374,6 +445,17 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                                 <span style={{ fontSize: 11, opacity: 0.7 }}>Active Context: </span>
                                 <span style={{ fontSize: 11, fontWeight: 'bold', color: '#007acc' }}>{activeSources.size} Items Selected</span>
                             </div>
+                            {/* INGEST SELECTED placeholder — future selective ingestion via ingestItems(itemKeys).
+                                When implemented, will create source_documents and document_chunks from
+                                selected notebook_items. Notebook membership is the curation gate;
+                                ingestion is a separate explicit step. */}
+                            <button
+                                disabled
+                                title="Selective ingestion coming soon — will call ingestItems(itemKeys) for selected items"
+                                style={{ background: '#333', border: '1px solid #444', color: '#666', padding: '6px 15px', borderRadius: 4, fontSize: 12, cursor: 'not-allowed' }}
+                            >
+                                INGEST SELECTED
+                            </button>
                             <button
                                 onClick={async () => {
                                     if (api?.setActiveNotebookContext) {

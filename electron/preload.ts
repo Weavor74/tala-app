@@ -387,6 +387,8 @@ contextBridge.exposeInMainWorld('tala', {
     researchAddItemsToNotebook: (notebookId: string, items: unknown[], searchRunId?: string) => ipcRenderer.invoke('research:addItemsToNotebook', notebookId, items, searchRunId),
     /** Remove an item from a notebook. */
     researchRemoveNotebookItem: (notebookId: string, itemKey: string) => ipcRenderer.invoke('research:removeNotebookItem', notebookId, itemKey),
+    /** Remove multiple items from a notebook in one operation. */
+    researchRemoveNotebookItems: (notebookId: string, itemKeys: string[]) => ipcRenderer.invoke('research:removeNotebookItems', notebookId, itemKeys),
     /** Create a search run and return its id. */
     researchCreateSearchRun: (input: { query_text: string; notebook_id?: string }) => ipcRenderer.invoke('research:createSearchRun', input),
     /** Add results to a search run. */
