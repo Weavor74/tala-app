@@ -400,6 +400,14 @@ contextBridge.exposeInMainWorld('tala', {
     /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
     researchResolveNotebookScope: (notebookId: string) => ipcRenderer.invoke('research:resolveNotebookScope', notebookId),
 
+    // ─── Retrieval Orchestration ──────────────────────────────────────────────
+    /** Execute a canonical retrieval request via RetrievalOrchestrator. */
+    retrievalRetrieve: (request: import('../shared/retrieval/retrievalTypes').RetrievalRequest) => ipcRenderer.invoke('retrieval:retrieve', request),
+    /** List all currently registered retrieval providers. */
+    retrievalListProviders: () => ipcRenderer.invoke('retrieval:listProviders'),
+    /** Refresh external search provider registration from current settings. */
+    retrievalRefreshExternalProvider: () => ipcRenderer.invoke('retrieval:refreshExternalProvider'),
+
     // ─── Browser Data Relay ───────────────────────────────────────
     /**
      * Sends browser data (DOM or screenshot) from the renderer back to the

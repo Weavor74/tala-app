@@ -2,11 +2,16 @@
  * Search Component (Unified Local + Web Search)
  *
  * Provides a search panel with two modes:
- * - **Local Search:** Searches workspace files by name/content via `FileService.searchFiles()`.
- * - **Web Search:** Queries DuckDuckGo Lite via the `search-remote` IPC handler.
+ * - **Local Search:** Searches workspace files by name/content via the
+ *   RetrievalOrchestrator (LocalSearchProvider, providerId='local').
+ * - **Web Search:** Queries configured external providers via
+ *   RetrievalOrchestrator (ExternalApiSearchProvider) or falls back to the
+ *   legacy DuckDuckGo Lite IPC path when no external provider is configured.
  *
- * Web results can be selected and bulk-scraped into the RAG database
- * using `search-scrape`, which downloads, converts to markdown, and ingests.
+ * All searches flow through RetrievalOrchestrator so both local and external
+ * providers are normalized into the same result shape. Legacy `searchFiles`
+ * and `searchRemote` IPC calls are kept as fallback paths for backward
+ * compatibility when the orchestrator is unavailable.
  *
  * Each search creates a `search_run` record in PostgreSQL, and results are
  * registered in `search_run_results`. From there users can save results into
@@ -20,6 +25,7 @@ import React, { useState } from 'react';
 /**
  * A unified search result — either a local file match or a web search result.
  * Local results have `path` and `content`; web results have `title`, `snippet`, and `url`.
+ * All results may also carry `providerId` and `sourceType` for provenance display.
  */
 interface Result {
     path?: string;
@@ -27,6 +33,10 @@ interface Result {
     title?: string;
     snippet?: string;
     url?: string;
+    /** ID of the retrieval provider that produced this result (e.g., 'local', 'external:brave'). */
+    providerId?: string;
+    /** Source category from the provider (e.g., 'local_file', 'web'). */
+    sourceType?: string;
 }
 
 /** Props for the Search component. */
@@ -37,6 +47,20 @@ interface SearchProps {
     initialNotebookId?: string | null;
     /** Callback when a source is successfully added to a notebook. */
     onAdd?: () => void;
+}
+
+// ─── Legacy search fallback ───────────────────────────────────────────────────
+
+/**
+ * Fallback search when RetrievalOrchestrator IPC is unavailable.
+ * Uses the original searchFiles / searchRemote IPC paths.
+ * Kept for backward compatibility during the transition period.
+ */
+async function _legacySearch(api: any, query: string, mode: 'local' | 'remote'): Promise<Result[]> {
+    if (mode === 'local') {
+        return (await api.searchFiles?.(query)) || [];
+    }
+    return (await api.searchRemote?.(query)) || [];
 }
 
 /**
@@ -101,6 +125,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         const notebookItems: Array<{
             item_key: string; item_type: string;
             source_path?: string; title?: string; uri?: string; snippet?: string;
+            provider_id?: string;
         }> = [];
 
         for (const url of urls) {
@@ -118,6 +143,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         title: resItem?.title ?? url,
                         uri: url,
                         snippet: resItem?.snippet ?? undefined,
+                        provider_id: resItem?.providerId ?? undefined,
                     });
                     setSelectedUrls(prev => {
                         const next = new Set(prev);
@@ -190,10 +216,36 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         try {
             let fetchedResults: Result[] = [];
 
-            if (mode === 'local') {
-                fetchedResults = (await api.searchFiles(query)) || [];
+            // Attempt retrieval via RetrievalOrchestrator first (canonical path).
+            // providerIds: 'local' for Local mode, omit for Web to use all enabled providers.
+            if (api.retrievalRetrieve) {
+                const providerIds = mode === 'local' ? ['local'] : undefined;
+                const retrievalRes = await api.retrievalRetrieve({
+                    query: query.trim(),
+                    mode: 'keyword',
+                    scope: 'global',
+                    providerIds,
+                });
+                if (retrievalRes?.ok && retrievalRes.response?.results) {
+                    fetchedResults = (retrievalRes.response.results as Array<{
+                        title: string; uri?: string | null; sourcePath?: string | null;
+                        snippet?: string | null; providerId: string; sourceType?: string | null;
+                    }>).map(r => ({
+                        title: r.title,
+                        url: r.uri ?? undefined,
+                        path: r.sourcePath ?? undefined,
+                        snippet: r.snippet ?? undefined,
+                        content: r.snippet ?? undefined,
+                        providerId: r.providerId,
+                        sourceType: r.sourceType ?? undefined,
+                    }));
+                } else {
+                    // Fall through to legacy path if orchestrator returned error
+                    fetchedResults = await _legacySearch(api, query, mode);
+                }
             } else {
-                fetchedResults = (await api.searchRemote(query)) || [];
+                // Orchestrator not yet exposed — use legacy IPC paths
+                fetchedResults = await _legacySearch(api, query, mode);
             }
 
             setResults(fetchedResults);
@@ -208,11 +260,12 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
 
                         const runResults = fetchedResults.map((r, i) => ({
                             item_key: r.url || r.path || `result-${i}`,
-                            item_type: mode === 'local' ? 'local_file' : 'web',
+                            item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
                             source_path: r.path ?? undefined,
                             title: r.title ?? r.path ?? undefined,
                             uri: r.url ?? undefined,
                             snippet: (r.snippet || r.content)?.slice(0, 500) ?? undefined,
+                            provider_id: r.providerId ?? undefined,
                         }));
                         await api.researchAddSearchRunResults(searchRunId, runResults);
                     }
@@ -463,7 +516,12 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                         </a>
                                         {/* Status Indicator */}
                                         {isScraping && <span style={{ fontSize: 11, color: '#e2b93d' }}>ADDING...</span>}
-                                        {/* Maybe show "Added" if we tracked history? For now simpler is better. */}
+                                        {/* Provider badge for provenance */}
+                                        {res.providerId && res.providerId !== 'local' && (
+                                            <span style={{ fontSize: 10, color: '#888', fontFamily: 'monospace', background: '#2a2a2a', padding: '1px 4px', borderRadius: 2 }}>
+                                                {res.providerId}
+                                            </span>
+                                        )}
                                     </div>
                                 )}
                             </div>
