@@ -8,6 +8,29 @@
 import { DEFAULT_DATABASE_CONFIG, type DatabaseConfig } from '../../../shared/dbConfig';
 
 /**
+ * Build a PostgreSQL connection string (DSN) from a DatabaseConfig.
+ *
+ * If the config already carries an explicit connectionString it is returned
+ * unchanged.  Otherwise the DSN is composed from the individual host/port/
+ * database/user/password fields so that MCP child processes receive a
+ * single TALA_PG_DSN value regardless of how the parent was configured.
+ */
+export function buildPgDsn(config: DatabaseConfig): string {
+  if (config.connectionString) {
+    return config.connectionString;
+  }
+
+  const user = encodeURIComponent(config.user);
+  const password = encodeURIComponent(config.password);
+  const host = config.host;
+  const port = config.port;
+  const database = encodeURIComponent(config.database);
+  const sslParam = config.ssl ? '?sslmode=require' : '';
+
+  return `postgresql://${user}:${password}@${host}:${port}/${database}${sslParam}`;
+}
+
+/**
  * Resolve database configuration from environment and settings.
  * Environment variables take highest precedence, then explicit config, then defaults.
  */

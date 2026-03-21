@@ -53,6 +53,7 @@ import { promptProfileSelector } from './cognitive/PromptProfileSelector';
 import { cognitiveContextCompactor } from './cognitive/CognitiveContextCompactor';
 import { telemetry } from './TelemetryService';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
+import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -1509,6 +1510,11 @@ Exported standalone package from Tala.
                                 this.mcpService.setPythonPath(svcPython);
                             }
                             if (typeof (this.mcpService as any).connect === 'function') {
+                                // Derive TALA_PG_DSN from the canonical PostgreSQL config so the
+                                // tala-memory-graph child process can connect without manual env setup.
+                                const pgDsn = buildPgDsn(resolveDatabaseConfig());
+                                const graphEnv = { ...isolatedEnv, TALA_PG_DSN: pgDsn };
+                                console.log('[MCP] tala-memory-graph: injecting TALA_PG_DSN from canonical DB config');
                                 await (this.mcpService as any).connect({
                                     id: 'tala-memory-graph',
                                     name: 'Memory Graph',
@@ -1518,7 +1524,7 @@ Exported standalone package from Tala.
                                     command: svcPython,
                                     args: [graphScript],
                                     enabled: true,
-                                    env: isolatedEnv
+                                    env: graphEnv
                                 } as any);
                             }
                         } catch (error) {
