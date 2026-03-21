@@ -26,7 +26,7 @@ import type {
 
 export class LocalSearchProvider implements SearchProvider {
   readonly id = 'local';
-  readonly supportedModes: RetrievalMode[] = ['keyword'];
+  readonly supportedModes: RetrievalMode[] = ['keyword', 'hybrid'];
 
   constructor(private readonly fileService: FileService) {}
 

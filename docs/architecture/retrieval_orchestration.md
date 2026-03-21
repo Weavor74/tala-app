@@ -301,28 +301,134 @@ normalization before being rendered or persisted.
 
 ---
 
-## Future Integration Paths
+## Hybrid Retrieval
 
-### pgvector semantic provider
+`mode: 'hybrid'` combines keyword and semantic signals into a single ranked
+result set. All fusion logic is contained in `RetrievalOrchestrator.hybridMergeResults()`.
 
-When pgvector is enabled and embeddings are populated, a future
-`SemanticSearchProvider` can be registered alongside `LocalSearchProvider`
-and `ExternalApiSearchProvider` without changing the orchestrator or the
-Search UI. It will support `mode: 'semantic'` and `mode: 'hybrid'`.
+### Provider participation
 
-```typescript
-class SemanticSearchProvider implements SearchProvider {
-  id = 'semantic_pgvector';
-  supportedModes: RetrievalMode[] = ['semantic', 'hybrid'];
-  // ... uses PostgresMemoryRepository.searchObservationsBySimilarity()
-}
+Providers declare hybrid support via `supportedModes`:
+
+| Provider | supportedModes |
+|----------|---------------|
+| `LocalSearchProvider` | `['keyword', 'hybrid']` |
+| `ExternalApiSearchProvider` | `['keyword', 'hybrid']` |
+| `SemanticSearchProvider` | `['semantic', 'hybrid']` |
+
+When `mode === 'hybrid'`, the orchestrator calls all providers whose
+`supportedModes` includes `'hybrid'`, which means both keyword and semantic
+providers are invoked concurrently via `Promise.allSettled()`.
+
+### Score normalization
+
+Before fusion, each provider's raw score is clamped to `[0,1]`:
+
 ```
+normalizedScore = clamp(rawScore, 0, 1)
+```
+
+If a provider returns `null` for score (e.g., `LocalSearchProvider`), the
+default score of `0.5` is used.
+
+### Fusion scoring
+
+After normalization:
+
+```
+fusedScore = (0.6 × semanticScore) + (0.4 × keywordScore)
+```
+
+Fixed weights for this pass:
+- `semanticWeight = 0.6` — semantic results weighted higher (dense vector similarity)
+- `keywordWeight  = 0.4` — keyword results weighted lower
+
+If a result comes from only one provider type:
+- semantic-only: `keywordScore = 0`
+- keyword-only: `semanticScore = 0`
+- both: scores combined
+
+### Deduplication
+
+Duplicates are detected and merged by:
+1. `itemKey` (exact match — primary key)
+2. `uri` (same canonical URL from different providers)
+3. `contentHash` (same content fingerprint across providers)
+
+When merging:
+- Scores are kept at their maximum per provider type, then fusedScore is recomputed.
+- The best non-null `title` and `snippet` are kept (prefers descriptive over raw key strings).
+- All original provenance metadata is preserved from the first occurrence.
+- `metadata.sourceProviders` lists all provider IDs that contributed to the result.
+
+### Notebook boost
+
+When `scopeType === 'notebook'`, a small boost is applied:
+
+```
+finalScore = min(1.0, fusedScore + 0.1)
+```
+
+All results in notebook scope receive this boost. Scope enforcement (which items
+are in scope) is already handled upstream by providers and the scope resolver.
+
+### Metadata emitted per hybrid result
+
+Each hybrid result contains these additional fields in `metadata`:
+
+| Field | Value |
+|-------|-------|
+| `semanticScore` | Normalized semantic provider score (0 if absent) |
+| `keywordScore` | Normalized keyword provider score (0 if absent) |
+| `fusedScore` | Final fused score before topK sort |
+| `sourceProviders` | Array of provider IDs that contributed to this result |
+
+Existing citation and provenance fields (`chunkId`, `documentId`, `citationLabel`,
+`sectionLabel`, `pageNumber`, etc.) are preserved unchanged from the original
+provider result.
+
+### Hybrid retrieval pipeline
+
+```
+hybrid retrieve request
+    ↓ resolveScope() [same as keyword/semantic]
+    ↓ selectProviders() [providers with 'hybrid' in supportedModes]
+    ↓ executeProviders() in parallel [LocalSearchProvider + SemanticSearchProvider + ExternalApiSearchProvider]
+    ↓ hybridMergeResults():
+        ↓ normalizeScore() per result
+        ↓ dedup by itemKey / URI / contentHash
+        ↓ fusedScore = 0.6 × semantic + 0.4 × keyword
+        ↓ notebook boost (+0.1) if scopeType='notebook'
+        ↓ sort by fusedScore DESC
+        ↓ cap at topK
+    ↓ return NormalizedSearchResult[]
+```
+
+### Non-hybrid modes unchanged
+
+`mode: 'keyword'` and `mode: 'semantic'` use the original merge path
+(first-occurrence-wins dedup, sort by raw `score`, no fusion). Hybrid is
+additive, not a rewrite.
+
+### Future tuning points
+
+- Scoring weights (`SEMANTIC_WEIGHT`, `KEYWORD_WEIGHT`) are module-level constants
+  in `RetrievalOrchestrator.ts` and can be adjusted without API changes.
+- Notebook boost magnitude (`NOTEBOOK_BOOST`) is similarly a named constant.
+- Reciprocal Rank Fusion (RRF) can replace the weighted sum in the same
+  `hybridMergeResults()` method if score calibration proves inconsistent.
+- Per-query or per-user weight tuning can be introduced via `RetrievalRequest.filters`
+  without changing the external interface.
+
+---
+
+## Future Integration Paths
 
 ### Notebook content ingestion for semantic search
 
-Future: when a notebook item is saved, trigger embedding generation and
-store the vector in `observation_embeddings`. The `SemanticSearchProvider`
-can then search within notebook scope using pgvector similarity.
+When a notebook item is saved, trigger embedding generation and store the vector
+in `document_chunk_embeddings`. The `SemanticSearchProvider` can then search
+within notebook scope using pgvector similarity constrained by `itemKeys`.
 
 ### Additional external provider types
 
@@ -360,3 +466,7 @@ changes at runtime without requiring an app restart.
 6. **No UI-owned provider logic** — the renderer submits `RetrievalRequest` via
    IPC. Provider selection, execution, merging, and deduplication happen in the
    main process only.
+
+7. **Hybrid is additive** — `mode: 'hybrid'` adds fusion scoring on top of the
+   existing provider model. It does not replace keyword or semantic modes and
+   does not change the external `RetrievalResponse` shape.
