@@ -14,18 +14,33 @@
  * compatibility when the orchestrator is unavailable.
  *
  * Each search creates a `search_run` record in PostgreSQL, and results are
- * registered in `search_run_results`. From there users can save results into
- * a Notebook (persisted in `notebook_items`).
+ * registered in `search_run_results`. From there users can:
+ *   - **Save Selected** (preferred): save only selected results as
+ *     `notebook_items` references — no content scraping or ingestion.
+ *   - **Save All** (convenience): copy all search-run results into a notebook.
+ *   - **Add to Notebook (with scrape)**: scrape/download content before saving.
+ *
+ * Architectural contract:
+ *   - search results = candidate discovery items
+ *   - notebook_items = curated saved references (this component's output)
+ *   - ingestion (source_documents / chunks) = explicit later step
  *
  * Results display with clickable titles that either open local files
  * or launch URLs in the embedded browser.
  */
 import React, { useState } from 'react';
+import {
+    resultKey,
+    resultToNotebookItem,
+    filterSelectedResults,
+    allResultKeys,
+} from '../utils/searchSelection';
 
 /**
  * A unified search result — either a local file match or a web search result.
  * Local results have `path` and `content`; web results have `title`, `snippet`, and `url`.
  * All results may also carry `providerId` and `sourceType` for provenance display.
+ * Aligns with `SearchResultInput` in searchSelection.ts.
  */
 interface Result {
     path?: string;
@@ -37,6 +52,10 @@ interface Result {
     providerId?: string;
     /** Source category from the provider (e.g., 'local_file', 'web'). */
     sourceType?: string;
+    /** Provider-native identifier from NormalizedSearchResult.externalId. */
+    externalId?: string | null;
+    /** Arbitrary provider metadata from NormalizedSearchResult.metadata. */
+    metadata?: Record<string, unknown>;
 }
 
 /** Props for the Search component. */
@@ -73,7 +92,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const [results, setResults] = useState<Result[]>([]);
     const [loading, setLoading] = useState(false);
     const [scraping, setScraping] = useState<string | null>(null);
-    const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
+    /** Keys of results the user has selected (url || path || result:<index>). */
+    const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [notebooks, setNotebooks] = useState<any[]>([]);
     const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || '');
     /** The search_run id from the most recent search, used to register notebook items. */
@@ -82,46 +102,99 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const api = (window as any).tala;
 
 
-    const handleBulkAdd = async () => {
-        if (selectedUrls.size === 0 || !selectedNotebookId) return;
+    /**
+     * Resolves (or creates) the target notebook.
+     * Returns the resolved notebook ID, or null if the user cancelled.
+     */
+    const resolveTargetNotebook = async (rawId: string): Promise<string | null> => {
+        if (rawId !== 'CREATE_NEW_NB') return rawId;
+
+        const name = prompt("Enter New Notebook Name:");
+        if (!name) return null;
+
+        // Try PostgreSQL-backed creation first
+        if (api?.researchCreateNotebook) {
+            const res = await api.researchCreateNotebook({ name });
+            if (res?.ok && res.notebook) return res.notebook.id;
+        }
+        // Fallback: settings-based
+        const settings = await api.getSettings();
+        const newNb = {
+            id: `nb-${Math.random().toString(36).substring(2, 11)}`,
+            name,
+            sourcePaths: [],
+            createdAt: Date.now()
+        };
+        const nbs = [...(settings.notebooks || []), newNb];
+        await api.saveSettings({ ...settings, notebooks: nbs });
+        return newNb.id;
+    };
+
+    /**
+     * SAVE SELECTED — preferred curated workflow.
+     *
+     * Saves only the selected search results into the target notebook as
+     * `notebook_items` reference records. No content scraping or ingestion
+     * occurs. The saved items carry full normalized metadata (itemKey, title,
+     * uri, sourcePath, snippet, providerId, externalId) so they can be
+     * explicitly ingested later via ingestItems(itemKeys).
+     */
+    const handleSaveSelected = async () => {
+        if (selectedKeys.size === 0 || !selectedNotebookId) return;
         setLoading(true);
 
-        const urls = Array.from(selectedUrls);
-        let successCount = 0;
-        let failCount = 0;
+        const targetId = await resolveTargetNotebook(selectedNotebookId);
+        if (!targetId) { setLoading(false); return; }
 
-        // 1. Determine target notebook id (may need to create one)
-        let targetId = selectedNotebookId;
-        if (selectedNotebookId === 'CREATE_NEW_NB') {
-            const name = prompt("Enter New Notebook Name:");
-            if (!name) {
-                setScraping(null);
-                setLoading(false);
-                return;
-            }
-            // Try PostgreSQL-backed creation first
-            if (api?.researchCreateNotebook) {
-                const res = await api.researchCreateNotebook({ name });
-                if (res?.ok && res.notebook) {
-                    targetId = res.notebook.id;
-                }
-            }
-            if (targetId === 'CREATE_NEW_NB') {
-                // Fallback: settings-based
-                const settings = await api.getSettings();
-                const newNb = {
-                    id: `nb-${Math.random().toString(36).substring(2, 11)}`,
-                    name,
-                    sourcePaths: [],
-                    createdAt: Date.now()
-                };
-                const nbs = [...(settings.notebooks || []), newNb];
+        const selected = filterSelectedResults(results, selectedKeys);
+        const notebookItems = selected.map(({ result, index }) =>
+            resultToNotebookItem(result, index)
+        );
+
+        if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
+            await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+        } else if (notebookItems.length > 0 && api?.getSettings) {
+            // Settings-based fallback (DB unavailable): only source_paths can be persisted.
+            // Web-only items (uri but no source_path) are not saved in this degraded mode —
+            // use the PostgreSQL-backed path for full notebook_item persistence.
+            const settings = await api.getSettings();
+            const nbs = [...(settings.notebooks || [])];
+            const nbIdx = nbs.findIndex((n: any) => n.id === targetId);
+            if (nbIdx >= 0) {
+                const paths = notebookItems.map(i => i.source_path).filter(Boolean) as string[];
+                nbs[nbIdx].sourcePaths = Array.from(new Set([...(nbs[nbIdx].sourcePaths || []), ...paths]));
                 await api.saveSettings({ ...settings, notebooks: nbs });
-                targetId = newNb.id;
             }
         }
 
-        // 2. Ingest files and collect notebook items
+        setSelectedNotebookId(targetId);
+        setSelectedKeys(new Set());
+        setLoading(false);
+        alert(`Saved ${notebookItems.length} item(s) to notebook.`);
+        if (onAdd) onAdd();
+    };
+
+    /**
+     * ADD TO NOTEBOOK (with scrape) — downloads/scrapes web content before saving.
+     *
+     * This is an explicit content-fetch action for users who want to download
+     * the page content as a local artifact alongside the notebook reference.
+     * Only applies to web results that have a URL.
+     */
+    const handleBulkAdd = async () => {
+        if (selectedKeys.size === 0 || !selectedNotebookId) return;
+        setLoading(true);
+
+        const targetId = await resolveTargetNotebook(selectedNotebookId);
+        if (!targetId) { setScraping(null); setLoading(false); return; }
+
+        let successCount = 0;
+        let failCount = 0;
+
+        const urls = results
+            .filter((r, i) => r.url && selectedKeys.has(resultKey(r.url, r.path, i)))
+            .map(r => r.url as string);
+
         const notebookItems: Array<{
             item_key: string; item_type: string;
             source_path?: string; title?: string; uri?: string; snippet?: string;
@@ -145,7 +218,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         snippet: resItem?.snippet ?? undefined,
                         provider_id: resItem?.providerId ?? undefined,
                     });
-                    setSelectedUrls(prev => {
+                    setSelectedKeys(prev => {
                         const next = new Set(prev);
                         next.delete(url);
                         return next;
@@ -158,7 +231,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             }
         }
 
-        // 3. Persist notebook items to PostgreSQL
+        // Persist notebook items to PostgreSQL
         if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
             await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
         } else if (notebookItems.length > 0 && api?.getSettings) {
@@ -208,7 +281,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const handleSearch = async () => {
         if (!query.trim()) return;
         setLoading(true);
-        setSelectedUrls(new Set()); // Clear selection on new search
+        setSelectedKeys(new Set()); // Reset selection when a new search is run
         setCurrentSearchRunId(null);
 
         if (!api) return;
@@ -230,6 +303,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                     fetchedResults = (retrievalRes.response.results as Array<{
                         title: string; uri?: string | null; sourcePath?: string | null;
                         snippet?: string | null; providerId: string; sourceType?: string | null;
+                        externalId?: string | null; metadata?: Record<string, unknown>;
                     }>).map(r => ({
                         title: r.title,
                         url: r.uri ?? undefined,
@@ -238,6 +312,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         content: r.snippet ?? undefined,
                         providerId: r.providerId,
                         sourceType: r.sourceType ?? undefined,
+                        externalId: r.externalId ?? undefined,
+                        metadata: r.metadata,
                     }));
                 } else {
                     // Fall through to legacy path if orchestrator returned error
@@ -285,17 +361,20 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         if (e.key === 'Enter') handleSearch();
     };
 
-    const toggleSelection = (url: string) => {
-        setSelectedUrls(prev => {
+    const toggleSelection = (key: string) => {
+        setSelectedKeys(prev => {
             const next = new Set(prev);
-            if (next.has(url)) {
-                next.delete(url);
+            if (next.has(key)) {
+                next.delete(key);
             } else {
-                next.add(url);
+                next.add(key);
             }
             return next;
         });
     };
+
+    const handleSelectAll = () => setSelectedKeys(allResultKeys(results));
+    const handleClearSelection = () => setSelectedKeys(new Set());
 
     return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#ccc', background: '#1e1e1e' }}>
@@ -368,10 +447,34 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                     </button>
                 </div>
 
-                {/* Bulk Actions Toolbar */}
-                {mode === 'remote' && selectedUrls.size > 0 && (
-                    <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#2d2d2d', padding: '5px 10px', borderRadius: 4 }}>
-                        <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{selectedUrls.size} selected</span>
+                {/* Selection controls — shown whenever there are results */}
+                {results.length > 0 && (
+                    <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button
+                            onClick={handleSelectAll}
+                            style={{ background: 'transparent', border: '1px solid #444', color: '#aaa', fontSize: 10, padding: '2px 8px', borderRadius: 2, cursor: 'pointer' }}
+                        >
+                            Select All
+                        </button>
+                        <button
+                            onClick={handleClearSelection}
+                            disabled={selectedKeys.size === 0}
+                            style={{ background: 'transparent', border: '1px solid #444', color: selectedKeys.size > 0 ? '#aaa' : '#555', fontSize: 10, padding: '2px 8px', borderRadius: 2, cursor: selectedKeys.size > 0 ? 'pointer' : 'default' }}
+                        >
+                            Clear
+                        </button>
+                        {selectedKeys.size > 0 && (
+                            <span style={{ fontSize: 10, opacity: 0.7 }}>{selectedKeys.size} of {results.length} selected</span>
+                        )}
+                    </div>
+                )}
+
+                {/* Save Selected toolbar — preferred curated workflow, no content scraping */}
+                {selectedKeys.size > 0 && (
+                    <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#1e2830', padding: '5px 10px', borderRadius: 4, border: '1px solid #2a4060' }}>
+                        <span style={{ fontSize: 11, whiteSpace: 'nowrap', color: '#9cdcfe' }}>
+                            💾 {selectedKeys.size} selected
+                        </span>
                         <select
                             value={selectedNotebookId}
                             onChange={e => setSelectedNotebookId(e.target.value)}
@@ -384,26 +487,47 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             ))}
                         </select>
                         <button
-                            onClick={handleBulkAdd}
+                            onClick={handleSaveSelected}
                             disabled={!selectedNotebookId}
+                            title="Save selected results as notebook references (no content download)"
                             style={{
-                                background: selectedNotebookId ? '#1a8c3e' : '#444',
+                                background: selectedNotebookId ? '#0e639c' : '#444',
                                 border: 'none',
                                 color: 'white',
                                 fontSize: 11,
                                 padding: '4px 10px',
                                 borderRadius: 2,
                                 cursor: selectedNotebookId ? 'pointer' : 'default',
-                                whiteSpace: 'nowrap'
+                                whiteSpace: 'nowrap',
+                                fontWeight: 'bold'
                             }}
                         >
-                            ADD TO NOTEBOOK
+                            SAVE SELECTED
                         </button>
+                        {mode === 'remote' && (
+                            <button
+                                onClick={handleBulkAdd}
+                                disabled={!selectedNotebookId}
+                                title="Download and scrape selected web pages, then save to notebook"
+                                style={{
+                                    background: 'transparent',
+                                    border: '1px solid #444',
+                                    color: selectedNotebookId ? '#aaa' : '#555',
+                                    fontSize: 11,
+                                    padding: '4px 10px',
+                                    borderRadius: 2,
+                                    cursor: selectedNotebookId ? 'pointer' : 'default',
+                                    whiteSpace: 'nowrap'
+                                }}
+                            >
+                                + SCRAPE & ADD
+                            </button>
+                        )}
                     </div>
                 )}
 
-                {/* Save All Results toolbar (shown when search run was registered) */}
-                {currentSearchRunId && results.length > 0 && selectedUrls.size === 0 && (
+                {/* Save All Results toolbar (shown when search run was registered and nothing is selected) */}
+                {currentSearchRunId && results.length > 0 && selectedKeys.size === 0 && (
                     <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#1e2d1e', padding: '5px 10px', borderRadius: 4, border: '1px solid #2a4a2a' }}>
                         <span style={{ fontSize: 11, opacity: 0.7, flex: 1 }}>Save all {results.length} results to notebook</span>
                         <select
@@ -464,44 +588,53 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                 )}
 
                 {results.map((res, i) => {
-                    const isSelected = res.url ? selectedUrls.has(res.url) : false;
+                    const key = resultKey(res.url, res.path, i);
+                    const isSelected = selectedKeys.has(key);
                     const isScraping = res.url === scraping;
 
                     return (
                         <div
                             key={i}
+                            onClick={() => toggleSelection(key)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSelection(key); } }}
+                            tabIndex={0}
+                            role="checkbox"
+                            aria-checked={isSelected}
                             style={{
                                 padding: '15px',
                                 borderBottom: '1px solid #252526',
-                                cursor: 'default',
+                                cursor: 'pointer',
                                 transition: 'background 0.2s',
                                 position: 'relative',
                                 display: 'flex',
                                 gap: 10,
-                                background: isSelected ? '#2d2d2d' : 'transparent'
+                                background: isSelected ? '#1e2830' : 'transparent',
+                                outline: 'none'
                             }}
                             className="search-result-item"
                         >
-                            {/* Checkbox for Remote Items */}
-                            {mode === 'remote' && res.url && (
-                                <div style={{ paddingTop: 2 }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={isSelected}
-                                        onChange={() => toggleSelection(res.url!)}
-                                        style={{ cursor: 'pointer' }}
-                                    />
-                                </div>
-                            )}
+                            {/* Checkbox — available for all result types (local and web) */}
+                            <div style={{ paddingTop: 2 }}>
+                                <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelection(key)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ cursor: 'pointer' }}
+                                />
+                            </div>
 
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div
-                                    onClick={() => mode === 'local' && res.path && onOpenFile?.(res.path)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (mode === 'local' && res.path) onOpenFile?.(res.path);
+                                    }}
                                     style={{
                                         fontWeight: 'bold',
                                         color: '#9cdcfe',
                                         marginBottom: '5px',
-                                        cursor: mode === 'local' ? 'pointer' : 'text'
+                                        cursor: mode === 'local' && res.path ? 'pointer' : 'default'
                                     }}
                                 >
                                     {res.title || res.path}
@@ -511,7 +644,13 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                 </div>
                                 {res.url && (
                                     <div style={{ display: 'flex', gap: 10, marginTop: 5, alignItems: 'center' }}>
-                                        <a href={res.url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: '#3794ff', textDecoration: 'none' }}>
+                                        <a
+                                            href={res.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={e => e.stopPropagation()}
+                                            style={{ fontSize: '12px', color: '#3794ff', textDecoration: 'none' }}
+                                        >
                                             View Source
                                         </a>
                                         {/* Status Indicator */}
@@ -522,6 +661,12 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                                 {res.providerId}
                                             </span>
                                         )}
+                                    </div>
+                                )}
+                                {/* Provider badge for local results */}
+                                {res.providerId === 'local' && res.path && (
+                                    <div style={{ fontSize: 10, color: '#888', marginTop: 3, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {res.path}
                                     </div>
                                 )}
                             </div>

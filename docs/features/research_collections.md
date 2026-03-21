@@ -48,17 +48,51 @@ All handlers are exposed on `window.tala` via `electron/preload.ts` as `research
 
 ### UI Components
 
-- `src/renderer/components/Notebooks.tsx` — Research sidebar and notebook viewer. Lists notebooks from PostgreSQL. Falls back to settings-based notebooks if the DB is unavailable.
-- `src/renderer/components/Search.tsx` — Search & Add panel. Creates a `search_run` on each search and registers all results in `search_run_results`. Shows "SAVE ALL" toolbar to copy results to a notebook.
+- `src/renderer/components/Notebooks.tsx` — Research sidebar and notebook viewer. Lists notebooks from PostgreSQL. Falls back to settings-based notebooks if the DB is unavailable. Each notebook item can be selected for agent context sync or future selective ingestion.
+- `src/renderer/components/Search.tsx` — Search & Add panel. Creates a `search_run` on each search and registers all results in `search_run_results`. Shows per-result checkboxes for both local and web results with "SAVE SELECTED", "SAVE ALL", and "+ SCRAPE & ADD" actions.
+- `src/renderer/utils/searchSelection.ts` — Pure TypeScript utilities (`resultKey`, `resultToNotebookItem`, `filterSelectedResults`, `allResultKeys`) that implement the curated save workflow. Testable without a DOM environment.
 
 ## Search & Add Workflow
 
+### Curated Save (preferred) — no content ingestion
+
 1. User types a query in Search & Add.
 2. `researchCreateSearchRun({ query_text })` is called, creating a `search_runs` row.
-3. Results are fetched via the existing `search-remote` or `search-local` IPC.
+3. Results are fetched via `RetrievalOrchestrator` (canonical) or legacy IPC fallback.
 4. All results are registered in `search_run_results` via `researchAddSearchRunResults`.
-5. User selects results and clicks "ADD TO NOTEBOOK" — selected URLs are scraped and added as `notebook_items`.
-6. Or: user clicks "SAVE ALL" to copy all registered results into an existing or new notebook.
+5. User selects individual results using per-result checkboxes (both local files and web results).
+6. User clicks **SAVE SELECTED** — selected results are saved as `notebook_items` references. No content scraping or ingestion occurs. All normalized metadata (itemKey, title, uri, sourcePath, snippet, providerId, externalId) is preserved.
+
+### Select All / Clear Selection
+
+- "Select All" button selects all current results at once.
+- "Clear" button deselects all.
+- Selection is automatically reset when a new search is run.
+
+### Save All (convenience)
+
+- When no items are selected, a "SAVE ALL" bar is shown.
+- Copies all registered `search_run_results` for the current search into an existing or new notebook.
+- Uses `researchAddSearchRunResultsToNotebook` or `researchCreateNotebookFromSearchRun`.
+
+### Scrape & Add (explicit content download)
+
+- Available alongside "SAVE SELECTED" when web results are selected.
+- Downloads/scrapes the web page content locally before saving as a notebook item.
+- Stores the local `source_path` alongside the notebook reference.
+- This is an opt-in explicit step, not triggered automatically by selection.
+
+## Curated Research Architecture
+
+Search results, notebook items, and ingested content are three distinct layers:
+
+| Layer | Table / Storage | Description |
+|---|---|---|
+| Search results | `search_run_results` | Ephemeral candidates from a query. Not memory by default. |
+| Notebook items | `notebook_items` | Curated saved references. Curation gate for all downstream use. |
+| Ingested content | `source_documents`, `document_chunks` | Full content available for retrieval. Created by explicit ingestion. |
+
+Notebook membership is the curation gate. Ingestion is a separate explicit step.
 
 ## My Notebooks Sidebar
 

@@ -12,6 +12,14 @@
  * **Agent Interaction:**
  * - **Context Sync**: `UPDATE AGENT CONTEXT` sends selected sources to TALA's RAG system.
  * - **Synthesis**: "GENERATE SUMMARY" triggers a chain-of-thought analysis over the selected notebook data.
+ * - **Ingest Selected** (placeholder): Future `ingestItems(itemKeys)` call to create source_documents
+ *   and document_chunks from selected notebook_items. Ingestion is always an explicit step — never
+ *   triggered automatically when items are saved.
+ * 
+ * **Curated Research Architecture:**
+ * - search results = candidate discovery items (found in Search & Add)
+ * - notebook_items = curated saved references (the curation gate)
+ * - ingestion = explicit later step (source_documents / document_chunks)
  * 
  * Notebooks are persisted in PostgreSQL via the research:* IPC handlers.
  */
@@ -374,6 +382,17 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                                 <span style={{ fontSize: 11, opacity: 0.7 }}>Active Context: </span>
                                 <span style={{ fontSize: 11, fontWeight: 'bold', color: '#007acc' }}>{activeSources.size} Items Selected</span>
                             </div>
+                            {/* INGEST SELECTED placeholder — future selective ingestion via ingestItems(itemKeys).
+                                When implemented, will create source_documents and document_chunks from
+                                selected notebook_items. Notebook membership is the curation gate;
+                                ingestion is a separate explicit step. */}
+                            <button
+                                disabled
+                                title="Selective ingestion coming soon — will call ingestItems(itemKeys) for selected items"
+                                style={{ background: '#333', border: '1px solid #444', color: '#666', padding: '6px 15px', borderRadius: 4, fontSize: 12, cursor: 'not-allowed' }}
+                            >
+                                INGEST SELECTED
+                            </button>
                             <button
                                 onClick={async () => {
                                     if (api?.setActiveNotebookContext) {
