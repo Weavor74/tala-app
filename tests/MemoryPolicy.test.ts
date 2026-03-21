@@ -25,6 +25,7 @@ import type {
   ContextAssemblyItem,
   ContextAssemblyRequest,
   ContextAssemblyResult,
+  AffectiveModulationPolicy,
 } from '../shared/policy/memoryPolicyTypes';
 
 // Re-export aliases used by policy consumers
@@ -111,16 +112,26 @@ describe('MemoryPolicy type contracts', () => {
       'policy',
       'session_memory',
       'summary',
+      // Affective node types
+      'astro_state',
+      'emotion_tag',
+      'affect_state',
     ];
 
-    it('includes all ten canonical node types', () => {
-      expect(nodeTypes).toHaveLength(10);
+    it('includes all thirteen canonical node types', () => {
+      expect(nodeTypes).toHaveLength(13);
     });
 
     it('includes all expected values', () => {
       for (const t of nodeTypes) {
         expect(expectLiteral<GraphNodeType>(t)).toBeTruthy();
       }
+    });
+
+    it('includes the three affective node types', () => {
+      expect(nodeTypes).toContain('astro_state');
+      expect(nodeTypes).toContain('emotion_tag');
+      expect(nodeTypes).toContain('affect_state');
     });
   });
 
@@ -141,16 +152,30 @@ describe('MemoryPolicy type contracts', () => {
       'references',
       'governs',
       'same_as',
+      // Affective edge types
+      'modulates',
+      'amplifies',
+      'suppresses',
+      'resonates_with',
+      'active_during',
     ];
 
-    it('includes all thirteen canonical edge types', () => {
-      expect(edgeTypes).toHaveLength(13);
+    it('includes all eighteen canonical edge types', () => {
+      expect(edgeTypes).toHaveLength(18);
     });
 
     it('includes all expected values', () => {
       for (const t of edgeTypes) {
         expect(expectLiteral<GraphEdgeType>(t)).toBeTruthy();
       }
+    });
+
+    it('includes the five affective edge types', () => {
+      expect(edgeTypes).toContain('modulates');
+      expect(edgeTypes).toContain('amplifies');
+      expect(edgeTypes).toContain('suppresses');
+      expect(edgeTypes).toContain('resonates_with');
+      expect(edgeTypes).toContain('active_during');
     });
   });
 
@@ -525,6 +550,102 @@ describe('MemoryPolicy type contracts', () => {
       };
 
       expect(result.totalItems).toBe(result.items.length);
+    });
+  });
+
+  // ── AffectiveModulationPolicy ───────────────────────────────────────────────
+
+  describe('AffectiveModulationPolicy', () => {
+    it('accepts a disabled policy (strict defaults)', () => {
+      const policy: AffectiveModulationPolicy = {
+        enabled: false,
+        maxAffectiveNodes: 0,
+        allowToneModulation: false,
+        allowGraphOrderingInfluence: false,
+        allowGraphExpansionInfluence: false,
+        allowEvidenceReordering: false,
+        affectiveWeight: 0,
+        requireLabeling: true,
+      };
+
+      expect(policy.enabled).toBe(false);
+      expect(policy.maxAffectiveNodes).toBe(0);
+      expect(policy.affectiveWeight).toBe(0);
+      expect(policy.requireLabeling).toBe(true);
+    });
+
+    it('accepts a graph-assisted policy with light modulation', () => {
+      const policy: AffectiveModulationPolicy = {
+        enabled: true,
+        maxAffectiveNodes: 2,
+        allowToneModulation: true,
+        allowGraphOrderingInfluence: true,
+        allowGraphExpansionInfluence: false,
+        allowEvidenceReordering: false,
+        affectiveWeight: 0.1,
+        requireLabeling: true,
+      };
+
+      expect(policy.enabled).toBe(true);
+      expect(policy.maxAffectiveNodes).toBe(2);
+      expect(policy.allowToneModulation).toBe(true);
+      expect(policy.allowGraphOrderingInfluence).toBe(true);
+      expect(policy.allowGraphExpansionInfluence).toBe(false);
+      expect(policy.allowEvidenceReordering).toBe(false);
+      expect(policy.affectiveWeight).toBe(0.1);
+    });
+
+    it('accepts an exploratory policy with expansion enabled', () => {
+      const policy: AffectiveModulationPolicy = {
+        enabled: true,
+        maxAffectiveNodes: 4,
+        allowToneModulation: true,
+        allowGraphOrderingInfluence: true,
+        allowGraphExpansionInfluence: true,
+        allowEvidenceReordering: false,
+        affectiveWeight: 0.2,
+        requireLabeling: true,
+      };
+
+      expect(policy.enabled).toBe(true);
+      expect(policy.maxAffectiveNodes).toBe(4);
+      expect(policy.allowGraphExpansionInfluence).toBe(true);
+      expect(policy.allowEvidenceReordering).toBe(false);
+    });
+
+    it('is accepted as optional field on MemoryPolicy', () => {
+      const memoryPolicy: MemoryPolicy = {
+        groundingMode: 'graph_assisted',
+        retrievalMode: 'hybrid',
+        scope: 'global',
+        graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 10, maxNodesPerType: {} },
+        contextBudget: { maxItems: 15 },
+        affectiveModulation: {
+          enabled: true,
+          maxAffectiveNodes: 2,
+          allowToneModulation: true,
+          allowGraphOrderingInfluence: true,
+          allowGraphExpansionInfluence: false,
+          allowEvidenceReordering: false,
+          affectiveWeight: 0.1,
+          requireLabeling: true,
+        },
+      };
+
+      expect(memoryPolicy.affectiveModulation?.enabled).toBe(true);
+      expect(memoryPolicy.affectiveModulation?.maxAffectiveNodes).toBe(2);
+    });
+
+    it('allows MemoryPolicy without affectiveModulation (optional field)', () => {
+      const memoryPolicy: MemoryPolicy = {
+        groundingMode: 'strict',
+        retrievalMode: 'hybrid',
+        scope: 'global',
+        graphTraversal: { enabled: false, maxHopDepth: 0, maxRelatedNodes: 0, maxNodesPerType: {} },
+        contextBudget: { maxItems: 10 },
+      };
+
+      expect(memoryPolicy.affectiveModulation).toBeUndefined();
     });
   });
 });

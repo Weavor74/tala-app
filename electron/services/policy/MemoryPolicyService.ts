@@ -26,6 +26,7 @@ import type {
   GroundingMode,
   GraphTraversalPolicy,
   ContextBudgetPolicy,
+  AffectiveModulationPolicy,
 } from '../../../shared/policy/memoryPolicyTypes';
 import type { RetrievalMode } from '../../../shared/retrieval/retrievalTypes';
 import {
@@ -83,6 +84,23 @@ export class MemoryPolicyService {
       ? { ...base.contextBudget, ...raw.contextBudget }
       : { ...base.contextBudget };
 
+    // 7. Merge affectiveModulation overrides over the base affective policy.
+    //    When the base policy has no affectiveModulation, use a disabled default
+    //    so that downstream consumers always receive a defined policy object.
+    const baseAffective: AffectiveModulationPolicy = base.affectiveModulation ?? {
+      enabled: false,
+      maxAffectiveNodes: 0,
+      allowToneModulation: false,
+      allowGraphOrderingInfluence: false,
+      allowGraphExpansionInfluence: false,
+      allowEvidenceReordering: false,
+      affectiveWeight: 0,
+      requireLabeling: true,
+    };
+    const affectiveModulation: AffectiveModulationPolicy = raw.affectiveModulation
+      ? { ...baseAffective, ...raw.affectiveModulation }
+      : { ...baseAffective };
+
     return {
       groundingMode,
       retrievalMode,
@@ -91,6 +109,7 @@ export class MemoryPolicyService {
       explicitSources: raw.explicitSources,
       graphTraversal,
       contextBudget,
+      affectiveModulation,
     };
   }
 

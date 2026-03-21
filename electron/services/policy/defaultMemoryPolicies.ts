@@ -22,7 +22,56 @@
  * Node.js — lives in electron/. Not imported by renderer code.
  */
 
-import type { MemoryPolicy } from '../../../shared/policy/memoryPolicyTypes';
+import type { MemoryPolicy, AffectiveModulationPolicy } from '../../../shared/policy/memoryPolicyTypes';
+
+// ─── Affective Modulation Defaults ────────────────────────────────────────────
+
+/**
+ * Affective modulation disabled.
+ * Used by STRICT policy — no emotional/astro influence on any context assembly.
+ */
+const AFFECTIVE_STRICT: AffectiveModulationPolicy = {
+  enabled: false,
+  maxAffectiveNodes: 0,
+  allowToneModulation: false,
+  allowGraphOrderingInfluence: false,
+  allowGraphExpansionInfluence: false,
+  allowEvidenceReordering: false,
+  affectiveWeight: 0,
+  requireLabeling: true,
+};
+
+/**
+ * Affective modulation for graph-assisted mode.
+ * Emotional/astro state may lightly modulate graph_context ordering and tone
+ * descriptor; evidence ordering and content are never affected.
+ */
+const AFFECTIVE_GRAPH_ASSISTED: AffectiveModulationPolicy = {
+  enabled: true,
+  maxAffectiveNodes: 2,
+  allowToneModulation: true,
+  allowGraphOrderingInfluence: true,
+  allowGraphExpansionInfluence: false,
+  allowEvidenceReordering: false,
+  affectiveWeight: 0.1,
+  requireLabeling: true,
+};
+
+/**
+ * Affective modulation for exploratory mode.
+ * Broader affective influence on graph_context ordering and optional expansion;
+ * evidence ordering and content remain protected.
+ */
+const AFFECTIVE_EXPLORATORY: AffectiveModulationPolicy = {
+  enabled: true,
+  maxAffectiveNodes: 4,
+  allowToneModulation: true,
+  allowGraphOrderingInfluence: true,
+  allowGraphExpansionInfluence: true,
+  allowEvidenceReordering: false,
+  affectiveWeight: 0.2,
+  requireLabeling: true,
+};
 
 // ─── Strict ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +103,7 @@ export const DEFAULT_STRICT_POLICY: MemoryPolicy = {
     },
     evidencePriority: true,
   },
+  affectiveModulation: AFFECTIVE_STRICT,
 };
 
 // ─── Graph-Assisted ───────────────────────────────────────────────────────────
@@ -94,6 +144,7 @@ export const DEFAULT_GRAPH_ASSISTED_POLICY: MemoryPolicy = {
     },
     evidencePriority: true,
   },
+  affectiveModulation: AFFECTIVE_GRAPH_ASSISTED,
 };
 
 // ─── Exploratory ──────────────────────────────────────────────────────────────
@@ -141,4 +192,5 @@ export const DEFAULT_EXPLORATORY_POLICY: MemoryPolicy = {
     },
     evidencePriority: true,
   },
+  affectiveModulation: AFFECTIVE_EXPLORATORY,
 };
