@@ -481,6 +481,405 @@ describe('GraphTraversalService', () => {
   });
 });
 
+// ─── Step 6B: Section co-occurrence ──────────────────────────────────────────
+
+describe('GraphTraversalService — Step 6B section co-occurrence', () => {
+  let service: GraphTraversalService;
+
+  beforeEach(() => {
+    service = new GraphTraversalService();
+  });
+
+  it('returns a section node when 2+ items share the same sectionLabel', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'Intro A', metadata: { sectionLabel: 'Introduction' } }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'Intro B', metadata: { sectionLabel: 'Introduction' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNodes = result.filter(i => i.graphEdgeType === 'about');
+    expect(sectionNodes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('section node has selectionClass graph_context', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Methods' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Methods' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNode = result.find(i => i.graphEdgeType === 'about');
+    expect(sectionNode?.selectionClass).toBe('graph_context');
+  });
+
+  it('section node has graphEdgeType about and graphEdgeTrust derived', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Results' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Results' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.graphEdgeType).toBe('about');
+    expect(node?.graphEdgeTrust).toBe('derived');
+  });
+
+  it('section node has graphNodeType document_chunk', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Discussion' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Discussion' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.metadata?.graphNodeType).toBe('document_chunk');
+  });
+
+  it('section node title matches the sectionLabel', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Conclusion' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Conclusion' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.title).toBe('Conclusion');
+  });
+
+  it('section node sourceKey is prefixed with section:', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Abstract' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Abstract' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.sourceKey).toBe('section:Abstract');
+  });
+
+  it('section node content references the sectionLabel and anchor titles', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'Chunk Alpha', metadata: { sectionLabel: 'Background' } }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'Chunk Beta', metadata: { sectionLabel: 'Background' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.content).toContain('Background');
+    expect(node?.content).toContain('Chunk Alpha');
+    expect(node?.content).toContain('Chunk Beta');
+  });
+
+  it('section node metadata preserves anchorCount and anchorKeys', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'key-1', metadata: { sectionLabel: 'Appendix' } }),
+      makeEvidenceItem({ sourceKey: 'key-2', metadata: { sectionLabel: 'Appendix' } }),
+      makeEvidenceItem({ sourceKey: 'key-3', metadata: { sectionLabel: 'Appendix' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.metadata?.anchorCount).toBe(3);
+    expect(node?.metadata?.anchorKeys).toEqual(['key-1', 'key-2', 'key-3']);
+  });
+
+  it('returns empty when only one item has a given sectionLabel', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Methods' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Results' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNodes = result.filter(i => i.graphEdgeType === 'about');
+    expect(sectionNodes).toHaveLength(0);
+  });
+
+  it('returns empty when items have no sectionLabel', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: {} }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: {} }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNodes = result.filter(i => i.graphEdgeType === 'about');
+    expect(sectionNodes).toHaveLength(0);
+  });
+
+  it('produces one section node per distinct shared sectionLabel', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a1', metadata: { sectionLabel: 'Intro' } }),
+      makeEvidenceItem({ sourceKey: 'a2', metadata: { sectionLabel: 'Intro' } }),
+      makeEvidenceItem({ sourceKey: 'b1', metadata: { sectionLabel: 'Methods' } }),
+      makeEvidenceItem({ sourceKey: 'b2', metadata: { sectionLabel: 'Methods' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNodes = result.filter(i => i.graphEdgeType === 'about');
+    expect(sectionNodes).toHaveLength(2);
+  });
+
+  it('section node is suppressed when maxHopDepth is 0', async () => {
+    const policy = makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 0,
+        maxRelatedNodes: 10,
+        maxNodesPerType: {},
+      },
+    });
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Intro' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Intro' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    expect(result).toHaveLength(0);
+  });
+
+  it('section node is excluded when allowedEdgeTypes does not include about', async () => {
+    const policy = makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 1,
+        maxRelatedNodes: 10,
+        maxNodesPerType: {},
+        allowedEdgeTypes: ['contains', 'cites'],
+      },
+    });
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Intro' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Intro' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const sectionNodes = result.filter(i => i.graphEdgeType === 'about');
+    expect(sectionNodes).toHaveLength(0);
+  });
+
+  it('section node derivedFrom is section_cooccurrence', async () => {
+    const policy = makePolicy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', metadata: { sectionLabel: 'Summary' } }),
+      makeEvidenceItem({ sourceKey: 'b', metadata: { sectionLabel: 'Summary' } }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'about');
+    expect(node?.metadata?.derivedFrom).toBe('section_cooccurrence');
+    expect(node?.metadata?.hopDepth).toBe(1);
+  });
+});
+
+// ─── Step 6B: Title keyword overlap ──────────────────────────────────────────
+
+describe('GraphTraversalService — Step 6B title keyword overlap', () => {
+  let service: GraphTraversalService;
+
+  const makeHop2Policy = (overrides: Partial<MemoryPolicy> = {}): MemoryPolicy =>
+    makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 2,
+        maxRelatedNodes: 20,
+        maxNodesPerType: {},
+        allowedEdgeTypes: undefined,
+      },
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    service = new GraphTraversalService();
+  });
+
+  it('returns a topic node when 2+ items share a significant title keyword', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'neural network training' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'neural network architecture' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes.length).toBeGreaterThan(0);
+  });
+
+  it('topic node has selectionClass graph_context', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'climate change impact' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'climate change policy' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'related_to');
+    expect(node?.selectionClass).toBe('graph_context');
+  });
+
+  it('topic node has graphEdgeType related_to and graphEdgeTrust derived', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'quantum computing basics' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'quantum computing applications' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'related_to');
+    expect(node?.graphEdgeType).toBe('related_to');
+    expect(node?.graphEdgeTrust).toBe('derived');
+  });
+
+  it('topic node has graphNodeType topic', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'machine learning overview' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'machine learning techniques' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'related_to');
+    expect(node?.metadata?.graphNodeType).toBe('topic');
+  });
+
+  it('topic node sourceKey is prefixed with topic:', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'protein folding study' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'protein folding simulation' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'related_to' && i.title === 'protein');
+    expect(node?.sourceKey).toBe('topic:protein');
+  });
+
+  it('topic node content references the keyword and contributing titles', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'solar energy conversion' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'solar energy storage' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.graphEdgeType === 'related_to' && i.title === 'solar');
+    expect(node?.content).toContain('solar');
+    expect(node?.content).toContain('solar energy conversion');
+    expect(node?.content).toContain('solar energy storage');
+  });
+
+  it('topic node metadata preserves keyword, anchorCount, derivedFrom', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'x', title: 'deep learning fundamentals' }),
+      makeEvidenceItem({ sourceKey: 'y', title: 'deep learning applications' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const node = result.find(i => i.metadata?.keyword === 'deep');
+    expect(node?.metadata?.anchorCount).toBe(2);
+    expect(node?.metadata?.derivedFrom).toBe('title_keyword_overlap');
+    expect(node?.metadata?.hopDepth).toBe(2);
+  });
+
+  it('does not emit a topic node when only one item has a given keyword', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'photosynthesis process' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'neural network training' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    // No keyword appears in both titles.
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes).toHaveLength(0);
+  });
+
+  it('does not emit topic nodes when maxHopDepth is 1', async () => {
+    const policy = makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 1,
+        maxRelatedNodes: 20,
+        maxNodesPerType: {},
+      },
+    });
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'neural network training' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'neural network architecture' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes).toHaveLength(0);
+  });
+
+  it('excludes stop words from keyword extraction', async () => {
+    const policy = makeHop2Policy();
+    // "the", "and", "for" are stop words; they should NOT produce topic nodes.
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'the impact for researchers' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'the role for scientists' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    // Stop words "the" and "for" must not produce topic nodes.
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    const stopWordNodes = topicNodes.filter(
+      n => n.title === 'the' || n.title === 'and' || n.title === 'for',
+    );
+    expect(stopWordNodes).toHaveLength(0);
+  });
+
+  it('excludes short tokens (under 3 chars) from keywords', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'AI ML systems' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'AI ML pipeline' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    // "AI" and "ML" are 2 chars — must not produce topic nodes.
+    const shortNodes = result.filter(
+      i => i.graphEdgeType === 'related_to' && (i.title === 'ai' || i.title === 'ml'),
+    );
+    expect(shortNodes).toHaveLength(0);
+  });
+
+  it('topic nodes are excluded when allowedEdgeTypes does not include related_to', async () => {
+    const policy = makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 2,
+        maxRelatedNodes: 20,
+        maxNodesPerType: {},
+        allowedEdgeTypes: ['contains', 'about'],
+      },
+    });
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'solar energy conversion' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'solar energy storage' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes).toHaveLength(0);
+  });
+
+  it('topic nodes are capped by maxNodesPerType.topic', async () => {
+    const policy = makePolicy({
+      graphTraversal: {
+        enabled: true,
+        maxHopDepth: 2,
+        maxRelatedNodes: 20,
+        maxNodesPerType: { topic: 1 },
+      },
+    });
+    // Multiple shared keywords → multiple topic candidates, but cap is 1.
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: 'deep neural network training optimization' }),
+      makeEvidenceItem({ sourceKey: 'b', title: 'deep neural network architecture optimization' }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes.length).toBeLessThanOrEqual(1);
+  });
+
+  it('items with no title do not contribute keywords', async () => {
+    const policy = makeHop2Policy();
+    const items = [
+      makeEvidenceItem({ sourceKey: 'a', title: undefined }),
+      makeEvidenceItem({ sourceKey: 'b', title: undefined }),
+    ];
+    const result = await service.expandFromEvidence({ evidenceItems: items, policy });
+    const topicNodes = result.filter(i => i.graphEdgeType === 'related_to');
+    expect(topicNodes).toHaveLength(0);
+  });
+});
+
 // ─── ContextAssemblyService integration ──────────────────────────────────────
 
 function makeMockResult(
