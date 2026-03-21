@@ -30,6 +30,9 @@ import { getRetrievalOrchestrator, refreshExternalProvider } from './retrieval/R
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
+import { ContextAssemblyService } from './context/ContextAssemblyService';
+import { MemoryPolicyService } from './policy/MemoryPolicyService';
+import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 
 export interface IpcRouterContext {
   app: any;
@@ -1657,6 +1660,35 @@ export class IpcRouter {
       try {
         refreshExternalProvider(getSettingsPath());
         return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — CONTEXT ASSEMBLY (Step 5B)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Assemble policy-governed, prompt-ready context from retrieval results.
+     *
+     * Resolves the active MemoryPolicy, retrieves candidate items, enforces
+     * budget rules, classifies injected vs. latent items, and returns a
+     * structured ContextAssemblyResult with full citation/provenance metadata.
+     *
+     * Returns: { ok: true, result: ContextAssemblyResult }
+     *        | { ok: false, error: string }
+     */
+    ipcMain.handle('context:assemble', async (_e, request: ContextAssemblyRequest) => {
+      const orchestrator = getRetrievalOrchestrator();
+      if (!orchestrator) {
+        return { ok: false, error: 'RetrievalOrchestrator not initialized' };
+      }
+      try {
+        const policyService = new MemoryPolicyService();
+        const assembler = new ContextAssemblyService(orchestrator, policyService);
+        const result = await assembler.assemble(request);
+        return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
       }

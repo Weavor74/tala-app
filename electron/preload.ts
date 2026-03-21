@@ -429,6 +429,15 @@ contextBridge.exposeInMainWorld('tala', {
     /** Refresh external search provider registration from current settings. */
     retrievalRefreshExternalProvider: () => ipcRenderer.invoke('retrieval:refreshExternalProvider'),
 
+    // ─── Context Assembly (Step 5B) ───────────────────────────────────────────
+    /**
+     * Assemble policy-governed, prompt-ready context from retrieval results.
+     * Resolves the active MemoryPolicy, retrieves candidates, enforces budget,
+     * and returns a ContextAssemblyResult with full citation/provenance metadata.
+     * Policy logic is backend-owned and runs in the main process only.
+     */
+    contextAssemble: (request: import('../shared/policy/memoryPolicyTypes').ContextAssemblyRequest) => ipcRenderer.invoke('context:assemble', request),
+
     // ─── Browser Data Relay ───────────────────────────────────────
     /**
      * Sends browser data (DOM or screenshot) from the renderer back to the
