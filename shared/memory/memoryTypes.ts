@@ -124,6 +124,17 @@ export interface CreateObservationInput {
   valid_until?: Date | null;
   source_episode_id?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * When provided, an embedding is automatically upserted after the observation
+   * is inserted (as a separate follow-up query). Must be vector(1536).
+   * Use TALA_EMBEDDING_DIM from embeddingConstants.ts.
+   */
+  embedding?: number[] | null;
+  /**
+   * Embedding model name. Required when embedding is provided.
+   * Use TALA_EMBEDDING_MODEL from embeddingConstants.ts.
+   */
+  embedding_model?: string;
 }
 
 // ─── Relationship ───────────────────────────────────────────────────────────
@@ -234,3 +245,63 @@ export interface CreateEmbeddingInput {
   /** vector(1536) value; null when no embedding is available yet */
   embedding?: number[] | null;
 }
+
+// ─── Embedding Upsert ───────────────────────────────────────────────────────
+
+/**
+ * Input for upserting a vector embedding.
+ * If an embedding already exists for (owner_kind, owner_id, chunk_index, embedding_model),
+ * the content, content_hash, embedding vector, and metadata are updated in place.
+ * No id field — the upsert is keyed on the business identity, not the surrogate PK.
+ */
+export interface UpsertEmbeddingInput {
+  owner_kind: string;
+  owner_id: string;
+  /** Defaults to 0 */
+  chunk_index?: number;
+  embedding_model: string;
+  /** The canonical source text that was embedded. */
+  content: string;
+  /** SHA-256 or similar hash of content; used for change detection. */
+  content_hash: string;
+  metadata?: Record<string, unknown>;
+  /** The raw vector(1536) value. Required for semantic search to work. */
+  embedding: number[];
+}
+
+// ─── Semantic Search ────────────────────────────────────────────────────────
+
+/**
+ * Options for semantic similarity search queries.
+ */
+export interface SimilaritySearchOptions {
+  /**
+   * Filter by embedding model name.
+   * Defaults to TALA_EMBEDDING_MODEL if not specified.
+   */
+  model?: string;
+  /** Maximum number of results to return. Defaults to 10. */
+  topK?: number;
+  /**
+   * Minimum cosine similarity threshold (0.0–1.0).
+   * Results below this threshold are excluded. Defaults to 0.
+   */
+  minSimilarity?: number;
+}
+
+/**
+ * A single result from a semantic similarity search.
+ * Wraps the matched canonical record with its similarity score.
+ */
+export interface SemanticSearchResult<T> {
+  /** The matched canonical record (e.g., ObservationRecord). */
+  record: T;
+  /**
+   * Cosine similarity score in the range [0, 1].
+   * 1.0 = identical, 0.0 = orthogonal.
+   */
+  similarity: number;
+  /** The UUID of the embeddings row that matched. */
+  embedding_id: string;
+}
+
