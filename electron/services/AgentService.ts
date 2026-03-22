@@ -54,6 +54,9 @@ import { cognitiveContextCompactor } from './cognitive/CognitiveContextCompactor
 import { telemetry } from './TelemetryService';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
+import { getCanonicalMemoryRepository } from './db/initMemoryStore';
+import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
+import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -2646,18 +2649,65 @@ Failure to provide a tool call will result in system termination.`;
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
         if (finalResponse && settings.agent?.capabilities?.memory !== false) {
             const storeMemories = async () => {
+                // P7A: Canonical write through MemoryAuthorityService MUST happen before
+                // any derived system (mem0, RAG, graph). canonical_memory_id is returned
+                // and passed downstream so derived systems can reference it.
+                let canonicalMemoryId: string | null = null;
                 try {
-                    // 1. Mem0: store interaction with timestamp + incident anchor for retrieval
+                    const repo = getCanonicalMemoryRepository();
+                    if (repo) {
+                        const pgRepo = repo as unknown as PostgresMemoryRepository;
+                        const pool = pgRepo.getSharedPool();
+                        const authorityService = new MemoryAuthorityService(pool);
+
+                        const ts = new Date().toISOString().slice(0, 16);
+                        const contentText = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
+
+                        canonicalMemoryId = await authorityService.createCanonicalMemory({
+                            memory_type: 'interaction',
+                            subject_type: 'conversation',
+                            subject_id: turnId,
+                            content_text: contentText,
+                            content_structured: {
+                                user_message: userMessage.slice(0, 500),
+                                agent_response: finalResponse.slice(0, 1000),
+                                mode: activeMode,
+                                turn_id: turnId,
+                            },
+                            confidence: 1.0,
+                            source_kind: 'conversation',
+                            source_ref: `turn:${turnId}`,
+                        });
+
+                        console.log(`[AgentService] P7A canonical write complete: ${canonicalMemoryId}`);
+                        telemetry.operational(
+                            'cognitive',
+                            'post_turn_memory_write',
+                            'info',
+                            `turn:${turnId}`,
+                            `P7A canonical memory write: postgres stored under mode=${activeMode}`,
+                            'success',
+                            { payload: { turnId, canonicalMemoryId, mode: activeMode, source: 'postgres' } },
+                        );
+                    } else {
+                        console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
+                    }
+                } catch (e) {
+                    console.warn('[AgentService] P7A canonical write failed:', e);
+                }
+
+                try {
+                    // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
                     const ts = new Date().toISOString().slice(0, 16); // 2026-03-02T08:46
                     const memEntry = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
 
                     if (runtimeSafety.isDuplicateMemory(memEntry)) {
                         console.log(`[AgentService] MEMORY_DUPLICATE_SKIPPED: mem0`);
                     } else {
-                        const memId = `MEM-${Date.now().toString(36).toUpperCase()}`;
+                        const memId = canonicalMemoryId ?? `MEM-${Date.now().toString(36).toUpperCase()}`;
                         // FIX 5: Mode Persistence Writeback Correctness
                         // We use the activeMode captured at the top of the turn (line 1512)
-                        await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId }, activeMode);
+                        await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId, canonical_memory_id: canonicalMemoryId }, activeMode);
                         console.log(`[AgentService] Stored interaction to Mem0 (${memId}) under mode: ${activeMode}`);
                         // Phase 3A: emit post-turn memory write telemetry
                         telemetry.operational(
@@ -2667,7 +2717,7 @@ Failure to provide a tool call will result in system termination.`;
                             `turn:${turnId}`,
                             `Post-turn memory write: mem0 stored under mode=${activeMode}`,
                             'success',
-                            { payload: { turnId, memId, mode: activeMode, source: 'mem0' } },
+                            { payload: { turnId, memId, mode: activeMode, source: 'mem0', canonicalMemoryId } },
                         );
                     }
                 } catch (e) {
@@ -2675,7 +2725,7 @@ Failure to provide a tool call will result in system termination.`;
                 }
 
                 try {
-                    // 2. RAG: log full turn for episodic long-term retrieval
+                    // 2. RAG (derived): log full turn for episodic long-term retrieval
                     await this.rag.logInteraction(userMessage, finalResponse);
                     console.log('[AgentService] Logged interaction to RAG');
                 } catch (e) {
@@ -2683,13 +2733,14 @@ Failure to provide a tool call will result in system termination.`;
                 }
 
                 try {
-                    // 3. Memory Graph: run extraction pipeline on the full exchange.
+                    // 3. Memory Graph (derived): run extraction pipeline on the full exchange.
                     // process_memory handles Extract → Validate → Store internally.
                     if (this.mcpService && typeof this.mcpService.callTool === 'function') {
                         const turnText = `User: ${userMessage}\nTala: ${finalResponse.slice(0, 600)}`;
                         await this.mcpService.callTool('tala-memory-graph', 'process_memory', {
                             text: turnText,
-                            source_ref: 'conversation'
+                            source_ref: canonicalMemoryId ?? 'conversation',
+                            canonical_memory_id: canonicalMemoryId,
                         });
                         console.log('[AgentService] Processed turn into Memory Graph');
                     }
