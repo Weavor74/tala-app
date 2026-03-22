@@ -2,9 +2,11 @@
 
 ## Purpose
 
-`AffectiveGraphService` is the first affective graph modulation layer for the TALA context assembly pipeline. Its job is to translate the current astro/emotional state (produced by `AstroService`) into bounded, labeled `graph_context` items that can supplement—but never override—primary evidence in an assembled context block.
+`AffectiveGraphService` is the affective graph modulation layer for the TALA context assembly pipeline (Step 6D). Its job is to translate the current astro/emotional state (produced by `AstroService`) into bounded, labeled `graph_context` items that can supplement—but never override—primary evidence in an assembled context block.
 
-Affective modulation is a modulatory layer only. It adjusts graph_context ordering and tone descriptors; it never changes which evidence items are retrieved, selected, or ranked.
+Affective modulation is a modulatory layer only. It adjusts graph_context ordering and adds tone descriptors; it never changes which evidence items are retrieved, selected, or ranked.
+
+As of Step 6D, `AffectiveGraphService` is wired into `ContextAssemblyService` as an optional fourth constructor dependency. When provided, it is called after `GraphTraversalService` and before the final graph_context budget cap. When absent, behavior is identical to the previous implementation.
 
 ---
 
@@ -24,11 +26,17 @@ ContextAssemblyRequest
         │
         ├─► GraphTraversalService.expandFromEvidence()    ← structural graph_context
         │
-        ├─► AffectiveGraphService.getActiveAffectiveContext()  ← affective graph_context
+        ├─► AffectiveGraphService.getActiveAffectiveContext()  ← affective graph_context (Step 6D)
         │     reads policy.affectiveModulation
         │     calls AstroService.getEmotionalState()
         │     returns bounded, labeled graph_context items
         │     (empty in strict mode, or when disabled, or when astro unavailable)
+        │     failure is caught → warning added → assembly continues
+        │
+        ├─► _mergeGraphContextItems()                     ← ordering influence + combined cap
+        │     merges structural + affective graph_context
+        │     applies ordering influence (policy-gated)
+        │     applies combined contextBudget.maxItemsPerClass.graph_context cap
         │
         ├─► _selectItems()                                ← evidence budget enforcement
         │
@@ -36,7 +44,7 @@ ContextAssemblyRequest
               items: ContextAssemblyItem[]  ← evidence + graph_context + latent
 ```
 
-`AffectiveGraphService` is called after `GraphTraversalService` and before final budget enforcement. Its items enter the same `graph_context` budget slot as structural traversal items. They are never placed in the `evidence` slot.
+`AffectiveGraphService` is called after `GraphTraversalService` and before final budget enforcement. Its items are merged with structural graph_context items in `_mergeGraphContextItems()`, and the combined list is capped by `contextBudget.maxItemsPerClass.graph_context`. They are never placed in the `evidence` slot.
 
 ---
 
@@ -49,7 +57,7 @@ Affective modulation is gated by `AffectiveModulationPolicy` (defined in `shared
 | Field | Type | Purpose |
 |---|---|---|
 | `enabled` | boolean | Master on/off switch for this assembly pass |
-| `maxAffectiveNodes` | number | Hard cap on affective items returned |
+| `maxAffectiveNodes` | number | Hard cap on affective items returned (enforced inside AffectiveGraphService) |
 | `allowToneModulation` | boolean | Permit tone descriptor in affective item content |
 | `allowGraphOrderingInfluence` | boolean | Permit affective items to influence graph_context sort order |
 | `allowGraphExpansionInfluence` | boolean | Permit affective state to trigger additional graph_context expansion |
@@ -82,6 +90,8 @@ All default policies set `allowEvidenceReordering: false` and `requireLabeling: 
 7. The returned state string matches a known neutral/offline sentinel (e.g., "Engine offline", "Calculation failed")
 
 The service degrades gracefully at each gate without throwing.
+
+In addition, `ContextAssemblyService` adds its own outer guard: if `affectiveGraphService` is `null` (not provided to the constructor), the call is skipped entirely without reaching `AffectiveGraphService`.
 
 ---
 
@@ -125,6 +135,47 @@ Produced only when `AstroService.getRawEmotionalState()` returns a non-null `moo
 
 ---
 
+## Graph Context Ordering Influence
+
+When affective and structural graph_context items are merged in `ContextAssemblyService._mergeGraphContextItems()`:
+
+### `allowGraphOrderingInfluence: false` (default)
+
+Affective items are placed first in the graph_context list; structural items retain their original order.
+
+### `allowGraphOrderingInfluence: true`
+
+Structural graph_context items receive a small keyword-overlap boost when their title/content text overlaps with active mood labels or astro tag words extracted from affective items. The boost is capped at `affectiveWeight × 0.5` (max 0.15). Structural items are then sorted by boosted score descending. Affective items still lead the list.
+
+Keyword extraction is deterministic: only lowercase words of 3+ characters from `metadata.moodLabel` and the title suffix after `:` are used. No stemming or ML scoring.
+
+### Evidence ordering — always unchanged
+
+Evidence items are processed by `_selectItems()` after `_mergeGraphContextItems()`. The merge step never touches evidence items. `allowEvidenceReordering` is false in all default policies and must remain so unless explicitly enabled.
+
+---
+
+## Prompt Block Rendering
+
+Affective items are rendered in a dedicated `[AFFECTIVE CONTEXT]` section in `renderPromptBlocks()`:
+
+```
+[AFFECTIVE CONTEXT]
+- Current Astro State: ...
+- Emotion Tag: Urgency
+These signals may influence tone or graph-context emphasis, but do not change factual grounding.
+```
+
+This section:
+- Only appears when affective items are present in the result
+- Is separate from `[DIRECT GRAPH CONTEXT]` (which shows structural non-affective graph_context items)
+- Includes a footer note explicitly marking it as non-authoritative
+- Does not affect evidence ordering or primary evidence content
+
+The `[POLICY CONSTRAINTS]` section always includes `affectiveModulation: enabled/disabled` status.
+
+---
+
 ## Critical Constraints
 
 - Affective items are **never evidence**. `selectionClass` is always `graph_context`.
@@ -134,6 +185,7 @@ Produced only when `AstroService.getRawEmotionalState()` returns a non-null `moo
 - `allowEvidenceReordering` is **false** in all default policies and must remain so unless explicitly enabled by a caller with a clear documented reason.
 - Strict mode **always returns empty** regardless of policy flags.
 - `requireLabeling: true` is the default and must only be set false in contexts with explicit user consent.
+- The combined graph_context budget cap (`contextBudget.maxItemsPerClass.graph_context`) applies to structural + affective items together.
 
 ---
 
@@ -145,6 +197,8 @@ Produced only when `AstroService.getRawEmotionalState()` returns a non-null `moo
 - Allows the service to be instantiated before `AstroService` is ready (pass `null`; service degrades gracefully).
 - Prevents `AffectiveGraphService` from importing Electron-specific code directly.
 
+`ContextAssemblyService` accepts `AffectiveGraphService` as an optional fourth constructor parameter (default `null`). When `null`, the affective pipeline step is skipped entirely.
+
 ---
 
 ## Source Files
@@ -152,7 +206,9 @@ Produced only when `AstroService.getRawEmotionalState()` returns a non-null `moo
 | File | Role |
 |---|---|
 | `electron/services/graph/AffectiveGraphService.ts` | Service implementation |
+| `electron/services/context/ContextAssemblyService.ts` | Wires AffectiveGraphService; merges + orders graph_context; renders [AFFECTIVE CONTEXT] |
 | `shared/policy/memoryPolicyTypes.ts` | `AffectiveModulationPolicy`, `GraphNodeType` (astro_state, emotion_tag, affect_state), `GraphEdgeType` (modulates, amplifies, suppresses, resonates_with, active_during) |
 | `electron/services/policy/defaultMemoryPolicies.ts` | Default `affectiveModulation` values per grounding mode |
 | `electron/services/policy/MemoryPolicyService.ts` | Merges `affectiveModulation` overrides during policy resolution |
-| `tests/AffectiveGraphService.test.ts` | 37 unit tests |
+| `tests/AffectiveGraphService.test.ts` | 29 unit tests |
+| `tests/ContextAssemblyService.test.ts` | Integration tests covering affective wiring, ordering, rendering |

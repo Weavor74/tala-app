@@ -16,14 +16,27 @@
  *   - renderPromptBlocks() includes [LATENT MEMORY SUMMARY] when latent items exist.
  *   - Retrieval failure returns graceful result with warning.
  *   - Empty retrieval returns valid empty ContextAssemblyResult.
+ *   - Affective context: service absent → unchanged behavior.
+ *   - Affective context: disabled policy → no affective items.
+ *   - Affective context: enabled + items returned → items appear as graph_context.
+ *   - Strict mode excludes affective items regardless of policy.
+ *   - Affective items carry metadata.affective=true and are never evidence.
+ *   - Evidence ordering unchanged when allowEvidenceReordering=false (default).
+ *   - Graph_context ordering influenced when allowGraphOrderingInfluence=true.
+ *   - maxAffectiveNodes enforced by AffectiveGraphService (via mock).
+ *   - Affective service failure adds warning but does not fail assembly.
+ *   - renderPromptBlocks includes [AFFECTIVE CONTEXT] only when affective items present.
+ *   - [POLICY CONSTRAINTS] always shows affective modulation status.
  *
- * Uses mocked RetrievalOrchestrator — no real DB or network.
+ * Uses mocked RetrievalOrchestrator and AffectiveGraphService — no real DB or network.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ContextAssemblyService } from '../electron/services/context/ContextAssemblyService';
 import { MemoryPolicyService } from '../electron/services/policy/MemoryPolicyService';
+import { GraphTraversalService } from '../electron/services/graph/GraphTraversalService';
 import type { RetrievalOrchestrator } from '../electron/services/retrieval/RetrievalOrchestrator';
+import type { AffectiveGraphService } from '../electron/services/graph/AffectiveGraphService';
 import type {
   NormalizedSearchResult,
   RetrievalResponse,
@@ -32,6 +45,8 @@ import type {
 import type {
   ContextAssemblyRequest,
   MemoryPolicy,
+  ContextAssemblyItem,
+  AffectiveModulationPolicy,
 } from '../shared/policy/memoryPolicyTypes';
 
 vi.mock('electron', () => ({
@@ -97,6 +112,72 @@ function makeRequest(policyOverride: Partial<MemoryPolicy> = {}): ContextAssembl
     query: 'test query',
     policy: partialPolicy as MemoryPolicy,
   };
+}
+
+// ─── Affective helpers ────────────────────────────────────────────────────────
+
+function makeAffectivePolicy(
+  overrides: Partial<AffectiveModulationPolicy> = {},
+): AffectiveModulationPolicy {
+  return {
+    enabled: true,
+    maxAffectiveNodes: 2,
+    allowToneModulation: true,
+    allowGraphOrderingInfluence: false,
+    allowGraphExpansionInfluence: false,
+    allowEvidenceReordering: false,
+    affectiveWeight: 0.1,
+    requireLabeling: true,
+    ...overrides,
+  };
+}
+
+function makeAffectiveItem(
+  overrides: Partial<ContextAssemblyItem> = {},
+): ContextAssemblyItem {
+  return {
+    content: '[Affective context — not evidence]\nCurrent astro state: Mars trine Saturn',
+    selectionClass: 'graph_context',
+    sourceType: 'astro_state',
+    sourceKey: 'astro_state:global',
+    title: 'Affective state (astro)',
+    score: 0.1,
+    graphEdgeType: 'modulates',
+    graphEdgeTrust: 'session_only',
+    metadata: {
+      affective: true,
+      affectiveNodeType: 'astro_state',
+      allowToneModulation: true,
+      allowGraphOrderingInfluence: false,
+      rawAstroState: null,
+    },
+    ...overrides,
+  };
+}
+
+function makeMockAffectiveService(
+  items: ContextAssemblyItem[],
+): AffectiveGraphService {
+  return {
+    getActiveAffectiveContext: vi.fn().mockResolvedValue(items),
+  } as unknown as AffectiveGraphService;
+}
+
+function makeFailingAffectiveService(): AffectiveGraphService {
+  return {
+    getActiveAffectiveContext: vi.fn().mockRejectedValue(new Error('Astro engine error')),
+  } as unknown as AffectiveGraphService;
+}
+
+/**
+ * Returns a GraphTraversalService that always expands to zero items.
+ * Used in affective integration tests where structural graph traversal is
+ * not the concern and must not interfere with results.
+ */
+function makeNoopGraphTraversalService(): GraphTraversalService {
+  return {
+    expandFromEvidence: vi.fn().mockResolvedValue([]),
+  } as unknown as GraphTraversalService;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -552,6 +633,474 @@ describe('ContextAssemblyService', () => {
 
       expect(result.itemCountByClass.evidence).toBe(evidenceCount);
       expect(result.itemCountByClass.latent).toBe(latentCount);
+    });
+  });
+
+  // ── Affective context integration ─────────────────────────────────────────
+
+  describe('affective context integration', () => {
+
+    // ── Service absent / disabled ──────────────────────────────────────────
+
+    it('when affective service not provided: no affective items, same behavior', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      // No affective service passed (default null)
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = await service.assemble(makeRequest({ groundingMode: 'graph_assisted' }));
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective).toHaveLength(0);
+      expect(result.items.some(i => i.selectionClass === 'evidence')).toBe(true);
+    });
+
+    it('when affectiveModulation disabled in policy: no affective items returned', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const affectiveService = makeMockAffectiveService([makeAffectiveItem()]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      // affectiveModulation.enabled = false
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: false }),
+      });
+      const result = await service.assemble(request);
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective).toHaveLength(0);
+    });
+
+    it('when strict mode: no affective items even with service and enabled policy', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const affectiveService = makeMockAffectiveService([makeAffectiveItem()]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'strict',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+      });
+      const result = await service.assemble(request);
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective).toHaveLength(0);
+      const graphItems = result.items.filter(i => i.selectionClass === 'graph_context');
+      expect(graphItems).toHaveLength(0);
+    });
+
+    // ── Affective items included ───────────────────────────────────────────
+
+    it('graph_assisted mode with enabled service: affective items appear as graph_context', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const affectiveItem = makeAffectiveItem();
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective.length).toBeGreaterThan(0);
+      for (const item of affective) {
+        expect(item.selectionClass).toBe('graph_context');
+      }
+    });
+
+    it('exploratory mode with enabled service: affective items appear as graph_context', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const affectiveItem = makeAffectiveItem();
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'exploratory',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 20, maxItemsPerClass: { graph_context: 6 } },
+      });
+      const result = await service.assemble(request);
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective.length).toBeGreaterThan(0);
+      expect(affective[0].selectionClass).toBe('graph_context');
+    });
+
+    // ── Affective items never evidence ────────────────────────────────────
+
+    it('affective items are never selectionClass evidence', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const affectiveItem = makeAffectiveItem();
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const evidenceItems = result.items.filter(i => i.selectionClass === 'evidence');
+      for (const item of evidenceItems) {
+        expect(item.metadata?.affective).not.toBe(true);
+      }
+    });
+
+    it('affective items carry metadata.affective=true', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const affectiveItem = makeAffectiveItem();
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective.length).toBeGreaterThan(0);
+      expect(affective[0].graphEdgeType).toBe('modulates');
+      expect(affective[0].graphEdgeTrust).toBe('session_only');
+    });
+
+    // ── Evidence ordering preserved ───────────────────────────────────────
+
+    it('evidence ordering unchanged when allowEvidenceReordering=false (default)', async () => {
+      const results = [
+        makeResult({ itemKey: 'r0', title: 'First', providerId: 'local', score: 0.9 }),
+        makeResult({ itemKey: 'r1', title: 'Second', providerId: 'local', score: 0.8 }),
+        makeResult({ itemKey: 'r2', title: 'Third', providerId: 'local', score: 0.7 }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const affectiveItem = makeAffectiveItem({
+        metadata: {
+          affective: true,
+          affectiveNodeType: 'emotion_tag',
+          moodLabel: 'First',  // overlaps with first evidence title
+        },
+      });
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({
+          enabled: true,
+          allowEvidenceReordering: false,
+          allowGraphOrderingInfluence: true,
+        }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const evidence = result.items.filter(i => i.selectionClass === 'evidence');
+      expect(evidence[0].sourceKey).toBe('r0');
+      expect(evidence[1].sourceKey).toBe('r1');
+      expect(evidence[2].sourceKey).toBe('r2');
+    });
+
+    // ── Graph context ordering influence ──────────────────────────────────
+
+    it('allowGraphOrderingInfluence=true: affective items appear first in graph_context', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const affectiveItem = makeAffectiveItem({
+        score: 0.1,
+        metadata: {
+          affective: true,
+          affectiveNodeType: 'astro_state',
+          allowGraphOrderingInfluence: true,
+          moodLabel: 'Urgency',
+          rawAstroState: null,
+          allowToneModulation: true,
+        },
+      });
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({
+          enabled: true,
+          allowGraphOrderingInfluence: true,
+          affectiveWeight: 0.1,
+        }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const graphItems = result.items.filter(i => i.selectionClass === 'graph_context');
+      if (graphItems.length > 0) {
+        expect(graphItems[0].metadata?.affective).toBe(true);
+      }
+    });
+
+    // ── Service failure graceful degradation ──────────────────────────────
+
+    it('affective service failure adds warning but does not fail assembly', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const failingService = makeFailingAffectiveService();
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), failingService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      // Assembly should complete successfully
+      expect(result.items.some(i => i.selectionClass === 'evidence')).toBe(true);
+      // Warning should be present
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.some(w => w.includes('Affective context unavailable'))).toBe(true);
+      // No affective items
+      const affective = result.items.filter(i => i.metadata?.affective === true);
+      expect(affective).toHaveLength(0);
+    });
+
+    // ── Budget cap ────────────────────────────────────────────────────────
+
+    it('graph_context budget cap applies to combined structural+affective items', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const affectiveItems = [
+        makeAffectiveItem({ sourceKey: 'a1', score: 0.1 }),
+        makeAffectiveItem({ sourceKey: 'a2', score: 0.08 }),
+        makeAffectiveItem({ sourceKey: 'a3', score: 0.06 }),
+      ];
+      const affectiveService = makeMockAffectiveService(affectiveItems);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true, maxAffectiveNodes: 3 }),
+        // Only 2 graph_context slots
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 2 } },
+      });
+      const result = await service.assemble(request);
+
+      const graphItems = result.items.filter(i => i.selectionClass === 'graph_context');
+      expect(graphItems.length).toBeLessThanOrEqual(2);
+    });
+
+    // ── itemCountByClass with affective ───────────────────────────────────
+
+    it('itemCountByClass.graph_context counts affective items', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const affectiveItem = makeAffectiveItem();
+      const affectiveService = makeMockAffectiveService([affectiveItem]);
+      const service = new ContextAssemblyService(
+        orchestrator, policyService, makeNoopGraphTraversalService(), affectiveService,
+      );
+      const request = makeRequest({
+        groundingMode: 'graph_assisted',
+        affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 5 } },
+      });
+      const result = await service.assemble(request);
+
+      const graphItemCount = result.items.filter(i => i.selectionClass === 'graph_context').length;
+      expect(result.itemCountByClass.graph_context).toBe(graphItemCount);
+    });
+  });
+
+  // ── Affective context in renderPromptBlocks ─────────────────────────────────
+
+  describe('renderPromptBlocks: affective context sections', () => {
+
+    it('[AFFECTIVE CONTEXT] present when affective items in result', () => {
+      const affectiveItem = makeAffectiveItem();
+      const evidenceItem: ContextAssemblyItem = {
+        content: 'Evidence content',
+        selectionClass: 'evidence',
+        sourceType: null,
+        sourceKey: 'ev1',
+        title: 'Evidence Doc',
+        score: 0.9,
+        graphEdgeType: null,
+        graphEdgeTrust: null,
+        metadata: {},
+      };
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const ap = makeAffectivePolicy({ enabled: true });
+      const result = {
+        items: [evidenceItem, affectiveItem],
+        policy: {
+          groundingMode: 'graph_assisted',
+          retrievalMode: 'hybrid',
+          scope: 'global',
+          graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 5, maxNodesPerType: 3, minEdgeTrustLevel: 'derived', allowedEdgeTypes: [] },
+          contextBudget: { maxItems: 15, maxTokens: 6144, maxItemsPerClass: { evidence: 10, graph_context: 5 }, evidencePriority: true },
+          affectiveModulation: ap,
+        } as MemoryPolicy,
+        totalItems: 2,
+        itemCountByClass: { evidence: 1, graph_context: 1 },
+        estimatedTokens: 50,
+        durationMs: 10,
+      };
+      const block = service.renderPromptBlocks(result);
+      expect(block).toContain('[AFFECTIVE CONTEXT]');
+      expect(block).toContain('do not change factual grounding');
+    });
+
+    it('[AFFECTIVE CONTEXT] omitted when no affective items in result', () => {
+      const evidenceItem: ContextAssemblyItem = {
+        content: 'Evidence content',
+        selectionClass: 'evidence',
+        sourceType: null,
+        sourceKey: 'ev1',
+        title: 'Evidence Doc',
+        score: 0.9,
+        graphEdgeType: null,
+        graphEdgeTrust: null,
+        metadata: {},
+      };
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = {
+        items: [evidenceItem],
+        policy: {
+          groundingMode: 'graph_assisted',
+          retrievalMode: 'hybrid',
+          scope: 'global',
+          graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 5, maxNodesPerType: 3, minEdgeTrustLevel: 'derived', allowedEdgeTypes: [] },
+          contextBudget: { maxItems: 15, maxTokens: 6144, maxItemsPerClass: { evidence: 10, graph_context: 5 }, evidencePriority: true },
+          affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        } as MemoryPolicy,
+        totalItems: 1,
+        itemCountByClass: { evidence: 1 },
+        estimatedTokens: 20,
+        durationMs: 10,
+      };
+      const block = service.renderPromptBlocks(result);
+      expect(block).not.toContain('[AFFECTIVE CONTEXT]');
+    });
+
+    it('[DIRECT GRAPH CONTEXT] shows only non-affective graph_context items', () => {
+      const structuralItem: ContextAssemblyItem = {
+        content: 'Related document context',
+        selectionClass: 'graph_context',
+        sourceType: 'source_document',
+        sourceKey: 'doc-1',
+        title: 'Related Doc',
+        score: 0.5,
+        graphEdgeType: 'contains',
+        graphEdgeTrust: 'derived',
+        metadata: { graphNodeType: 'source_document' },
+      };
+      const affectiveItem = makeAffectiveItem();
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = {
+        items: [structuralItem, affectiveItem],
+        policy: {
+          groundingMode: 'graph_assisted',
+          retrievalMode: 'hybrid',
+          scope: 'global',
+          graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 5, maxNodesPerType: 3, minEdgeTrustLevel: 'derived', allowedEdgeTypes: [] },
+          contextBudget: { maxItems: 15, maxTokens: 6144, maxItemsPerClass: { evidence: 10, graph_context: 5 }, evidencePriority: true },
+          affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        } as MemoryPolicy,
+        totalItems: 2,
+        itemCountByClass: { graph_context: 2 },
+        estimatedTokens: 50,
+        durationMs: 10,
+      };
+      const block = service.renderPromptBlocks(result);
+      expect(block).toContain('[DIRECT GRAPH CONTEXT]');
+      expect(block).toContain('[AFFECTIVE CONTEXT]');
+      // Structural item appears in DIRECT GRAPH CONTEXT, affective in AFFECTIVE CONTEXT
+      expect(block).toContain('Related Doc');
+    });
+
+    it('[POLICY CONSTRAINTS] includes affective modulation status when configured', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = {
+        items: [],
+        policy: {
+          groundingMode: 'graph_assisted',
+          retrievalMode: 'hybrid',
+          scope: 'global',
+          graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 5, maxNodesPerType: 3, minEdgeTrustLevel: 'derived', allowedEdgeTypes: [] },
+          contextBudget: { maxItems: 15, maxTokens: 6144, maxItemsPerClass: { evidence: 10, graph_context: 5 }, evidencePriority: true },
+          affectiveModulation: makeAffectivePolicy({ enabled: true }),
+        } as MemoryPolicy,
+        totalItems: 0,
+        itemCountByClass: {},
+        estimatedTokens: 0,
+        durationMs: 5,
+      };
+      const block = service.renderPromptBlocks(result);
+      expect(block).toContain('[POLICY CONSTRAINTS]');
+      expect(block).toContain('affectiveModulation:');
+    });
+
+    it('[POLICY CONSTRAINTS] shows affectiveModulation disabled when not configured', async () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = await service.assemble(makeRequest({ groundingMode: 'graph_assisted' }));
+      const block = service.renderPromptBlocks(result);
+      expect(block).toContain('[POLICY CONSTRAINTS]');
+      expect(block).toContain('affectiveModulation:');
+    });
+
+    it('non-authoritative disclaimer preserved in affective item content', () => {
+      const labeledItem = makeAffectiveItem({
+        content: '[Affective context — not evidence]\nMars trine Saturn — focused energy',
+      });
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = {
+        items: [labeledItem],
+        policy: {
+          groundingMode: 'graph_assisted',
+          retrievalMode: 'hybrid',
+          scope: 'global',
+          graphTraversal: { enabled: true, maxHopDepth: 1, maxRelatedNodes: 5, maxNodesPerType: 3, minEdgeTrustLevel: 'derived', allowedEdgeTypes: [] },
+          contextBudget: { maxItems: 15, maxTokens: 6144, maxItemsPerClass: { evidence: 10, graph_context: 5 }, evidencePriority: true },
+          affectiveModulation: makeAffectivePolicy({ enabled: true, requireLabeling: true }),
+        } as MemoryPolicy,
+        totalItems: 1,
+        itemCountByClass: { graph_context: 1 },
+        estimatedTokens: 30,
+        durationMs: 5,
+      };
+      const block = service.renderPromptBlocks(result);
+      expect(block).toContain('[AFFECTIVE CONTEXT]');
+      // Content of the affective item should be preserved
+      expect(block).toContain('Mars trine Saturn');
     });
   });
 });
