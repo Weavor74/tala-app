@@ -171,3 +171,101 @@ Phase A deliberately does **not** implement:
 - Workflow engine integration
 - UI changes
 - MemoryService (beyond the raw repository)
+
+---
+
+## P7A: Memory Authority Lock
+
+**Status**: Implemented
+
+P7A extends the canonical memory foundation by enforcing PostgreSQL as the
+**SINGLE SOURCE OF TRUTH** for all persistent memory. All other memory systems
+(mem0, graph, RAG/vector index) become derived projections that MUST reference
+`canonical_memory_id` and can be fully rebuilt from Postgres alone.
+
+### New Tables (migration 011_memory_authority.sql)
+
+| Table | Purpose |
+|---|---|
+| `memory_records` | Canonical truth for every persistent memory write |
+| `memory_lineage` | Version history and supersession chain |
+| `memory_projections` | Tracks which derived systems have received each record |
+| `memory_integrity_issues` | Validation audit log and repair tracking |
+| `memory_duplicates` | Duplicate detection groups |
+
+### Memory Write Flow (Post-P7A)
+
+```
+AgentService.storeMemories()
+  │
+  ▼ (Step 1 — canonical write, BLOCKING)
+  MemoryAuthorityService.createCanonicalMemory()
+    │  1. normalize input
+    │  2. compute canonical_hash (SHA-256)
+    │  3. detectDuplicates() — exact hash match; semantic stub
+    │  4. INSERT INTO memory_records (version=1, status='canonical')
+    │  5. _appendLineage() — change_kind='create'
+    │  6. _emitProjectionEvents() — insert 'pending' rows for mem0/graph/vector
+    │
+    └── returns canonical_memory_id
+  │
+  ▼ (Step 2 — derived writes, fire-and-forget, reference canonical_memory_id)
+  ├── mem0 (MemoryService.add) — includes canonical_memory_id in metadata
+  ├── RAG  (RagService.logInteraction)
+  └── graph (mcpService.callTool 'process_memory') — source_ref = canonical_memory_id
+```
+
+### Authority Lifecycle
+
+```
+                       createCanonicalMemory()
+                               │
+                   ┌───────────▼───────────┐
+                   │  authority_status =   │
+                   │      'canonical'      │
+                   └───────────┬───────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+              ▼                ▼                ▼
+  updateCanonicalMemory()  (stays canonical)  tombstoneMemory()
+  → version++                                → status = 'tombstoned'
+  → projections = 'stale'                    → tombstoned_at = NOW()
+                                             → lineage entry added
+                                             ⚠ Cannot be updated after tombstone
+```
+
+### Integrity Validation
+
+`MemoryAuthorityService.validateIntegrity()` detects:
+
+| Check | Issue Kind | Severity |
+|---|---|---|
+| Projection references non-existent canonical record | `orphan` | error |
+| Derived system version < canonical version | `projection_mismatch` | warning |
+| Multiple canonical records share same hash | `duplicate` | error |
+| Projection still 'projected' for tombstoned record | `tombstone_violation` | critical |
+
+### Rebuild Pipeline
+
+`MemoryAuthorityService.rebuildDerivedState()`:
+
+- Reads all non-tombstoned canonical records in batches of 200
+- Identifies which derived system projections are missing or stale
+- Logs rebuild actions without performing them (full implementation deferred)
+- Verifies no canonical records have NULL content_text (unreachable)
+
+### Service Location
+
+```
+electron/services/memory/MemoryAuthorityService.ts
+shared/memory/authorityTypes.ts
+```
+
+### Global Constraints
+
+- **All** persistent memory writes must flow through `MemoryAuthorityService.createCanonicalMemory()`
+- mem0, graph, and RAG are **derived** — they cannot originate authoritative memory
+- Duplicate detection runs **before** every canonical commit
+- Tombstoned records are **never** deleted — required for lineage integrity and rebuild
+

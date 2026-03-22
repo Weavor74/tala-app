@@ -21,6 +21,8 @@ memory/
 !mcp-servers/**/src/memory/**
 !shared/memory/
 !shared/memory/**
+!electron/services/memory/
+!electron/services/memory/**
 data/
 *.gguf
 *ltmf*
