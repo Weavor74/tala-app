@@ -9,14 +9,18 @@
  *   2. Call RetrievalOrchestrator using the resolved retrieval mode and scope.
  *   3. Map NormalizedSearchResult items into ContextAssemblyItem with full
  *      citation/provenance metadata preserved.
- *   4. Enforce policy budget rules (maxItems, maxItemsPerClass, max chunks per doc).
+ *   4. Enforce budget: cap evidence items; move overflow to latent.
  *   5. Classify items as 'evidence' (injected) or 'latent' (overflow).
  *   6. Return a structured ContextAssemblyResult.
  *   7. Provide renderPromptBlocks() for deterministic prompt string rendering.
  *
- * DESIGN PRINCIPLES:
+ * DESIGN PRINCIPLES (P7B):
  *   - Evidence-first: evidence items are always selected before any other class.
- *   - Deterministic: same inputs always produce the same outputs.
+ *   - Deterministic: same inputs always produce the same outputs (P7B).
+ *     - Candidates are scored by ContextScoringService and sorted with a
+ *       total-order comparator before budget selection is applied.
+ *     - No selection drift from insertion order, Map/Set iteration, or
+ *       undifferentiated retrieval ordering.
  *   - Graph context via GraphTraversalService: graph_context items are derived
  *     from evidence seeds by GraphTraversalService and inserted after evidence
  *     mapping but before budget enforcement. Empty when traversal is disabled.
@@ -25,6 +29,8 @@
  *     after structural graph traversal, subject to policy.affectiveModulation. In
  *     strict mode or when the service is absent, behavior is unchanged.
  *   - No silent discards: overflow evidence moves to 'latent', not dropped.
+ *   - Decision records: every candidate considered produces a ContextDecision
+ *     with explicit reason codes.
  *   - Citation/provenance metadata survives from retrieval into assembled context.
  *   - Backend-owned: this service must not be imported by renderer code.
  *
@@ -39,15 +45,109 @@ import type {
   ContextAssemblyItem,
   MemoryPolicy,
   MemorySelectionClass,
+  GraphEdgeType,
+  EdgeTrustLevel,
 } from '../../../shared/policy/memoryPolicyTypes';
+import type {
+  ContextCandidate,
+  RankedContextCandidate,
+  ContextDecision,
+  ContextDecisionReason,
+  ContextAssemblyDiagnostics,
+  ContextLayerBudget,
+  TieBreakRecord,
+  ConflictResolutionRecord,
+} from '../../../shared/context/contextDeterminismTypes';
+import type { MemoryAuthorityTier } from '../../../shared/memory/authorityTypes';
 import { MemoryPolicyService } from '../policy/MemoryPolicyService';
 import { GraphTraversalService } from '../graph/GraphTraversalService';
 import { AffectiveGraphService } from '../graph/AffectiveGraphService';
+import { ContextScoringService } from './ContextScoringService';
+import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+// ─── Timestamp parser helper ──────────────────────────────────────────────────
+function parseTimestampMs(ts: string | null | undefined): number {
+  if (!ts) return 0;
+  const ms = Date.parse(ts);
+  return isNaN(ms) ? 0 : ms;
+}
+
+// ─── Authority tier derivation from edge trust ────────────────────────────────
+
+function deriveAuthorityTierFromEdgeTrust(
+  trust: string | null | undefined,
+): MemoryAuthorityTier | null {
+  switch (trust) {
+    case 'canonical':
+    case 'explicit':
+      return 'canonical';
+    case 'derived':
+    case 'inferred_high':
+      return 'verified_derived';
+    case 'inferred_low':
+      return 'transient';
+    case 'session_only':
+      return 'speculative';
+    default:
+      return null;
+  }
+}
+
+// ─── Item ↔ Candidate conversion helpers ─────────────────────────────────────
+
+function itemToCandidate(
+  item: ContextAssemblyItem,
+  layer: 'evidence' | 'graph_context',
+  idx: number,
+): ContextCandidate {
+  // Use sourceKey as stable ID; fall back to URI, title, or positional key
+  const id = item.sourceKey ?? item.uri ?? item.title ?? `${layer}-${idx}`;
+  const authorityTier: MemoryAuthorityTier | null =
+    item.selectionClass === 'graph_context'
+      ? deriveAuthorityTierFromEdgeTrust(item.graphEdgeTrust)
+      : null; // evidence items: null = neutral (scoring treats as 0.5)
+  const timestamp = (item.metadata?.fetchedAt as string | undefined) ?? null;
+  const graphHopDepth = item.selectionClass === 'graph_context' ? 1 : 0;
+
+  return {
+    id,
+    content: item.content,
+    title: item.title,
+    uri: item.uri,
+    sourceType: item.sourceType ?? undefined,
+    sourceKey: item.sourceKey ?? undefined,
+    selectionClass: item.selectionClass,
+    layerAssignment: layer,
+    estimatedTokens: estimateTokens(item.content),
+    score: item.score ?? null,
+    authorityTier,
+    timestamp,
+    graphHopDepth,
+    graphEdgeType: item.graphEdgeType ?? null,
+    graphEdgeTrust: item.graphEdgeTrust ?? null,
+    metadata: item.metadata,
+  };
+}
+
+function rankedCandidateToItem(rc: RankedContextCandidate): ContextAssemblyItem {
+  return {
+    content: rc.content,
+    selectionClass: rc.selectionClass as MemorySelectionClass,
+    sourceType: rc.sourceType ?? null,
+    sourceKey: rc.sourceKey ?? undefined,
+    title: rc.title,
+    uri: rc.uri,
+    score: rc.score ?? null,
+    graphEdgeType: (rc.graphEdgeType ?? null) as GraphEdgeType | null,
+    graphEdgeTrust: (rc.graphEdgeTrust ?? null) as EdgeTrustLevel | null,
+    metadata: rc.metadata,
+  };
 }
 
 // ─── ContextAssemblyService ───────────────────────────────────────────────────
@@ -74,6 +174,8 @@ const AFFECTIVE_BOOST_FACTOR = 0.5;
 const KEYWORD_BOOST_INCREMENT = 0.05;
 
 export class ContextAssemblyService {
+  private readonly _scoringService = new ContextScoringService();
+
   constructor(
     private readonly orchestrator: RetrievalOrchestrator,
     private readonly policyService: MemoryPolicyService = new MemoryPolicyService(),
@@ -86,16 +188,28 @@ export class ContextAssemblyService {
   /**
    * Assemble context for a single turn.
    *
-   * Steps:
-   *   1. Resolve the active MemoryPolicy.
-   *   2. Retrieve candidates via RetrievalOrchestrator.
-   *   3. Map retrieval results to ContextAssemblyItems with full provenance.
-   *   4. Enforce budget: cap evidence items; move overflow to latent.
-   *   5. Build the ContextAssemblyResult.
+   * P7B deterministic pipeline stages:
+   *   1.  Resolve the active MemoryPolicy.
+   *   2.  Retrieve candidates via RetrievalOrchestrator.
+   *   3.  Map retrieval results to ContextAssemblyItems with full provenance.
+   *   3P. Score and sort evidence candidates with total-order comparator (P7B).
+   *   3.5 Expand structural graph context via GraphTraversalService.
+   *   3.6 Add affective graph context via AffectiveGraphService (optional).
+   *   3.7 Merge structural + affective graph_context; score and sort deterministically.
+   *   4.  Enforce evidence budget: cap evidence items; move overflow to latent.
+   *       Record inclusion/exclusion decisions for every candidate.
+   *   5.  Combine injected (evidence) + graph_context + latent items.
+   *   6.  Build class counts.
+   *   7.  Estimate tokens.
+   *   8.  Build P7B diagnostics.
+   *   9.  Return ContextAssemblyResult.
    */
   async assemble(request: ContextAssemblyRequest): Promise<ContextAssemblyResult> {
     const startMs = Date.now();
     const warnings: string[] = [];
+    const allDecisions: ContextDecision[] = [];
+    const allTieBreaks: TieBreakRecord[] = [];
+    const conflictResolutionRecords: ConflictResolutionRecord[] = [];
 
     // 1. Resolve active policy.
     const policy = this.policyService.resolvePolicy(request);
@@ -118,9 +232,16 @@ export class ContextAssemblyService {
     }
 
     // 3. Map retrieval results to ContextAssemblyItems (all are evidence candidates).
-    const candidates = retrievalResults.map((result, index) =>
+    const rawCandidates = retrievalResults.map((result, index) =>
       this._mapResultToItem(result, index),
     );
+
+    // 3P. P7B: Score and sort evidence candidates deterministically before selection.
+    //     This replaces reliance on retrieval order and eliminates selection drift.
+    const { ranked: rankedEvidence, tieBreaks: evidenceTieBreaks } =
+      this._rankItems(rawCandidates, 'evidence');
+    allTieBreaks.push(...evidenceTieBreaks);
+    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
 
     // 3.5. Expand structural graph context from evidence candidates (when traversal is enabled).
     //      Runs after evidence mapping but before budget enforcement so that
@@ -129,7 +250,7 @@ export class ContextAssemblyService {
     if (policy.graphTraversal.enabled && policy.groundingMode !== 'strict') {
       try {
         structuralGraphItems = await this.graphTraversalService.expandFromEvidence({
-          evidenceItems: candidates,
+          evidenceItems: rawCandidates, // pass original (unsorted) for seed extraction
           policy,
         });
       } catch (err: unknown) {
@@ -161,18 +282,57 @@ export class ContextAssemblyService {
       }
     }
 
-    // 3.7. Merge structural and affective graph_context items; apply ordering influence
-    //      and graph_context class budget cap.
+    // 3.7. Merge structural and affective graph_context items; score and sort
+    //      deterministically before applying the graph_context class budget cap.
     const graphCap = policy.contextBudget.maxItemsPerClass?.graph_context ?? 0;
     const mergedGraphCandidates = this._mergeGraphContextItems(
       structuralGraphItems,
       affectiveItems,
       policy,
     );
-    const graphContextItems = mergedGraphCandidates.slice(0, graphCap);
+
+    // P7B: Score and sort the merged graph candidates with total-order comparator.
+    const { ranked: rankedGraph, tieBreaks: graphTieBreaks } =
+      this._rankItems(mergedGraphCandidates, 'graph_context');
+    allTieBreaks.push(...graphTieBreaks);
+    const sortedGraphItems = rankedGraph.map(rankedCandidateToItem);
+
+    // Apply graph_context cap. Candidates beyond the cap are recorded as excluded.
+    const graphContextItems = sortedGraphItems.slice(0, graphCap);
+    for (const rc of rankedGraph.slice(0, graphCap)) {
+      allDecisions.push({
+        candidateId: rc.id,
+        sourceType: rc.sourceType,
+        authorityTier: rc.authorityTier,
+        finalScore: rc.scoreBreakdown.finalScore,
+        estimatedTokens: rc.estimatedTokens,
+        status: 'included',
+        layerAssignment: 'graph_context',
+        reasons: ['included.top_ranked_within_budget'],
+      });
+    }
+    for (const rc of rankedGraph.slice(graphCap)) {
+      allDecisions.push({
+        candidateId: rc.id,
+        sourceType: rc.sourceType,
+        authorityTier: rc.authorityTier,
+        finalScore: rc.scoreBreakdown.finalScore,
+        estimatedTokens: rc.estimatedTokens,
+        status: 'excluded',
+        layerAssignment: 'graph_context',
+        reasons: ['excluded.layer_budget_exceeded'],
+      });
+    }
 
     // 4. Enforce evidence budget and produce latent overflow.
-    const { injected, latent } = this._selectItems(candidates, policy, warnings);
+    //    Input is now deterministically sorted (step 3P).
+    const { injected, latent, decisions: evidenceDecisions } = this._selectItems(
+      sortedEvidenceCandidates,
+      rankedEvidence,
+      policy,
+      warnings,
+    );
+    allDecisions.push(...evidenceDecisions);
 
     // 5. Combine injected (evidence) + graph_context + latent items.
     const allItems: ContextAssemblyItem[] = [...injected, ...graphContextItems, ...latent];
@@ -190,6 +350,19 @@ export class ContextAssemblyService {
       0,
     );
 
+    // 8. Build P7B diagnostics.
+    const diagnostics = this._buildDiagnostics({
+      policy,
+      rankedEvidence,
+      rankedGraph,
+      decisions: allDecisions,
+      tieBreakRecords: allTieBreaks,
+      conflictResolutionRecords,
+      graphCap,
+      injected,
+      latent,
+    });
+
     return {
       items: allItems,
       policy,
@@ -198,6 +371,7 @@ export class ContextAssemblyService {
       estimatedTokens,
       durationMs: Date.now() - startMs,
       warnings: warnings.length > 0 ? warnings : undefined,
+      diagnostics,
     };
   }
 
@@ -355,6 +529,8 @@ export class ContextAssemblyService {
   /**
    * Select injected (evidence) items and produce latent overflow.
    *
+   * Input must be pre-sorted deterministically (P7B: step 3P in assemble()).
+   *
    * Rules (applied in order):
    *   1. Evidence items are always selected first (evidencePriority).
    *   2. Total injected count is capped by contextBudget.maxItems.
@@ -365,12 +541,14 @@ export class ContextAssemblyService {
    *      minimum 1.
    *   5. All items that do not fit the budget become 'latent', preserving
    *      ranked order and full metadata.
+   *   6. P7B: A ContextDecision record is produced for every candidate.
    */
   private _selectItems(
     candidates: ContextAssemblyItem[],
+    rankedCandidates: RankedContextCandidate[],
     policy: MemoryPolicy,
     warnings: string[],
-  ): { injected: ContextAssemblyItem[]; latent: ContextAssemblyItem[] } {
+  ): { injected: ContextAssemblyItem[]; latent: ContextAssemblyItem[]; decisions: ContextDecision[] } {
     const budget = policy.contextBudget;
     const maxTotal = budget.maxItems;
     const evidenceClassCap = budget.maxItemsPerClass?.evidence ?? maxTotal;
@@ -386,11 +564,33 @@ export class ContextAssemblyService {
     const injected: ContextAssemblyItem[] = [];
     const latent: ContextAssemblyItem[] = [];
     const chunksPerDoc = new Map<string, number>();
+    const decisions: ContextDecision[] = [];
+
+    // Build a map from sourceKey → RankedContextCandidate for decision enrichment.
+    const rankedById = new Map<string, RankedContextCandidate>();
+    for (const rc of rankedCandidates) {
+      rankedById.set(rc.id, rc);
+    }
 
     for (const item of candidates) {
+      const candidateId = item.sourceKey ?? item.uri ?? item.title ?? '';
+      const rc = rankedById.get(candidateId);
+      const finalScore = rc?.scoreBreakdown.finalScore ?? (item.score ?? 0);
+      const tokenCost = estimateTokens(item.content);
+
       if (injected.length >= evidenceCap) {
         // Budget exhausted — move to latent.
         latent.push({ ...item, selectionClass: 'latent' });
+        decisions.push({
+          candidateId,
+          sourceType: item.sourceType ?? undefined,
+          authorityTier: rc?.authorityTier ?? null,
+          finalScore,
+          estimatedTokens: tokenCost,
+          status: 'latent',
+          layerAssignment: 'evidence',
+          reasons: ['overflow.to_latent'],
+        });
         continue;
       }
 
@@ -400,12 +600,36 @@ export class ContextAssemblyService {
         const used = chunksPerDoc.get(docId) ?? 0;
         if (used >= maxChunksPerDoc) {
           latent.push({ ...item, selectionClass: 'latent' });
+          decisions.push({
+            candidateId,
+            sourceType: item.sourceType ?? undefined,
+            authorityTier: rc?.authorityTier ?? null,
+            finalScore,
+            estimatedTokens: tokenCost,
+            status: 'latent',
+            layerAssignment: 'evidence',
+            reasons: ['excluded.per_document_cap', 'overflow.to_latent'],
+          });
           continue;
         }
         chunksPerDoc.set(docId, used + 1);
       }
 
       injected.push(item);
+      const reasons: ContextDecisionReason[] =
+        rc?.authorityTier === 'canonical'
+          ? ['included.high_authority', 'included.canonical_memory_priority']
+          : ['included.top_ranked_within_budget'];
+      decisions.push({
+        candidateId,
+        sourceType: item.sourceType ?? undefined,
+        authorityTier: rc?.authorityTier ?? null,
+        finalScore,
+        estimatedTokens: tokenCost,
+        status: 'included',
+        layerAssignment: 'evidence',
+        reasons,
+      });
     }
 
     if (latent.length > 0) {
@@ -414,7 +638,138 @@ export class ContextAssemblyService {
       );
     }
 
-    return { injected, latent };
+    return { injected, latent, decisions };
+  }
+
+  /**
+   * P7B: Score and sort a list of ContextAssemblyItems deterministically.
+   *
+   * Pipeline:
+   *   1. Convert items to ContextCandidates.
+   *   2. Score each with ContextScoringService.
+   *   3. Wrap in RankedContextCandidates.
+   *   4. Sort with applyDeterministicTieBreak (total-order comparator).
+   *   5. Assign 1-indexed ranks.
+   *
+   * Returns the ranked (sorted) candidates and any tie-break records.
+   */
+  private _rankItems(
+    items: ContextAssemblyItem[],
+    layer: 'evidence' | 'graph_context',
+  ): { ranked: RankedContextCandidate[]; tieBreaks: TieBreakRecord[] } {
+    if (items.length === 0) return { ranked: [], tieBreaks: [] };
+
+    // Convert to ContextCandidates and score each one.
+    const unranked: RankedContextCandidate[] = items.map((item, idx) => {
+      const candidate = itemToCandidate(item, layer, idx);
+      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate);
+      return { ...candidate, scoreBreakdown, rank: 0 };
+    });
+
+    // Apply deterministic total-order sort.
+    const { sorted, tieBreakRecords } = applyDeterministicTieBreak(unranked);
+
+    // Assign 1-indexed ranks in sorted order.
+    for (let i = 0; i < sorted.length; i++) {
+      sorted[i]!.rank = i + 1;
+    }
+
+    return { ranked: sorted, tieBreaks: tieBreakRecords };
+  }
+
+  /**
+   * Build P7B ContextLayerBudgets from the active policy.
+   */
+  private _buildLayerBudgets(policy: MemoryPolicy): ContextLayerBudget[] {
+    const budget = policy.contextBudget;
+    return [
+      {
+        layer: 'evidence',
+        maxItems: budget.maxItemsPerClass?.evidence ?? budget.maxItems,
+        maxTokens: budget.maxTokens,
+        priority: 1,
+        overflowPolicy: 'overflow_to_latent',
+      },
+      {
+        layer: 'graph_context',
+        maxItems: budget.maxItemsPerClass?.graph_context ?? 0,
+        priority: 2,
+        overflowPolicy: 'drop',
+      },
+      {
+        layer: 'canonical_memory',
+        maxItems: budget.maxItemsPerClass?.summary ?? 0,
+        priority: 3,
+        overflowPolicy: 'drop',
+      },
+    ];
+  }
+
+  /**
+   * Build P7B ContextAssemblyDiagnostics from the collected pipeline data.
+   */
+  private _buildDiagnostics(args: {
+    policy: MemoryPolicy;
+    rankedEvidence: RankedContextCandidate[];
+    rankedGraph: RankedContextCandidate[];
+    decisions: ContextDecision[];
+    tieBreakRecords: TieBreakRecord[];
+    conflictResolutionRecords: ConflictResolutionRecord[];
+    graphCap: number;
+    injected: ContextAssemblyItem[];
+    latent: ContextAssemblyItem[];
+  }): ContextAssemblyDiagnostics {
+    const {
+      policy, rankedEvidence, rankedGraph,
+      decisions, tieBreakRecords, conflictResolutionRecords,
+      graphCap, injected, latent,
+    } = args;
+
+    const layerBudgets = this._buildLayerBudgets(policy);
+
+    // Build candidate pool by layer.
+    const candidatePoolByLayer: ContextAssemblyDiagnostics['candidatePoolByLayer'] = {};
+    if (rankedEvidence.length > 0) candidatePoolByLayer['evidence'] = rankedEvidence;
+    if (rankedGraph.length > 0) candidatePoolByLayer['graph_context'] = rankedGraph;
+
+    // Partition included/excluded/truncated/latent candidate IDs.
+    const includedCandidates: string[] = [];
+    const excludedCandidates: string[] = [];
+    const truncatedCandidates: string[] = [];
+    const latentCandidates: string[] = [];
+    for (const d of decisions) {
+      if (d.status === 'included') includedCandidates.push(d.candidateId);
+      else if (d.status === 'excluded') excludedCandidates.push(d.candidateId);
+      else if (d.status === 'truncated') truncatedCandidates.push(d.candidateId);
+      else if (d.status === 'latent') latentCandidates.push(d.candidateId);
+    }
+
+    // Compute final token usage by layer.
+    const finalTokenUsageByLayer: ContextAssemblyDiagnostics['finalTokenUsageByLayer'] = {};
+    const evidenceTokens = injected.reduce((s, i) => s + estimateTokens(i.content), 0);
+    if (evidenceTokens > 0) finalTokenUsageByLayer['evidence'] = evidenceTokens;
+    const graphTokens = rankedGraph
+      .slice(0, graphCap)
+      .reduce((s, rc) => s + rc.estimatedTokens, 0);
+    if (graphTokens > 0) finalTokenUsageByLayer['graph_context'] = graphTokens;
+    const latentTokens = latent.reduce((s, i) => s + estimateTokens(i.content), 0);
+    if (latentTokens > 0) finalTokenUsageByLayer['canonical_memory'] = latentTokens;
+
+    return {
+      assemblyMode: policy.groundingMode,
+      layerBudgets,
+      candidatePoolByLayer,
+      decisions,
+      includedCandidates,
+      excludedCandidates,
+      truncatedCandidates,
+      latentCandidates,
+      finalTokenUsageByLayer,
+      tieBreakRecords,
+      conflictResolutionRecords,
+      totalCandidatesConsidered: rankedEvidence.length + rankedGraph.length,
+      totalIncluded: includedCandidates.length,
+    };
   }
 
   /**
@@ -471,10 +826,23 @@ export class ContextAssemblyService {
       return { ...item, score: baseScore + Math.min(boost, maxBoostPerItem) };
     });
 
-    // Sort structural items by boosted score descending; affective items lead.
+    // P7B: Sort structural items using a deterministic total-order comparator.
+    // Replaces the previous simple (b.score ?? 0) - (a.score ?? 0) which
+    // left ties unresolved. The comparator applies: score desc → tokenCost asc →
+    // timestamp desc → lexical sourceKey asc.
     const sortedStructural = boostedStructural
       .slice()
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      .sort((a, b) => {
+        const scoreDiff = (b.score ?? 0) - (a.score ?? 0);
+        if (scoreDiff !== 0) return scoreDiff;
+        const tokenDiff = estimateTokens(a.content) - estimateTokens(b.content);
+        if (tokenDiff !== 0) return tokenDiff;
+        const tsA = parseTimestampMs(a.metadata?.fetchedAt as string | undefined);
+        const tsB = parseTimestampMs(b.metadata?.fetchedAt as string | undefined);
+        const tsDiff = tsB - tsA;
+        if (tsDiff !== 0) return tsDiff;
+        return (a.sourceKey ?? '') < (b.sourceKey ?? '') ? -1 : 1;
+      });
     return [...affectiveItems, ...sortedStructural];
   }
 
