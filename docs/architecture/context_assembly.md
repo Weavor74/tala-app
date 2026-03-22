@@ -48,16 +48,26 @@ ContextAssemblyRequest
         │     graceful degradation: failure adds warning, assembly continues unaffected
         │     See: docs/architecture/affective_graph_modulation.md
         │
-        ├─► _mergeGraphContextItems()                    ← ordering + combined graph_context cap
+        ├─► _mergeGraphContextItems()                    ← merge structural + affective graph_context
         │     merges structural + affective graph_context candidates
         │     if allowGraphOrderingInfluence=false: affective items placed first, structural unchanged
         │     if allowGraphOrderingInfluence=true: structural items receive small keyword-overlap boost
         │     evidence ordering is NEVER affected by this step
-        │     combined list capped by contextBudget.maxItemsPerClass.graph_context
         │
-        ├─► _selectItems()                               ← enforces evidence budget
-        │     applies maxItems / maxItemsPerClass.evidence / per-doc chunk cap
-        │     overflow evidence moves to 'latent' (never dropped)
+        ├─► _rankItems()                                  ← P7D: unified scoring + ranking pass
+        │     ALL candidates (evidence + graph_context) scored and sorted in ONE pass
+        │     ContextScoringService computes ScoreBreakdown (P7B base + P7D normalized score)
+        │     AffectiveWeightingService applies per-candidate affective adjustments (P7C)
+        │     applyDeterministicTieBreak() enforces total-order sort (P7B)
+        │
+        ├─► _selectItemsGlobal()                          ← P7D Feed 3: single global budget selection
+        │     ALL candidates compete under ONE global token + item budget
+        │     no per-layer quota enforcement (per-class caps removed)
+        │     greedy selection in rank order until global budget exhausted
+        │     evidence overflow → latent (never dropped)
+        │     graph_context overflow → excluded (decision record produced)
+        │     optional minCanonicalItems floor: canonical items bypass global cap
+        │     per-document chunk cap still applies to evidence items
         │
         └─► ContextAssemblyResult
               items: ContextAssemblyItem[]     ← evidence + graph_context + latent
@@ -93,7 +103,7 @@ P7B (implemented in this service) ensures context assembly is deterministic:
 
 - **Total-order tie-breaking.** `compareContextCandidates` provides a 5-level tie-break: authority score → final score → token cost → timestamp → lexical ID. Two distinct candidates can never compare as equal.
 
-- **Decision records for every candidate.** `_selectItems` produces a `ContextDecision` for each candidate. No candidate can disappear without an explicit reason code. Reason codes include `included.*`, `excluded.*`, `overflow.to_latent`, and `truncated.*`.
+- **Decision records for every candidate.** `_selectItemsGlobal` produces a `ContextDecision` for each candidate. No candidate can disappear without an explicit reason code. Reason codes include `included.cross_layer_top_rank`, `included.high_authority`, `excluded.cross_layer_budget_exceeded`, `excluded.outcompeted_by_higher_rank`, `overflow.to_latent`, `excluded.per_document_cap`, and `truncated.*`.
 
 - **Diagnostics always populated.** `ContextAssemblyResult.diagnostics` (`ContextAssemblyDiagnostics`) is always set. It includes the full candidate pool by layer, score breakdowns, all decisions, tie-break records, and final token usage by layer.
 
@@ -105,10 +115,10 @@ See `docs/architecture/p7b_context_determinism.md` for the full scoring model, t
 
 All context assembly passes enforce evidence-first grounding:
 
-- Evidence items (retrieved documents, chunks, notebook items) are always selected before any other class.
+- Evidence items (retrieved documents, chunks, notebook items) rank ahead of graph_context items with lower authority tier in the unified ranking pass.
 - `contextBudget.evidencePriority = true` in all three default policies.
 - In `strict` mode, only evidence items enter context. Graph traversal is skipped, affective modulation is skipped, and no graph_context items are added.
-- In `graph_assisted` and `exploratory` modes, evidence fills its budget first. Graph context (from `GraphTraversalService` and `AffectiveGraphService`) and latent overflow follow.
+- In `graph_assisted` and `exploratory` modes, ALL candidates (evidence + graph_context) compete under a single global budget. Evidence items typically rank above graph_context items because evidence items use authority tier `null` (neutral 0.5), while graph_context items derived from 'derived' edge trust receive `verified_derived` (0.75). The total-order comparator puts higher authority first, so structural graph_context items with `derived` trust can rank above evidence.
 - Affective items are **never** placed in the `evidence` class. They remain `graph_context` regardless of policy.
 - Affective modulation never reorders evidence items (`allowEvidenceReordering: false` in all default policies).
 
@@ -202,7 +212,7 @@ When affective items are merged with structural graph_context items in `_mergeGr
 - **`allowGraphOrderingInfluence: false` (default):** Affective items are placed first in the graph_context list; structural items retain their original order. Evidence items are never touched.
 - **`allowGraphOrderingInfluence: true`:** Structural graph_context items receive a small keyword-overlap boost when their title/content matches active mood labels or astro tags. The boost is capped at `affectiveWeight × 0.5` (max 0.15). Affective items still lead the list. Evidence items are still never touched.
 
-The combined graph_context list (structural + affective) is then capped by `contextBudget.maxItemsPerClass.graph_context`. This cap applies to all graph_context items together, not separately per source.
+The combined graph_context list (structural + affective) is passed to `_rankItems()` together with all evidence candidates. There is no longer a separate per-class cap for graph_context items. Instead, all candidates compete under the global budget set by `contextBudget.maxItems` and `contextBudget.maxTokens`. See the Budget Enforcement section below.
 
 ### Graceful degradation
 
@@ -212,18 +222,31 @@ See: `docs/architecture/affective_graph_modulation.md` for full gate conditions 
 
 ---
 
-## Budget Enforcement
+## Budget Enforcement (P7D Feed 3: Global Competitive Selection)
 
-`ContextAssemblyService._selectItems()` applies the following rules in order for evidence:
+`ContextAssemblyService._selectItemsGlobal()` applies a single global budget to ALL candidates (evidence + graph_context combined). Per-layer quota enforcement has been replaced by competitive selection:
 
-1. Evidence items are selected first (evidencePriority enforced).
-2. Total injected item count is capped by `contextBudget.maxItems`.
-3. Evidence class cap is applied from `contextBudget.maxItemsPerClass.evidence` when set.
-4. Per-document chunk cap: `ceil(evidenceCap / 2)`, minimum 1. Prevents a single document from consuming the entire evidence budget.
+1. All candidates are ranked in the unified pass via `_rankItems()` using the total-order comparator.
+2. The assembler iterates through the ranked pool in rank order (highest rank first).
+3. A candidate is included when:
+   - The global item cap (`contextBudget.maxItems`) has not been reached, AND
+   - The global token cap (`contextBudget.maxTokens`, optional) has room for the candidate's token cost, AND
+   - The per-document chunk cap has not been reached (evidence items only).
+4. Evidence candidates that exceed the global budget are moved to `latent` (not dropped).
+5. Graph_context candidates that exceed the global budget are `excluded` with a decision record.
+6. Per-document chunk cap: `ceil(globalItemCap / 2)`, minimum 1. Prevents a single document from consuming more than half the global budget.
+7. Optional minimum canonical floor: `contextBudget.minCanonicalItems` reserves slots for the top-ranked canonical candidates. They bypass the global budget check if configured.
 
-Graph context items (structural + affective combined) are capped separately using `contextBudget.maxItemsPerClass.graph_context` before being merged into the result. They are not subject to the evidence budget rules.
+### Reason codes
 
-All items that do not fit within the evidence budget become `latent` items (not dropped).
+| Reason | Status | Meaning |
+|---|---|---|
+| `included.cross_layer_top_rank` | included | Top-ranked in global competition |
+| `included.high_authority` | included (co-emitted) | Candidate has canonical authority tier |
+| `excluded.cross_layer_budget_exceeded` | excluded / latent | Global item or token budget exhausted |
+| `excluded.outcompeted_by_higher_rank` | latent (co-emitted) | Per-document cap hit (higher-ranked chunk took slot) |
+| `excluded.per_document_cap` | latent (co-emitted) | Per-document chunk cap enforced |
+| `overflow.to_latent` | latent (co-emitted) | Evidence item moved to latent class |
 
 ---
 
