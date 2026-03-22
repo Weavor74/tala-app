@@ -78,6 +78,14 @@ function parseTimestampMs(ts: string | null | undefined): number {
   return isNaN(ms) ? 0 : ms;
 }
 
+/**
+ * Default graph hop depth assigned to graph_context items that originated from
+ * evidence co-occurrence derivation (GraphTraversalService one-hop expansion).
+ * This assumption holds until multi-hop traversal is introduced, at which point
+ * items should carry their actual hop depth from the traversal.
+ */
+const DEFAULT_GRAPH_HOP_DEPTH = 1;
+
 // ─── Authority tier derivation from edge trust ────────────────────────────────
 
 function deriveAuthorityTierFromEdgeTrust(
@@ -113,7 +121,7 @@ function itemToCandidate(
       ? deriveAuthorityTierFromEdgeTrust(item.graphEdgeTrust)
       : null; // evidence items: null = neutral (scoring treats as 0.5)
   const timestamp = (item.metadata?.fetchedAt as string | undefined) ?? null;
-  const graphHopDepth = item.selectionClass === 'graph_context' ? 1 : 0;
+  const graphHopDepth = item.selectionClass === 'graph_context' ? DEFAULT_GRAPH_HOP_DEPTH : 0;
 
   return {
     id,

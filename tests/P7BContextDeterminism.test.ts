@@ -662,11 +662,13 @@ describe('P7B: no silent drops', () => {
 
 // ─── 10. ContextScoringService formula correctness ───────────────────────────
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 describe('ContextScoringService: deterministic formula', () => {
   it('computeRecencyScore: recent item scores higher than old item', () => {
     const nowMs = Date.now();
-    const recentTs = new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString(); // 3 days ago
-    const oldTs = new Date(nowMs - 60 * 24 * 60 * 60 * 1000).toISOString(); // 60 days ago
+    const recentTs = new Date(nowMs - 3 * DAY_MS).toISOString(); // 3 days ago
+    const oldTs = new Date(nowMs - 60 * DAY_MS).toISOString(); // 60 days ago
     expect(computeRecencyScore(recentTs, nowMs)).toBeGreaterThan(computeRecencyScore(oldTs, nowMs));
   });
 
