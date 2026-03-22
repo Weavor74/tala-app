@@ -315,6 +315,20 @@ export interface ContextBudgetPolicy {
    * Defaults to true — evidence-first grounding is the TALA default.
    */
   evidencePriority?: boolean;
+
+  /**
+   * P7D Feed 3: Optional minimum canonical memory floor.
+   *
+   * When set, the assembler guarantees that at least this many canonical memory
+   * items are included, even when the global competitive ranking would otherwise
+   * exclude them. The floor is satisfied by including the top-ranked canonical
+   * candidates ahead of the normal global budget check.
+   *
+   * Defaults to 0 (no floor). Because the total-order comparator already places
+   * canonical authority items at the top of the global ranked pool, this floor
+   * only activates when the global budget is smaller than the canonical item count.
+   */
+  minCanonicalItems?: number;
 }
 
 // ─── Memory Policy ────────────────────────────────────────────────────────────

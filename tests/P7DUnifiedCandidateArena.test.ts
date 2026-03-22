@@ -455,9 +455,9 @@ describe('P7D: P7C affective weighting gates intact after unification', () => {
   });
 });
 
-// ─── 5. Layer budget enforcement post-unification ─────────────────────────────
+// ─── 5. Global budget enforcement post-unification ────────────────────────────
 
-describe('P7D: layer budget enforcement still applies after unified ranking', () => {
+describe('P7D: global budget enforced after unified ranking', () => {
   it('evidence budget cap is enforced: excess evidence moves to latent', async () => {
     const results = Array.from({ length: 5 }, (_, i) =>
       makeResult({ itemKey: `e${i}`, title: `Doc ${i}`, providerId: 'local', score: 0.9 - i * 0.1 }),
@@ -472,7 +472,7 @@ describe('P7D: layer budget enforcement still applies after unified ranking', ()
     expect(latent.length).toBe(2);
   });
 
-  it('graph_context budget cap is enforced: excess graph candidates excluded', async () => {
+  it('global budget cap is enforced: excess graph candidates excluded', async () => {
     const orchestrator = makeMockOrchestrator([]);
     const graphItems = [
       makeGraphContextItem({ sourceKey: 'g1', score: 0.9 }),
@@ -482,7 +482,7 @@ describe('P7D: layer budget enforcement still applies after unified ranking', ()
     const graphService = makeGraphServiceReturning(graphItems);
     const service = new ContextAssemblyService(orchestrator, policyService, graphService);
     const result = await service.assemble(makeRequest({
-      contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 2 } },
+      contextBudget: { maxItems: 2 },
     }));
 
     const graphInResult = result.items.filter(i => i.selectionClass === 'graph_context');
@@ -493,6 +493,8 @@ describe('P7D: layer budget enforcement still applies after unified ranking', ()
       dec => dec.layerAssignment === 'graph_context' && dec.status === 'excluded',
     );
     expect(excludedGraph.length).toBe(1);
+    // P7D Feed 3: excluded with cross-layer budget exceeded reason code
+    expect(excludedGraph[0]!.reasons).toContain('excluded.cross_layer_budget_exceeded');
   });
 
   it('evidence and graph_context items both survive to result when within budget', async () => {
@@ -505,7 +507,7 @@ describe('P7D: layer budget enforcement still applies after unified ranking', ()
     const graphService = makeGraphServiceReturning([graphItem]);
     const service = new ContextAssemblyService(orchestrator, policyService, graphService);
     const result = await service.assemble(makeRequest({
-      contextBudget: { maxItems: 5, maxItemsPerClass: { graph_context: 2 } },
+      contextBudget: { maxItems: 5 },
     }));
 
     const evidence = result.items.filter(i => i.selectionClass === 'evidence');

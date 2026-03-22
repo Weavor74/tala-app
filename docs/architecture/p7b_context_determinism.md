@@ -31,7 +31,7 @@ the system must produce the same:
 | No arbitrary selection drift | Candidates are scored and sorted before selection, not taken in retrieval order |
 | Prompt composition is explainable | Every included block has reason codes |
 | Every exclusion has reason codes | No candidate disappears without a `ContextDecision` record |
-| Token budgets are explicit per layer | `ContextLayerBudget` defines maxItems + maxTokens per named layer |
+| Token budget is global (P7D Feed 3) | Single `contextBudget.maxItems` + optional `maxTokens` covers all layers |
 | Scoring formulas are deterministic | `ContextScoringService` with explicit weights, no LLM/ML |
 | Tie-breaking rules are explicit and total | `compareContextCandidates` resolves all ties down to lexical ID |
 | Ranking pipeline is repeatable | Same inputs always produce same `RankedContextCandidate[]` order |
@@ -56,11 +56,12 @@ ContextAssemblyRequest
    → ContextAssemblyItem[] (all evidence candidates, unsorted)
   │
   ▼  [P7B step 3P]
-4. ScoreAndRank (_rankItems, 'evidence')
-   → itemToCandidate() for each item
-   → ContextScoringService.computeCandidateScore()
+4. ScoreAndRank — P7D Unified Pass (_rankItems, ALL candidates)
+   → itemToCandidate() for each evidence + graph_context item
+   → ContextScoringService.computeCandidateScore() (P7B base + P7D normalized score)
+   → AffectiveWeightingService per-candidate adjustment (P7C gates per layerAssignment)
    → applyDeterministicTieBreak() → total-order sort
-   → RankedContextCandidate[] (sorted by priority)
+   → RankedContextCandidate[] (all sources, single unified order)
   │
   ▼
 5. ExpandGraphContext (GraphTraversalService)
@@ -74,19 +75,14 @@ ContextAssemblyRequest
 7. MergeGraphContextItems (_mergeGraphContextItems)
    → combined graph_context ContextAssemblyItem[] with deterministic sort
   │
-  ▼  [P7B step]
-8. ScoreAndRank (_rankItems, 'graph_context')
-   → RankedContextCandidate[] sorted by priority
-  │
-  ▼
-9. ApplyGraphCap (slice to maxItemsPerClass.graph_context)
-   → ContextDecision records for included + excluded graph candidates
-  │
-  ▼
-10. SelectEvidence (_selectItems)
-    → injected: ContextAssemblyItem[] (within budget, deterministic order)
-    → latent: ContextAssemblyItem[] (overflow, ranked order)
-    → ContextDecision records for every candidate
+  ▼  [P7D Feed 3]
+8. GlobalCompetitiveSelection (_selectItemsGlobal)
+   → ALL candidates compete under ONE global token + item budget
+   → greedy iteration in rank order; per-document chunk cap for evidence
+   → injected: ContextAssemblyItem[] (evidence, within budget)
+   → graphContextItems: ContextAssemblyItem[] (graph_context, within budget)
+   → latent: ContextAssemblyItem[] (evidence overflow, ranked order)
+   → ContextDecision records for every candidate
   │
   ▼
 11. AssembleResult
@@ -113,7 +109,17 @@ ContextAssemblyResult (with diagnostics)
 | `task_state` | Current task state | 5 |
 | `policy_block` | Mode/policy blocks | 6 |
 
-### Per-layer budget (`ContextLayerBudget`)
+### Global budget (P7D Feed 3)
+
+P7D Feed 3 replaced per-layer quota enforcement with a single global budget. `ContextAssemblyService._buildLayerBudgets()` still returns `ContextLayerBudget` records (for diagnostics), but the actual selection is performed by `_selectItemsGlobal()` using:
+
+- `contextBudget.maxItems` — global item cap across all layers
+- `contextBudget.maxTokens` — optional global soft token cap
+- `contextBudget.minCanonicalItems` — optional floor that reserves slots for canonical items
+
+The `maxItemsPerClass` field remains in `ContextBudgetPolicy` for backward compatibility, but per-class caps (`evidence`, `graph_context`) are no longer enforced during selection. The only per-class behavior retained is the per-document chunk cap for evidence items: `ceil(globalItemCap / 2)`.
+
+### ContextLayerBudget (diagnostics)
 
 ```typescript
 interface ContextLayerBudget {
@@ -126,14 +132,14 @@ interface ContextLayerBudget {
 }
 ```
 
-Current layer budgets are derived from the active `MemoryPolicy.contextBudget` in `ContextAssemblyService._buildLayerBudgets()`.
+Under P7D Feed 3, the layer budgets recorded in diagnostics reflect the global budget for `evidence` and `graph_context` layers (both show `maxItems` = `contextBudget.maxItems`).
 
 ### Overflow policy
 
 | Policy | Behavior |
 |---|---|
-| `overflow_to_latent` | Items beyond the budget cap are moved to `selectionClass: 'latent'` and included in the result (evidence layer) |
-| `drop` | Items beyond the cap are excluded and recorded as `excluded.layer_budget_exceeded` (graph_context layer) |
+| `overflow_to_latent` | Evidence items beyond budget → `selectionClass: 'latent'` (included in result) |
+| `drop` | Graph_context items beyond budget → excluded with `ContextDecision` record |
 | `truncate` | Item content is truncated to fit (future extension) |
 
 ---
@@ -257,14 +263,15 @@ interface ContextAssemblyDiagnostics {
 | Code | When used |
 |---|---|
 | `included.high_authority` | Candidate has `canonical` authority tier |
-| `included.top_ranked_within_budget` | Candidate ranked within layer budget |
+| `included.cross_layer_top_rank` | Candidate included in global cross-layer competition (P7D Feed 3) |
 | `included.canonical_memory_priority` | P7A canonical memory included first |
-| `excluded.layer_budget_exceeded` | Layer was full when this candidate was considered |
+| `excluded.cross_layer_budget_exceeded` | Global item or token budget exhausted (P7D Feed 3) |
+| `excluded.outcompeted_by_higher_rank` | Per-document cap hit; higher-ranked chunk from same doc took the slot (P7D Feed 3) |
 | `excluded.per_document_cap` | Per-document chunk cap already reached |
 | `excluded.lower_rank_than_canonical` | Canonical item outranked this candidate |
 | `excluded.tie_break_lost` | Lost a deterministic tie-break |
 | `excluded.authority_conflict_lost` | Canonical vs. derived conflict resolution |
-| `overflow.to_latent` | Evidence budget exhausted; moved to latent class |
+| `overflow.to_latent` | Budget exhausted; evidence item moved to latent class |
 | `truncated.to_fit_budget` | Content was truncated (future extension) |
 
 ---
