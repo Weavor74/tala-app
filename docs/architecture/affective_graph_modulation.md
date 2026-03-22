@@ -4,9 +4,9 @@
 
 `AffectiveGraphService` is the affective graph modulation layer for the TALA context assembly pipeline (Step 6D). Its job is to translate the current astro/emotional state (produced by `AstroService`) into bounded, labeled `graph_context` items that can supplement—but never override—primary evidence in an assembled context block.
 
-Affective modulation is a modulatory layer only. It adjusts graph_context ordering and adds tone descriptors; it never changes which evidence items are retrieved, selected, or ranked.
+`AffectiveWeightingService` (P7C) is the affective scoring layer. It translates the active `AffectiveState` (mood labels with intensities) into bounded, formula-based score adjustments applied to context candidates via `ContextScoringService.computeCandidateScore()`. These adjustments appear as `ScoreBreakdown.affectiveAdjustment` and `ContextDecision.affectiveReasonCode`, providing full traceability.
 
-As of Step 6D, `AffectiveGraphService` is wired into `ContextAssemblyService` as an optional fourth constructor dependency. When provided, it is called after `GraphTraversalService` and before the final graph_context budget cap. When absent, behavior is identical to the previous implementation.
+Together, the two services implement the full affective modulation stack: item injection (Step 6D) + score influence (P7C).
 
 ---
 
@@ -33,18 +33,34 @@ ContextAssemblyRequest
         │     (empty in strict mode, or when disabled, or when astro unavailable)
         │     failure is caught → warning added → assembly continues
         │
-        ├─► _mergeGraphContextItems()                     ← ordering influence + combined cap
-        │     merges structural + affective graph_context
-        │     applies ordering influence (policy-gated)
+        ├─► _buildAffectiveStateFromItems()               ← P7C: build AffectiveState
+        │     converts affective graph_context items into normalized AffectiveState
+        │     (mood labels + intensities from emotion_tag and astro_state items)
+        │     returns null when no affective items available
+        │
+        ├─► _rankItems(evidence, affectiveState)          ← P7C: score + sort evidence
+        │     AffectiveWeightingService.computeAdjustment() for each candidate
+        │     gate: allowEvidenceReordering (always off by default)
+        │     affectiveAdjustment flows into ScoreBreakdown; reason code into ContextDecision
+        │
+        ├─► _mergeGraphContextItems()                     ← simple merge
+        │     combines structural + affective graph_context (affective items first)
+        │     no raw score mutation — ordering is determined by _rankItems below
+        │
+        ├─► _rankItems(graph_context, affectiveState)     ← P7C: score + sort graph_context
+        │     AffectiveWeightingService.computeAdjustment() for each candidate
+        │     gate: allowGraphOrderingInfluence
+        │     affectiveAdjustment flows into ScoreBreakdown; reason code into ContextDecision
         │     applies combined contextBudget.maxItemsPerClass.graph_context cap
         │
         ├─► _selectItems()                                ← evidence budget enforcement
         │
         └─► ContextAssemblyResult
               items: ContextAssemblyItem[]  ← evidence + graph_context + latent
+              diagnostics.decisions: ContextDecision[] ← every candidate with affectiveReasonCode
 ```
 
-`AffectiveGraphService` is called after `GraphTraversalService` and before final budget enforcement. Its items are merged with structural graph_context items in `_mergeGraphContextItems()`, and the combined list is capped by `contextBudget.maxItemsPerClass.graph_context`. They are never placed in the `evidence` slot.
+`AffectiveGraphService` is called after `GraphTraversalService` and before scoring. `AffectiveWeightingService` is called inside `_rankItems` for every candidate — it applies a bounded, keyword-overlap-based score adjustment governed by `AffectiveModulationPolicy`.
 
 ---
 
@@ -59,10 +75,10 @@ Affective modulation is gated by `AffectiveModulationPolicy` (defined in `shared
 | `enabled` | boolean | Master on/off switch for this assembly pass |
 | `maxAffectiveNodes` | number | Hard cap on affective items returned (enforced inside AffectiveGraphService) |
 | `allowToneModulation` | boolean | Permit tone descriptor in affective item content |
-| `allowGraphOrderingInfluence` | boolean | Permit affective items to influence graph_context sort order |
+| `allowGraphOrderingInfluence` | boolean | P7C: Permit affective adjustment on graph_context candidates |
 | `allowGraphExpansionInfluence` | boolean | Permit affective state to trigger additional graph_context expansion |
-| `allowEvidenceReordering` | boolean | Permit reordering of evidence items (must remain false by default) |
-| `affectiveWeight` | number [0, 1] | Scalar applied as the score on affective items; clamped to 0.3 max |
+| `allowEvidenceReordering` | boolean | P7C: Permit affective adjustment on evidence candidates (must remain false by default) |
+| `affectiveWeight` | number [0, 1] | Scalar applied to affective influence; clamped to 0.3 max |
 | `requireLabeling` | boolean | Require all affective items to carry the non-authoritative disclaimer |
 
 ### Default Policies
@@ -89,13 +105,20 @@ All default policies set `allowEvidenceReordering: false` and `requireLabeling: 
 6. `AstroService.getEmotionalState()` throws
 7. The returned state string matches a known neutral/offline sentinel (e.g., "Engine offline", "Calculation failed")
 
-The service degrades gracefully at each gate without throwing.
+`AffectiveWeightingService.computeAdjustment()` returns `adjustment=0` with an `AffectiveReasonCode` when any of the following are true:
 
-In addition, `ContextAssemblyService` adds its own outer guard: if `affectiveGraphService` is `null` (not provided to the constructor), the call is skipped entirely without reaching `AffectiveGraphService`.
+1. `affectiveState` is null → `'affective.no_state'`
+2. `policy` is absent, `enabled=false`, or `affectiveWeight=0` → `'affective.policy_disabled'`
+3. Target layer is `evidence` and `allowEvidenceReordering=false` → `'affective.layer_not_eligible'`
+4. Target layer is `graph_context` and `allowGraphOrderingInfluence=false` → `'affective.layer_not_eligible'`
+5. No keywords extractable from moodVector → `'affective.no_keywords'`
+6. No keyword overlap with candidate text → `'affective.no_keyword_match'`
+
+Every candidate considered receives exactly one `AffectiveReasonCode` in its `ContextDecision.affectiveReasonCode`.
 
 ---
 
-## Item Production
+## Item Production (Step 6D — AffectiveGraphService)
 
 When all gates pass, the service produces up to `maxAffectiveNodes` items:
 
@@ -115,8 +138,6 @@ Always the first item produced when the state is non-neutral.
 
 Content: a truncated summary of the raw astro state text (max 400 characters, with `…` appended when truncated). The `[ASTRO STATE]` header is stripped from the content. When `requireLabeling: true`, the content is prefixed with `[Affective context — not evidence]`.
 
-The 400-character limit prevents token-budget exhaustion from verbose engine responses while still surfacing the most relevant emotional state data.
-
 ### Item 2 — `emotion_tag` node
 
 Produced only when `AstroService.getRawEmotionalState()` returns a non-null `mood_label`.
@@ -135,23 +156,66 @@ Produced only when `AstroService.getRawEmotionalState()` returns a non-null `moo
 
 ---
 
-## Graph Context Ordering Influence
+## P7C: Affective Weighting (AffectiveWeightingService)
+
+P7C adds bounded, deterministic affective score adjustments to the context scoring pipeline.
+
+### How it works
+
+1. `_buildAffectiveStateFromItems()` converts affective graph_context items into a normalized `AffectiveState` (mood labels → intensities). Returns null when no affective items available.
+2. `_rankItems()` calls `AffectiveWeightingService.computeAdjustment()` for every candidate.
+3. The adjustment flows into `ContextScoringService.computeCandidateScore(candidate, affectiveAdj)` as the `affectiveAdjustment` parameter.
+4. `ScoreBreakdown.affectiveAdjustment` reflects the applied boost.
+5. `ContextDecision.affectiveReasonCode` explains why the boost was or was not applied.
+
+### Keyword algorithm
+
+1. Extract keywords from `AffectiveState.moodVector` keys (split on whitespace, underscores, hyphens; words ≥ 3 chars).
+2. Perform case-insensitive substring matching against `"${title} ${content}".toLowerCase()`.
+3. `adjustment = min(matchCount × 0.05, min(affectiveWeight, 0.3) × 0.5)`
+4. Maximum possible adjustment: `0.3 × 0.5 = 0.15`
+5. Contribution to `finalScore`: `adjustment × 0.05` (max 0.0075)
+
+### Layer gates
+
+- **evidence layer**: requires `allowEvidenceReordering === true`. Default: false. Affective adjustment is off for evidence unless explicitly opted in.
+- **graph_context layer**: requires `allowGraphOrderingInfluence === true`. Default: false. Affective adjustment enables keyword-overlap-based score influence on graph_context items.
+
+### Bounded influence
+
+The affective adjustment contribution to `finalScore` is capped at `0.0075` (`0.15 × 0.05`). This is intentionally small: affective signals can tip the balance between candidates with very similar scores but cannot override authority-based ranking or large semantic score differences.
+
+Canonical authority (`authorityScore`) still dominates the total-order comparator. Canonical items always rank above speculative ones regardless of affective boost magnitude.
+
+### Score formula
+
+```
+finalScore =
+  semanticScore   × 0.40   ← retrieval score; affective NEVER modifies this
+  authorityScore  × 0.25   ← always dominates; canonical always beats affective
+  recencyScore    × 0.15
+  sourceWeight    × 0.10
+  graphDepthPenalty × 0.05
+  affectiveAdj    × 0.05   ← P7C: bounded keyword-overlap boost
+```
+
+---
+
+## Graph Context Ordering
 
 When affective and structural graph_context items are merged in `ContextAssemblyService._mergeGraphContextItems()`:
 
-### `allowGraphOrderingInfluence: false` (default)
+### All cases
 
-Affective items are placed first in the graph_context list; structural items retain their original order.
+Affective items are placed first in the merged list; structural items follow in their original order. The final ordering is determined deterministically by `_rankItems()` using the total-order comparator (authority → finalScore → token cost → timestamp → sourceKey).
 
-### `allowGraphOrderingInfluence: true`
+When `allowGraphOrderingInfluence: true`, structural graph_context items receive an `affectiveAdjustment` boost when their text overlaps with active mood keywords. This slightly elevates their `finalScore` relative to non-overlapping items.
 
-Structural graph_context items receive a small keyword-overlap boost when their title/content text overlaps with active mood labels or astro tag words extracted from affective items. The boost is capped at `affectiveWeight × 0.5` (max 0.15). Structural items are then sorted by boosted score descending. Affective items still lead the list.
+When `allowGraphOrderingInfluence: false` (default), all graph_context candidates receive `affectiveReasonCode: 'affective.layer_not_eligible'` and `affectiveAdjustment = 0`.
 
-Keyword extraction is deterministic: only lowercase words of 3+ characters from `metadata.moodLabel` and the title suffix after `:` are used. No stemming or ML scoring.
+### Evidence ordering — always unchanged by default
 
-### Evidence ordering — always unchanged
-
-Evidence items are processed by `_selectItems()` after `_mergeGraphContextItems()`. The merge step never touches evidence items. `allowEvidenceReordering` is false in all default policies and must remain so unless explicitly enabled.
+`allowEvidenceReordering` is false in all default policies. When false, evidence candidates receive `affectiveReasonCode: 'affective.layer_not_eligible'` and `affectiveAdjustment = 0`. Evidence ordering is unchanged.
 
 ---
 
@@ -179,13 +243,16 @@ The `[POLICY CONSTRAINTS]` section always includes `affectiveModulation: enabled
 ## Critical Constraints
 
 - Affective items are **never evidence**. `selectionClass` is always `graph_context`.
-- Affective items **never override retrieved evidence** or change evidence ranking.
+- Affective items **never override retrieved evidence** or change evidence ranking by default.
 - Affective content is **never fabricated** when no astro/emotion state is present.
 - `affectiveWeight` is **clamped to 0.3** by the service regardless of policy value.
 - `allowEvidenceReordering` is **false** in all default policies and must remain so unless explicitly enabled by a caller with a clear documented reason.
 - Strict mode **always returns empty** regardless of policy flags.
 - `requireLabeling: true` is the default and must only be set false in contexts with explicit user consent.
 - The combined graph_context budget cap (`contextBudget.maxItemsPerClass.graph_context`) applies to structural + affective items together.
+- **All affective decisions emit reason codes** (`ContextDecision.affectiveReasonCode`). No candidate is evaluated for affective weighting without producing a reason code.
+- **No randomness**. Keyword extraction and matching are deterministic; same inputs always produce the same adjustment value.
+- **No LLM scoring**. Only keyword substring presence is used — no embeddings, no ML models.
 
 ---
 
@@ -199,18 +266,25 @@ The `[POLICY CONSTRAINTS]` section always includes `affectiveModulation: enabled
 
 `ContextAssemblyService` accepts `AffectiveGraphService` as an optional fourth constructor parameter (default `null`). When `null`, the affective pipeline step is skipped entirely.
 
+`AffectiveWeightingService` is instantiated as a private field of `ContextAssemblyService`. It has no external dependencies and is always available regardless of whether `AffectiveGraphService` is provided.
+
 ---
 
 ## Source Files
 
 | File | Role |
 |---|---|
-| `electron/services/graph/AffectiveGraphService.ts` | Service implementation |
-| `electron/services/context/ContextAssemblyService.ts` | Wires AffectiveGraphService; merges + orders graph_context; renders [AFFECTIVE CONTEXT] |
+| `electron/services/graph/AffectiveGraphService.ts` | Step 6D: produce affective graph_context items from AstroService |
+| `electron/services/context/AffectiveWeightingService.ts` | P7C: compute bounded keyword-overlap adjustments for candidates |
+| `electron/services/context/ContextAssemblyService.ts` | Wires both services; builds AffectiveState; calls _rankItems with adjustments |
+| `electron/services/context/ContextScoringService.ts` | Accepts affectiveAdjustment parameter; includes it in ScoreBreakdown |
+| `shared/context/affectiveWeightingTypes.ts` | P7C contracts: AffectiveState, AffectiveAdjustmentResult, AffectiveReasonCode |
+| `shared/context/contextDeterminismTypes.ts` | ContextDecision.affectiveAdjustment + affectiveReasonCode; RankedContextCandidate.affectiveReasonCode |
 | `shared/policy/memoryPolicyTypes.ts` | `AffectiveModulationPolicy`, `GraphNodeType` (astro_state, emotion_tag, affect_state), `GraphEdgeType` (modulates, amplifies, suppresses, resonates_with, active_during) |
 | `electron/services/policy/defaultMemoryPolicies.ts` | Default `affectiveModulation` values per grounding mode |
 | `electron/services/policy/MemoryPolicyService.ts` | Merges `affectiveModulation` overrides during policy resolution |
-| `tests/AffectiveGraphService.test.ts` | 29 unit tests |
+| `tests/AffectiveGraphService.test.ts` | 29 unit tests for AffectiveGraphService |
+| `tests/P7CAffectiveWeighting.test.ts` | 43 P7C tests: AffectiveWeightingService + integration |
 | `tests/ContextAssemblyService.test.ts` | Integration tests covering affective wiring, ordering, rendering |
 | `tests/AffectiveGraphIntegration.test.ts` | Step 6E integration tests: IpcRouter composition path wiring seam |
 
@@ -228,6 +302,9 @@ The handler:
 3. Passes it as the 4th argument to `ContextAssemblyService(orchestrator, policyService, graphTraversalService, affectiveGraphService)`.
 4. If the Astro runtime is unavailable, not yet ignited, or throws, `null` is passed instead — assembly continues unchanged with no affective items.
 
+`AffectiveWeightingService` is always active inside `ContextAssemblyService`. When no affective items are produced (null astro, disabled policy, strict mode), `AffectiveWeightingService.computeAdjustment()` returns `adjustment=0` with reason code `'affective.no_state'` or `'affective.policy_disabled'` for every candidate.
+
 **Graceful degradation**: Any failure to obtain or construct `AffectiveGraphService` emits a `console.warn` and leaves affective modulation disabled for that call. Evidence retrieval, structural graph context, and prompt rendering are unaffected.
 
-**Strict mode**: `AffectiveGraphService` always returns `[]` in strict mode, regardless of policy configuration or Astro runtime state.
+**Strict mode**: `AffectiveGraphService` always returns `[]` in strict mode, regardless of policy configuration or Astro runtime state. `AffectiveWeightingService` receives null `affectiveState` and emits `'affective.no_state'` for every candidate.
+
