@@ -3654,6 +3654,14 @@ Failure to provide a tool call will result in system termination.`;
         };
     }
 
+    /**
+     * Returns the AstroService instance for use by backend composition roots
+     * (e.g. IpcRouter context:assemble handler). Returns null if not initialized.
+     */
+    public getAstroService(): AstroService | null {
+        return this.astro ?? null;
+    }
+
     public async getEmotionState(): Promise<string> {
         // Suppress Astro refresh after technical deterministic turns to save work and reduce noise
         const technicalIntents = ['file_read', 'file_list', 'git_status', 'git_branch', 'repo_audit', 'code_search', 'diagnostics', 'repo_query'];

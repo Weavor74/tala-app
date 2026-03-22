@@ -212,3 +212,22 @@ The `[POLICY CONSTRAINTS]` section always includes `affectiveModulation: enabled
 | `electron/services/policy/MemoryPolicyService.ts` | Merges `affectiveModulation` overrides during policy resolution |
 | `tests/AffectiveGraphService.test.ts` | 29 unit tests |
 | `tests/ContextAssemblyService.test.ts` | Integration tests covering affective wiring, ordering, rendering |
+| `tests/AffectiveGraphIntegration.test.ts` | Step 6E integration tests: IpcRouter composition path wiring seam |
+
+---
+
+## Runtime Wiring (Step 6E)
+
+Affective modulation is live through the IPC backend context assembly path.
+
+**Composition root**: `electron/services/IpcRouter.ts` — `context:assemble` handler.
+
+The handler:
+1. Calls `agent.getAstroService()` to obtain the `AstroService` singleton owned by `AgentService`.
+2. If the service is available, constructs `AffectiveGraphService(astroService)`.
+3. Passes it as the 4th argument to `ContextAssemblyService(orchestrator, policyService, graphTraversalService, affectiveGraphService)`.
+4. If the Astro runtime is unavailable, not yet ignited, or throws, `null` is passed instead — assembly continues unchanged with no affective items.
+
+**Graceful degradation**: Any failure to obtain or construct `AffectiveGraphService` emits a `console.warn` and leaves affective modulation disabled for that call. Evidence retrieval, structural graph context, and prompt rendering are unaffected.
+
+**Strict mode**: `AffectiveGraphService` always returns `[]` in strict mode, regardless of policy configuration or Astro runtime state.

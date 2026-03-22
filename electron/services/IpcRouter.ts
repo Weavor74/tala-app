@@ -32,6 +32,8 @@ import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 import { ContextAssemblyService } from './context/ContextAssemblyService';
 import { MemoryPolicyService } from './policy/MemoryPolicyService';
+import { GraphTraversalService } from './graph/GraphTraversalService';
+import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 
 export interface IpcRouterContext {
@@ -1686,7 +1688,24 @@ export class IpcRouter {
       }
       try {
         const policyService = new MemoryPolicyService();
-        const assembler = new ContextAssemblyService(orchestrator, policyService);
+        // Step 6E: wire AffectiveGraphService with AstroService from the AgentService
+        // singleton. When the Astro runtime is unavailable or not yet ignited, context
+        // assembly continues unchanged — affective items simply do not appear.
+        let affectiveGraphService: AffectiveGraphService | null = null;
+        try {
+          const astroService = agent.getAstroService();
+          if (astroService) {
+            affectiveGraphService = new AffectiveGraphService(astroService);
+          }
+        } catch (astroErr: any) {
+          console.warn('[IpcRouter] context:assemble — AstroService unavailable, affective modulation disabled:', astroErr?.message ?? String(astroErr));
+        }
+        const assembler = new ContextAssemblyService(
+          orchestrator,
+          policyService,
+          new GraphTraversalService(),
+          affectiveGraphService,
+        );
         const result = await assembler.assemble(request);
         return { ok: true, result };
       } catch (err: any) {
