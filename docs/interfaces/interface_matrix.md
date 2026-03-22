@@ -19,6 +19,9 @@ This matrix provides a comprehensive mapping of all data and command flows betwe
 | **ToolService** | **MCP Servers** | JSON-RPC (stdio) | Delegated tool execution (RAG, Astro, Mem0). | Medium-High |
 | **MCP Servers** | **Local Filesystem** | File System API | Accessing vector DBs, memory graphs, and RAG indexes. | Medium |
 | **AgentService** | **MemoryService** | Internal API | Relational and vector semantic search. | High (History) |
+| **AgentService** | **MemoryAuthorityService** | Internal API | Canonical memory write — all persistent writes must flow here before derived systems. Returns `canonical_memory_id`. | High (History) |
+| **MemoryAuthorityService** | **PostgresMemoryRepository** | Internal API (Pool) | Writes to `memory_records`, `memory_lineage`, `memory_projections`. Canonical source of truth. | High (History) |
+| **MemoryAuthorityService** | **memory_projections** | SQL | Inserts pending projection events for mem0, graph, vector after every canonical commit. | Medium |
 | **SettingsManager** | **app_settings.json** | Atomic File I/O | Persistence of system configuration. | Critical (Security) |
 | **GuardrailService** | **AgentService** | Internal API | Post-inference verification and redaction. | High |
 
