@@ -6,11 +6,13 @@
  * the same call always produces the same ordering.
  *
  * Tie-break order:
- *   1. Higher authority tier score  (canonical > verified_derived > transient > speculative)
- *   2. Higher final composite score
- *   3. Lower estimated token cost   (prefer compact items when scores are equal)
- *   4. Newer timestamp              (ISO-8601; missing timestamp treated as epoch 0)
- *   5. Lexicographically smaller id (stable string sort; guarantees total order)
+ *   1. Higher authority tier score   (canonical > verified_derived > transient > speculative)
+ *   2. Higher normalized score       (P7D Feed 2: finalScore × sourceWeight × tokenEfficiency)
+ *   3. Lower estimated token cost    (prefer compact items when scores are equal)
+ *   4. Newer timestamp               (ISO-8601; missing timestamp treated as epoch 0)
+ *   5. Lexicographically smaller id  (stable string sort; guarantees total order)
+ *
+ * Authority tier dominance (step 1) is never overridden by normalization (P7D constraint).
  *
  * Usage:
  *   const sorted = applyDeterministicTieBreak(candidates);
@@ -45,8 +47,10 @@ export function compareContextCandidates(
   const authDiff = b.scoreBreakdown.authorityScore - a.scoreBreakdown.authorityScore;
   if (authDiff !== 0) return authDiff;
 
-  // 2. Final composite score: higher is better
-  const scoreDiff = b.scoreBreakdown.finalScore - a.scoreBreakdown.finalScore;
+  // 2. Normalized score (P7D Feed 2): higher is better
+  //    normalizedScore = finalScore × sourceWeight × tokenEfficiency
+  //    Prevents any source layer from dominating cross-layer ranking.
+  const scoreDiff = b.scoreBreakdown.normalizedScore - a.scoreBreakdown.normalizedScore;
   if (scoreDiff !== 0) return scoreDiff;
 
   // 3. Token cost: lower is better (prefer compact items to maximise diversity)
@@ -123,12 +127,12 @@ function detectTieBreakRecord(
   b: RankedContextCandidate,
 ): TieBreakRecord | null {
   const authEqual = a.scoreBreakdown.authorityScore === b.scoreBreakdown.authorityScore;
-  const scoreEqual = a.scoreBreakdown.finalScore === b.scoreBreakdown.finalScore;
+  const scoreEqual = a.scoreBreakdown.normalizedScore === b.scoreBreakdown.normalizedScore;
 
   if (!authEqual) return null; // Separated cleanly by authority — no tie
-  if (!scoreEqual) return null; // Separated cleanly by score — no tie
+  if (!scoreEqual) return null; // Separated cleanly by normalized score — no tie
 
-  // Both authority and score are equal; a lower-priority criterion was used
+  // Both authority and normalized score are equal; a lower-priority criterion was used
   const tokenEqual = a.estimatedTokens === b.estimatedTokens;
   const tsA = parseTimestampMs(a.timestamp);
   const tsB = parseTimestampMs(b.timestamp);
@@ -145,7 +149,7 @@ function detectTieBreakRecord(
 
   return {
     candidateIds: [a.id, b.id],
-    tiedScore: a.scoreBreakdown.finalScore,
+    tiedScore: a.scoreBreakdown.normalizedScore,
     winnerCandidateId: a.id, // a comes before b in sorted order
     tieBreakCriteria: criteria,
   };

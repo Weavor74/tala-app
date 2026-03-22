@@ -127,7 +127,7 @@ function makeRankedCandidate(
 }
 
 function makeScoreBreakdown(finalScore: number, overrides: Partial<ScoreBreakdown> = {}): ScoreBreakdown {
-  return {
+  const base = {
     semanticScore: 0.5,
     recencyScore: 0.5,
     authorityScore: 0.5,
@@ -135,7 +135,15 @@ function makeScoreBreakdown(finalScore: number, overrides: Partial<ScoreBreakdow
     graphDepthPenalty: 0,
     affectiveAdjustment: 0,
     finalScore,
+    tokenEfficiency: 1.0,
     ...overrides,
+  };
+  // normalizedScore defaults to finalScore × sourceWeight × tokenEfficiency
+  // so that tests that don't override it behave consistently with the formula.
+  return {
+    ...base,
+    normalizedScore: base.finalScore * base.sourceWeight * base.tokenEfficiency,
+    ...('normalizedScore' in overrides ? { normalizedScore: (overrides as ScoreBreakdown).normalizedScore } : {}),
   };
 }
 

@@ -91,6 +91,8 @@ export interface ContextLayerBudget {
  * No LLM/ML scoring — all values derived from deterministic formulas.
  *
  * finalScore is the weighted composite of all components.
+ * normalizedScore is the cross-layer normalized score used for ranking
+ * (P7D Feed 2: finalScore × sourceWeight × tokenEfficiency).
  */
 export interface ScoreBreakdown {
   /** Base semantic/retrieval similarity score [0, 1]. Comes from retrieval provider. */
@@ -112,9 +114,12 @@ export interface ScoreBreakdown {
   authorityScore: number;
 
   /**
-   * Source weighting [0, 1].
-   * Adjusts score based on the originating source type.
-   * Default: 1.0 (no adjustment). Future extension point for source-specific weights.
+   * Source-type weight [0, 1].
+   * P7D Feed 2: Derived from the candidate's sourceLayer using SOURCE_WEIGHT constants.
+   * Prevents any single source type from dominating cross-layer ranking.
+   * Examples: canonical_memory=1.0, conversation=0.95, mem0=0.9, graph=0.85, rag=0.8.
+   * Falls back to 1.0 when sourceLayer is absent or unknown.
+   * Also used as a component weight within the finalScore weighted sum.
    */
   sourceWeight: number;
 
@@ -135,11 +140,29 @@ export interface ScoreBreakdown {
   affectiveAdjustment: number;
 
   /**
-   * Final composite score.
+   * Final composite score (base score).
    * Computed as the weighted sum of all components above.
    * Range approximately [−0.25, 1.0] depending on component values.
+   * Use normalizedScore for cross-layer ranking (P7D Feed 2).
    */
   finalScore: number;
+
+  /**
+   * P7D Feed 2: Token efficiency factor [0, 1].
+   * Penalizes high token-cost candidates to maximise context diversity.
+   * Formula: 1 / (1 + estimatedTokens × TOKEN_PENALTY_FACTOR).
+   * Higher token counts yield lower efficiency scores.
+   */
+  tokenEfficiency: number;
+
+  /**
+   * P7D Feed 2: Cross-layer normalized score.
+   * The primary ranking signal for cross-layer comparison.
+   * Formula: finalScore × sourceWeight × tokenEfficiency.
+   * Prevents any source type from dominating due to scale or bias.
+   * Range approximately [0, 1.0].
+   */
+  normalizedScore: number;
 }
 
 /**
