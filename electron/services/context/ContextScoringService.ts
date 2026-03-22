@@ -1,11 +1,15 @@
 /**
- * ContextScoringService.ts — P7B Deterministic Scoring Formulas
+ * ContextScoringService.ts — P7B Deterministic Scoring Formulas + P7D Feed 2 Cross-Layer Normalization
  *
  * Centralizes all scoring logic for context candidates so that:
  *   - Formulas are explicit and numeric.
  *   - Weights/constants are readable and independently testable.
  *   - No LLM/ML judgment is involved.
  *   - Same input always produces the same ScoreBreakdown.
+ *
+ * P7D Feed 2 adds a normalization stage AFTER base scoring to prevent any
+ * single source layer from dominating cross-layer ranking due to scale or bias:
+ *   normalizedScore = finalScore × sourceWeight × tokenEfficiencyFactor
  *
  * Consumed by ContextAssemblyService to score candidates before
  * the total-order comparator sorts them.
@@ -83,6 +87,43 @@ export const RECENCY_FULL_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 /** Neutral recency score for items with no timestamp. */
 export const NEUTRAL_RECENCY_SCORE = 0.5;
 
+// ─── P7D Feed 2: Cross-Layer Normalization constants ─────────────────────────
+
+/**
+ * Per-source-layer weight constants for cross-layer normalization (P7D Feed 2).
+ *
+ * Applied as a multiplier to the base finalScore so that no single source type
+ * dominates the unified candidate ranking due to scale or bias.
+ *
+ * Weight rationale:
+ *   canonical_memory 1.0  — highest authority; canonical records
+ *   task             1.0  — active task state; equally authoritative
+ *   conversation     0.95 — recent conversation; high relevance signal
+ *   mem0             0.9  — derived memory layer; trusted but not canonical
+ *   graph            0.85 — graph-derived context; structural, one step removed
+ *   rag              0.8  — external retrieval; least anchored to canonical truth
+ *
+ * Unknown or absent sourceLayer falls back to 1.0 (neutral, no penalty).
+ */
+export const SOURCE_WEIGHT: Record<string, number> = {
+  canonical_memory: 1.0,
+  task: 1.0,
+  conversation: 0.95,
+  mem0: 0.9,
+  graph: 0.85,
+  rag: 0.8,
+};
+
+/**
+ * Token penalty factor for the token efficiency formula (P7D Feed 2).
+ *
+ * tokenEfficiencyFactor = 1 / (1 + estimatedTokens × TOKEN_PENALTY_FACTOR)
+ *
+ * A value of 0.01 means a 100-token item has efficiency ≈ 0.50,
+ * and a 50-token item has efficiency ≈ 0.67. Compact items are mildly preferred.
+ */
+export const TOKEN_PENALTY_FACTOR = 0.01;
+
 // ─── ContextScoringService ────────────────────────────────────────────────────
 
 export class ContextScoringService {
@@ -93,9 +134,13 @@ export class ContextScoringService {
    *   - semanticScore   from candidate.score (retrieval provider output)
    *   - recencyScore    from candidate.timestamp (ISO-8601) and RECENCY_FULL_WINDOW_MS
    *   - authorityScore  from candidate.authorityTier and AUTHORITY_TIER_SCORES
-   *   - sourceWeight    always 1.0 (extension point for future source weights)
+   *   - sourceWeight    from candidate.sourceLayer and SOURCE_WEIGHT map (P7D Feed 2)
    *   - graphDepthPenalty from candidate.graphHopDepth and GRAPH_DEPTH_PENALTY_PER_HOP
    *   - affectiveAdjustment passed in as an explicit bounded value (caller-supplied)
+   *
+   * P7D Feed 2: After computing finalScore (base), applies cross-layer normalization:
+   *   tokenEfficiency = 1 / (1 + estimatedTokens × TOKEN_PENALTY_FACTOR)
+   *   normalizedScore = finalScore × sourceWeight × tokenEfficiency
    *
    * @param candidate           The candidate to score.
    * @param affectiveAdjustment Optional affective boost [0, MAX_AFFECTIVE_BOOST].
@@ -111,7 +156,7 @@ export class ContextScoringService {
     const semanticScore = this._clamp01(candidate.score ?? 0);
     const recencyScore = computeRecencyScore(candidate.timestamp ?? null, nowMs);
     const authorityScore = computeAuthorityScore(candidate.authorityTier);
-    const sourceWeight = 1.0; // Extension point: future source-specific weights go here
+    const sourceWeight = computeSourceWeight(candidate.sourceLayer);
     const graphDepthPenalty = computeGraphDepthPenalty(candidate.graphHopDepth ?? 0);
     const clampedAffective = this._clamp(affectiveAdjustment, 0, 0.3 * 0.5); // max 0.15
 
@@ -123,6 +168,10 @@ export class ContextScoringService {
       graphDepthPenalty * SCORING_WEIGHTS.graphDepth +
       clampedAffective * SCORING_WEIGHTS.affective;
 
+    // P7D Feed 2: Cross-layer normalization — applied AFTER base scoring.
+    const tokenEfficiency = computeTokenEfficiency(candidate.estimatedTokens);
+    const normalizedScore = finalScore * sourceWeight * tokenEfficiency;
+
     return {
       semanticScore,
       recencyScore,
@@ -131,6 +180,8 @@ export class ContextScoringService {
       graphDepthPenalty,
       affectiveAdjustment: clampedAffective,
       finalScore,
+      tokenEfficiency,
+      normalizedScore,
     };
   }
 
@@ -188,4 +239,32 @@ export function computeAuthorityScore(tier: MemoryAuthorityTier | null | undefin
 export function computeGraphDepthPenalty(hopDepth: number): number {
   if (hopDepth <= 0) return 0;
   return -Math.min(hopDepth * GRAPH_DEPTH_PENALTY_PER_HOP, MAX_GRAPH_DEPTH_PENALTY);
+}
+
+/**
+ * Look up the source-layer weight from the SOURCE_WEIGHT map (P7D Feed 2).
+ *
+ * Returns 1.0 for absent or unknown source layers (neutral — no penalty).
+ *
+ * @param sourceLayer  Candidate sourceLayer string (e.g. 'rag', 'graph', 'canonical_memory').
+ */
+export function computeSourceWeight(sourceLayer: string | undefined): number {
+  if (!sourceLayer) return 1.0;
+  return SOURCE_WEIGHT[sourceLayer] ?? 1.0;
+}
+
+/**
+ * Compute the token efficiency factor for the normalization step (P7D Feed 2).
+ *
+ * Formula: 1 / (1 + estimatedTokens × TOKEN_PENALTY_FACTOR)
+ *
+ * A 0-token item → 1.0 (maximum efficiency).
+ * A 100-token item → ≈ 0.50.
+ * A 50-token item → ≈ 0.67.
+ *
+ * @param estimatedTokens  Estimated token cost of the candidate (non-negative).
+ */
+export function computeTokenEfficiency(estimatedTokens: number): number {
+  const tokens = Math.max(0, estimatedTokens);
+  return 1 / (1 + tokens * TOKEN_PENALTY_FACTOR);
 }
