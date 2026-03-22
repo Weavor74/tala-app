@@ -133,7 +133,9 @@
             "filesystem",
             "memory",
             "astro-emotion",
-            "browser-use"
+            "browser-use",
+            "tala-memory-graph",
+            "world-engine"
           ],
           "workspace": []
         }
@@ -201,11 +203,9 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "-m",
-        "astro_emotion_engine.mcp_server"
+        "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
       ],
-      "enabled": true,
-      "cwd": "mcp-servers/astro-engine"
+      "enabled": true
     },
     {
       "id": "tala-memory-graph",
