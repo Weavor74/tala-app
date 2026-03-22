@@ -214,7 +214,7 @@ The comparator provides a **total order** — for any two distinct candidates, t
 | Priority | Criterion | Direction | Tie means... |
 |---|---|---|---|
 | 1 | `authorityScore` | desc | Higher authority wins |
-| 2 | `finalScore` | desc | Higher composite score wins |
+| 2 | `normalizedScore` | desc | Higher normalized score wins (P7D Feed 2) |
 | 3 | `estimatedTokens` | asc | Smaller item wins (prefer compact) |
 | 4 | `timestamp` | desc | More recent item wins |
 | 5 | `id` (candidate ID / sourceKey) | asc (lexical) | Stable final tie-break |
@@ -232,7 +232,13 @@ interface ContextAssemblyDiagnostics {
   assemblyMode: string;           // GroundingMode value
   layerBudgets: ContextLayerBudget[];
   candidatePoolByLayer: Partial<Record<ContextLayerName, RankedContextCandidate[]>>;
+  crossLayerCandidatePool: RankedContextCandidate[];
+  crossLayerRankingOrder: string[];
   decisions: ContextDecision[];   // one per candidate — no omissions
+  perSourceInclusionCounts: Record<string, number>;
+  exclusionReasonsBySource: Record<string, Partial<Record<ContextDecisionReason, number>>>;
+  authorityConflictRecords: ConflictResolutionRecord[];
+  normalizationBreakdown: NormalizationBreakdownEntry[];
   includedCandidates: string[];
   excludedCandidates: string[];
   truncatedCandidates: string[];
@@ -244,6 +250,13 @@ interface ContextAssemblyDiagnostics {
   totalIncluded: number;
 }
 ```
+
+Cross-layer diagnostics fields are populated from the unified candidate pool:
+
+- `crossLayerCandidatePool` and `crossLayerRankingOrder` show the exact ordering used by the global selection pass.
+- `perSourceInclusionCounts` and `exclusionReasonsBySource` make it explicit why a source layer (rag, graph, mem0, etc.) was included or excluded.
+- `authorityConflictRecords` mirrors `conflictResolutionRecords` for direct authority-focused inspection.
+- `normalizationBreakdown` lists `finalScore`, `sourceWeight`, `tokenEfficiency`, and `normalizedScore` per candidate so ranking effects from normalization are transparent.
 
 ### ContextDecision fields
 

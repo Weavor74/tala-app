@@ -2,9 +2,12 @@
 
 - [a2uiTypes.ts](./a2uiTypes.md)
 - [cognitiveTurnTypes.ts](./cognitiveTurnTypes.md)
+- [dbBootstrapConfig.ts](./dbBootstrapConfig.md)
+- [dbConfig.ts](./dbConfig.md)
 - [inferenceProviderTypes.ts](./inferenceProviderTypes.md)
 - [logs.ts](./logs.md)
 - [modelCapabilityTypes.ts](./modelCapabilityTypes.md)
+- [researchTypes.ts](./researchTypes.md)
 - [runtimeDiagnosticsTypes.ts](./runtimeDiagnosticsTypes.md)
 - [settings.ts](./settings.md)
 - [telemetry.ts](./telemetry.md)

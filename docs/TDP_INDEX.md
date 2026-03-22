@@ -13,10 +13,17 @@
 
 ## architecture
 
+- [Affective Graph Modulation — Architecture](architecture/affective_graph_modulation.md)
 - [Architectural Decisions](architecture/architecture_decisions.md)
+- [Canonical Memory Foundation — Phase A](architecture/canonical_memory_foundation.md)
 - [Component Model](architecture/component_model.md)
+- [Content Ingestion Pipeline](architecture/content_ingestion.md)
+- [Context Assembly — Architecture](architecture/context_assembly.md)
 - [Data Flow](architecture/data_flow.md)
 - [Deployment Topology](architecture/deployment_topology.md)
+- [Memory Bootstrap — Native-First Local PostgreSQL Runtime](architecture/memory_bootstrap.md)
+- [P7A Hardening Audit](architecture/p7a_hardening_audit.md)
+- [P7B Context Determinism](architecture/p7b_context_determinism.md)
 - [Phase 1 Coherence Hardening](architecture/phase1_coherence_hardening.md)
 - [Phase 1B — Canonical Streaming Integration + Inference Reflection Signals](architecture/phase1b_streaming_hardening.md)
 - [Phase 2 Trustworthiness Hardening](architecture/phase2_trustworthiness_hardening.md)
@@ -29,7 +36,9 @@
 - [Phase 4A: World Model Foundation — Architecture Notes](architecture/phase4a_world_model.md)
 - [Phase 4B: Self-Maintenance Foundation](architecture/phase4b_self_maintenance_foundation.md)
 - [Phase 4C — A2UI Workspace Surfaces](architecture/phase4c_a2ui_workspace_surfaces.md)
+- [Retrieval Orchestration Architecture](architecture/retrieval_orchestration.md)
 - [Runtime Flow](architecture/runtime_flow.md)
+- [Semantic Retrieval Architecture](architecture/semantic_retrieval.md)
 - [Service Interactions](architecture/service_interactions.md)
 - [System Architecture Overview](architecture/overview.md)
 - [Tala System Overview](architecture/system_overview.md)
@@ -56,18 +65,6 @@
 - [Tala Repository Folder Index](audit/folder_index.md)
 - [Tala Requirement and Usage Report](audit/requirement_report.md)
 - [Tala Service Index](audit/service_index.md)
-
-## build
-
-- [Build Instructions — Tala System](build/build_instructions.md)
-- [Dependency Management — Tala System](build/dependency_management.md)
-- [Deployment Procedures — Tala System](build/deployment_procedures.md)
-- [Disaster Recovery — Tala System](build/disaster_recovery.md)
-- [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
-- [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
-- [Offline / Portable Build — Tala System](build/offline_portable_build.md)
-- [Release Packaging — Tala System](build/release_packaging.md)
-- [Update and Upgrade Process — Tala System](build/update_and_upgrade_process.md)
 
 ## compliance
 
@@ -109,10 +106,12 @@
 - [Feature Specification — Memory Systems Features](features/memory_systems_features.md)
 - [Feature Specification — Security Layer Features](features/security_layer_features.md)
 - [Feature Specification — Tool Execution Features](features/tool_execution_features.md)
+- [Research Collections Feature](features/research_collections.md)
 - [System Features — Tala](features/system_features.md)
 
 ## interfaces
 
+- [AffectiveGraphService — Interface Contract](interfaces/affective_graph_service.md)
 - [Configuration Contracts Document — Tala System](interfaces/configuration_contracts.md)
 - [Inference Interface Control Document (ICD) — Tala System](interfaces/inference_interface_control.md)
 - [Interface Matrix — Tala System](interfaces/interface_matrix.md)
@@ -128,24 +127,6 @@
 - [Maintenance Strategy — Tala System](lifecycle/maintenance_strategy.md)
 - [System Lifecycle Plan — Tala System](lifecycle/system_lifecycle_plan.md)
 - [Update Policy — Tala System](lifecycle/update_policy.md)
-
-## logs
-
-- [Architecture Generation Log](architecture/logs/architecture_generation_log.md)
-- [Audit Actions Log](audit/logs/audit_actions.md)
-- [Build Generation Log — Pass 8](build/logs/build_generation_log.md)
-- [Compliance Generation Log — Pass 9](compliance/logs/compliance_generation_log.md)
-- [Deep Catalog Generation Log](audit/logs/deep_catalog_generation_log.md)
-- [File Documentation Generation Log](audit/logs/file_doc_generation_log.md)
-- [Government-Grade Inventory Generation Log](audit/logs/government_inventory_generation_log.md)
-- [Interface Generation Log — Pass 6](interfaces/logs/interface_generation_log.md)
-- [Lifecycle Generation Log — Tala System](lifecycle/logs/lifecycle_generation_log.md)
-- [Requirements Validation Log](audit/logs/requirements_validation_log.md)
-- [requirements_generation_log.md](audit/logs/requirements_generation_log.md)
-- [Review Generation Log — Pass 7.5](review/logs/review_generation_log.md)
-- [Security Generation Log — Pass 7](security/logs/security_generation_log.md)
-- [Traceability Generation Log — Tala System](traceability/logs/traceability_generation_log.md)
-- [Unresolved Items Log](audit/logs/unresolved_items.md)
 
 ## requirements
 

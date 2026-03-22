@@ -338,6 +338,7 @@ export class ContextAssemblyService {
     // 8. Build P7B diagnostics.
     const diagnostics = this._buildDiagnostics({
       policy,
+      rankedAll,
       rankedEvidence,
       rankedGraph,
       decisions: allDecisions,
@@ -985,6 +986,7 @@ export class ContextAssemblyService {
    */
   private _buildDiagnostics(args: {
     policy: MemoryPolicy;
+    rankedAll: RankedContextCandidate[];
     rankedEvidence: RankedContextCandidate[];
     rankedGraph: RankedContextCandidate[];
     decisions: ContextDecision[];
@@ -995,7 +997,7 @@ export class ContextAssemblyService {
     latent: ContextAssemblyItem[];
   }): ContextAssemblyDiagnostics {
     const {
-      policy, rankedEvidence, rankedGraph,
+      policy, rankedAll, rankedEvidence, rankedGraph,
       decisions, tieBreakRecords, conflictResolutionRecords,
       graphContextItems, injected, latent,
     } = args;
@@ -1007,17 +1009,60 @@ export class ContextAssemblyService {
     if (rankedEvidence.length > 0) candidatePoolByLayer['evidence'] = rankedEvidence;
     if (rankedGraph.length > 0) candidatePoolByLayer['graph_context'] = rankedGraph;
 
+    // Cross-layer diagnostics: unified candidate pool and rank order.
+    const crossLayerCandidatePool = rankedAll;
+    const crossLayerRankingOrder = rankedAll.map(rc => rc.id);
+    const candidateById = new Map(rankedAll.map(candidate => [candidate.id, candidate]));
+
     // Partition included/excluded/truncated/latent candidate IDs.
     const includedCandidates: string[] = [];
     const excludedCandidates: string[] = [];
     const truncatedCandidates: string[] = [];
     const latentCandidates: string[] = [];
+    const perSourceInclusionCounts: ContextAssemblyDiagnostics['perSourceInclusionCounts'] = {};
+    const exclusionReasonsBySource: ContextAssemblyDiagnostics['exclusionReasonsBySource'] = {};
+
+    const resolveSourceKey = (candidateId: string, fallback?: string) => {
+      const candidate = candidateById.get(candidateId);
+      return candidate?.sourceLayer ?? candidate?.sourceType ?? fallback ?? 'unknown';
+    };
+
     for (const d of decisions) {
-      if (d.status === 'included') includedCandidates.push(d.candidateId);
-      else if (d.status === 'excluded') excludedCandidates.push(d.candidateId);
-      else if (d.status === 'truncated') truncatedCandidates.push(d.candidateId);
-      else if (d.status === 'latent') latentCandidates.push(d.candidateId);
+      if (d.status === 'included') {
+        includedCandidates.push(d.candidateId);
+        const sourceKey = resolveSourceKey(d.candidateId, d.sourceType);
+        perSourceInclusionCounts[sourceKey] = (perSourceInclusionCounts[sourceKey] ?? 0) + 1;
+      } else {
+        if (d.status === 'excluded') excludedCandidates.push(d.candidateId);
+        else if (d.status === 'truncated') truncatedCandidates.push(d.candidateId);
+        else if (d.status === 'latent') latentCandidates.push(d.candidateId);
+
+        const sourceKey = resolveSourceKey(d.candidateId, d.sourceType);
+        const reasonCounts = exclusionReasonsBySource[sourceKey] ?? {};
+        for (const reason of d.reasons) {
+          reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+        }
+        exclusionReasonsBySource[sourceKey] = reasonCounts;
+      }
     }
+
+    // Ensure sources with zero includes are still represented when present in the pool.
+    for (const candidate of rankedAll) {
+      const sourceKey = candidate.sourceLayer ?? candidate.sourceType ?? 'unknown';
+      if (perSourceInclusionCounts[sourceKey] === undefined) {
+        perSourceInclusionCounts[sourceKey] = 0;
+      }
+    }
+
+    const normalizationBreakdown: ContextAssemblyDiagnostics['normalizationBreakdown'] =
+      rankedAll.map(candidate => ({
+        candidateId: candidate.id,
+        sourceLayer: candidate.sourceLayer ?? undefined,
+        finalScore: candidate.scoreBreakdown.finalScore,
+        sourceWeight: candidate.scoreBreakdown.sourceWeight,
+        tokenEfficiency: candidate.scoreBreakdown.tokenEfficiency,
+        normalizedScore: candidate.scoreBreakdown.normalizedScore,
+      }));
 
     // Compute final token usage by layer.
     const finalTokenUsageByLayer: ContextAssemblyDiagnostics['finalTokenUsageByLayer'] = {};
@@ -1032,7 +1077,13 @@ export class ContextAssemblyService {
       assemblyMode: policy.groundingMode,
       layerBudgets,
       candidatePoolByLayer,
+      crossLayerCandidatePool,
+      crossLayerRankingOrder,
       decisions,
+      perSourceInclusionCounts,
+      exclusionReasonsBySource,
+      authorityConflictRecords: conflictResolutionRecords,
+      normalizationBreakdown,
       includedCandidates,
       excludedCandidates,
       truncatedCandidates,
@@ -1040,7 +1091,7 @@ export class ContextAssemblyService {
       finalTokenUsageByLayer,
       tieBreakRecords,
       conflictResolutionRecords,
-      totalCandidatesConsidered: rankedEvidence.length + rankedGraph.length,
+      totalCandidatesConsidered: rankedAll.length,
       totalIncluded: includedCandidates.length,
     };
   }
