@@ -236,6 +236,13 @@ export interface RankedContextCandidate extends ContextCandidate {
 
   /** 1-indexed rank within the candidate's layer. Lower rank = higher priority. */
   rank: number;
+
+  /**
+   * P7C: Affective weighting reason code, when AffectiveWeightingService was
+   * invoked for this candidate. See AffectiveReasonCode in affectiveWeightingTypes.ts
+   * for valid values. Null when affective weighting was not applied.
+   */
+  affectiveReasonCode?: string | null;
 }
 
 // ─── C. Traceable Inclusion / Exclusion ──────────────────────────────────────
@@ -317,6 +324,21 @@ export interface ContextDecision {
    * and the conflict was resolved in its favour or against it.
    */
   conflictResolved?: boolean;
+
+  /**
+   * P7C: Non-zero when affective weighting influenced this candidate's finalScore.
+   * Mirrors ScoreBreakdown.affectiveAdjustment. Included here for convenience
+   * so diagnostic consumers do not need to walk candidatePoolByLayer.
+   * Null or absent when affective weighting was not applied.
+   */
+  affectiveAdjustment?: number | null;
+
+  /**
+   * P7C: Affective weighting reason code explaining why the adjustment was
+   * applied or skipped. See AffectiveReasonCode in affectiveWeightingTypes.ts.
+   * Null when affective weighting was not invoked for this candidate.
+   */
+  affectiveReasonCode?: string | null;
 }
 
 // ─── E. Tie-Break Records ─────────────────────────────────────────────────────

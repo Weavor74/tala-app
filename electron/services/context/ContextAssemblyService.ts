@@ -47,6 +47,7 @@ import type {
   MemorySelectionClass,
   GraphEdgeType,
   EdgeTrustLevel,
+  AffectiveModulationPolicy,
 } from '../../../shared/policy/memoryPolicyTypes';
 import type {
   ContextCandidate,
@@ -58,24 +59,19 @@ import type {
   TieBreakRecord,
   ConflictResolutionRecord,
 } from '../../../shared/context/contextDeterminismTypes';
+import type { AffectiveState } from '../../../shared/context/affectiveWeightingTypes';
 import type { MemoryAuthorityTier } from '../../../shared/memory/authorityTypes';
 import { MemoryPolicyService } from '../policy/MemoryPolicyService';
 import { GraphTraversalService } from '../graph/GraphTraversalService';
 import { AffectiveGraphService } from '../graph/AffectiveGraphService';
 import { ContextScoringService } from './ContextScoringService';
+import { AffectiveWeightingService } from './AffectiveWeightingService';
 import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
-}
-
-// ─── Timestamp parser helper ──────────────────────────────────────────────────
-function parseTimestampMs(ts: string | null | undefined): number {
-  if (!ts) return 0;
-  const ms = Date.parse(ts);
-  return isNaN(ms) ? 0 : ms;
 }
 
 /**
@@ -161,28 +157,14 @@ function rankedCandidateToItem(rc: RankedContextCandidate): ContextAssemblyItem 
 // ─── ContextAssemblyService ───────────────────────────────────────────────────
 
 /**
- * Hard upper bound on affectiveWeight used when applying keyword-overlap boosts
- * to structural graph_context items. Shared with the clamping in AffectiveGraphService.
+ * Hard upper bound on affectiveWeight. Shared with AffectiveGraphService and
+ * AffectiveWeightingService to enforce a consistent policy cap.
  */
 const MAX_AFFECTIVE_WEIGHT = 0.3;
 
-/**
- * Fraction of the clamped affectiveWeight applied as the maximum boost per
- * structural graph_context item when allowGraphOrderingInfluence is true.
- * Keeps affective signals from dominating structural provenance scoring.
- * E.g. affectiveWeight=0.1 → max boost = 0.05 per item.
- */
-const AFFECTIVE_BOOST_FACTOR = 0.5;
-
-/**
- * Score increment applied per matched keyword when computing the affective
- * ordering boost for structural graph_context items. Multiple keyword matches
- * accumulate, but the total is capped at AFFECTIVE_BOOST_FACTOR * clampedWeight.
- */
-const KEYWORD_BOOST_INCREMENT = 0.05;
-
 export class ContextAssemblyService {
   private readonly _scoringService = new ContextScoringService();
+  private readonly _affectiveWeightingService = new AffectiveWeightingService();
 
   constructor(
     private readonly orchestrator: RetrievalOrchestrator,
@@ -196,20 +178,24 @@ export class ContextAssemblyService {
   /**
    * Assemble context for a single turn.
    *
-   * P7B deterministic pipeline stages:
+   * P7B+P7C deterministic pipeline stages:
    *   1.  Resolve the active MemoryPolicy.
    *   2.  Retrieve candidates via RetrievalOrchestrator.
    *   3.  Map retrieval results to ContextAssemblyItems with full provenance.
-   *   3P. Score and sort evidence candidates with total-order comparator (P7B).
    *   3.5 Expand structural graph context via GraphTraversalService.
    *   3.6 Add affective graph context via AffectiveGraphService (optional).
-   *   3.7 Merge structural + affective graph_context; score and sort deterministically.
+   *   3P. P7B+P7C: Score and sort evidence candidates deterministically.
+   *       When allowEvidenceReordering is true, affective keyword-overlap
+   *       adjustments are applied via AffectiveWeightingService (P7C).
+   *   3.7 Merge structural + affective graph_context; score and sort with
+   *       total-order comparator. When allowGraphOrderingInfluence is true,
+   *       affective keyword-overlap adjustments are applied (P7C).
    *   4.  Enforce evidence budget: cap evidence items; move overflow to latent.
    *       Record inclusion/exclusion decisions for every candidate.
    *   5.  Combine injected (evidence) + graph_context + latent items.
    *   6.  Build class counts.
    *   7.  Estimate tokens.
-   *   8.  Build P7B diagnostics.
+   *   8.  Build P7B diagnostics (includes P7C affective adjustment fields).
    *   9.  Return ContextAssemblyResult.
    */
   async assemble(request: ContextAssemblyRequest): Promise<ContextAssemblyResult> {
@@ -243,13 +229,6 @@ export class ContextAssemblyService {
     const rawCandidates = retrievalResults.map((result, index) =>
       this._mapResultToItem(result, index),
     );
-
-    // 3P. P7B: Score and sort evidence candidates deterministically before selection.
-    //     This replaces reliance on retrieval order and eliminates selection drift.
-    const { ranked: rankedEvidence, tieBreaks: evidenceTieBreaks } =
-      this._rankItems(rawCandidates, 'evidence');
-    allTieBreaks.push(...evidenceTieBreaks);
-    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
 
     // 3.5. Expand structural graph context from evidence candidates (when traversal is enabled).
     //      Runs after evidence mapping but before budget enforcement so that
@@ -290,18 +269,33 @@ export class ContextAssemblyService {
       }
     }
 
+    // P7C: Build AffectiveState from the collected affective items so that
+    //      AffectiveWeightingService can compute keyword-overlap adjustments for
+    //      both graph_context and evidence candidates. Null when no affective items.
+    const affectiveState = this._buildAffectiveStateFromItems(affectiveItems);
+
+    // 3P. P7B+P7C: Score and sort evidence candidates deterministically before selection.
+    //     P7C: Always pass affectiveState and affectivePolicy; AffectiveWeightingService
+    //          gates application by layer eligibility (allowEvidenceReordering gate).
+    const { ranked: rankedEvidence, tieBreaks: evidenceTieBreaks } =
+      this._rankItems(rawCandidates, 'evidence', affectiveState, affectivePolicy);
+    allTieBreaks.push(...evidenceTieBreaks);
+    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
+
     // 3.7. Merge structural and affective graph_context items; score and sort
     //      deterministically before applying the graph_context class budget cap.
+    //      P7C: Keyword-overlap boost flows through AffectiveWeightingService →
+    //           affectiveAdjustment in the scoring formula (allowGraphOrderingInfluence gate).
     const graphCap = policy.contextBudget.maxItemsPerClass?.graph_context ?? 0;
     const mergedGraphCandidates = this._mergeGraphContextItems(
       structuralGraphItems,
       affectiveItems,
-      policy,
     );
 
-    // P7B: Score and sort the merged graph candidates with total-order comparator.
+    // P7B+P7C: Score and sort the merged graph candidates with total-order comparator.
+    //          AffectiveWeightingService gates application via allowGraphOrderingInfluence.
     const { ranked: rankedGraph, tieBreaks: graphTieBreaks } =
-      this._rankItems(mergedGraphCandidates, 'graph_context');
+      this._rankItems(mergedGraphCandidates, 'graph_context', affectiveState, affectivePolicy);
     allTieBreaks.push(...graphTieBreaks);
     const sortedGraphItems = rankedGraph.map(rankedCandidateToItem);
 
@@ -317,6 +311,8 @@ export class ContextAssemblyService {
         status: 'included',
         layerAssignment: 'graph_context',
         reasons: ['included.top_ranked_within_budget'],
+        affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+        affectiveReasonCode: rc.affectiveReasonCode ?? null,
       });
     }
     for (const rc of rankedGraph.slice(graphCap)) {
@@ -329,6 +325,8 @@ export class ContextAssemblyService {
         status: 'excluded',
         layerAssignment: 'graph_context',
         reasons: ['excluded.layer_budget_exceeded'],
+        affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+        affectiveReasonCode: rc.affectiveReasonCode ?? null,
       });
     }
 
@@ -598,6 +596,8 @@ export class ContextAssemblyService {
           status: 'latent',
           layerAssignment: 'evidence',
           reasons: ['overflow.to_latent'],
+          affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
+          affectiveReasonCode: rc?.affectiveReasonCode ?? null,
         });
         continue;
       }
@@ -617,6 +617,8 @@ export class ContextAssemblyService {
             status: 'latent',
             layerAssignment: 'evidence',
             reasons: ['excluded.per_document_cap', 'overflow.to_latent'],
+            affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
+            affectiveReasonCode: rc?.affectiveReasonCode ?? null,
           });
           continue;
         }
@@ -637,6 +639,8 @@ export class ContextAssemblyService {
         status: 'included',
         layerAssignment: 'evidence',
         reasons,
+        affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
+        affectiveReasonCode: rc?.affectiveReasonCode ?? null,
       });
     }
 
@@ -650,28 +654,55 @@ export class ContextAssemblyService {
   }
 
   /**
-   * P7B: Score and sort a list of ContextAssemblyItems deterministically.
+   * P7B+P7C: Score and sort a list of ContextAssemblyItems deterministically.
    *
    * Pipeline:
    *   1. Convert items to ContextCandidates.
    *   2. Score each with ContextScoringService.
-   *   3. Wrap in RankedContextCandidates.
+   *      P7C: When affectiveState and affectivePolicy are provided, compute an
+   *           affective keyword-overlap adjustment via AffectiveWeightingService
+   *           and pass it to computeCandidateScore(). Adjustment is clamped and
+   *           bounded — it does not override canonical authority.
+   *   3. Wrap in RankedContextCandidates (including P7C affectiveReasonCode).
    *   4. Sort with applyDeterministicTieBreak (total-order comparator).
    *   5. Assign 1-indexed ranks.
    *
    * Returns the ranked (sorted) candidates and any tie-break records.
+   *
+   * @param affectiveState   Optional normalized affective state for P7C weighting.
+   *                         Pass null to skip affective adjustment (backward compat).
+   * @param affectivePolicy  Required when affectiveState is non-null. Provides
+   *                         layer eligibility gates and affectiveWeight.
    */
   private _rankItems(
     items: ContextAssemblyItem[],
     layer: 'evidence' | 'graph_context',
+    affectiveState?: AffectiveState | null,
+    affectivePolicy?: AffectiveModulationPolicy | null,
   ): { ranked: RankedContextCandidate[]; tieBreaks: TieBreakRecord[] } {
     if (items.length === 0) return { ranked: [], tieBreaks: [] };
 
-    // Convert to ContextCandidates and score each one.
+    // Convert to ContextCandidates, score each one, and wrap in RankedContextCandidate.
     const unranked: RankedContextCandidate[] = items.map((item, idx) => {
       const candidate = itemToCandidate(item, layer, idx);
-      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate);
-      return { ...candidate, scoreBreakdown, rank: 0 };
+
+      // P7C: Compute affective adjustment when state and policy are available.
+      let affectiveAdjustment = 0;
+      let affectiveReasonCode: string | null = null;
+      if (affectiveState) {
+        const candidateText = `${candidate.title ?? ''} ${candidate.content}`.toLowerCase();
+        const result = this._affectiveWeightingService.computeAdjustment(
+          candidateText,
+          affectiveState,
+          affectivePolicy ?? null,
+          layer,
+        );
+        affectiveAdjustment = result.adjustment;
+        affectiveReasonCode = result.reasonCode;
+      }
+
+      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment);
+      return { ...candidate, scoreBreakdown, rank: 0, affectiveReasonCode };
     });
 
     // Apply deterministic total-order sort.
@@ -783,108 +814,73 @@ export class ContextAssemblyService {
   /**
    * Merge structural and affective graph_context items into a single ordered list.
    *
-   * Ordering rules:
-   *   - When allowGraphOrderingInfluence is false (default):
-   *       Affective items appear first (bounded), then structural items in their
-   *       original order. Evidence ordering is never touched.
-   *   - When allowGraphOrderingInfluence is true:
-   *       Affective items remain first. Structural graph_context items receive a
-   *       small, bounded score boost when their title/content overlaps with active
-   *       affective keywords (mood labels, astro tag words). Structural items are
-   *       then sorted by boosted score descending.
-   *       The boost is capped at affectiveWeight × 0.5 (max 0.15) to prevent
-   *       affective signals from dominating structural provenance.
+   * P7C: The keyword-overlap boost that previously mutated structural item raw scores
+   * has been moved into AffectiveWeightingService → _rankItems → affectiveAdjustment
+   * component of ScoreBreakdown. This method now simply concatenates the two lists:
+   * affective items first, structural items after. The final ordering is determined
+   * deterministically by _rankItems() using the total-order comparator.
    *
    * Evidence items are never touched by this method.
    */
   private _mergeGraphContextItems(
     structuralItems: ContextAssemblyItem[],
     affectiveItems: ContextAssemblyItem[],
-    policy: MemoryPolicy,
   ): ContextAssemblyItem[] {
-    if (affectiveItems.length === 0) {
-      return structuralItems;
-    }
-    if (structuralItems.length === 0) {
-      return affectiveItems;
-    }
-
-    const ap = policy.affectiveModulation;
-    if (!ap?.allowGraphOrderingInfluence) {
-      // Simple placement: affective items first, then structural items unchanged.
-      return [...affectiveItems, ...structuralItems];
-    }
-
-    // allowGraphOrderingInfluence: apply keyword-overlap boost to structural items.
-    const affectiveKeywords = this._extractAffectiveKeywords(affectiveItems);
-    const clampedWeight = Math.min(ap.affectiveWeight, MAX_AFFECTIVE_WEIGHT);
-    const maxBoostPerItem = clampedWeight * AFFECTIVE_BOOST_FACTOR;
-
-    const boostedStructural = structuralItems.map(item => {
-      if (affectiveKeywords.size === 0) return item;
-      const itemText = `${item.title ?? ''} ${item.content}`.toLowerCase();
-      let boost = 0;
-      for (const kw of affectiveKeywords) {
-        if (itemText.includes(kw)) {
-          boost += KEYWORD_BOOST_INCREMENT;
-        }
-      }
-      if (boost === 0) return item;
-      const baseScore = item.score ?? 0;
-      return { ...item, score: baseScore + Math.min(boost, maxBoostPerItem) };
-    });
-
-    // P7B: Sort structural items using a deterministic total-order comparator.
-    // Replaces the previous simple (b.score ?? 0) - (a.score ?? 0) which
-    // left ties unresolved. The comparator applies: score desc → tokenCost asc →
-    // timestamp desc → lexical sourceKey asc.
-    const sortedStructural = boostedStructural
-      .slice()
-      .sort((a, b) => {
-        const scoreDiff = (b.score ?? 0) - (a.score ?? 0);
-        if (scoreDiff !== 0) return scoreDiff;
-        const tokenDiff = estimateTokens(a.content) - estimateTokens(b.content);
-        if (tokenDiff !== 0) return tokenDiff;
-        const tsA = parseTimestampMs(a.metadata?.fetchedAt as string | undefined);
-        const tsB = parseTimestampMs(b.metadata?.fetchedAt as string | undefined);
-        const tsDiff = tsB - tsA;
-        if (tsDiff !== 0) return tsDiff;
-        return (a.sourceKey ?? '') < (b.sourceKey ?? '') ? -1 : 1;
-      });
-    return [...affectiveItems, ...sortedStructural];
+    if (affectiveItems.length === 0) return structuralItems;
+    if (structuralItems.length === 0) return affectiveItems;
+    // Simple merge: affective items first. Final ordering is handled by _rankItems().
+    return [...affectiveItems, ...structuralItems];
   }
 
   /**
-   * Extract simple lowercase keywords from affective items for overlap scoring.
+   * P7C: Build a normalized AffectiveState from the affective graph_context items
+   * returned by AffectiveGraphService.
    *
    * Sources:
-   *   - metadata.moodLabel (e.g., "Urgency" → "urgency", "urgent")
-   *   - title suffix after ':' (e.g., "Mood: Calm" → "calm")
+   *   - emotion_tag items: metadata.moodLabel → key in moodVector, item.score → intensity.
+   *   - astro_state items: metadata.rawAstroState.emotional_vector → entries in moodVector.
    *
-   * Only words of 3+ characters are included. This is intentionally minimal:
-   * no stemming, no ML — just deterministic keyword presence checks.
+   * Returns null when no affective items are present or no mood data is extractable.
+   * The returned AffectiveState is used by AffectiveWeightingService to compute
+   * keyword-overlap adjustments for evidence and graph_context candidates.
    */
-  private _extractAffectiveKeywords(affectiveItems: ContextAssemblyItem[]): Set<string> {
-    const keywords = new Set<string>();
+  private _buildAffectiveStateFromItems(
+    affectiveItems: ContextAssemblyItem[],
+  ): AffectiveState | null {
+    const moodVector: Record<string, number> = {};
+    let dominantMood: string | undefined;
+    let highestIntensity = -1;
+
     for (const item of affectiveItems) {
+      // emotion_tag items: extract mood label with its intensity (item.score).
       const moodLabel = item.metadata?.moodLabel as string | undefined;
-      if (moodLabel) {
-        keywords.add(moodLabel.toLowerCase());
-        for (const word of moodLabel.toLowerCase().split(/\s+/)) {
-          if (word.length >= 3) keywords.add(word);
+      if (moodLabel && typeof moodLabel === 'string' && moodLabel.trim().length > 0) {
+        const key = moodLabel.trim().toLowerCase();
+        const intensity = typeof item.score === 'number' ? item.score : 0.5;
+        moodVector[key] = intensity;
+        if (intensity > highestIntensity) {
+          highestIntensity = intensity;
+          dominantMood = moodLabel.trim();
         }
       }
-      // Extract from title format "Mood: <label>" or "Affective state (astro)"
-      const title = item.title ?? '';
-      const colonIdx = title.indexOf(':');
-      if (colonIdx !== -1) {
-        const part = title.slice(colonIdx + 1).trim().toLowerCase();
-        if (part.length >= 3) keywords.add(part);
-        for (const word of part.split(/\s+/)) {
-          if (word.length >= 3) keywords.add(word);
+
+      // astro_state items: extract emotional_vector component names as mood keys.
+      if (item.metadata?.affectiveNodeType === 'astro_state') {
+        const rawState = item.metadata?.rawAstroState as
+          | { emotional_vector?: Record<string, number> }
+          | null
+          | undefined;
+        if (rawState?.emotional_vector) {
+          for (const [key, value] of Object.entries(rawState.emotional_vector)) {
+            if (typeof value === 'number' && value > 0) {
+              moodVector[key.toLowerCase()] = value;
+            }
+          }
         }
       }
     }
-    return keywords;
+
+    if (Object.keys(moodVector).length === 0) return null;
+    return { moodVector, dominantMood };
   }
 }
