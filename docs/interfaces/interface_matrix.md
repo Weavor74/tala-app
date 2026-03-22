@@ -15,13 +15,14 @@ This matrix provides a comprehensive mapping of all data and command flows betwe
 | **Renderer UI** | **Main Process** | Electron IPC | User commands, settings updates, chat input. | High (User PII) |
 | **Main Process** | **Renderer UI** | Electron IPC | Streamed chat tokens, status updates, tool results. | Medium |
 | **AgentService** | **Brain (Ollama/Cloud)** | IBrain API | Inference requests and system prompt injection. | High (Context) |
-| **AgentService** | **ToolService** | Internal API | Execution of system capabilities (FS, Shell, Browser). | Critical (Control) |
+| **AgentService** | **ToolService** | Internal API | Execution of system capabilities (FS, Shell, Browser). `setMemoryService(memory, getCanonicalId?)` signature — P7A authority callback wires canonical anchoring through `mem0_add`. | Critical (Control) |
 | **ToolService** | **MCP Servers** | JSON-RPC (stdio) | Delegated tool execution (RAG, Astro, Mem0). | Medium-High |
 | **MCP Servers** | **Local Filesystem** | File System API | Accessing vector DBs, memory graphs, and RAG indexes. | Medium |
 | **AgentService** | **MemoryService** | Internal API | Relational and vector semantic search. | High (History) |
 | **AgentService** | **MemoryAuthorityService** | Internal API | Canonical memory write — all persistent writes must flow here before derived systems. Returns `canonical_memory_id`. | High (History) |
 | **MemoryAuthorityService** | **PostgresMemoryRepository** | Internal API (Pool) | Writes to `memory_records`, `memory_lineage`, `memory_projections`. Canonical source of truth. | High (History) |
 | **MemoryAuthorityService** | **memory_projections** | SQL | Inserts pending projection events for mem0, graph, vector after every canonical commit. | Medium |
+| **derivedWriteGuards** | **All Derived Stores** | In-process guard | `assertDerivedMemoryAnchor(anchor, source)` — enforces `canonical_memory_id` on every durable derived write. Throws in strict mode (`TALA_STRICT_MEMORY=1`), warns in production. `DerivedWriteAnchor` is the required metadata interface for all derived writes. | High (Authority) |
 | **SettingsManager** | **app_settings.json** | Atomic File I/O | Persistence of system configuration. | Critical (Security) |
 | **GuardrailService** | **AgentService** | Internal API | Post-inference verification and redaction. | High |
 

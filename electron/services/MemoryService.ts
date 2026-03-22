@@ -480,7 +480,20 @@ export class MemoryService {
      * @returns {Promise<boolean>} Always returns `true` (local write never fails fatally).
      */
     async add(text: string, metadata: any = {}, mode: string = 'assistant'): Promise<boolean> {
-        // Always save local for redundancy
+        // P7A derived write guard: every durable write should carry canonical_memory_id.
+        // MemoryService is a derived system (mem0 abstraction + local JSON). Any durable
+        // write without a canonical_memory_id is a P7A violation — warn (or throw in strict mode).
+        if (!metadata.canonical_memory_id) {
+            const source = metadata.source ?? 'unknown';
+            const message =
+                `[P7A][MemoryService] Derived write without canonical_memory_id (source="${source}"). ` +
+                `Ensure MemoryAuthorityService.createCanonicalMemory() is called first and its ID ` +
+                `is passed as canonical_memory_id in metadata.`;
+            if (process.env.NODE_ENV === 'test' && process.env.TALA_STRICT_MEMORY === '1') {
+                throw new Error(message);
+            }
+            console.warn(message);
+        }
         const role = mode === 'rp' ? 'rp' : 'core';
         const finalMetadata = { ...metadata, role };
 

@@ -256,7 +256,29 @@ export class AgentService {
             null, // mcpService injected after MCP is ready (setMcpService)
         );
 
-        this.tools.setMemoryService(this.memory);
+        // P7A: build a canonical write callback so ToolService's mem0_add tool
+        // routes through MemoryAuthorityService before writing to the derived store.
+        const _getCanonicalIdForTool = async (text: string, sourceKind: string): Promise<string | null> => {
+            try {
+                const repo = getCanonicalMemoryRepository();
+                if (!repo) return null;
+                const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+                const authorityService = new MemoryAuthorityService(pool);
+                return await authorityService.createCanonicalMemory({
+                    memory_type: 'explicit_fact',
+                    subject_type: 'user',
+                    subject_id: 'user',
+                    content_text: text,
+                    source_kind: sourceKind,
+                    source_ref: sourceKind,
+                    confidence: 0.9,
+                });
+            } catch (e) {
+                console.warn(`[AgentService] P7A canonical write failed for ${sourceKind}:`, e);
+                return null;
+            }
+        };
+        this.tools.setMemoryService(this.memory, _getCanonicalIdForTool);
         this.tools.setGoalManager(this.goals);
         if (mcp) {
             this.mcpService = mcp;
@@ -3732,7 +3754,33 @@ Failure to provide a tool call will result in system termination.`;
     public async addMemory(text: string) {
         // Use module-level getActiveMode for a guaranteed cache-only read.
         const mode = getActiveMode(this.settingsPath, 'AgentService.addMemory');
-        return this.memory.add(text, {}, mode);
+
+        // P7A: canonical write first — get a canonical_memory_id from Postgres before
+        // writing to the derived mem0 store. If Postgres is unavailable, the write
+        // proceeds but is flagged by the MemoryService P7A guard.
+        let canonicalMemoryId: string | null = null;
+        try {
+            const repo = getCanonicalMemoryRepository();
+            if (repo) {
+                const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+                const authorityService = new MemoryAuthorityService(pool);
+                canonicalMemoryId = await authorityService.createCanonicalMemory({
+                    memory_type: 'explicit_fact',
+                    subject_type: 'user',
+                    subject_id: 'user',
+                    content_text: text,
+                    source_kind: 'explicit',
+                    source_ref: 'addMemory',
+                    confidence: 0.9,
+                });
+            } else {
+                console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
+            }
+        } catch (e) {
+            console.warn('[AgentService:addMemory] P7A canonical write failed:', e);
+        }
+
+        return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
     }
 
     public async getAllMemories() {

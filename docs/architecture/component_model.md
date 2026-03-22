@@ -24,6 +24,7 @@ This document describes the Tala system as a collection of interacting component
 - **Inputs**: Tool names and arguments.
 - **Outputs**: Result data or error messages.
 - **Dependencies**: MCP Client, local file system modules.
+- **P7A Note**: `setMemoryService(memory, getCanonicalId?)` accepts an optional authority callback. When wired (by AgentService), the `mem0_add` tool calls `getCanonicalId` to obtain a `canonical_memory_id` from MemoryAuthorityService before writing to the derived mem0 store.
 
 ## 2. Inference Pipeline
 
@@ -112,3 +113,21 @@ This document describes the Tala system as a collection of interacting component
 ### Memory Store
 - **Path**: `memory/` (Logical)
 - **Purpose**: Hosts SQLite databases for the knowledge graph and vector stores for RAG.
+
+## 6. Memory Authority Layer (P7A)
+
+### MemoryAuthorityService
+- **Path**: `electron/services/memory/MemoryAuthorityService.ts`
+- **Purpose**: The only write gateway for all canonical persistent memory. Enforces PostgreSQL as the single source of truth. Provides duplicate detection, lineage tracking, integrity validation, and rebuild orchestration.
+- **Inputs**: `ProposedMemoryInput` from any caller.
+- **Outputs**: `canonical_memory_id` (UUID), `IntegrityReport`, `RebuildReport`.
+- **Dependencies**: PostgreSQL pool (`memory_records`, `memory_lineage`, `memory_projections`, `memory_integrity_issues`).
+
+### derivedWriteGuards
+- **Path**: `electron/services/memory/derivedWriteGuards.ts`
+- **Purpose**: Enforcement utilities that prevent derived systems (mem0, graph, vector, local JSON) from persisting durable memory without a canonical anchor.
+- **Key functions**:
+  - `assertDerivedMemoryAnchor(anchor, source)` — throws in strict mode, warns in production when `canonical_memory_id` is absent.
+  - `rankMemoryByAuthority(candidates[])` — deterministic 4-tier priority: `canonical > verified_derived > transient > speculative`.
+  - `resolveMemoryAuthorityConflict(canonical, derived, source)` — canonical always wins; conflict logged for diagnostics.
+- **Integration**: Called by `MemoryService.add()` and by any new derived write site.

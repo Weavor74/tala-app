@@ -574,7 +574,7 @@ describe('MemoryAuthorityService', () => {
                     if (sql.includes('HAVING COUNT(*) > 1')) {
                         return Promise.resolve({ rows: [] });
                     }
-                    if (sql.includes("authority_status = 'tombstoned'")) {
+                    if (sql.includes("authority_status = 'tombstoned'") && sql.includes('projected')) {
                         return Promise.resolve({
                             rows: [{
                                 projection_id: PROJ_ID,
@@ -602,4 +602,330 @@ describe('MemoryAuthorityService', () => {
             expect(tsViolation?.affected_system).toBe('vector');
         });
     });
+
+    // -----------------------------------------------------------------------
+    // 13. absent projection detection (new hardening check)
+    // -----------------------------------------------------------------------
+    describe('validateIntegrity — absent projections', () => {
+        it('reports absent_projection for canonical records with no projection row', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_records')) {
+                        return Promise.resolve({ rows: [{ cnt: '1' }] });
+                    }
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_projections')) {
+                        return Promise.resolve({ rows: [{ cnt: '0' }] });
+                    }
+                    // All standard checks return empty
+                    if (sql.includes('WHERE r.memory_id IS NULL')) return Promise.resolve({ rows: [] });
+                    if (sql.includes('projected_version < r.version')) return Promise.resolve({ rows: [] });
+                    if (sql.includes('HAVING COUNT(*) > 1')) return Promise.resolve({ rows: [] });
+                    if (sql.includes("authority_status = 'tombstoned'") && sql.includes('projected')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    // Absent projection check: LEFT JOIN looking for p.memory_id IS NULL
+                    if (sql.includes('LEFT JOIN memory_projections p') && sql.includes("authority_status = 'canonical'")) {
+                        return Promise.resolve({
+                            rows: [{ memory_id: MEMORY_ID, memory_type: 'interaction' }],
+                        });
+                    }
+                    if (sql.includes('INSERT INTO memory_integrity_issues')) {
+                        return Promise.resolve({
+                            rows: [{ issue_id: ISSUE_ID, detected_at: NOW }],
+                        });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.validateIntegrity();
+
+            // 3 absent projections: one for each of mem0, graph, vector
+            expect(report.absent_projection_count).toBeGreaterThanOrEqual(1);
+            const absentIssue = report.issues.find(i => i.issue_kind === 'absent_projection');
+            expect(absentIssue).toBeDefined();
+            expect(absentIssue?.severity).toBe('warning');
+            expect(absentIssue?.affected_memory_id).toBe(MEMORY_ID);
+        });
+
+        it('reports zero absent projections when all canonical records have projection rows', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_records')) {
+                        return Promise.resolve({ rows: [{ cnt: '1' }] });
+                    }
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_projections')) {
+                        return Promise.resolve({ rows: [{ cnt: '3' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.validateIntegrity();
+
+            expect(report.absent_projection_count).toBe(0);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 14. superseded-active-projection detection (new hardening check)
+    // -----------------------------------------------------------------------
+    describe('validateIntegrity — superseded active projections', () => {
+        it('reports superseded_active_projection for superseded records still projected', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_records')) {
+                        return Promise.resolve({ rows: [{ cnt: '1' }] });
+                    }
+                    if (sql.includes('COUNT(*) AS cnt FROM memory_projections')) {
+                        return Promise.resolve({ rows: [{ cnt: '1' }] });
+                    }
+                    if (sql.includes('WHERE r.memory_id IS NULL')) return Promise.resolve({ rows: [] });
+                    if (sql.includes('projected_version < r.version')) return Promise.resolve({ rows: [] });
+                    if (sql.includes('HAVING COUNT(*) > 1')) return Promise.resolve({ rows: [] });
+                    if (sql.includes("authority_status = 'tombstoned'") && sql.includes('projected')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('LEFT JOIN memory_projections p') && sql.includes("authority_status = 'canonical'")) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    // Superseded active projection check
+                    if (sql.includes("authority_status = 'superseded'") && sql.includes("projection_status = 'projected'")) {
+                        return Promise.resolve({
+                            rows: [{
+                                projection_id: PROJ_ID,
+                                memory_id: MEMORY_ID,
+                                target_system: 'mem0',
+                            }],
+                        });
+                    }
+                    if (sql.includes('INSERT INTO memory_integrity_issues')) {
+                        return Promise.resolve({
+                            rows: [{ issue_id: ISSUE_ID, detected_at: NOW }],
+                        });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.validateIntegrity();
+
+            expect(report.superseded_active_projection_count).toBe(1);
+            const issue = report.issues.find(i => i.issue_kind === 'superseded_active_projection');
+            expect(issue).toBeDefined();
+            expect(issue?.severity).toBe('warning');
+            expect(issue?.affected_system).toBe('mem0');
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 15. rebuild target stubs (mem0, graph, vector)
+    // -----------------------------------------------------------------------
+    describe('rebuildMem0FromCanonical / rebuildGraphFromCanonical / rebuildVectorIndexFromCanonical', () => {
+        function makeRebuildPool() {
+            return {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('ORDER BY created_at')) {
+                        if ((makeRebuildPool as any)._calls === undefined) (makeRebuildPool as any)._calls = 0;
+                        (makeRebuildPool as any)._calls++;
+                        return Promise.resolve({
+                            rows: [{
+                                memory_id: MEMORY_ID,
+                                memory_type: 'interaction',
+                                subject_id: 'turn-1',
+                                version: 1,
+                                authority_status: 'canonical',
+                                content_text: 'some content',
+                            }],
+                        });
+                    }
+                    if (sql.includes('FROM memory_projections') && sql.includes('AND target_system')) {
+                        return Promise.resolve({ rows: [] }); // no existing projections
+                    }
+                    if (sql.includes('content_text IS NULL')) {
+                        return Promise.resolve({ rows: [{ cnt: '0' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+        }
+
+        it('rebuildMem0FromCanonical produces create actions for missing mem0 projections', async () => {
+            let orderByCalls = 0;
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('ORDER BY created_at')) {
+                        orderByCalls++;
+                        if (orderByCalls === 1) {
+                            return Promise.resolve({ rows: [{ memory_id: MEMORY_ID, memory_type: 'interaction', subject_id: 'turn-1', version: 1, authority_status: 'canonical', content_text: 'some content' }] });
+                        }
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('FROM memory_projections') && sql.includes('AND target_system')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('content_text IS NULL')) {
+                        return Promise.resolve({ rows: [{ cnt: '0' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.rebuildMem0FromCanonical();
+
+            expect(report.canonical_records_read).toBe(1);
+            const createActions = report.actions.filter(a => a.action_kind === 'create');
+            expect(createActions.length).toBe(1);
+            expect(createActions[0].target_system).toBe('mem0');
+            expect(report.unreachable_count).toBe(0);
+        });
+
+        it('rebuildGraphFromCanonical produces create actions for missing graph projections', async () => {
+            let orderByCalls = 0;
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('ORDER BY created_at')) {
+                        orderByCalls++;
+                        if (orderByCalls === 1) {
+                            return Promise.resolve({ rows: [{ memory_id: MEMORY_ID, memory_type: 'interaction', subject_id: 'turn-1', version: 2, authority_status: 'canonical', content_text: 'some content' }] });
+                        }
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('FROM memory_projections') && sql.includes('AND target_system')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('content_text IS NULL')) {
+                        return Promise.resolve({ rows: [{ cnt: '0' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.rebuildGraphFromCanonical();
+
+            expect(report.canonical_records_read).toBe(1);
+            const createActions = report.actions.filter(a => a.action_kind === 'create');
+            expect(createActions[0].target_system).toBe('graph');
+        });
+
+        it('rebuildVectorIndexFromCanonical skips records with NULL content_text', async () => {
+            let orderByCalls = 0;
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('ORDER BY created_at')) {
+                        orderByCalls++;
+                        if (orderByCalls === 1) {
+                            return Promise.resolve({ rows: [{ memory_id: MEMORY_ID, memory_type: 'interaction', subject_id: 'turn-1', version: 1, authority_status: 'canonical', content_text: null }] });
+                        }
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('content_text IS NULL')) {
+                        return Promise.resolve({ rows: [{ cnt: '1' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.rebuildVectorIndexFromCanonical();
+
+            expect(report.unreachable_count).toBe(1);
+            const skipActions = report.actions.filter(a => a.action_kind === 'skip');
+            expect(skipActions.length).toBe(1);
+            expect(skipActions[0].target_system).toBe('vector');
+        });
+
+        it('rebuildDerivedState skip action when projection is already current', async () => {
+            let orderByCalls = 0;
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('ORDER BY created_at')) {
+                        orderByCalls++;
+                        if (orderByCalls === 1) {
+                            return Promise.resolve({ rows: [{ memory_id: MEMORY_ID, memory_type: 'interaction', subject_id: 'turn-1', version: 1, authority_status: 'canonical' }] });
+                        }
+                        return Promise.resolve({ rows: [] });
+                    }
+                    if (sql.includes('FROM memory_projections') && sql.includes('WHERE memory_id')) {
+                        return Promise.resolve({
+                            rows: [
+                                { target_system: 'mem0', projection_status: 'projected', projected_version: 1 },
+                                { target_system: 'graph', projection_status: 'projected', projected_version: 1 },
+                                { target_system: 'vector', projection_status: 'projected', projected_version: 1 },
+                            ],
+                        });
+                    }
+                    if (sql.includes('content_text IS NULL')) {
+                        return Promise.resolve({ rows: [{ cnt: '0' }] });
+                    }
+                    return Promise.resolve({ rows: [] });
+                }),
+            };
+
+            const svc = new MemoryAuthorityService(pool as never);
+            const report = await svc.rebuildDerivedState();
+
+            const skipActions = report.actions.filter(a => a.action_kind === 'skip');
+            expect(skipActions.length).toBe(3);
+            const createActions = report.actions.filter(a => a.action_kind === 'create');
+            expect(createActions.length).toBe(0);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 16. authority ranking and conflict resolution
+    // -----------------------------------------------------------------------
+    describe('rankMemoryByAuthority', () => {
+        it('ranks canonical source first, speculative last', () => {
+            const svc = new MemoryAuthorityService({} as never);
+            const ranked = svc.rankMemoryByAuthority([
+                { content: 'speculative fact', source_description: 'unknown-source', is_transient: false },
+                { content: 'canonical fact', source_description: 'postgres', is_canonical_source: true },
+                { content: 'transient fact', source_description: 'session', is_transient: true },
+                { content: 'verified derived', source_description: 'mem0', canonical_memory_id: MEMORY_ID },
+            ]);
+
+            expect(ranked[0].tier).toBe('canonical');
+            expect(ranked[1].tier).toBe('verified_derived');
+            expect(ranked[2].tier).toBe('transient');
+            expect(ranked[3].tier).toBe('speculative');
+        });
+
+        it('returns empty array for empty input', () => {
+            const svc = new MemoryAuthorityService({} as never);
+            expect(svc.rankMemoryByAuthority([])).toEqual([]);
+        });
+    });
+
+    describe('resolveMemoryAuthorityConflict', () => {
+        it('canonical always wins when content differs', () => {
+            const svc = new MemoryAuthorityService({} as never);
+            const result = svc.resolveMemoryAuthorityConflict(
+                { memory_id: MEMORY_ID, content_text: 'canonical truth', version: 2 },
+                { content: 'derived lie', canonical_memory_id: MEMORY_ID },
+                'test-context',
+            );
+
+            expect(result.winner_content).toBe('canonical truth');
+            expect(result.conflict_logged).toBe(true);
+        });
+
+        it('no conflict when content matches', () => {
+            const svc = new MemoryAuthorityService({} as never);
+            const result = svc.resolveMemoryAuthorityConflict(
+                { memory_id: MEMORY_ID, content_text: 'same truth', version: 1 },
+                { content: 'same truth', canonical_memory_id: MEMORY_ID },
+                'test-context',
+            );
+
+            expect(result.winner_content).toBe('same truth');
+            expect(result.conflict_logged).toBe(false);
+        });
+    });
 });
+
