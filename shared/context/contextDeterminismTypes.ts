@@ -504,4 +504,34 @@ export interface ContextAssemblyDiagnostics {
 
   /** Total number of candidates included in the final context. */
   totalIncluded: number;
+
+  // ─── P7D Feed 5: Cross-layer Explainability ────────────────────────────────
+
+  /**
+   * The complete unified candidate pool BEFORE global selection.
+   * Includes all candidates (evidence + graph_context) with their full
+   * score breakdowns and rankings.
+   */
+  crossLayerCandidatePool: RankedContextCandidate[];
+
+  /** IDs of ALL candidates in their final deterministic ranking order. */
+  crossLayerRankingOrder: string[];
+
+  /** Count of candidates grouped by their sourceLayer. */
+  perSourceCounts: Record<string, number>;
+
+  /** Count of candidates grouped by their final ContextDecisionReason code. */
+  exclusionBreakdown: Record<string, number>;
+
+  /**
+   * Alias for conflictResolutionRecords (for P7D Feed 5 naming consistency).
+   * All canonical-vs-derived conflicts resolved in this pass.
+   */
+  authorityConflicts: ConflictResolutionRecord[];
+
+  /**
+   * Statistical details for normalizedScore across the pool.
+   * Includes min, max, and average normalizedScore.
+   */
+  normalizationDetails: Record<string, any>;
 }

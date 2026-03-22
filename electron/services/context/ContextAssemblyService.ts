@@ -346,6 +346,7 @@ export class ContextAssemblyService {
       graphContextItems,
       injected,
       latent,
+      rankedAll,
     });
 
     return {
@@ -990,14 +991,14 @@ export class ContextAssemblyService {
     decisions: ContextDecision[];
     tieBreakRecords: TieBreakRecord[];
     conflictResolutionRecords: ConflictResolutionRecord[];
-    graphContextItems: ContextAssemblyItem[];
     injected: ContextAssemblyItem[];
     latent: ContextAssemblyItem[];
+    rankedAll: RankedContextCandidate[];
   }): ContextAssemblyDiagnostics {
     const {
       policy, rankedEvidence, rankedGraph,
       decisions, tieBreakRecords, conflictResolutionRecords,
-      graphContextItems, injected, latent,
+      graphContextItems, injected, latent, rankedAll,
     } = args;
 
     const layerBudgets = this._buildLayerBudgets(policy);
@@ -1042,6 +1043,52 @@ export class ContextAssemblyService {
       conflictResolutionRecords,
       totalCandidatesConsidered: rankedEvidence.length + rankedGraph.length,
       totalIncluded: includedCandidates.length,
+      // ─── P7D Feed 5: Cross-layer Explainability ───────────────────────────
+      crossLayerCandidatePool: rankedAll,
+      crossLayerRankingOrder: rankedAll.map(rc => rc.id),
+      authorityConflicts: conflictResolutionRecords,
+      perSourceCounts: this._computePerSourceCounts(rankedAll),
+      exclusionBreakdown: this._computeExclusionBreakdown(decisions),
+      normalizationDetails: this._computeNormalizationDetails(rankedAll),
+    };
+  }
+
+  private _computePerSourceCounts(pool: RankedContextCandidate[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const rc of pool) {
+      const source = rc.sourceLayer ?? 'unknown';
+      counts[source] = (counts[source] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  private _computeExclusionBreakdown(decisions: ContextDecision[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const d of decisions) {
+      if (d.status === 'excluded' || d.status === 'latent') {
+        const primaryReason = d.reasons[0] ?? 'unknown';
+        counts[primaryReason] = (counts[primaryReason] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  private _computeNormalizationDetails(pool: RankedContextCandidate[]): Record<string, any> {
+    if (pool.length === 0) return { min: 0, max: 0, avg: 0 };
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    for (const rc of pool) {
+      const s = rc.scoreBreakdown.normalizedScore;
+      if (s < min) min = s;
+      if (s > max) max = s;
+      sum += s;
+    }
+    return {
+      min,
+      max,
+      avg: sum / pool.length,
+      candidateCount: pool.length,
     };
   }
 
