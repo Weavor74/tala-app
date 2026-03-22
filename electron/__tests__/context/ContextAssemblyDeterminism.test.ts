@@ -401,7 +401,7 @@ describe('ContextAssembly Determinism Proof (Feed 6)', () => {
       policyService,
       makeGraphServiceReturning(graphItems),
     );
-    const result = await service.assemble(makeRequest({ contextBudget: { maxItems: 5 } }));
+    const result = await service.assemble(makeRequest({ contextBudget: { maxItems: 2 } }));
     const diag = result.diagnostics!;
 
     expect(diag.crossLayerCandidatePool.length).toBe(diag.crossLayerRankingOrder.length);

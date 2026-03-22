@@ -145,18 +145,25 @@ export class ContextScoringService {
    * @param candidate           The candidate to score.
    * @param affectiveAdjustment Optional affective boost [0, MAX_AFFECTIVE_BOOST].
    *                            Must already be clamped by the caller before passing in.
+   * @param weightMultipliers   P7E: Optional strategy-driven multipliers for source layers.
    * @param nowMs               Reference timestamp for recency calculation.
    *                            Defaults to Date.now(). Override in tests for determinism.
    */
   computeCandidateScore(
     candidate: ContextCandidate,
     affectiveAdjustment: number = 0,
+    weightMultipliers: Record<string, number> = {},
     nowMs: number = Date.now(),
   ): ScoreBreakdown {
     const semanticScore = this._clamp01(candidate.score ?? 0);
     const recencyScore = computeRecencyScore(candidate.timestamp ?? null, nowMs);
     const authorityScore = computeAuthorityScore(candidate.authorityTier);
-    const sourceWeight = computeSourceWeight(candidate.sourceLayer);
+    
+    // P7E: Apply optional strategy multiplier to the base source weight
+    const baseSourceWeight = computeSourceWeight(candidate.sourceLayer);
+    const multiplier = candidate.sourceLayer ? (weightMultipliers[candidate.sourceLayer] ?? 1.0) : 1.0;
+    const sourceWeight = this._clamp(baseSourceWeight * multiplier, 0.1, 2.0);
+
     const graphDepthPenalty = computeGraphDepthPenalty(candidate.graphHopDepth ?? 0);
     const clampedAffective = this._clamp(affectiveAdjustment, 0, 0.3 * 0.5); // max 0.15
 

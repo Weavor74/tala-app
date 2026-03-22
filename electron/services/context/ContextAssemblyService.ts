@@ -58,14 +58,20 @@ import type {
   ContextLayerBudget,
   TieBreakRecord,
   ConflictResolutionRecord,
+  ContextLayerName,
 } from '../../../shared/context/contextDeterminismTypes';
 import type { AffectiveState } from '../../../shared/context/affectiveWeightingTypes';
 import type { MemoryAuthorityTier } from '../../../shared/memory/authorityTypes';
+import {
+  ContextStrategyMode,
+  ContextStrategyResolution,
+} from '../../../shared/context/contextStrategyTypes';
 import { MemoryPolicyService } from '../policy/MemoryPolicyService';
 import { GraphTraversalService } from '../graph/GraphTraversalService';
 import { AffectiveGraphService } from '../graph/AffectiveGraphService';
 import { ContextScoringService } from './ContextScoringService';
 import { AffectiveWeightingService } from './AffectiveWeightingService';
+import { ContextStrategyResolver } from './ContextStrategyResolver';
 import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
 import { resolveMemoryAuthorityConflict } from './authorityConflictResolver';
 
@@ -175,6 +181,7 @@ const MAX_AFFECTIVE_WEIGHT = 0.3;
 export class ContextAssemblyService {
   private readonly _scoringService = new ContextScoringService();
   private readonly _affectiveWeightingService = new AffectiveWeightingService();
+  private readonly _strategyResolver = new ContextStrategyResolver();
 
   constructor(
     private readonly orchestrator: RetrievalOrchestrator,
@@ -216,8 +223,14 @@ export class ContextAssemblyService {
     const allTieBreaks: TieBreakRecord[] = [];
     const conflictResolutionRecords: ConflictResolutionRecord[] = [];
 
-    // 1. Resolve active policy.
-    const policy = this.policyService.resolvePolicy(request);
+    // 1. Resolve active base policy.
+    const basePolicy = this.policyService.resolvePolicy(request);
+
+    // P7E: Resolve Adaptive Context Strategy.
+    const strategy = this._strategyResolver.resolveContextStrategy(basePolicy);
+
+    // P7E: Apply strategy-aware budget adjustments to a cloned policy.
+    const policy = this._applyStrategyBudgetAdjustments(basePolicy, strategy);
 
     // 2. Retrieve candidates.
     let retrievalResults: NormalizedSearchResult[] = [];
@@ -228,7 +241,7 @@ export class ContextAssemblyService {
         scope: policy.scope,
         notebookId: policy.notebookId,
         explicitSources: policy.explicitSources,
-        topK: policy.contextBudget.maxItems * 3, // over-fetch to allow budget selection
+        topK: (policy.contextBudget.maxItems + 5) * 3, // over-fetch with strategy headroom
       });
       retrievalResults = response.results ?? [];
     } catch (err: unknown) {
@@ -241,14 +254,12 @@ export class ContextAssemblyService {
       this._mapResultToItem(result, index),
     );
 
-    // 3.5. Expand structural graph context from evidence candidates (when traversal is enabled).
-    //      Runs after evidence mapping but before budget enforcement so that
-    //      graph_context items can be capped independently from evidence items.
+    // 3.5. Expand structural graph context from evidence candidates.
     let structuralGraphItems: ContextAssemblyItem[] = [];
     if (policy.graphTraversal.enabled && policy.groundingMode !== 'strict') {
       try {
         structuralGraphItems = await this.graphTraversalService.expandFromEvidence({
-          evidenceItems: rawCandidates, // pass original (unsorted) for seed extraction
+          evidenceItems: rawCandidates,
           policy,
         });
       } catch (err: unknown) {
@@ -257,10 +268,7 @@ export class ContextAssemblyService {
       }
     }
 
-    // 3.6. Affective context (bounded, labeled, non-authoritative graph_context items).
-    //      Only runs when AffectiveGraphService is provided, affectiveModulation is
-    //      enabled, and the grounding mode is not 'strict'. Degrades gracefully on
-    //      service failure — a warning is added but assembly continues.
+    // 3.6. Affective context.
     let affectiveItems: ContextAssemblyItem[] = [];
     const affectivePolicy = policy.affectiveModulation;
     if (
@@ -280,35 +288,30 @@ export class ContextAssemblyService {
       }
     }
 
-    // P7C: Build AffectiveState from the collected affective items so that
-    //      AffectiveWeightingService can compute keyword-overlap adjustments for
-    //      both graph_context and evidence candidates. Null when no affective items.
+    // P7C: Build AffectiveState.
     const affectiveState = this._buildAffectiveStateFromItems(affectiveItems);
 
-    // 3.7. Merge structural and affective graph_context items into a single list.
-    //      Ordering within the merged list is determined by the unified ranking pass below.
+    // 3.7. Merge structural and affective graph_context items.
     const mergedGraphCandidates = this._mergeGraphContextItems(
       structuralGraphItems,
       affectiveItems,
     );
 
-    // P7D: Collect ALL candidates (evidence + graph_context) into a single competitive
-    //      pool. Score and sort ALL candidates in ONE unified pass so that no layer is
-    //      ranked independently before scoring.
-    //      P7B+P7C: AffectiveWeightingService gates are applied per-candidate based on
-    //               each candidate's layerAssignment ('evidence' vs 'graph_context').
+    // P7D: Score and sort ALL candidates in ONE unified pass.
     const allRawItems = [...rawCandidates, ...mergedGraphCandidates];
-    const { ranked: rankedAll, tieBreaks: unifiedTieBreaks } =
-      this._rankItems(allRawItems, affectiveState, affectivePolicy);
-    allTieBreaks.push(...unifiedTieBreaks);
+    const { rankedAll, tieBreaks } = this._scoreAndRankCandidates({
+      items: allRawItems,
+      affectiveState,
+      policy,
+      weightMultipliers: strategy.appliedWeightMultipliers,
+    });
+    allTieBreaks.push(...tieBreaks);
 
     // Split unified ranked pool by layer assignment for diagnostics.
     const rankedEvidence = rankedAll.filter(rc => rc.layerAssignment === 'evidence');
     const rankedGraph = rankedAll.filter(rc => rc.layerAssignment === 'graph_context');
 
-    // P7D Feed 3: Global competitive selection — all candidates compete under ONE budget.
-    // Per-layer quota enforcement is replaced by a single global token + item budget.
-    // P7D Feed 4: Cross-layer authority conflict resolution is applied before the greedy pass.
+    // P7D: Global competitive selection.
     const {
       injected,
       graphContextItems,
@@ -319,7 +322,7 @@ export class ContextAssemblyService {
     allDecisions.push(...selectionDecisions);
     conflictResolutionRecords.push(...conflictRecords);
 
-    // 5. Combine injected (evidence) + graph_context + latent items.
+    // 5. Combine results.
     const allItems: ContextAssemblyItem[] = [...injected, ...graphContextItems, ...latent];
 
     // 6. Build class counts.
@@ -347,6 +350,7 @@ export class ContextAssemblyService {
       graphContextItems,
       injected,
       latent,
+      strategy,
     });
 
     return {
@@ -365,15 +369,6 @@ export class ContextAssemblyService {
 
   /**
    * Render assembled context into a deterministic prompt string.
-   *
-   * Sections produced:
-   *   [PRIMARY EVIDENCE]         — injected evidence items with source labels.
-   *   [DIRECT GRAPH CONTEXT]     — non-affective graph_context items; omitted when absent.
-   *   [AFFECTIVE CONTEXT]        — affective graph_context items (metadata.affective===true);
-   *                                omitted when absent. Clearly labeled as non-authoritative.
-   *   [POLICY CONSTRAINTS]       — groundingMode, retrievalMode, scope summary;
-   *                                includes affective modulation status.
-   *   [LATENT MEMORY SUMMARY]    — brief note when latent items were retained.
    */
   renderPromptBlocks(result: ContextAssemblyResult): string {
     const sections: string[] = [];
@@ -390,7 +385,7 @@ export class ContextAssemblyService {
       sections.push(`[PRIMARY EVIDENCE]\n${lines.join('\n\n')}`);
     }
 
-    // DIRECT GRAPH CONTEXT — structural (non-affective) graph_context items only
+    // DIRECT GRAPH CONTEXT
     const graphItems = result.items.filter(
       i => i.selectionClass === 'graph_context' && !i.metadata?.affective,
     );
@@ -403,7 +398,7 @@ export class ContextAssemblyService {
       sections.push(`[DIRECT GRAPH CONTEXT]\n${lines.join('\n\n')}`);
     }
 
-    // AFFECTIVE CONTEXT — affective graph_context items; clearly labeled non-authoritative
+    // AFFECTIVE CONTEXT
     const affectiveItems = result.items.filter(
       i => i.selectionClass === 'graph_context' && i.metadata?.affective === true,
     );
@@ -458,26 +453,14 @@ export class ContextAssemblyService {
   // ─── Private Helpers ──────────────────────────────────────────────────────
 
   /**
-   * Map a NormalizedSearchResult to a ContextAssemblyItem with full provenance.
-   *
-   * Citation fields preserved:
-   *   title, uri, sourcePath, providerId, externalId, contentHash,
-   *   chunkId, documentId, charStart, charEnd, sectionLabel, pageNumber,
-   *   citationLabel, displayDomain, fetchedAt.
+   * Map a NormalizedSearchResult to a ContextAssemblyItem.
    */
   private _mapResultToItem(
     result: NormalizedSearchResult,
     rank: number,
   ): ContextAssemblyItem {
     const meta = result.metadata ?? {};
-
-    // Prefer chunk content from metadata; fall back to snippet; then empty.
-    const content =
-      (meta.chunkContent as string | undefined) ??
-      result.snippet ??
-      '';
-
-    // Build enriched metadata with all available citation/provenance fields.
+    const content = (meta.chunkContent as string | undefined) ?? result.snippet ?? '';
     const enrichedMetadata: Record<string, unknown> = {
       ...meta,
       rank,
@@ -485,14 +468,12 @@ export class ContextAssemblyService {
       contentHash: result.contentHash ?? null,
       sourcePath: result.sourcePath ?? null,
       externalId: result.externalId ?? null,
-      // Chunk and document provenance
       chunkId: (meta.chunkId as string | undefined) ?? null,
       documentId: (meta.documentId as string | undefined) ?? null,
       charStart: (meta.charStart as number | undefined) ?? null,
       charEnd: (meta.charEnd as number | undefined) ?? null,
       sectionLabel: (meta.sectionLabel as string | undefined) ?? null,
       pageNumber: (meta.pageNumber as number | undefined) ?? null,
-      // Citation display fields
       citationLabel: (meta.citationLabel as string | undefined) ?? result.title ?? null,
       displayDomain: (meta.displayDomain as string | undefined) ?? null,
       fetchedAt: (meta.fetchedAt as string | undefined) ?? null,
@@ -513,169 +494,7 @@ export class ContextAssemblyService {
   }
 
   /**
-   * Select injected (evidence) items and produce latent overflow.
-   *
-   * Input must be pre-sorted deterministically (P7B: step 3P in assemble()).
-   *
-   * Rules (applied in order):
-   *   1. Evidence items are always selected first (evidencePriority).
-   *   2. Total injected count is capped by contextBudget.maxItems.
-   *   3. Evidence class cap is applied via contextBudget.maxItemsPerClass.evidence
-   *      when set; falls back to contextBudget.maxItems.
-   *   4. Per-document chunk cap is applied via metadata.documentId when set.
-   *      Cap value: contextBudget.maxItemsPerClass.evidence / 2 (rounded up),
-   *      minimum 1.
-   *   5. All items that do not fit the budget become 'latent', preserving
-   *      ranked order and full metadata.
-   *   6. P7B: A ContextDecision record is produced for every candidate.
-   */
-  private _selectItems(
-    candidates: ContextAssemblyItem[],
-    rankedCandidates: RankedContextCandidate[],
-    policy: MemoryPolicy,
-    warnings: string[],
-  ): { injected: ContextAssemblyItem[]; latent: ContextAssemblyItem[]; decisions: ContextDecision[] } {
-    const budget = policy.contextBudget;
-    const maxTotal = budget.maxItems;
-    const evidenceClassCap = budget.maxItemsPerClass?.evidence ?? maxTotal;
-    const evidenceCap = Math.min(maxTotal, evidenceClassCap);
-
-    // Derive per-document chunk cap from evidence cap.
-    // Per-document chunk cap: ceil(evidenceCap / 2).
-    // Dividing by 2 ensures no single document consumes more than half the
-    // evidence budget, preventing one large document from crowding out all
-    // other sources while still allowing meaningful multi-chunk representation.
-    const maxChunksPerDoc = Math.max(1, Math.ceil(evidenceCap / 2));
-
-    const injected: ContextAssemblyItem[] = [];
-    const latent: ContextAssemblyItem[] = [];
-    const chunksPerDoc = new Map<string, number>();
-    const decisions: ContextDecision[] = [];
-
-    // Build a map from sourceKey → RankedContextCandidate for decision enrichment.
-    const rankedById = new Map<string, RankedContextCandidate>();
-    for (const rc of rankedCandidates) {
-      rankedById.set(rc.id, rc);
-    }
-
-    for (const item of candidates) {
-      const candidateId = item.sourceKey ?? item.uri ?? item.title ?? '';
-      const rc = rankedById.get(candidateId);
-      const finalScore = rc?.scoreBreakdown.finalScore ?? (item.score ?? 0);
-      const tokenCost = estimateTokens(item.content);
-
-      if (injected.length >= evidenceCap) {
-        // Budget exhausted — move to latent.
-        latent.push({ ...item, selectionClass: 'latent' });
-        decisions.push({
-          candidateId,
-          sourceType: item.sourceType ?? undefined,
-          authorityTier: rc?.authorityTier ?? null,
-          finalScore,
-          estimatedTokens: tokenCost,
-          status: 'latent',
-          layerAssignment: 'evidence',
-          reasons: ['overflow.to_latent'],
-          affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
-          affectiveReasonCode: rc?.affectiveReasonCode ?? null,
-        });
-        continue;
-      }
-
-      // Check per-document chunk cap.
-      const docId = (item.metadata?.documentId as string | undefined) ?? null;
-      if (docId) {
-        const used = chunksPerDoc.get(docId) ?? 0;
-        if (used >= maxChunksPerDoc) {
-          latent.push({ ...item, selectionClass: 'latent' });
-          decisions.push({
-            candidateId,
-            sourceType: item.sourceType ?? undefined,
-            authorityTier: rc?.authorityTier ?? null,
-            finalScore,
-            estimatedTokens: tokenCost,
-            status: 'latent',
-            layerAssignment: 'evidence',
-            reasons: ['excluded.per_document_cap', 'overflow.to_latent'],
-            affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
-            affectiveReasonCode: rc?.affectiveReasonCode ?? null,
-          });
-          continue;
-        }
-        chunksPerDoc.set(docId, used + 1);
-      }
-
-      injected.push(item);
-      const reasons: ContextDecisionReason[] =
-        rc?.authorityTier === 'canonical'
-          ? ['included.high_authority', 'included.canonical_memory_priority']
-          : ['included.top_ranked_within_budget'];
-      decisions.push({
-        candidateId,
-        sourceType: item.sourceType ?? undefined,
-        authorityTier: rc?.authorityTier ?? null,
-        finalScore,
-        estimatedTokens: tokenCost,
-        status: 'included',
-        layerAssignment: 'evidence',
-        reasons,
-        affectiveAdjustment: rc?.scoreBreakdown.affectiveAdjustment || null,
-        affectiveReasonCode: rc?.affectiveReasonCode ?? null,
-      });
-    }
-
-    if (latent.length > 0) {
-      warnings.push(
-        `${latent.length} overflow item${latent.length === 1 ? '' : 's'} retained as latent memory due to policy budget limits.`,
-      );
-    }
-
-    return { injected, latent, decisions };
-  }
-
-  /**
-   * P7D Feed 3: Select items using a single global budget across ALL layers.
-   *
-   * Replaces per-layer quota enforcement with one greedy pass over ALL ranked
-   * candidates (evidence + graph_context) in rank order. A candidate is included
-   * when the global item and token budgets allow it; otherwise it is excluded or
-   * moved to latent.
-   *
-   * P7D Feed 4: Before the greedy pass, runs resolveMemoryAuthorityConflict() to
-   * detect and mark candidates that share the same canonicalId. The canonical
-   * candidate always wins. Derived candidates are either:
-   *   - Included as supporting context ('included.supporting_derived')
-   *   - Excluded when superseded by a canonical candidate ('excluded.superseded_by_canonical')
-   *   - Excluded when they lost a non-canonical authority conflict ('excluded.authority_conflict')
-   *
-   * Rules (applied in order):
-   *   1. Run cross-layer authority conflict resolution (P7D Feed 4).
-   *   2. Iterate over ALL candidates in descending rank order (highest rank first).
-   *   3. Always exclude conflict losers with 'excluded.authority_conflict'.
-   *   4. Include a candidate when:
-   *        - Global item cap has not been reached, AND
-   *        - Global token cap (if set) has room for this candidate's token cost, AND
-   *        - Per-document chunk cap has not been reached (evidence only).
-   *   5. Evidence candidates that do not fit are moved to 'latent' (not dropped),
-   *      preserving their metadata and ranked order.
-   *   6. Graph_context candidates that do not fit are excluded with a decision record.
-   *   7. Optional minimum canonical floor: the top-ranked canonical candidates are
-   *      guaranteed inclusion even when the global item budget would otherwise
-   *      exclude them (see policy.contextBudget.minCanonicalItems).
-   *   8. A ContextDecision record is produced for every candidate.
-   *   9. Reason codes:
-   *        included  → 'included.cross_layer_top_rank' (+ 'included.high_authority'
-   *                    when authorityTier === 'canonical')
-   *                  → 'included.supporting_derived' (when candidate is a derived
-   *                    member of a canonicalId conflict group)
-   *        excluded  → 'excluded.cross_layer_budget_exceeded' (global cap hit)
-   *                  → 'excluded.superseded_by_canonical' (derived candidate excluded
-   *                    because canonical counterpart was selected and budget exhausted)
-   *                  → 'excluded.authority_conflict' (non-canonical conflict loser)
-   *        latent    → 'excluded.cross_layer_budget_exceeded' + 'overflow.to_latent'
-   *                  → 'excluded.superseded_by_canonical' + 'overflow.to_latent'
-   *        per-doc   → 'excluded.per_document_cap' + 'excluded.outcompeted_by_higher_rank'
-   *                    + 'overflow.to_latent' (higher-ranked chunk from same doc took the slot)
+   * P7D Feed 3: Select items using a single global budget.
    */
   private _selectItemsGlobal(
     rankedAll: RankedContextCandidate[],
@@ -692,16 +511,8 @@ export class ContextAssemblyService {
     const globalItemCap = budget.maxItems;
     const globalTokenCap = budget.maxTokens ?? Infinity;
     const minCanonical = budget.minCanonicalItems ?? 0;
-
-    // Per-document chunk cap for evidence items.
-    // Use the global item cap as the base so that no single document consumes
-    // more than half the global budget.
     const maxChunksPerDoc = Math.max(1, Math.ceil(globalItemCap / 2));
 
-    // P7D Feed 3: Optional minimum canonical memory floor.
-    // The comparator already places canonical items at the top of rankedAll
-    // (authority tier is step 1). The floor only activates when the policy
-    // explicitly requires more canonical items than the global cap would allow.
     const mustIncludeIds = new Set<string>();
     if (minCanonical > 0) {
       const canonicals = rankedAll.filter(rc => rc.authorityTier === 'canonical');
@@ -711,9 +522,6 @@ export class ContextAssemblyService {
       }
     }
 
-    // P7D Feed 4: Detect and resolve cross-layer authority conflicts BEFORE selection.
-    // affective weighting must NOT override authority — conflicts are resolved here
-    // purely by the authority hierarchy, independently of any score component.
     const {
       supportingIds,
       conflictLoserIds,
@@ -737,8 +545,7 @@ export class ContextAssemblyService {
       const isSupporting = supportingIds.has(rc.id);
       const isCanonicalWinner = canonicalWinnerIds.has(rc.id);
 
-      // P7D Feed 4: Always exclude authority-conflict losers regardless of budget.
-      if (isConflictLoser) {
+      if (isConflictLoser || isSupporting) {
         decisions.push({
           candidateId: rc.id,
           sourceType: rc.sourceType,
@@ -747,7 +554,7 @@ export class ContextAssemblyService {
           estimatedTokens: tokenCost,
           status: 'excluded',
           layerAssignment: rc.layerAssignment,
-          reasons: ['excluded.authority_conflict'],
+          reasons: [isSupporting ? 'excluded.superseded_by_canonical' : 'excluded.authority_conflict'],
           conflictResolved: true,
           affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
           affectiveReasonCode: rc.affectiveReasonCode ?? null,
@@ -755,7 +562,6 @@ export class ContextAssemblyService {
         continue;
       }
 
-      // Check global budget. Must-include canonical items bypass the cap.
       const budgetExhausted =
         !isMustInclude &&
         (totalIncluded >= globalItemCap ||
@@ -764,8 +570,6 @@ export class ContextAssemblyService {
       if (budgetExhausted) {
         if (isEvidence) {
           latent.push({ ...rankedCandidateToItem(rc), selectionClass: 'latent' });
-          // P7D Feed 4: Use superseded_by_canonical for supporting candidates excluded
-          // due to budget exhaustion; use standard budget_exceeded reason otherwise.
           const budgetExclusionReason: ContextDecisionReason = isSupporting
             ? 'excluded.superseded_by_canonical'
             : 'excluded.cross_layer_budget_exceeded';
@@ -783,8 +587,6 @@ export class ContextAssemblyService {
             affectiveReasonCode: rc.affectiveReasonCode ?? null,
           });
         } else {
-          // P7D Feed 4: Use superseded_by_canonical for supporting candidates excluded
-          // due to budget exhaustion; use standard budget_exceeded reason otherwise.
           const budgetExclusionReason: ContextDecisionReason = isSupporting
             ? 'excluded.superseded_by_canonical'
             : 'excluded.cross_layer_budget_exceeded';
@@ -805,7 +607,6 @@ export class ContextAssemblyService {
         continue;
       }
 
-      // Check per-document chunk cap for evidence items.
       if (isEvidence && !isMustInclude) {
         const docId = (rc.metadata?.documentId as string | undefined) ?? null;
         if (docId) {
@@ -829,22 +630,15 @@ export class ContextAssemblyService {
         }
       }
 
-      // Include this candidate.
       const item = rankedCandidateToItem(rc);
       if (isEvidence) {
         injected.push(item);
-        // Track per-document chunk count.
         const docId = (rc.metadata?.documentId as string | undefined) ?? null;
         if (docId) chunksPerDoc.set(docId, (chunksPerDoc.get(docId) ?? 0) + 1);
       } else {
         graphContextItems.push(item);
       }
 
-      // P7D Feed 4: Choose the correct inclusion reason.
-      // - isSupporting → 'included.supporting_derived' (derived candidate included
-      //   as supporting context alongside or instead of its canonical counterpart)
-      // - canonical authority → 'included.high_authority' co-emitted
-      // - default → 'included.cross_layer_top_rank'
       const reasons: ContextDecisionReason[] = isSupporting
         ? ['included.supporting_derived']
         : rc.authorityTier === 'canonical'
@@ -879,110 +673,129 @@ export class ContextAssemblyService {
   }
 
   /**
-   * P7B+P7C+P7D: Score and sort a unified list of ContextAssemblyItems deterministically.
-   *
-   * P7D change: The `layer` parameter has been removed. All items from all layers
-   * (evidence, graph_context, etc.) are scored and sorted in a single pass. Each
-   * item's layer is derived from its selectionClass via itemToCandidate(). The
-   * AffectiveWeightingService layer-eligibility gates are applied per-candidate
-   * based on the candidate's derived layerAssignment.
-   *
-   * Pipeline:
-   *   1. Convert items to ContextCandidates (P7D: layer derived from selectionClass).
-   *   2. Score each with ContextScoringService.
-   *      P7C: When affectiveState and affectivePolicy are provided, compute an
-   *           affective keyword-overlap adjustment via AffectiveWeightingService
-   *           and pass it to computeCandidateScore(). Adjustment is clamped and
-   *           bounded — it does not override canonical authority.
-   *   3. Wrap in RankedContextCandidates (including P7C affectiveReasonCode).
-   *   4. Sort with applyDeterministicTieBreak (total-order comparator).
-   *   5. Assign 1-indexed ranks.
-   *
-   * Returns the ranked (sorted) candidates and any tie-break records.
-   *
-   * @param affectiveState   Optional normalized affective state for P7C weighting.
-   *                         Pass null to skip affective adjustment (backward compat).
-   * @param affectivePolicy  Required when affectiveState is non-null. Provides
-   *                         layer eligibility gates and affectiveWeight.
+   * P7E: Score and sort a unified list of ContextAssemblyItems.
    */
-  private _rankItems(
-    items: ContextAssemblyItem[],
-    affectiveState?: AffectiveState | null,
-    affectivePolicy?: AffectiveModulationPolicy | null,
-  ): { ranked: RankedContextCandidate[]; tieBreaks: TieBreakRecord[] } {
-    if (items.length === 0) return { ranked: [], tieBreaks: [] };
+  private _scoreAndRankCandidates(params: {
+    items: ContextAssemblyItem[];
+    affectiveState: AffectiveState | null;
+    policy: MemoryPolicy;
+    weightMultipliers: Record<string, number>;
+  }): { rankedAll: RankedContextCandidate[]; tieBreaks: TieBreakRecord[] } {
+    const { items, affectiveState, policy, weightMultipliers } = params;
 
-    // Convert to ContextCandidates, score each one, and wrap in RankedContextCandidate.
-    // P7D: Layer is derived from each item's selectionClass inside itemToCandidate().
+    const itemToCandidate = (item: ContextAssemblyItem, rank: number): RankedContextCandidate => {
+      const isAffective = !!item.metadata?.affective;
+      const isMemory = item.sourceType === 'session_memory' || item.sourceType === 'summary';
+      const isGraph = item.sourceType === 'graph_node';
+      
+      const layerAssignment: ContextLayerName = isAffective || isGraph ? 'graph_context' : (isMemory ? 'canonical_memory' : 'evidence');
+      const sourceLayer = isGraph ? 'graph' : (isMemory ? 'canonical_memory' : 'rag');
+      const id = item.sourceKey ?? `unknown-${rank}`;
+      
+      // Map authority from metadata or graphEdgeTrust
+      const authorityTier = (item.metadata?.authorityTier as MemoryAuthorityTier | undefined) 
+        || (item.sourceType === 'graph_node' ? item.graphEdgeTrust as MemoryAuthorityTier : null);
+
+      const candidate: RankedContextCandidate = {
+        id,
+        content: item.content,
+        title: item.title,
+        timestamp: (item.metadata?.fetchedAt as string | undefined) ?? undefined,
+        authorityTier,
+        score: item.score ?? 0,
+        sourceLayer,
+        estimatedTokens: estimateTokens(item.content),
+        graphHopDepth: (item.metadata?.graphHopDepth as number | undefined) ?? 0,
+        canonicalId: item.metadata?.canonicalId as string | undefined,
+        selectionClass: item.selectionClass,
+        layerAssignment,
+        scoreBreakdown: {} as any, // Will be filled in map
+        rank: 0,
+      };
+
+      return candidate;
+    };
+
     const unranked: RankedContextCandidate[] = items.map((item, idx) => {
       const candidate = itemToCandidate(item, idx);
+      const affectEnabled = candidate.layerAssignment === 'graph_context'
+        ? policy.affectiveModulation?.enabled
+        : (policy.affectiveModulation?.enabled && policy.affectiveModulation?.allowEvidenceReordering);
+      
+      const result = this._affectiveWeightingService.computeAdjustment(
+        `${candidate.title ?? ''} ${candidate.content}`.toLowerCase(),
+        affectiveState,
+        policy.affectiveModulation ?? null,
+        candidate.layerAssignment as 'evidence' | 'graph_context',
+      );
+      const affectiveAdjustment = affectEnabled ? result.adjustment : 0;
+      const affectiveReasonCode = affectEnabled ? result.reasonCode : null;
+      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment, weightMultipliers);
 
-      // P7C: Compute affective adjustment when state and policy are available.
-      // P7D: Use each candidate's own layerAssignment for the eligibility gate so that
-      //      evidence and graph_context items are gated correctly within the unified pool.
-      let affectiveAdjustment = 0;
-      let affectiveReasonCode: string | null = null;
-      if (affectiveState) {
-        const candidateText = `${candidate.title ?? ''} ${candidate.content}`.toLowerCase();
-        const targetLayer = candidate.layerAssignment as 'evidence' | 'graph_context';
-        const result = this._affectiveWeightingService.computeAdjustment(
-          candidateText,
-          affectiveState,
-          affectivePolicy ?? null,
-          targetLayer,
-        );
-        affectiveAdjustment = result.adjustment;
-        affectiveReasonCode = result.reasonCode;
-      }
-
-      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment);
       return { ...candidate, scoreBreakdown, rank: 0, affectiveReasonCode };
     });
 
-    // Apply deterministic total-order sort.
     const { sorted, tieBreakRecords } = applyDeterministicTieBreak(unranked);
-
-    // Assign 1-indexed ranks in sorted order.
     for (let i = 0; i < sorted.length; i++) {
       sorted[i]!.rank = i + 1;
     }
-
-    return { ranked: sorted, tieBreaks: tieBreakRecords };
+    return { rankedAll: sorted, tieBreaks: tieBreakRecords };
   }
 
   /**
-   * Build P7B ContextLayerBudgets from the active policy.
-   *
-   * P7D Feed 3: Layer budgets now reflect the global single-budget model.
-   * Evidence and graph_context layers share the global maxItems cap.
+   * P7E: Apply strategy-aware budget adjustments to a cloned policy.
    */
+  private _applyStrategyBudgetAdjustments(
+    basePolicy: MemoryPolicy,
+    strategy: ContextStrategyResolution,
+  ): MemoryPolicy {
+    const policy = JSON.parse(JSON.stringify(basePolicy)) as MemoryPolicy;
+    const budget = policy.contextBudget;
+
+    Object.entries(strategy.appliedBudgetAdjustments).forEach(([layerName, adjustment]) => {
+      // 1. Apply global budget adjustments (only if 'evidence' layer is adjusted)
+      if (layerName === 'evidence') {
+        const currentItems = budget.maxItems ?? 10;
+        const currentTokens = budget.maxTokens ?? 4000;
+
+        if (adjustment.maxTokensMod && adjustment.maxTokensMod !== 0) {
+          budget.maxTokens = Math.max(1000, Math.min(128000, currentTokens + adjustment.maxTokensMod));
+        }
+        if (adjustment.maxItemsMod && adjustment.maxItemsMod !== 0) {
+          budget.maxItems = Math.max(1, Math.min(100, currentItems + adjustment.maxItemsMod));
+        }
+      }
+
+      // 2. Apply per-class adjustments
+      const classMap: Record<string, MemorySelectionClass> = {
+        'evidence': 'evidence',
+        'graph_context': 'graph_context',
+        'canonical_memory': 'summary', // Mapped based on _buildLayerBudgets usage
+        'summary': 'summary',
+      };
+
+      const targetClass = classMap[layerName];
+      if (targetClass && adjustment.maxItemsMod && adjustment.maxItemsMod !== 0) {
+        if (!budget.maxItemsPerClass) budget.maxItemsPerClass = {};
+        const currentClassLimit = budget.maxItemsPerClass[targetClass] ?? (layerName === 'evidence' ? budget.maxItems : 5);
+        budget.maxItemsPerClass[targetClass] = Math.max(0, currentClassLimit + adjustment.maxItemsMod);
+      }
+    });
+
+    return policy;
+  }
+
   private _buildLayerBudgets(policy: MemoryPolicy): ContextLayerBudget[] {
     const budget = policy.contextBudget;
     return [
-      {
-        layer: 'evidence',
-        maxItems: budget.maxItems,
-        maxTokens: budget.maxTokens,
-        priority: 1,
-        overflowPolicy: 'overflow_to_latent',
-      },
-      {
-        layer: 'graph_context',
-        maxItems: budget.maxItems,
-        priority: 2,
-        overflowPolicy: 'drop',
-      },
-      {
-        layer: 'canonical_memory',
-        maxItems: budget.maxItemsPerClass?.summary ?? 0,
-        priority: 3,
-        overflowPolicy: 'drop',
-      },
+      { layer: 'evidence', maxItems: budget.maxItems, maxTokens: budget.maxTokens, priority: 1, overflowPolicy: 'overflow_to_latent' },
+      { layer: 'graph_context', maxItems: budget.maxItems, priority: 2, overflowPolicy: 'drop' },
+      { layer: 'canonical_memory', maxItems: budget.maxItemsPerClass?.summary ?? 0, priority: 3, overflowPolicy: 'drop' },
     ];
   }
 
   /**
-   * Build P7B ContextAssemblyDiagnostics from the collected pipeline data.
+   * P7E: Build diagnostics including strategy trace.
    */
   private _buildDiagnostics(args: {
     policy: MemoryPolicy;
@@ -995,32 +808,19 @@ export class ContextAssemblyService {
     graphContextItems: ContextAssemblyItem[];
     injected: ContextAssemblyItem[];
     latent: ContextAssemblyItem[];
+    strategy: ContextStrategyResolution;
   }): ContextAssemblyDiagnostics {
-    const {
-      policy, rankedAll, rankedEvidence, rankedGraph,
-      decisions, tieBreakRecords, conflictResolutionRecords,
-      graphContextItems, injected, latent,
-    } = args;
-
+    const { policy, rankedAll, decisions, tieBreakRecords, conflictResolutionRecords, graphContextItems, injected, latent, strategy } = args;
     const layerBudgets = this._buildLayerBudgets(policy);
-
-    // Build candidate pool by layer.
-    const candidatePoolByLayer: ContextAssemblyDiagnostics['candidatePoolByLayer'] = {};
-    if (rankedEvidence.length > 0) candidatePoolByLayer['evidence'] = rankedEvidence;
-    if (rankedGraph.length > 0) candidatePoolByLayer['graph_context'] = rankedGraph;
-
-    // Cross-layer diagnostics: unified candidate pool and rank order.
-    const crossLayerCandidatePool = rankedAll;
     const crossLayerRankingOrder = rankedAll.map(rc => rc.id);
     const candidateById = new Map(rankedAll.map(candidate => [candidate.id, candidate]));
 
-    // Partition included/excluded/truncated/latent candidate IDs.
     const includedCandidates: string[] = [];
     const excludedCandidates: string[] = [];
     const truncatedCandidates: string[] = [];
     const latentCandidates: string[] = [];
-    const perSourceInclusionCounts: ContextAssemblyDiagnostics['perSourceInclusionCounts'] = {};
-    const exclusionReasonsBySource: ContextAssemblyDiagnostics['exclusionReasonsBySource'] = {};
+    const perSourceInclusionCounts: Record<string, number> = {};
+    const exclusionReasonsBySource: Record<string, Record<string, number>> = {};
 
     const resolveSourceKey = (candidateId: string, fallback?: string) => {
       const candidate = candidateById.get(candidateId);
@@ -1046,26 +846,16 @@ export class ContextAssemblyService {
       }
     }
 
-    // Ensure sources with zero includes are still represented when present in the pool.
-    for (const candidate of rankedAll) {
-      const sourceKey = candidate.sourceLayer ?? candidate.sourceType ?? 'unknown';
-      if (perSourceInclusionCounts[sourceKey] === undefined) {
-        perSourceInclusionCounts[sourceKey] = 0;
-      }
-    }
+    const normalizationBreakdown = rankedAll.map(candidate => ({
+      candidateId: candidate.id,
+      sourceLayer: candidate.sourceLayer ?? undefined,
+      finalScore: candidate.scoreBreakdown.finalScore,
+      sourceWeight: candidate.scoreBreakdown.sourceWeight,
+      tokenEfficiency: candidate.scoreBreakdown.tokenEfficiency,
+      normalizedScore: candidate.scoreBreakdown.normalizedScore,
+    }));
 
-    const normalizationBreakdown: ContextAssemblyDiagnostics['normalizationBreakdown'] =
-      rankedAll.map(candidate => ({
-        candidateId: candidate.id,
-        sourceLayer: candidate.sourceLayer ?? undefined,
-        finalScore: candidate.scoreBreakdown.finalScore,
-        sourceWeight: candidate.scoreBreakdown.sourceWeight,
-        tokenEfficiency: candidate.scoreBreakdown.tokenEfficiency,
-        normalizedScore: candidate.scoreBreakdown.normalizedScore,
-      }));
-
-    // Compute final token usage by layer.
-    const finalTokenUsageByLayer: ContextAssemblyDiagnostics['finalTokenUsageByLayer'] = {};
+    const finalTokenUsageByLayer: Partial<Record<ContextLayerName, number>> = {};
     const evidenceTokens = injected.reduce((s, i) => s + estimateTokens(i.content), 0);
     if (evidenceTokens > 0) finalTokenUsageByLayer['evidence'] = evidenceTokens;
     const graphTokens = graphContextItems.reduce((s, i) => s + estimateTokens(i.content), 0);
@@ -1076,7 +866,10 @@ export class ContextAssemblyService {
     return {
       assemblyMode: policy.groundingMode,
       layerBudgets,
-      candidatePoolByLayer,
+      candidatePoolByLayer: {
+        evidence: rankedAll.filter(rc => rc.layerAssignment === 'evidence'),
+        graph_context: rankedAll.filter(rc => rc.layerAssignment === 'graph_context'),
+      },
       decisions,
       perSourceInclusionCounts,
       exclusionReasonsBySource,
@@ -1091,13 +884,14 @@ export class ContextAssemblyService {
       conflictResolutionRecords,
       totalCandidatesConsidered: rankedAll.length,
       totalIncluded: includedCandidates.length,
-      // ─── P7D Feed 5: Cross-layer Explainability ───────────────────────────
       crossLayerCandidatePool: rankedAll,
-      crossLayerRankingOrder: rankedAll.map(rc => rc.id),
+      crossLayerRankingOrder,
       authorityConflicts: conflictResolutionRecords,
       perSourceCounts: this._computePerSourceCounts(rankedAll),
       exclusionBreakdown: this._computeExclusionBreakdown(decisions),
       normalizationDetails: this._computeNormalizationDetails(rankedAll),
+      strategyResolution: strategy,
+      strategyMode: strategy.profile.mode,
     };
   }
 
@@ -1113,7 +907,7 @@ export class ContextAssemblyService {
   private _computeExclusionBreakdown(decisions: ContextDecision[]): Record<string, number> {
     const counts: Record<string, number> = {};
     for (const d of decisions) {
-      if (d.status === 'excluded' || d.status === 'latent') {
+      if (d.status === 'excluded' || d.status === 'latent' || d.status === 'truncated') {
         const primaryReason = d.reasons[0] ?? 'unknown';
         counts[primaryReason] = (counts[primaryReason] ?? 0) + 1;
       }
@@ -1123,92 +917,42 @@ export class ContextAssemblyService {
 
   private _computeNormalizationDetails(pool: RankedContextCandidate[]): Record<string, any> {
     if (pool.length === 0) return { min: 0, max: 0, avg: 0 };
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
+    let min = Infinity; let max = -Infinity; let sum = 0;
     for (const rc of pool) {
       const s = rc.scoreBreakdown.normalizedScore;
-      if (s < min) min = s;
-      if (s > max) max = s;
-      sum += s;
+      if (s < min) min = s; if (s > max) max = s; sum += s;
     }
-    return {
-      min,
-      max,
-      avg: sum / pool.length,
-      candidateCount: pool.length,
-    };
+    return { min, max, avg: sum / pool.length, candidateCount: pool.length };
   }
 
-  /**
-   * Merge structural and affective graph_context items into a single ordered list.
-   *
-   * P7C: The keyword-overlap boost that previously mutated structural item raw scores
-   * has been moved into AffectiveWeightingService → _rankItems → affectiveAdjustment
-   * component of ScoreBreakdown. This method now simply concatenates the two lists:
-   * affective items first, structural items after. The final ordering is determined
-   * deterministically by _rankItems() using the total-order comparator.
-   *
-   * Evidence items are never touched by this method.
-   */
-  private _mergeGraphContextItems(
-    structuralItems: ContextAssemblyItem[],
-    affectiveItems: ContextAssemblyItem[],
-  ): ContextAssemblyItem[] {
+  private _mergeGraphContextItems(structuralItems: ContextAssemblyItem[], affectiveItems: ContextAssemblyItem[]): ContextAssemblyItem[] {
     if (affectiveItems.length === 0) return structuralItems;
     if (structuralItems.length === 0) return affectiveItems;
-    // Simple merge: affective items first. Final ordering is handled by _rankItems().
     return [...affectiveItems, ...structuralItems];
   }
 
-  /**
-   * P7C: Build a normalized AffectiveState from the affective graph_context items
-   * returned by AffectiveGraphService.
-   *
-   * Sources:
-   *   - emotion_tag items: metadata.moodLabel → key in moodVector, item.score → intensity.
-   *   - astro_state items: metadata.rawAstroState.emotional_vector → entries in moodVector.
-   *
-   * Returns null when no affective items are present or no mood data is extractable.
-   * The returned AffectiveState is used by AffectiveWeightingService to compute
-   * keyword-overlap adjustments for evidence and graph_context candidates.
-   */
-  private _buildAffectiveStateFromItems(
-    affectiveItems: ContextAssemblyItem[],
-  ): AffectiveState | null {
+  private _buildAffectiveStateFromItems(affectiveItems: ContextAssemblyItem[]): AffectiveState | null {
     const moodVector: Record<string, number> = {};
     let dominantMood: string | undefined;
     let highestIntensity = -1;
 
     for (const item of affectiveItems) {
-      // emotion_tag items: extract mood label with its intensity (item.score).
       const moodLabel = item.metadata?.moodLabel as string | undefined;
       if (moodLabel && typeof moodLabel === 'string' && moodLabel.trim().length > 0) {
         const key = moodLabel.trim().toLowerCase();
         const intensity = typeof item.score === 'number' ? item.score : 0.5;
         moodVector[key] = intensity;
-        if (intensity > highestIntensity) {
-          highestIntensity = intensity;
-          dominantMood = moodLabel.trim();
-        }
+        if (intensity > highestIntensity) { highestIntensity = intensity; dominantMood = moodLabel.trim(); }
       }
-
-      // astro_state items: extract emotional_vector component names as mood keys.
       if (item.metadata?.affectiveNodeType === 'astro_state') {
-        const rawState = item.metadata?.rawAstroState as
-          | { emotional_vector?: Record<string, number> }
-          | null
-          | undefined;
+        const rawState = item.metadata?.rawAstroState as { emotional_vector?: Record<string, number> } | null | undefined;
         if (rawState?.emotional_vector) {
           for (const [key, value] of Object.entries(rawState.emotional_vector)) {
-            if (typeof value === 'number' && value > 0) {
-              moodVector[key.toLowerCase()] = value;
-            }
+            if (typeof value === 'number' && value > 0) { moodVector[key.toLowerCase()] = value; }
           }
         }
       }
     }
-
     if (Object.keys(moodVector).length === 0) return null;
     return { moodVector, dominantMood };
   }

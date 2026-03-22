@@ -21,6 +21,8 @@
  */
 
 import type { MemoryAuthorityTier } from '../memory/authorityTypes';
+import type { ContextStrategyResolution } from './contextStrategyTypes';
+
 
 // ─── A. Context Layer Budgets ────────────────────────────────────────────────
 
@@ -580,4 +582,15 @@ export interface ContextAssemblyDiagnostics {
    * Includes min, max, and average normalizedScore.
    */
   normalizationDetails: Record<string, any>;
+
+  // ─── P7E: Adaptive Context Strategy Trace ──────────────────────────────────
+
+  /**
+   * The resolved context strategy for this assembly pass.
+   * Null if no strategy was resolved or if diagnostics are restricted.
+   */
+  strategyResolution?: ContextStrategyResolution | null;
+
+  /** The identifier for the active strategy mode (e.g. 'recall_strict'). */
+  strategyMode?: string;
 }
