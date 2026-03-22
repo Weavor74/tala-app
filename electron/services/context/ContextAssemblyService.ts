@@ -694,12 +694,13 @@ export class ContextAssemblyService {
       
       // Map authority from metadata or graphEdgeTrust
       const authorityTier = (item.metadata?.authorityTier as MemoryAuthorityTier | undefined) 
-        || (item.sourceType === 'graph_node' ? item.graphEdgeTrust as MemoryAuthorityTier : null);
+        || deriveAuthorityTierFromEdgeTrust(item.graphEdgeTrust);
 
       const candidate: RankedContextCandidate = {
         id,
         content: item.content,
         title: item.title,
+        sourceKey: item.sourceKey,
         timestamp: (item.metadata?.fetchedAt as string | undefined) ?? undefined,
         authorityTier,
         score: item.score ?? 0,
@@ -709,6 +710,7 @@ export class ContextAssemblyService {
         canonicalId: item.metadata?.canonicalId as string | undefined,
         selectionClass: item.selectionClass,
         layerAssignment,
+        metadata: item.metadata,
         scoreBreakdown: {} as any, // Will be filled in map
         rank: 0,
       };
@@ -730,7 +732,7 @@ export class ContextAssemblyService {
       );
       const affectiveAdjustment = affectEnabled ? result.adjustment : 0;
       const affectiveReasonCode = affectEnabled ? result.reasonCode : null;
-      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment, weightMultipliers);
+      const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment, undefined, weightMultipliers);
 
       return { ...candidate, scoreBreakdown, rank: 0, affectiveReasonCode };
     });

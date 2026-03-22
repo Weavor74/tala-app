@@ -56,11 +56,11 @@ def get_memory():
             _memory_instance = Memory.from_config(config)
             sys.stderr.write("[mem0-core] Memory initialized successfully.\n")
         except ImportError:
-            sys.stderr.write("[mem0-core] CRITICAL: 'mem0ai' library not found. Dependency failure.\n")
-            sys.exit(1)
+            sys.stderr.write("[mem0-core] ERROR: 'mem0ai' library not found. Running in degraded mode.\n")
+            return None
         except Exception as e:
-            sys.stderr.write(f"[mem0-core] CRITICAL: Failed to initialize Memory: {e}\n")
-            sys.exit(1)
+            sys.stderr.write(f"[mem0-core] ERROR: Failed to initialize Memory: {e}\n")
+            return None
     return _memory_instance
 
 # --- MANDATORY TOOLS (Registered at startup) ---
@@ -94,6 +94,8 @@ def mem0_add(text: str, user_id: str = "local_user", metadata: dict = None) -> s
     """
     try:
         mem = get_memory()
+        if mem is None:
+            return "Error: Memory system is in a degraded state (initialization failed)."
         mem.add(text, user_id=user_id, metadata=metadata)
         return "Memory added successfully."
     except Exception as e:
@@ -104,6 +106,8 @@ def mem0_search(query: str, user_id: str = "local_user", limit: int = 5) -> str:
     """Search for relevant memories."""
     try:
         mem = get_memory()
+        if mem is None:
+            return json.dumps({"error": "Memory system is in a degraded state."})
         results = mem.search(query, user_id=user_id, limit=limit)
         memories = [{"text": r["text"], "score": r.get("score", 0)} for r in results]
         return json.dumps(memories)

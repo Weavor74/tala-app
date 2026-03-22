@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { RuntimeFlags } from './RuntimeFlags';
 
 /**
  * Association
@@ -196,6 +197,10 @@ export class MemoryService {
      * @returns {Promise<void>}
      */
     async ignite(pythonPath: string, scriptPath: string, envVars: Record<string, string> = {}) {
+        if (!RuntimeFlags.ENABLE_MEM0_REMOTE) {
+            console.log(`[MemoryService] Remote mem0 is DISABLED via feature flag. Skipping ignition.`);
+            return;
+        }
         console.log(`[MemoryService] Igniting embedded Mem0 server at ${scriptPath}...`);
 
         const connectPromise = async () => {
@@ -306,7 +311,7 @@ export class MemoryService {
      */
     async search(query: string, limit = 5, mode: string = 'assistant'): Promise<MemoryItem[]> {
         // Preferred: MCP
-        if (this.client) {
+        if (this.client && RuntimeFlags.ENABLE_MEM0_REMOTE && !RuntimeFlags.ENABLE_PG_CANONICAL_ONLY) {
             try {
                 // If not RP mode, we might want to exclude RP memories
                 // If Mem0 server supports metadata filtering, we should use it here.
@@ -516,7 +521,7 @@ export class MemoryService {
         await this.handleContradiction(newItem);
         this.saveLocal();
 
-        if (this.client) {
+        if (this.client && RuntimeFlags.ENABLE_MEM0_REMOTE) {
             try {
                 await this.client.callTool({
                     name: "mem0_add",

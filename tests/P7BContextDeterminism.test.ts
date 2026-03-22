@@ -54,9 +54,6 @@ import type {
   ScoreBreakdown,
 } from '../shared/context/contextDeterminismTypes';
 
-vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp/tala-test' },
-}));
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 

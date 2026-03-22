@@ -152,8 +152,8 @@ export class ContextScoringService {
   computeCandidateScore(
     candidate: ContextCandidate,
     affectiveAdjustment: number = 0,
-    weightMultipliers: Record<string, number> = {},
     nowMs: number = Date.now(),
+    weightMultipliers: Record<string, number> = {},
   ): ScoreBreakdown {
     const semanticScore = this._clamp01(candidate.score ?? 0);
     const recencyScore = computeRecencyScore(candidate.timestamp ?? null, nowMs);

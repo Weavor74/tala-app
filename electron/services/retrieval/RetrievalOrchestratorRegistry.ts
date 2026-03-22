@@ -2,24 +2,6 @@
  * RetrievalOrchestratorRegistry
  *
  * Singleton manager for the RetrievalOrchestrator instance used at runtime.
- *
- * Responsibilities:
- * - Hold the single RetrievalOrchestrator instance shared across IPC handlers.
- * - Wire LocalSearchProvider and ExternalApiSearchProvider on init.
- * - Provide a refreshExternalProvider() seam to re-register the external
- *   provider when settings change (e.g., after Settings apply-changes).
- *
- * Usage:
- *   import { initRetrievalOrchestrator, getRetrievalOrchestrator } from './RetrievalOrchestratorRegistry';
- *
- *   // During app startup (after file service and research repo are ready):
- *   await initRetrievalOrchestrator({ fileService, researchRepo, settingsPath });
- *
- *   // In IPC handlers:
- *   const orchestrator = getRetrievalOrchestrator();
- *   if (orchestrator) { ... }
- *
- * Node.js — lives in electron/. Not imported by renderer code.
  */
 
 import { RetrievalOrchestrator } from './RetrievalOrchestrator';
@@ -30,6 +12,7 @@ import {
 } from './providers/ExternalApiSearchProvider';
 import { SemanticSearchProvider } from './providers/SemanticSearchProvider';
 import { loadSettings } from '../SettingsManager';
+import { RuntimeFlags } from '../RuntimeFlags';
 import type { FileService } from '../FileService';
 import type { ResearchRepository } from '../db/ResearchRepository';
 import type { EmbeddingsRepository } from '../db/EmbeddingsRepository';
@@ -37,6 +20,7 @@ import type { SearchConfig } from '../../../shared/settings';
 
 let _orchestrator: RetrievalOrchestrator | null = null;
 let _externalProvider: ExternalApiSearchProvider | null = null;
+let _settingsPath: string | null = null;
 
 export interface InitRetrievalOrchestratorOptions {
   /** FileService instance for LocalSearchProvider. */
@@ -45,85 +29,72 @@ export interface InitRetrievalOrchestratorOptions {
   researchRepo?: ResearchRepository;
   /**
    * Optional EmbeddingsRepository for SemanticSearchProvider.
-   * When provided, SemanticSearchProvider is registered with the orchestrator.
    */
   embeddingsRepo?: EmbeddingsRepository;
   /**
-   * Path to the app_settings.json file.
-   * Used to read the active external search provider configuration.
+   * Path to the app_settings.json file, used by ExternalApiSearchProvider.
    */
   settingsPath: string;
 }
 
 /**
- * Initialize the singleton RetrievalOrchestrator and register all providers.
- * Safe to call multiple times — returns the existing instance if already initialized.
+ * Initialize the singleton RetrievalOrchestrator.
+ * Must be called exactly once during app startup.
  */
 export function initRetrievalOrchestrator(
-  opts: InitRetrievalOrchestratorOptions,
+  options: InitRetrievalOrchestratorOptions,
 ): RetrievalOrchestrator {
-  if (_orchestrator) {
-    return _orchestrator;
-  }
+  if (_orchestrator) return _orchestrator;
 
-  const orchestrator = new RetrievalOrchestrator(opts.researchRepo);
-
-  // Register local provider
-  orchestrator.registerProvider(new LocalSearchProvider(opts.fileService));
-
-  // Register semantic provider (if embeddings repository is available)
-  if (opts.embeddingsRepo) {
-    orchestrator.registerProvider(new SemanticSearchProvider(opts.embeddingsRepo));
-    console.log('[RetrievalOrchestratorRegistry] Registered semantic provider.');
-  } else {
-    console.log(
-      '[RetrievalOrchestratorRegistry] No EmbeddingsRepository provided; semantic provider not registered.',
-    );
-  }
-
-  // Register external provider (if configured)
-  const settings = tryLoadSettings(opts.settingsPath);
-  const activeConfig = resolveActiveSearchProviderConfig(settings?.search);
-  const externalProvider = new ExternalApiSearchProvider(activeConfig);
-  _externalProvider = externalProvider;
-
-  if (activeConfig) {
-    orchestrator.registerProvider(externalProvider);
-    console.log(
-      `[RetrievalOrchestratorRegistry] Registered external provider: ${externalProvider.id}`,
-    );
-  } else {
-    // Register with null config so it can be refreshed later without re-init
-    // but don't actually wire it into the orchestrator until a provider is configured.
-    console.log(
-      '[RetrievalOrchestratorRegistry] No active external search provider configured; external provider not registered.',
-    );
-  }
-
+  const orchestrator = new RetrievalOrchestrator(options.researchRepo);
   _orchestrator = orchestrator;
-  console.log('[RetrievalOrchestratorRegistry] RetrievalOrchestrator initialized.');
-  return orchestrator;
+  _settingsPath = options.settingsPath;
+
+  // 1. Local search provider (always present)
+  _orchestrator.registerProvider(new LocalSearchProvider(options.fileService));
+
+  // 2. External API search provider (if enabled by flags)
+  const settings = tryLoadSettings(options.settingsPath);
+  const activeConfig = resolveActiveSearchProviderConfig(settings?.search);
+  
+  _externalProvider = new ExternalApiSearchProvider(activeConfig);
+  
+  // We only wire it into the orchestrator if a provider is actually configured
+  // AND the legacy search flag is enabled.
+  if (activeConfig && RuntimeFlags.ENABLE_LEGACY_REMOTE_SEARCH) {
+    _orchestrator.registerProvider(_externalProvider);
+    console.log(`[RetrievalOrchestratorRegistry] Registered external provider: ${_externalProvider.id}`);
+  } else {
+    console.log('[RetrievalOrchestratorRegistry] External provider not registered (no config or flag disabled)');
+  }
+
+  // 3. Optional Semantic search provider (pgvector)
+  if (options.embeddingsRepo) {
+    _orchestrator.registerProvider(
+      new SemanticSearchProvider(options.embeddingsRepo),
+    );
+    console.log('[RetrievalOrchestratorRegistry] Registered semantic provider.');
+  }
+
+  return _orchestrator;
 }
 
 /**
- * Get the initialized RetrievalOrchestrator.
- * Returns null if initRetrievalOrchestrator() has not been called.
+ * Get the singleton RetrievalOrchestrator instance.
  */
 export function getRetrievalOrchestrator(): RetrievalOrchestrator | null {
   return _orchestrator;
 }
 
 /**
- * Refresh the external search provider registration from current settings.
- *
- * Call this after the user applies settings changes that affect the Search tab.
- * The old external provider is unregistered and a new one registered if valid.
+ * Re-registers the ExternalApiSearchProvider with updated settings.
+ * P7E enhancement: uses loadSettings() to ensure we have the latest config state.
  */
-export function refreshExternalProvider(settingsPath: string): void {
+export function refreshExternalProvider(settings?: SearchConfig): void {
   if (!_orchestrator) return;
 
-  const settings = tryLoadSettings(settingsPath);
-  const activeConfig = resolveActiveSearchProviderConfig(settings?.search);
+  const effectiveSettings = settings ?? (loadSettings(_settingsPath || '').search as SearchConfig);
+  const activeConfig = resolveActiveSearchProviderConfig(effectiveSettings);
 
   // Unregister all previously registered external providers
   const providers = _orchestrator.listProviders();
@@ -139,15 +110,9 @@ export function refreshExternalProvider(settingsPath: string): void {
     _externalProvider = new ExternalApiSearchProvider(activeConfig);
   }
 
-  if (activeConfig) {
+  if (activeConfig && RuntimeFlags.ENABLE_LEGACY_REMOTE_SEARCH) {
     _orchestrator.registerProvider(_externalProvider);
-    console.log(
-      `[RetrievalOrchestratorRegistry] External provider refreshed: ${_externalProvider.id}`,
-    );
-  } else {
-    console.log(
-      '[RetrievalOrchestratorRegistry] No active external provider after refresh; external provider unregistered.',
-    );
+    console.log(`[RetrievalOrchestratorRegistry] External provider refreshed: ${_externalProvider.id}`);
   }
 }
 
