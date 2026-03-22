@@ -107,17 +107,23 @@ function deriveAuthorityTierFromEdgeTrust(
 
 function itemToCandidate(
   item: ContextAssemblyItem,
-  layer: 'evidence' | 'graph_context',
   idx: number,
 ): ContextCandidate {
+  const isGraphContext = item.selectionClass === 'graph_context';
+  const layer: 'evidence' | 'graph_context' = isGraphContext ? 'graph_context' : 'evidence';
+
   // Use sourceKey as stable ID; fall back to URI, title, or positional key
   const id = item.sourceKey ?? item.uri ?? item.title ?? `${layer}-${idx}`;
-  const authorityTier: MemoryAuthorityTier | null =
-    item.selectionClass === 'graph_context'
-      ? deriveAuthorityTierFromEdgeTrust(item.graphEdgeTrust)
-      : null; // evidence items: null = neutral (scoring treats as 0.5)
+  const authorityTier: MemoryAuthorityTier | null = isGraphContext
+    ? deriveAuthorityTierFromEdgeTrust(item.graphEdgeTrust)
+    : null; // evidence items: null = neutral (scoring treats as 0.5)
   const timestamp = (item.metadata?.fetchedAt as string | undefined) ?? null;
-  const graphHopDepth = item.selectionClass === 'graph_context' ? DEFAULT_GRAPH_HOP_DEPTH : 0;
+  const graphHopDepth = isGraphContext ? DEFAULT_GRAPH_HOP_DEPTH : 0;
+
+  // P7D: Derive source layer and canonical flag.
+  const sourceLayer = isGraphContext ? 'graph' : 'rag';
+  const isCanonical = authorityTier === 'canonical';
+  const canonicalId = (item.metadata?.canonicalId as string | undefined) ?? undefined;
 
   return {
     id,
@@ -136,6 +142,9 @@ function itemToCandidate(
     graphEdgeType: item.graphEdgeType ?? null,
     graphEdgeTrust: item.graphEdgeTrust ?? null,
     metadata: item.metadata,
+    sourceLayer,
+    isCanonical,
+    canonicalId,
   };
 }
 
@@ -178,24 +187,25 @@ export class ContextAssemblyService {
   /**
    * Assemble context for a single turn.
    *
-   * P7B+P7C deterministic pipeline stages:
+   * P7B+P7C+P7D deterministic pipeline stages:
    *   1.  Resolve the active MemoryPolicy.
    *   2.  Retrieve candidates via RetrievalOrchestrator.
    *   3.  Map retrieval results to ContextAssemblyItems with full provenance.
    *   3.5 Expand structural graph context via GraphTraversalService.
    *   3.6 Add affective graph context via AffectiveGraphService (optional).
-   *   3P. P7B+P7C: Score and sort evidence candidates deterministically.
-   *       When allowEvidenceReordering is true, affective keyword-overlap
-   *       adjustments are applied via AffectiveWeightingService (P7C).
-   *   3.7 Merge structural + affective graph_context; score and sort with
-   *       total-order comparator. When allowGraphOrderingInfluence is true,
-   *       affective keyword-overlap adjustments are applied (P7C).
+   *   3P. P7C: Build AffectiveState from affective items for keyword-overlap scoring.
+   *   3.7 Merge structural + affective graph_context items.
+   *   3D. P7D: Collect ALL candidates (evidence + graph_context) into ONE unified
+   *       competitive pool. Score and sort ALL candidates in a single pass with
+   *       ContextScoringService, AffectiveWeightingService (P7C gates per-layer),
+   *       and total-order comparator. No layer is ranked independently.
+   *       Split unified ranked pool by layerAssignment for budget enforcement.
    *   4.  Enforce evidence budget: cap evidence items; move overflow to latent.
-   *       Record inclusion/exclusion decisions for every candidate.
+   *       Enforce graph_context budget cap. Record decisions for every candidate.
    *   5.  Combine injected (evidence) + graph_context + latent items.
    *   6.  Build class counts.
    *   7.  Estimate tokens.
-   *   8.  Build P7B diagnostics (includes P7C affective adjustment fields).
+   *   8.  Build diagnostics (P7B/P7C/P7D fields).
    *   9.  Return ContextAssemblyResult.
    */
   async assemble(request: ContextAssemblyRequest): Promise<ContextAssemblyResult> {
@@ -274,29 +284,28 @@ export class ContextAssemblyService {
     //      both graph_context and evidence candidates. Null when no affective items.
     const affectiveState = this._buildAffectiveStateFromItems(affectiveItems);
 
-    // 3P. P7B+P7C: Score and sort evidence candidates deterministically before selection.
-    //     P7C: Always pass affectiveState and affectivePolicy; AffectiveWeightingService
-    //          gates application by layer eligibility (allowEvidenceReordering gate).
-    const { ranked: rankedEvidence, tieBreaks: evidenceTieBreaks } =
-      this._rankItems(rawCandidates, 'evidence', affectiveState, affectivePolicy);
-    allTieBreaks.push(...evidenceTieBreaks);
-    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
-
-    // 3.7. Merge structural and affective graph_context items; score and sort
-    //      deterministically before applying the graph_context class budget cap.
-    //      P7C: Keyword-overlap boost flows through AffectiveWeightingService →
-    //           affectiveAdjustment in the scoring formula (allowGraphOrderingInfluence gate).
+    // 3.7. Merge structural and affective graph_context items into a single list.
+    //      Ordering within the merged list is determined by the unified ranking pass below.
     const graphCap = policy.contextBudget.maxItemsPerClass?.graph_context ?? 0;
     const mergedGraphCandidates = this._mergeGraphContextItems(
       structuralGraphItems,
       affectiveItems,
     );
 
-    // P7B+P7C: Score and sort the merged graph candidates with total-order comparator.
-    //          AffectiveWeightingService gates application via allowGraphOrderingInfluence.
-    const { ranked: rankedGraph, tieBreaks: graphTieBreaks } =
-      this._rankItems(mergedGraphCandidates, 'graph_context', affectiveState, affectivePolicy);
-    allTieBreaks.push(...graphTieBreaks);
+    // P7D: Collect ALL candidates (evidence + graph_context) into a single competitive
+    //      pool. Score and sort ALL candidates in ONE unified pass so that no layer is
+    //      ranked independently before scoring.
+    //      P7B+P7C: AffectiveWeightingService gates are applied per-candidate based on
+    //               each candidate's layerAssignment ('evidence' vs 'graph_context').
+    const allRawItems = [...rawCandidates, ...mergedGraphCandidates];
+    const { ranked: rankedAll, tieBreaks: unifiedTieBreaks } =
+      this._rankItems(allRawItems, affectiveState, affectivePolicy);
+    allTieBreaks.push(...unifiedTieBreaks);
+
+    // Split unified ranked pool by layer assignment for layer-specific budget enforcement.
+    const rankedEvidence = rankedAll.filter(rc => rc.layerAssignment === 'evidence');
+    const rankedGraph = rankedAll.filter(rc => rc.layerAssignment === 'graph_context');
+    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
     const sortedGraphItems = rankedGraph.map(rankedCandidateToItem);
 
     // Apply graph_context cap. Candidates beyond the cap are recorded as excluded.
@@ -654,10 +663,16 @@ export class ContextAssemblyService {
   }
 
   /**
-   * P7B+P7C: Score and sort a list of ContextAssemblyItems deterministically.
+   * P7B+P7C+P7D: Score and sort a unified list of ContextAssemblyItems deterministically.
+   *
+   * P7D change: The `layer` parameter has been removed. All items from all layers
+   * (evidence, graph_context, etc.) are scored and sorted in a single pass. Each
+   * item's layer is derived from its selectionClass via itemToCandidate(). The
+   * AffectiveWeightingService layer-eligibility gates are applied per-candidate
+   * based on the candidate's derived layerAssignment.
    *
    * Pipeline:
-   *   1. Convert items to ContextCandidates.
+   *   1. Convert items to ContextCandidates (P7D: layer derived from selectionClass).
    *   2. Score each with ContextScoringService.
    *      P7C: When affectiveState and affectivePolicy are provided, compute an
    *           affective keyword-overlap adjustment via AffectiveWeightingService
@@ -676,26 +691,29 @@ export class ContextAssemblyService {
    */
   private _rankItems(
     items: ContextAssemblyItem[],
-    layer: 'evidence' | 'graph_context',
     affectiveState?: AffectiveState | null,
     affectivePolicy?: AffectiveModulationPolicy | null,
   ): { ranked: RankedContextCandidate[]; tieBreaks: TieBreakRecord[] } {
     if (items.length === 0) return { ranked: [], tieBreaks: [] };
 
     // Convert to ContextCandidates, score each one, and wrap in RankedContextCandidate.
+    // P7D: Layer is derived from each item's selectionClass inside itemToCandidate().
     const unranked: RankedContextCandidate[] = items.map((item, idx) => {
-      const candidate = itemToCandidate(item, layer, idx);
+      const candidate = itemToCandidate(item, idx);
 
       // P7C: Compute affective adjustment when state and policy are available.
+      // P7D: Use each candidate's own layerAssignment for the eligibility gate so that
+      //      evidence and graph_context items are gated correctly within the unified pool.
       let affectiveAdjustment = 0;
       let affectiveReasonCode: string | null = null;
       if (affectiveState) {
         const candidateText = `${candidate.title ?? ''} ${candidate.content}`.toLowerCase();
+        const targetLayer = candidate.layerAssignment as 'evidence' | 'graph_context';
         const result = this._affectiveWeightingService.computeAdjustment(
           candidateText,
           affectiveState,
           affectivePolicy ?? null,
-          layer,
+          targetLayer,
         );
         affectiveAdjustment = result.adjustment;
         affectiveReasonCode = result.reasonCode;

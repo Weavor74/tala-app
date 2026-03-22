@@ -222,6 +222,27 @@ export interface ContextCandidate {
 
   /** Preserved metadata from the originating item. */
   metadata?: Record<string, unknown>;
+
+  // ─── P7D: Unified Candidate Arena ──────────────────────────────────────────
+
+  /**
+   * P7D: Source layer this candidate originated from.
+   * Carries context-source provenance for the unified candidate arena.
+   * Examples: 'rag', 'graph', 'canonical_memory', 'mem0', 'conversation', 'task'
+   */
+  sourceLayer?: string;
+
+  /**
+   * P7D: True when this candidate has canonical memory authority tier.
+   * Convenience flag derived from authorityTier === 'canonical'.
+   */
+  isCanonical?: boolean;
+
+  /**
+   * P7D: Optional reference to the canonical record this candidate is derived from
+   * or the canonical source of this candidate's information.
+   */
+  canonicalId?: string;
 }
 
 /**
