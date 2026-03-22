@@ -1,6 +1,6 @@
 # Contract: settings.ts
 
-**Source**: [shared\settings.ts](../../shared/settings.ts)
+**Source**: [shared/settings.ts](../../shared/settings.ts)
 
 ## Interfaces
 
@@ -189,12 +189,6 @@ interface WorkflowConfig {
 ```
 
 ### `Notebook`
-
-> **Deprecated legacy format.** Notebooks are now persisted in PostgreSQL via the `notebooks` table
-> (migration `008_research_collections.sql`). The settings-based `notebooks[]` array is retained only
-> as a fallback when the database is unavailable. New notebook creation goes to PostgreSQL first.
-> See `docs/features/research_collections.md` for the canonical data model.
-
 ```typescript
 interface Notebook {
     id: string;
@@ -282,6 +276,8 @@ interface AppSettings {
     workflows: WorkflowConfig;
     notebooks: Notebook[];
     firewall: FirewallConfig;
+    database?: Partial<DatabaseConfig>;
+    databaseBootstrap?: Partial<DatabaseBootstrapConfig>;
 }
 ```
 

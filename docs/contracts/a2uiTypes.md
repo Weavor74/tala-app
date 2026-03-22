@@ -1,6 +1,6 @@
 # Contract: a2uiTypes.ts
 
-**Source**: [shared\a2uiTypes.ts](../../shared/a2uiTypes.ts)
+**Source**: [shared/a2uiTypes.ts](../../shared/a2uiTypes.ts)
 
 ## Interfaces
 

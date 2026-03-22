@@ -451,7 +451,41 @@ export interface ConflictResolutionRecord {
   reason: string;
 }
 
-// ─── D. Context Assembly Diagnostics ─────────────────────────────────────────
+// ─── D. Cross-layer diagnostics helpers ───────────────────────────────────────
+
+/**
+ * Normalization breakdown for a candidate in the cross-layer ranking pool.
+ *
+ * Captures the explicit components used in P7D Feed 2:
+ *   normalizedScore = finalScore × sourceWeight × tokenEfficiency
+ */
+export interface NormalizationBreakdownEntry {
+  /** Candidate ID from the unified ranking pool. */
+  candidateId: string;
+
+  /** Source layer used for normalization (rag, graph, mem0, canonical_memory, etc.). */
+  sourceLayer?: string;
+
+  /** Base composite score before normalization. */
+  finalScore: number;
+
+  /** Per-source-layer weight multiplier. */
+  sourceWeight: number;
+
+  /** Token efficiency multiplier derived from estimatedTokens. */
+  tokenEfficiency: number;
+
+  /** Final normalized score used in cross-layer ranking. */
+  normalizedScore: number;
+}
+
+/** Counts of included items grouped by source layer. */
+export type SourceInclusionCounts = Record<string, number>;
+
+/** Exclusion/latent/truncation reasons grouped by source layer. */
+export type ExclusionReasonsBySource = Record<string, Partial<Record<ContextDecisionReason, number>>>;
+
+// ─── E. Context Assembly Diagnostics ─────────────────────────────────────────
 
 /**
  * Full diagnostics for a single context assembly pass.
@@ -475,8 +509,26 @@ export interface ContextAssemblyDiagnostics {
   /** All ranked candidates grouped by their assigned layer. */
   candidatePoolByLayer: Partial<Record<ContextLayerName, RankedContextCandidate[]>>;
 
+  /** Unified ranked candidate pool across all layers (pre-selection). */
+  crossLayerCandidatePool: RankedContextCandidate[];
+
+  /** Candidate IDs in cross-layer rank order (highest priority first). */
+  crossLayerRankingOrder: string[];
+
   /** Complete decision record — one entry per candidate considered. */
   decisions: ContextDecision[];
+
+  /** Included counts grouped by source layer. */
+  perSourceInclusionCounts: SourceInclusionCounts;
+
+  /** Exclusion/truncation/latent reasons grouped by source layer. */
+  exclusionReasonsBySource: ExclusionReasonsBySource;
+
+  /** Authority conflict records (alias of conflictResolutionRecords for diagnostics consumers). */
+  authorityConflictRecords: ConflictResolutionRecord[];
+
+  /** Normalization breakdowns for cross-layer ranking. */
+  normalizationBreakdown: NormalizationBreakdownEntry[];
 
   /** Candidate IDs of items that were included in the final context. */
   includedCandidates: string[];
