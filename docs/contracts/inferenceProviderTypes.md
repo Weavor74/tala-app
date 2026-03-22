@@ -1,6 +1,6 @@
 # Contract: inferenceProviderTypes.ts
 
-**Source**: [shared\inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
+**Source**: [shared/inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
 
 ## Interfaces
 
@@ -204,7 +204,14 @@ interface StreamInferenceRequest {
     fallbackProviders?: InferenceProviderDescriptor[];
     /** AbortSignal for cancellation. */
     signal?: AbortSignal;
-    /** Stream-open timeout in milliseconds (default: 15000). */
+    /**
+     * Stream-open timeout in milliseconds — guards the window before the first token arrives.
+     * When omitted, InferenceService derives a provider-aware default:
+     *   - embedded_llamacpp (scope='embedded'): 90 000 ms; 120 000 ms when prompt exceeds 4 000 chars
+     *   - other local providers (scope='local'): 30 000 ms; 45 000 ms when prompt exceeds 4 000 chars
+     *   - cloud providers (scope='cloud'): 15 000 ms
+     * Set explicitly only when you need to override the policy.
+     */
     openTimeoutMs?: number;
 }
 ```

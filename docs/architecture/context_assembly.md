@@ -105,7 +105,7 @@ P7B (implemented in this service) ensures context assembly is deterministic:
 
 - **Decision records for every candidate.** `_selectItemsGlobal` produces a `ContextDecision` for each candidate. No candidate can disappear without an explicit reason code. Reason codes include `included.cross_layer_top_rank`, `included.high_authority`, `excluded.cross_layer_budget_exceeded`, `excluded.outcompeted_by_higher_rank`, `overflow.to_latent`, `excluded.per_document_cap`, and `truncated.*`.
 
-- **Diagnostics always populated.** `ContextAssemblyResult.diagnostics` (`ContextAssemblyDiagnostics`) is always set. It includes the full candidate pool by layer, score breakdowns, all decisions, tie-break records, and final token usage by layer.
+- **Diagnostics always populated.** `ContextAssemblyResult.diagnostics` (`ContextAssemblyDiagnostics`) is always set. It includes the full candidate pool by layer, the unified cross-layer ranking order, per-source inclusion/exclusion breakdowns, score/normalization components, all decisions, tie-break records, and final token usage by layer.
 
 ### P7D Extended Diagnostics (Feed 5)
 

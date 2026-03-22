@@ -1,6 +1,6 @@
 # MCP Server: mem0-core
 
-**Source**: [mcp-servers\mem0-core\server.py](../../mcp-servers/mem0-core/server.py)
+**Source**: [mcp-servers/mem0-core/server.py](../../mcp-servers/mem0-core/server.py)
 
 ### Tool: `ping`
 
