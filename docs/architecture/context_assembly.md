@@ -256,7 +256,7 @@ input:   ContextAssemblyRequest
 output:  { ok: true, result: ContextAssemblyResult } | { ok: false, error: string }
 ```
 
-Registered in `electron/services/IpcRouter.ts`. Uses `getRetrievalOrchestrator()` (singleton) and constructs `MemoryPolicyService`, `GraphTraversalService`, and `ContextAssemblyService` on each call (stateless). `AffectiveGraphService` is passed as the optional 4th constructor argument when an `AstroService` instance is available; otherwise `null` is passed and behavior is unchanged.
+Registered in `electron/services/IpcRouter.ts`. Uses `getRetrievalOrchestrator()` (singleton) and constructs `MemoryPolicyService`, `GraphTraversalService`, and `ContextAssemblyService` on each call (stateless). `AffectiveGraphService` is passed as the optional 4th constructor argument using the `AstroService` instance obtained from `agent.getAstroService()`. If the Astro runtime is unavailable, not yet ignited, or throws during construction, `null` is passed instead and assembly continues without affective items — no crash, no change to evidence or structural graph context.
 
 ### Preload
 
