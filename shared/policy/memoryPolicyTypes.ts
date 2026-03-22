@@ -31,6 +31,12 @@
 export type { RetrievalMode, RetrievalScopeType as ScopeType } from '../retrieval/retrievalTypes';
 import type { RetrievalMode, RetrievalScopeType } from '../retrieval/retrievalTypes';
 
+// P7B diagnostics — imported from the context determinism module. The import
+// direction is one-way (memoryPolicyTypes → contextDeterminismTypes) to avoid
+// circular dependencies.
+import type { ContextAssemblyDiagnostics } from '../context/contextDeterminismTypes';
+export type { ContextAssemblyDiagnostics } from '../context/contextDeterminismTypes';
+
 // ─── Grounding ────────────────────────────────────────────────────────────────
 
 /**
@@ -494,4 +500,16 @@ export interface ContextAssemblyResult {
    * The result is still usable when warnings are present.
    */
   warnings?: string[];
+
+  /**
+   * Full P7B diagnostics for this assembly pass.
+   *
+   * Includes layer budgets, per-candidate score breakdowns, decision records
+   * (inclusion/exclusion/truncation with reason codes), tie-break events,
+   * conflict resolution records, and final token usage by layer.
+   *
+   * Always populated by ContextAssemblyService. Suitable for test assertions
+   * and observability tooling.
+   */
+  diagnostics?: ContextAssemblyDiagnostics;
 }

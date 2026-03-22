@@ -66,6 +66,7 @@ ContextAssemblyRequest
               estimatedTokens
               durationMs
               warnings
+              diagnostics                      ← P7B: ContextAssemblyDiagnostics (always populated)
 ```
 
 The assembly layers are kept strictly separate:
@@ -76,9 +77,27 @@ The assembly layers are kept strictly separate:
 | Policy | `MemoryPolicyService.ts` | Resolve active policy from request (including affectiveModulation) |
 | Graph Traversal | `GraphTraversalService.ts` | Expand evidence seeds into structural graph_context candidates |
 | Affective Modulation | `AffectiveGraphService.ts` | Produce bounded, labeled affective graph_context from astro/emotional state |
-| Assembly | `ContextAssemblyService.ts` | Select, classify, budget, format |
+| **Scoring (P7B)** | **`ContextScoringService.ts`** | **Deterministic candidate scoring with explicit weight formula** |
+| **Ranking (P7B)** | **`contextCandidateComparator.ts`** | **Total-order tie-break comparator; always produces same sort** |
+| Assembly | `ContextAssemblyService.ts` | Select, classify, budget, format, emit diagnostics |
 
 Policy does not call retrieval. Retrieval does not know about policy. Graph traversal receives only evidence items and policy — it does not call retrieval. Affective modulation receives only policy and query text — it does not access evidence items. The assembler is the only layer that calls all others.
+
+---
+
+## P7B Context Determinism
+
+P7B (implemented in this service) ensures context assembly is deterministic:
+
+- **Score before select.** After mapping retrieval results to `ContextAssemblyItem[]`, the assembler converts each item to a `ContextCandidate`, computes a `ScoreBreakdown` via `ContextScoringService`, and sorts the candidates using the total-order comparator from `contextCandidateComparator.ts`. Selection then operates on this deterministically ordered list — retrieval order never determines assembly order.
+
+- **Total-order tie-breaking.** `compareContextCandidates` provides a 5-level tie-break: authority score → final score → token cost → timestamp → lexical ID. Two distinct candidates can never compare as equal.
+
+- **Decision records for every candidate.** `_selectItems` produces a `ContextDecision` for each candidate. No candidate can disappear without an explicit reason code. Reason codes include `included.*`, `excluded.*`, `overflow.to_latent`, and `truncated.*`.
+
+- **Diagnostics always populated.** `ContextAssemblyResult.diagnostics` (`ContextAssemblyDiagnostics`) is always set. It includes the full candidate pool by layer, score breakdowns, all decisions, tie-break records, and final token usage by layer.
+
+See `docs/architecture/p7b_context_determinism.md` for the full scoring model, tie-break rules, and budget model.
 
 ---
 
