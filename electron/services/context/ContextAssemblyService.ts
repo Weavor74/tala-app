@@ -153,7 +153,7 @@ function rankedCandidateToItem(rc: RankedContextCandidate): ContextAssemblyItem 
   return {
     content: rc.content,
     selectionClass: rc.selectionClass as MemorySelectionClass,
-    sourceType: rc.sourceType ?? null,
+    sourceType: rc.sourceType ?? undefined,
     sourceKey: rc.sourceKey ?? undefined,
     title: rc.title,
     uri: rc.uri,
@@ -347,7 +347,6 @@ export class ContextAssemblyService {
       graphContextItems,
       injected,
       latent,
-      rankedAll,
     });
 
     return {
@@ -993,14 +992,14 @@ export class ContextAssemblyService {
     decisions: ContextDecision[];
     tieBreakRecords: TieBreakRecord[];
     conflictResolutionRecords: ConflictResolutionRecord[];
+    graphContextItems: ContextAssemblyItem[];
     injected: ContextAssemblyItem[];
     latent: ContextAssemblyItem[];
-    rankedAll: RankedContextCandidate[];
   }): ContextAssemblyDiagnostics {
     const {
       policy, rankedAll, rankedEvidence, rankedGraph,
       decisions, tieBreakRecords, conflictResolutionRecords,
-      graphContextItems, injected, latent, rankedAll,
+      graphContextItems, injected, latent,
     } = args;
 
     const layerBudgets = this._buildLayerBudgets(policy);
@@ -1078,8 +1077,6 @@ export class ContextAssemblyService {
       assemblyMode: policy.groundingMode,
       layerBudgets,
       candidatePoolByLayer,
-      crossLayerCandidatePool,
-      crossLayerRankingOrder,
       decisions,
       perSourceInclusionCounts,
       exclusionReasonsBySource,

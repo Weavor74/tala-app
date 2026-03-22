@@ -17,6 +17,7 @@
 import type { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import { toSql as pgvectorToSql } from 'pgvector';
+import { toIsoString, toIsoStringOrNull } from './dbUtils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -280,7 +281,7 @@ export class EmbeddingsRepository {
       params
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row: any) => ({
       chunk_id: row.chunk_id,
       document_id: row.document_id,
       item_key: row.item_key,
@@ -297,9 +298,7 @@ export class EmbeddingsRepository {
       external_id: row.external_id,
       citation_label: row.citation_label,
       display_domain: row.display_domain,
-      fetched_at: row.fetched_at instanceof Date
-        ? (row.fetched_at as unknown as Date).toISOString()
-        : row.fetched_at,
+      fetched_at: toIsoStringOrNull(row.fetched_at),
       doc_content_hash: row.doc_content_hash,
       similarity: Number(row.similarity),
     }));
@@ -311,12 +310,8 @@ export class EmbeddingsRepository {
     return {
       ...row,
       embedding_dimension: Number(row.embedding_dimension),
-      created_at: row.created_at instanceof Date
-        ? (row.created_at as unknown as Date).toISOString()
-        : row.created_at,
-      updated_at: row.updated_at instanceof Date
-        ? (row.updated_at as unknown as Date).toISOString()
-        : row.updated_at,
+      created_at: toIsoString(row.created_at),
+      updated_at: toIsoString(row.updated_at),
     };
   }
 }

@@ -509,12 +509,6 @@ export interface ContextAssemblyDiagnostics {
   /** All ranked candidates grouped by their assigned layer. */
   candidatePoolByLayer: Partial<Record<ContextLayerName, RankedContextCandidate[]>>;
 
-  /** Unified ranked candidate pool across all layers (pre-selection). */
-  crossLayerCandidatePool: RankedContextCandidate[];
-
-  /** Candidate IDs in cross-layer rank order (highest priority first). */
-  crossLayerRankingOrder: string[];
-
   /** Complete decision record — one entry per candidate considered. */
   decisions: ContextDecision[];
 

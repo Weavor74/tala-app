@@ -24,11 +24,12 @@ describe('ContextAssemblyService Diagnostics Extensions (Feed 5)', () => {
   it('populates all new Feed 5 diagnostic fields', async () => {
     const request: ContextAssemblyRequest = {
       query: 'test query',
-      mode: 'assistant',
+      policy: { groundingMode: 'exploratory' } as any,
     };
 
     const result = await service.assemble(request);
-    const diag = result.diagnostics;
+    expect(result.diagnostics).toBeDefined();
+    const diag = result.diagnostics!;
 
     expect(diag.crossLayerCandidatePool).toBeDefined();
     expect(diag.crossLayerCandidatePool.length).toBeGreaterThan(0);
@@ -45,11 +46,12 @@ describe('ContextAssemblyService Diagnostics Extensions (Feed 5)', () => {
   it('correctly ranks candidates in crossLayerRankingOrder', async () => {
     const request: ContextAssemblyRequest = {
       query: 'test query',
-      mode: 'assistant',
+      policy: { groundingMode: 'exploratory' } as any,
     };
 
     const result = await service.assemble(request);
-    const diag = result.diagnostics;
+    expect(result.diagnostics).toBeDefined();
+    const diag = result.diagnostics!;
 
     // Check that IDs in crossLayerRankingOrder match the pool in order
     for (let i = 0; i < diag.crossLayerRankingOrder.length; i++) {
@@ -61,11 +63,12 @@ describe('ContextAssemblyService Diagnostics Extensions (Feed 5)', () => {
   it('answers "why X beat Y" via score breakdown in the pool', async () => {
     const request: ContextAssemblyRequest = {
       query: 'test query',
-      mode: 'assistant',
+      policy: { groundingMode: 'exploratory' } as any,
     };
 
     const result = await service.assemble(request);
-    const diag = result.diagnostics;
+    expect(result.diagnostics).toBeDefined();
+    const diag = result.diagnostics!;
 
     const first = diag.crossLayerCandidatePool[0];
     const second = diag.crossLayerCandidatePool[1];

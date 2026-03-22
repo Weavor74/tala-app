@@ -8,6 +8,7 @@
 
 import type { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
+import { toIsoString } from './dbUtils';
 import type {
   NotebookRecord,
   CreateNotebookInput,
@@ -49,7 +50,7 @@ export class ResearchRepository {
     const result = await this.pool.query<NotebookRecord>(
       `SELECT * FROM notebooks ORDER BY created_at DESC`
     );
-    return result.rows.map(r => this.mapNotebook(r));
+    return result.rows.map((r: any) => this.mapNotebook(r));
   }
 
   async getNotebook(id: string): Promise<NotebookRecord | null> {
@@ -178,7 +179,7 @@ export class ResearchRepository {
       `SELECT * FROM notebook_items WHERE notebook_id = $1 ORDER BY added_at DESC`,
       [notebookId]
     );
-    return result.rows.map(r => this.mapNotebookItem(r));
+    return result.rows.map((r: any) => this.mapNotebookItem(r));
   }
 
   // ─── Search Runs ───────────────────────────────────────────────────────────
@@ -217,13 +218,13 @@ export class ResearchRepository {
         `SELECT * FROM search_runs WHERE notebook_id = $1 ORDER BY executed_at DESC LIMIT $2`,
         [notebookId, limit]
       );
-      return result.rows.map(r => this.mapSearchRun(r));
+      return result.rows.map((r: any) => this.mapSearchRun(r));
     }
     const result = await this.pool.query<SearchRunRecord>(
       `SELECT * FROM search_runs ORDER BY executed_at DESC LIMIT $1`,
       [limit]
     );
-    return result.rows.map(r => this.mapSearchRun(r));
+    return result.rows.map((r: any) => this.mapSearchRun(r));
   }
 
   async addSearchRunResults(
@@ -264,7 +265,7 @@ export class ResearchRepository {
       `SELECT * FROM search_run_results WHERE search_run_id = $1 ORDER BY captured_at ASC`,
       [searchRunId]
     );
-    return result.rows.map(r => this.mapSearchRunResult(r));
+    return result.rows.map((r: any) => this.mapSearchRunResult(r));
   }
 
   // ─── Compound Operations ────────────────────────────────────────────────────
@@ -339,21 +340,15 @@ export class ResearchRepository {
   private mapNotebook(row: NotebookRecord): NotebookRecord {
     return {
       ...row,
-      created_at: row.created_at instanceof Date
-        ? (row.created_at as unknown as Date).toISOString()
-        : row.created_at,
-      updated_at: row.updated_at instanceof Date
-        ? (row.updated_at as unknown as Date).toISOString()
-        : row.updated_at,
+      created_at: toIsoString(row.created_at),
+      updated_at: toIsoString(row.updated_at),
     };
   }
 
   private mapSearchRun(row: SearchRunRecord): SearchRunRecord {
     return {
       ...row,
-      executed_at: row.executed_at instanceof Date
-        ? (row.executed_at as unknown as Date).toISOString()
-        : row.executed_at,
+      executed_at: toIsoString(row.executed_at),
     };
   }
 
@@ -361,18 +356,14 @@ export class ResearchRepository {
     return {
       ...row,
       score: row.score != null ? Number(row.score) : null,
-      captured_at: row.captured_at instanceof Date
-        ? (row.captured_at as unknown as Date).toISOString()
-        : row.captured_at,
+      captured_at: toIsoString(row.captured_at),
     };
   }
 
   private mapNotebookItem(row: NotebookItemRecord): NotebookItemRecord {
     return {
       ...row,
-      added_at: row.added_at instanceof Date
-        ? (row.added_at as unknown as Date).toISOString()
-        : row.added_at,
+      added_at: toIsoString(row.added_at),
     };
   }
 }

@@ -8,6 +8,7 @@
 
 import type { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
+import { toIsoString, toIsoStringOrNull } from './dbUtils';
 import type {
   SourceDocumentRecord,
   DocumentChunkRecord,
@@ -182,18 +183,10 @@ export class ContentRepository {
   private mapSourceDocument(row: SourceDocumentRecord): SourceDocumentRecord {
     return {
       ...row,
-      published_at: row.published_at instanceof Date
-        ? (row.published_at as unknown as Date).toISOString()
-        : row.published_at,
-      fetched_at: row.fetched_at instanceof Date
-        ? (row.fetched_at as unknown as Date).toISOString()
-        : row.fetched_at,
-      created_at: row.created_at instanceof Date
-        ? (row.created_at as unknown as Date).toISOString()
-        : row.created_at,
-      updated_at: row.updated_at instanceof Date
-        ? (row.updated_at as unknown as Date).toISOString()
-        : row.updated_at,
+      published_at: toIsoStringOrNull(row.published_at),
+      fetched_at: toIsoStringOrNull(row.fetched_at),
+      created_at: toIsoString(row.created_at),
+      updated_at: toIsoString(row.updated_at),
     };
   }
 
@@ -205,9 +198,7 @@ export class ContentRepository {
       char_start: Number(row.char_start),
       char_end: Number(row.char_end),
       page_number: row.page_number != null ? Number(row.page_number) : null,
-      created_at: row.created_at instanceof Date
-        ? (row.created_at as unknown as Date).toISOString()
-        : row.created_at,
+      created_at: toIsoString(row.created_at),
     };
   }
 }
