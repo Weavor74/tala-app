@@ -286,7 +286,6 @@ export class ContextAssemblyService {
 
     // 3.7. Merge structural and affective graph_context items into a single list.
     //      Ordering within the merged list is determined by the unified ranking pass below.
-    const graphCap = policy.contextBudget.maxItemsPerClass?.graph_context ?? 0;
     const mergedGraphCandidates = this._mergeGraphContextItems(
       structuralGraphItems,
       affectiveItems,
@@ -302,52 +301,19 @@ export class ContextAssemblyService {
       this._rankItems(allRawItems, affectiveState, affectivePolicy);
     allTieBreaks.push(...unifiedTieBreaks);
 
-    // Split unified ranked pool by layer assignment for layer-specific budget enforcement.
+    // Split unified ranked pool by layer assignment for diagnostics.
     const rankedEvidence = rankedAll.filter(rc => rc.layerAssignment === 'evidence');
     const rankedGraph = rankedAll.filter(rc => rc.layerAssignment === 'graph_context');
-    const sortedEvidenceCandidates = rankedEvidence.map(rankedCandidateToItem);
-    const sortedGraphItems = rankedGraph.map(rankedCandidateToItem);
 
-    // Apply graph_context cap. Candidates beyond the cap are recorded as excluded.
-    const graphContextItems = sortedGraphItems.slice(0, graphCap);
-    for (const rc of rankedGraph.slice(0, graphCap)) {
-      allDecisions.push({
-        candidateId: rc.id,
-        sourceType: rc.sourceType,
-        authorityTier: rc.authorityTier,
-        finalScore: rc.scoreBreakdown.finalScore,
-        estimatedTokens: rc.estimatedTokens,
-        status: 'included',
-        layerAssignment: 'graph_context',
-        reasons: ['included.top_ranked_within_budget'],
-        affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
-        affectiveReasonCode: rc.affectiveReasonCode ?? null,
-      });
-    }
-    for (const rc of rankedGraph.slice(graphCap)) {
-      allDecisions.push({
-        candidateId: rc.id,
-        sourceType: rc.sourceType,
-        authorityTier: rc.authorityTier,
-        finalScore: rc.scoreBreakdown.finalScore,
-        estimatedTokens: rc.estimatedTokens,
-        status: 'excluded',
-        layerAssignment: 'graph_context',
-        reasons: ['excluded.layer_budget_exceeded'],
-        affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
-        affectiveReasonCode: rc.affectiveReasonCode ?? null,
-      });
-    }
-
-    // 4. Enforce evidence budget and produce latent overflow.
-    //    Input is now deterministically sorted (step 3P).
-    const { injected, latent, decisions: evidenceDecisions } = this._selectItems(
-      sortedEvidenceCandidates,
-      rankedEvidence,
-      policy,
-      warnings,
-    );
-    allDecisions.push(...evidenceDecisions);
+    // P7D Feed 3: Global competitive selection — all candidates compete under ONE budget.
+    // Per-layer quota enforcement is replaced by a single global token + item budget.
+    const {
+      injected,
+      graphContextItems,
+      latent,
+      decisions: selectionDecisions,
+    } = this._selectItemsGlobal(rankedAll, policy, warnings);
+    allDecisions.push(...selectionDecisions);
 
     // 5. Combine injected (evidence) + graph_context + latent items.
     const allItems: ContextAssemblyItem[] = [...injected, ...graphContextItems, ...latent];
@@ -373,7 +339,7 @@ export class ContextAssemblyService {
       decisions: allDecisions,
       tieBreakRecords: allTieBreaks,
       conflictResolutionRecords,
-      graphCap,
+      graphContextItems,
       injected,
       latent,
     });
@@ -663,6 +629,184 @@ export class ContextAssemblyService {
   }
 
   /**
+   * P7D Feed 3: Select items using a single global budget across ALL layers.
+   *
+   * Replaces per-layer quota enforcement with one greedy pass over ALL ranked
+   * candidates (evidence + graph_context) in rank order. A candidate is included
+   * when the global item and token budgets allow it; otherwise it is excluded or
+   * moved to latent.
+   *
+   * Rules (applied in order):
+   *   1. Iterate over ALL candidates in descending rank order (highest rank first).
+   *   2. Include a candidate when:
+   *        - Global item cap has not been reached, AND
+   *        - Global token cap (if set) has room for this candidate's token cost, AND
+   *        - Per-document chunk cap has not been reached (evidence only).
+   *   3. Evidence candidates that do not fit are moved to 'latent' (not dropped),
+   *      preserving their metadata and ranked order.
+   *   4. Graph_context candidates that do not fit are excluded with a decision record.
+   *   5. Optional minimum canonical floor: the top-ranked canonical candidates are
+   *      guaranteed inclusion even when the global item budget would otherwise
+   *      exclude them (see policy.contextBudget.minCanonicalItems).
+   *   6. A ContextDecision record is produced for every candidate.
+   *   7. Reason codes:
+   *        included  → 'included.cross_layer_top_rank' (+ 'included.high_authority'
+   *                    when authorityTier === 'canonical')
+   *        excluded  → 'excluded.cross_layer_budget_exceeded' (global cap hit)
+   *        latent    → 'excluded.cross_layer_budget_exceeded' + 'overflow.to_latent'
+   *        per-doc   → 'excluded.per_document_cap' + 'excluded.outcompeted_by_higher_rank'
+   *                    + 'overflow.to_latent' (higher-ranked chunk from same doc took the slot)
+   */
+  private _selectItemsGlobal(
+    rankedAll: RankedContextCandidate[],
+    policy: MemoryPolicy,
+    warnings: string[],
+  ): {
+    injected: ContextAssemblyItem[];
+    graphContextItems: ContextAssemblyItem[];
+    latent: ContextAssemblyItem[];
+    decisions: ContextDecision[];
+  } {
+    const budget = policy.contextBudget;
+    const globalItemCap = budget.maxItems;
+    const globalTokenCap = budget.maxTokens ?? Infinity;
+    const minCanonical = budget.minCanonicalItems ?? 0;
+
+    // Per-document chunk cap for evidence items.
+    // Use the global item cap as the base so that no single document consumes
+    // more than half the global budget.
+    const maxChunksPerDoc = Math.max(1, Math.ceil(globalItemCap / 2));
+
+    // P7D Feed 3: Optional minimum canonical memory floor.
+    // The comparator already places canonical items at the top of rankedAll
+    // (authority tier is step 1). The floor only activates when the policy
+    // explicitly requires more canonical items than the global cap would allow.
+    const mustIncludeIds = new Set<string>();
+    if (minCanonical > 0) {
+      const canonicals = rankedAll.filter(rc => rc.authorityTier === 'canonical');
+      const floorCount = Math.min(minCanonical, canonicals.length);
+      for (let i = 0; i < floorCount; i++) {
+        mustIncludeIds.add(canonicals[i]!.id);
+      }
+    }
+
+    const injected: ContextAssemblyItem[] = [];
+    const graphContextItems: ContextAssemblyItem[] = [];
+    const latent: ContextAssemblyItem[] = [];
+    const decisions: ContextDecision[] = [];
+    const chunksPerDoc = new Map<string, number>();
+    let totalIncluded = 0;
+    let totalTokensUsed = 0;
+
+    for (const rc of rankedAll) {
+      const isEvidence = rc.layerAssignment === 'evidence';
+      const isMustInclude = mustIncludeIds.has(rc.id);
+      const tokenCost = rc.estimatedTokens;
+
+      // Check global budget. Must-include canonical items bypass the cap.
+      const budgetExhausted =
+        !isMustInclude &&
+        (totalIncluded >= globalItemCap ||
+          (globalTokenCap !== Infinity && totalTokensUsed + tokenCost > globalTokenCap));
+
+      if (budgetExhausted) {
+        if (isEvidence) {
+          latent.push({ ...rankedCandidateToItem(rc), selectionClass: 'latent' });
+          decisions.push({
+            candidateId: rc.id,
+            sourceType: rc.sourceType,
+            authorityTier: rc.authorityTier,
+            finalScore: rc.scoreBreakdown.finalScore,
+            estimatedTokens: tokenCost,
+            status: 'latent',
+            layerAssignment: rc.layerAssignment,
+            reasons: ['excluded.cross_layer_budget_exceeded', 'overflow.to_latent'],
+            affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+            affectiveReasonCode: rc.affectiveReasonCode ?? null,
+          });
+        } else {
+          decisions.push({
+            candidateId: rc.id,
+            sourceType: rc.sourceType,
+            authorityTier: rc.authorityTier,
+            finalScore: rc.scoreBreakdown.finalScore,
+            estimatedTokens: tokenCost,
+            status: 'excluded',
+            layerAssignment: rc.layerAssignment,
+            reasons: ['excluded.cross_layer_budget_exceeded'],
+            affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+            affectiveReasonCode: rc.affectiveReasonCode ?? null,
+          });
+        }
+        continue;
+      }
+
+      // Check per-document chunk cap for evidence items.
+      if (isEvidence && !isMustInclude) {
+        const docId = (rc.metadata?.documentId as string | undefined) ?? null;
+        if (docId) {
+          const used = chunksPerDoc.get(docId) ?? 0;
+          if (used >= maxChunksPerDoc) {
+            latent.push({ ...rankedCandidateToItem(rc), selectionClass: 'latent' });
+            decisions.push({
+              candidateId: rc.id,
+              sourceType: rc.sourceType,
+              authorityTier: rc.authorityTier,
+              finalScore: rc.scoreBreakdown.finalScore,
+              estimatedTokens: tokenCost,
+              status: 'latent',
+              layerAssignment: rc.layerAssignment,
+              reasons: ['excluded.per_document_cap', 'excluded.outcompeted_by_higher_rank', 'overflow.to_latent'],
+              affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+              affectiveReasonCode: rc.affectiveReasonCode ?? null,
+            });
+            continue;
+          }
+        }
+      }
+
+      // Include this candidate.
+      const item = rankedCandidateToItem(rc);
+      if (isEvidence) {
+        injected.push(item);
+        // Track per-document chunk count.
+        const docId = (rc.metadata?.documentId as string | undefined) ?? null;
+        if (docId) chunksPerDoc.set(docId, (chunksPerDoc.get(docId) ?? 0) + 1);
+      } else {
+        graphContextItems.push(item);
+      }
+
+      const reasons: ContextDecisionReason[] =
+        rc.authorityTier === 'canonical'
+          ? ['included.high_authority', 'included.cross_layer_top_rank']
+          : ['included.cross_layer_top_rank'];
+      decisions.push({
+        candidateId: rc.id,
+        sourceType: rc.sourceType,
+        authorityTier: rc.authorityTier,
+        finalScore: rc.scoreBreakdown.finalScore,
+        estimatedTokens: tokenCost,
+        status: 'included',
+        layerAssignment: rc.layerAssignment,
+        reasons,
+        affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+        affectiveReasonCode: rc.affectiveReasonCode ?? null,
+      });
+
+      totalIncluded++;
+      totalTokensUsed += tokenCost;
+    }
+
+    if (latent.length > 0) {
+      warnings.push(
+        `${latent.length} overflow item${latent.length === 1 ? '' : 's'} retained as latent memory due to policy budget limits.`,
+      );
+    }
+
+    return { injected, graphContextItems, latent, decisions };
+  }
+
+  /**
    * P7B+P7C+P7D: Score and sort a unified list of ContextAssemblyItems deterministically.
    *
    * P7D change: The `layer` parameter has been removed. All items from all layers
@@ -736,20 +880,23 @@ export class ContextAssemblyService {
 
   /**
    * Build P7B ContextLayerBudgets from the active policy.
+   *
+   * P7D Feed 3: Layer budgets now reflect the global single-budget model.
+   * Evidence and graph_context layers share the global maxItems cap.
    */
   private _buildLayerBudgets(policy: MemoryPolicy): ContextLayerBudget[] {
     const budget = policy.contextBudget;
     return [
       {
         layer: 'evidence',
-        maxItems: budget.maxItemsPerClass?.evidence ?? budget.maxItems,
+        maxItems: budget.maxItems,
         maxTokens: budget.maxTokens,
         priority: 1,
         overflowPolicy: 'overflow_to_latent',
       },
       {
         layer: 'graph_context',
-        maxItems: budget.maxItemsPerClass?.graph_context ?? 0,
+        maxItems: budget.maxItems,
         priority: 2,
         overflowPolicy: 'drop',
       },
@@ -772,14 +919,14 @@ export class ContextAssemblyService {
     decisions: ContextDecision[];
     tieBreakRecords: TieBreakRecord[];
     conflictResolutionRecords: ConflictResolutionRecord[];
-    graphCap: number;
+    graphContextItems: ContextAssemblyItem[];
     injected: ContextAssemblyItem[];
     latent: ContextAssemblyItem[];
   }): ContextAssemblyDiagnostics {
     const {
       policy, rankedEvidence, rankedGraph,
       decisions, tieBreakRecords, conflictResolutionRecords,
-      graphCap, injected, latent,
+      graphContextItems, injected, latent,
     } = args;
 
     const layerBudgets = this._buildLayerBudgets(policy);
@@ -805,9 +952,7 @@ export class ContextAssemblyService {
     const finalTokenUsageByLayer: ContextAssemblyDiagnostics['finalTokenUsageByLayer'] = {};
     const evidenceTokens = injected.reduce((s, i) => s + estimateTokens(i.content), 0);
     if (evidenceTokens > 0) finalTokenUsageByLayer['evidence'] = evidenceTokens;
-    const graphTokens = rankedGraph
-      .slice(0, graphCap)
-      .reduce((s, rc) => s + rc.estimatedTokens, 0);
+    const graphTokens = graphContextItems.reduce((s, i) => s + estimateTokens(i.content), 0);
     if (graphTokens > 0) finalTokenUsageByLayer['graph_context'] = graphTokens;
     const latentTokens = latent.reduce((s, i) => s + estimateTokens(i.content), 0);
     if (latentTokens > 0) finalTokenUsageByLayer['canonical_memory'] = latentTokens;

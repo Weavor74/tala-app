@@ -324,7 +324,14 @@ export type ContextDecisionReason =
   | 'truncated.to_fit_budget'
   // ── Overflow / latent ──────────────────────────────────────────────────────
   /** Item moved to the latent class because evidence budget was exhausted. */
-  | 'overflow.to_latent';
+  | 'overflow.to_latent'
+  // ── P7D Feed 3: Cross-layer competitive selection ─────────────────────────
+  /** Item included as the cross-layer top-ranked candidate within the global budget. */
+  | 'included.cross_layer_top_rank'
+  /** Item excluded because the global item or token budget was exhausted. */
+  | 'excluded.cross_layer_budget_exceeded'
+  /** Item excluded because higher-ranked candidates consumed the available global budget. */
+  | 'excluded.outcompeted_by_higher_rank';
 
 /**
  * Decision record for a single context candidate.

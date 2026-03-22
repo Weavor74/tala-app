@@ -1058,8 +1058,8 @@ describe('ContextAssemblyService graph integration', () => {
     expect(result.itemCountByClass.graph_context).toBeGreaterThan(0);
   });
 
-  it('graph_context items are capped at maxItemsPerClass.graph_context', async () => {
-    // 3 documents with 2 items each → 3 graph_context candidates, cap = 2
+  it('graph_context items are subject to global budget cap', async () => {
+    // 3 documents with 2 items each → 3 graph_context candidates, global cap = 2
     const results = [
       makeMockResult({ itemKey: 'a1', providerId: 'local', metadata: { documentId: 'docA', chunkContent: 'a1' } }),
       makeMockResult({ itemKey: 'a2', providerId: 'local', metadata: { documentId: 'docA', chunkContent: 'a2' } }),
@@ -1085,8 +1085,7 @@ describe('ContextAssemblyService graph integration', () => {
           allowedEdgeTypes: ['contains'],
         },
         contextBudget: {
-          maxItems: 20,
-          maxItemsPerClass: { evidence: 10, graph_context: 2, latent: 10 },
+          maxItems: 2,
           evidencePriority: true,
         },
       },

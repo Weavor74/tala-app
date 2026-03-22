@@ -353,7 +353,7 @@ describe('P7B: layer budget determinism', () => {
     expect(evidenceItems.map(i => i.sourceKey)).toEqual(['r0', 'r1', 'r2']);
   });
 
-  it('graph_context cap is deterministically applied', async () => {
+  it('global budget cap is deterministically applied', async () => {
     const orchestrator = makeMockOrchestrator([]);
     const service = new ContextAssemblyService(
       orchestrator,
@@ -375,7 +375,7 @@ describe('P7B: layer budget determinism', () => {
     );
     const result = await service.assemble(makeRequest({
       groundingMode: 'graph_assisted',
-      contextBudget: { maxItems: 20, maxItemsPerClass: { graph_context: 3 } },
+      contextBudget: { maxItems: 3 },
     }));
 
     const graphItems = result.items.filter(i => i.selectionClass === 'graph_context');

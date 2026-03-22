@@ -248,14 +248,14 @@ describe('ContextAssemblyService', () => {
       expect(injected.length).toBeLessThanOrEqual(3);
     });
 
-    it('caps injected items at maxItemsPerClass.evidence when set', async () => {
+    it('global budget cap is enforced for evidence items', async () => {
       const results = Array.from({ length: 8 }, (_, i) =>
         makeResult({ itemKey: `r${i}`, title: `Doc ${i}`, providerId: 'local' }),
       );
       const orchestrator = makeMockOrchestrator(results);
       const service = new ContextAssemblyService(orchestrator, policyService);
       const request = makeRequest({
-        contextBudget: { maxItems: 10, maxItemsPerClass: { evidence: 4 } },
+        contextBudget: { maxItems: 4 },
       });
       const result = await service.assemble(request);
 
@@ -890,7 +890,7 @@ describe('ContextAssemblyService', () => {
 
     // ── Budget cap ────────────────────────────────────────────────────────
 
-    it('graph_context budget cap applies to combined structural+affective items', async () => {
+    it('global budget cap applies to combined structural+affective items', async () => {
       const orchestrator = makeMockOrchestrator([]);
       const affectiveItems = [
         makeAffectiveItem({ sourceKey: 'a1', score: 0.1 }),
@@ -904,8 +904,8 @@ describe('ContextAssemblyService', () => {
       const request = makeRequest({
         groundingMode: 'graph_assisted',
         affectiveModulation: makeAffectivePolicy({ enabled: true, maxAffectiveNodes: 3 }),
-        // Only 2 graph_context slots
-        contextBudget: { maxItems: 10, maxItemsPerClass: { graph_context: 2 } },
+        // Global budget of 2 — only 2 items can be included
+        contextBudget: { maxItems: 2 },
       });
       const result = await service.assemble(request);
 
