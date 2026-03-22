@@ -257,8 +257,15 @@ export class ToolService {
     * - `desktop_input` — Controls mouse/keyboard via PowerShell.
     * 
     * @param {any} memory - The MemoryService instance.
+    * @param {Function} [getCanonicalId] - Optional P7A authority callback.
+    *   Called before every durable mem0_add write to obtain a canonical_memory_id
+    *   from MemoryAuthorityService. When provided, derived writes will be anchored.
+    *   When absent, writes proceed but are flagged by the MemoryService P7A guard.
     */
-    public setMemoryService(memory: any) {
+    public setMemoryService(
+        memory: any,
+        getCanonicalId?: (text: string, sourceKind: string) => Promise<string | null>,
+    ) {
         console.log('[ToolService] Memory Service Injected');
 
         this.register({
@@ -296,7 +303,18 @@ export class ToolService {
             },
             execute: async (args) => {
                 try {
-                    await memory.add(args.text);
+                    // P7A: obtain canonical_memory_id before writing to derived store.
+                    // If getCanonicalId is provided (wired by AgentService), the write
+                    // will be anchored. Otherwise the MemoryService guard emits a warning.
+                    let canonicalMemoryId: string | null = null;
+                    if (getCanonicalId) {
+                        try {
+                            canonicalMemoryId = await getCanonicalId(args.text, 'tool:mem0_add');
+                        } catch (e) {
+                            console.warn('[P7A][ToolService:mem0_add] Could not obtain canonical_memory_id:', e);
+                        }
+                    }
+                    await memory.add(args.text, { canonical_memory_id: canonicalMemoryId, source: 'tool:mem0_add' });
                     return "Memory stored successfully.";
                 } catch (e: any) { return `Error storing memory: ${e.message} `; }
             }

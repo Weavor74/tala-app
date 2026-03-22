@@ -26,7 +26,12 @@ import type {
     ProjectionTargetSystem,
     RebuildReport,
     RebuildAction,
+    RankedMemoryCandidate,
 } from '../../../shared/memory/authorityTypes';
+import {
+    rankMemoryByAuthority,
+    resolveMemoryAuthorityConflict,
+} from './derivedWriteGuards';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -430,6 +435,61 @@ export class MemoryAuthorityService {
             issues.push(issue);
         }
 
+        // --- 5. Absent projections (canonical records with no projection tracking row) ---
+        let absentProjectionCount = 0;
+        for (const target of PROJECTION_TARGETS) {
+            const absentRows = await this.pool.query<{
+                memory_id: string;
+                memory_type: string;
+            }>(
+                `SELECT r.memory_id, r.memory_type
+                 FROM memory_records r
+                 LEFT JOIN memory_projections p
+                   ON p.memory_id = r.memory_id AND p.target_system = $1
+                 WHERE r.authority_status = 'canonical'
+                   AND p.memory_id IS NULL`,
+                [target],
+            );
+
+            for (const row of absentRows.rows) {
+                absentProjectionCount++;
+                const issue = await this._persistIssue({
+                    issue_kind: 'absent_projection',
+                    severity: 'warning',
+                    affected_memory_id: row.memory_id,
+                    affected_system: target,
+                    description: `Canonical memory_id ${row.memory_id} (type=${row.memory_type}) has no projection record for target_system=${target}`,
+                    repair_suggestion: `INSERT INTO memory_projections (memory_id, target_system, projection_status, canonical_version) SELECT memory_id, '${target}', 'pending', version FROM memory_records WHERE memory_id = '${row.memory_id}'`,
+                });
+                issues.push(issue);
+            }
+        }
+
+        // --- 6. Superseded records with active projections ---
+        const supersededActiveRows = await this.pool.query<{
+            projection_id: string;
+            memory_id: string;
+            target_system: string;
+        }>(
+            `SELECT p.projection_id, p.memory_id, p.target_system
+             FROM memory_projections p
+             JOIN memory_records r ON r.memory_id = p.memory_id
+             WHERE r.authority_status = 'superseded'
+               AND p.projection_status = 'projected'`,
+        );
+
+        for (const row of supersededActiveRows.rows) {
+            const issue = await this._persistIssue({
+                issue_kind: 'superseded_active_projection',
+                severity: 'warning',
+                affected_memory_id: row.memory_id,
+                affected_system: row.target_system,
+                description: `Projection for superseded memory_id ${row.memory_id} still shows status='projected' in ${row.target_system} — derived system may surface stale data`,
+                repair_suggestion: `Update projection status to 'stale' for memory_id ${row.memory_id} in ${row.target_system}`,
+            });
+            issues.push(issue);
+        }
+
         console.log(`[MemoryAuthority] Integrity check complete: ${issues.length} issue(s) found`);
 
         return {
@@ -441,6 +501,8 @@ export class MemoryAuthorityService {
             duplicate_conflict_count: dupConflictRows.rows.length,
             projection_mismatch_count: mismatchRows.rows.length,
             tombstone_violation_count: tombViolRows.rows.length,
+            absent_projection_count: absentProjectionCount,
+            superseded_active_projection_count: supersededActiveRows.rows.length,
         };
     }
 
@@ -543,9 +605,178 @@ export class MemoryAuthorityService {
         };
     }
 
+    /**
+     * Rebuild the mem0 derived layer from canonical Postgres records.
+     *
+     * Reads all non-tombstoned canonical records and produces an action plan
+     * for re-projecting into mem0. Full write implementation is deferred; this
+     * stub validates that the canonical source is reachable and all records have
+     * the data required to regenerate a mem0 projection.
+     *
+     * Canonical input required: content_text, memory_type, subject_id, canonical_hash
+     * Truth preserved: projection is rebuildable; no authoritative truth is stored
+     *   exclusively in mem0.
+     */
+    async rebuildMem0FromCanonical(): Promise<RebuildReport> {
+        return this._rebuildTargetFromCanonical('mem0');
+    }
+
+    /**
+     * Rebuild the graph derived layer from canonical Postgres records.
+     *
+     * Reads all non-tombstoned canonical records and produces an action plan
+     * for re-projecting relationship nodes and edges into the graph store.
+     * Full graph write implementation is deferred; this stub confirms canonical
+     * lineage is sufficient to regenerate the graph projection.
+     *
+     * Canonical input required: content_text, content_structured (entity/relationship data)
+     * Truth preserved: graph topology is fully rebuildable; no autobiographical truth
+     *   lives exclusively in the graph layer.
+     */
+    async rebuildGraphFromCanonical(): Promise<RebuildReport> {
+        return this._rebuildTargetFromCanonical('graph');
+    }
+
+    /**
+     * Rebuild the vector/RAG index derived layer from canonical Postgres records.
+     *
+     * Reads all non-tombstoned canonical records and produces an action plan
+     * for re-embedding and re-indexing into the vector store. Full embedding
+     * implementation is deferred; this stub confirms the canonical content is
+     * sufficient to regenerate the vector index from scratch.
+     *
+     * Canonical input required: content_text (embedding source)
+     * Truth preserved: vector index is fully rebuildable; no memory truth is stored
+     *   exclusively in the vector layer.
+     */
+    async rebuildVectorIndexFromCanonical(): Promise<RebuildReport> {
+        return this._rebuildTargetFromCanonical('vector');
+    }
+
+    /**
+     * Rank a set of memory candidates by authority tier.
+     *
+     * Order: canonical > verified_derived > transient > speculative
+     * This is deterministic — no ML judgment.
+     */
+    rankMemoryByAuthority(
+        candidates: Parameters<typeof rankMemoryByAuthority>[0],
+    ): RankedMemoryCandidate[] {
+        return rankMemoryByAuthority(candidates);
+    }
+
+    /**
+     * Resolve a conflict between a canonical and a derived memory record.
+     * Canonical always wins. The conflict is logged for diagnostics.
+     */
+    resolveMemoryAuthorityConflict(
+        canonical: { memory_id: string; content_text: string; version: number },
+        derived: { content: string; canonical_memory_id: string | null },
+        source: string,
+    ): { winner_content: string; conflict_logged: boolean } {
+        return resolveMemoryAuthorityConflict(canonical, derived, source);
+    }
+
     // -----------------------------------------------------------------------
     // PRIVATE HELPERS
     // -----------------------------------------------------------------------
+
+    /**
+     * Core rebuild implementation for a specific target system.
+     * Shared by rebuildMem0FromCanonical, rebuildGraphFromCanonical,
+     * and rebuildVectorIndexFromCanonical.
+     */
+    private async _rebuildTargetFromCanonical(target: ProjectionTargetSystem): Promise<RebuildReport> {
+        const runAt = new Date().toISOString();
+        const actions: RebuildAction[] = [];
+        let unreachableCount = 0;
+
+        const BATCH_SIZE = 200;
+        let offset = 0;
+        let totalRead = 0;
+
+        while (true) {
+            const batch = await this.pool.query<Record<string, unknown>>(
+                `SELECT memory_id, memory_type, subject_id, version, authority_status, content_text
+                 FROM memory_records
+                 WHERE authority_status != 'tombstoned'
+                 ORDER BY created_at ASC
+                 LIMIT $1 OFFSET $2`,
+                [BATCH_SIZE, offset],
+            );
+
+            if (batch.rows.length === 0) break;
+            totalRead += batch.rows.length;
+
+            for (const row of batch.rows) {
+                const memId = row.memory_id as string;
+                const version = row.version as number;
+
+                if (!row.content_text) {
+                    unreachableCount++;
+                    actions.push({
+                        memory_id: memId,
+                        target_system: target,
+                        action_kind: 'skip',
+                        reason: `NULL content_text — cannot rebuild ${target} projection`,
+                    });
+                    continue;
+                }
+
+                const existingProj = await this.pool.query<{
+                    projection_status: string;
+                    projected_version: number | null;
+                }>(
+                    `SELECT projection_status, projected_version
+                     FROM memory_projections
+                     WHERE memory_id = $1 AND target_system = $2`,
+                    [memId, target],
+                );
+
+                const current = existingProj.rows[0];
+                if (current && current.projection_status === 'projected' && current.projected_version === version) {
+                    actions.push({
+                        memory_id: memId,
+                        target_system: target,
+                        action_kind: 'skip',
+                        reason: `Already projected at v${version}`,
+                    });
+                } else {
+                    actions.push({
+                        memory_id: memId,
+                        target_system: target,
+                        action_kind: 'create',
+                        reason: `Missing or stale ${target} projection — would re-project from canonical content`,
+                    });
+                    console.log(
+                        `[MemoryAuthority][Rebuild:${target}] Would project memory_id=${memId} type=${row.memory_type} → ${target} (v${version})`,
+                    );
+                }
+            }
+
+            offset += BATCH_SIZE;
+        }
+
+        const unreachable = await this.pool.query<{ cnt: string }>(
+            `SELECT COUNT(*) AS cnt FROM memory_records WHERE authority_status = 'canonical' AND content_text IS NULL`,
+        );
+        unreachableCount = Math.max(unreachableCount, parseInt(unreachable.rows[0].cnt, 10));
+        if (unreachableCount > 0) {
+            console.warn(`[MemoryAuthority][Rebuild:${target}] ${unreachableCount} canonical record(s) have NULL content_text`);
+        }
+
+        console.log(
+            `[MemoryAuthority] Rebuild:${target} scan complete: ${totalRead} canonical record(s) checked, ` +
+            `${actions.filter(a => a.action_kind === 'create').length} projection(s) needed`,
+        );
+
+        return {
+            run_at: runAt,
+            canonical_records_read: totalRead,
+            actions,
+            unreachable_count: unreachableCount,
+        };
+    }
 
     private async _fetchRecord(memoryId: string): Promise<CanonicalMemory | null> {
         const result = await this.pool.query<Record<string, unknown>>(

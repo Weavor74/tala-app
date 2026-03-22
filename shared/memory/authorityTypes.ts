@@ -92,6 +92,47 @@ export interface ProjectionRecord {
     attempted_at: string;       // ISO-8601
     projected_at: string | null;
     error_message: string | null;
+    /** Classification of where this projection lives (aligns with DerivedWriteAnchor.derivation_type) */
+    derivation_type?: string;
+    /** Source system that triggered the projection (e.g. 'turn:xyz', 'ingestion') */
+    projection_source?: string;
+}
+
+// ---------------------------------------------------------------------------
+// DerivedWriteAnchor — metadata required on every durable derived write
+// ---------------------------------------------------------------------------
+
+export interface DerivedWriteAnchor {
+    /** UUID of the authoritative memory_records row this projection is derived from. */
+    canonical_memory_id: string | null | undefined;
+    /** Classification of the derived system: 'mem0' | 'graph' | 'vector' | 'local' */
+    derivation_type?: ProjectionTargetSystem | 'local' | string;
+    /** Opaque reference into the canonical source (e.g. "turn:xyz", "ingestion:abc") */
+    projection_source?: string;
+    /**
+     * Canonical version at projection time. Used to detect staleness.
+     * Set by MemoryAuthorityService after createCanonicalMemory().
+     */
+    canonical_version?: number;
+}
+
+// ---------------------------------------------------------------------------
+// MemoryAuthorityRanking — priority-ordered result from rankMemoryByAuthority()
+// ---------------------------------------------------------------------------
+
+export type MemoryAuthorityTier =
+    | 'canonical'          // Postgres memory_records, status='canonical'
+    | 'verified_derived'   // Projection in sync with canonical version
+    | 'transient'          // Session-only or unanchored temporary data
+    | 'speculative';       // No canonical anchor; origin unknown
+
+export interface RankedMemoryCandidate {
+    content: string;
+    tier: MemoryAuthorityTier;
+    canonical_memory_id: string | null;
+    /** Relative priority: lower number = higher authority (1 = highest) */
+    priority: number;
+    source_description: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +144,10 @@ export type IssueKind =
     | 'duplicate'
     | 'divergence'
     | 'projection_mismatch'
-    | 'tombstone_violation';
+    | 'tombstone_violation'
+    | 'absent_projection'
+    | 'superseded_active_projection'
+    | 'illegal_authority';
 
 export type IssueSeverity = 'info' | 'warning' | 'error' | 'critical';
 
@@ -132,6 +176,8 @@ export interface IntegrityReport {
     duplicate_conflict_count: number;
     projection_mismatch_count: number;
     tombstone_violation_count: number;
+    absent_projection_count: number;
+    superseded_active_projection_count: number;
 }
 
 // ---------------------------------------------------------------------------
