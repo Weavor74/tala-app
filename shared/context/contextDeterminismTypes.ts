@@ -331,7 +331,14 @@ export type ContextDecisionReason =
   /** Item excluded because the global item or token budget was exhausted. */
   | 'excluded.cross_layer_budget_exceeded'
   /** Item excluded because higher-ranked candidates consumed the available global budget. */
-  | 'excluded.outcompeted_by_higher_rank';
+  | 'excluded.outcompeted_by_higher_rank'
+  // ── P7D Feed 4: Cross-layer authority enforcement ─────────────────────────
+  /** Derived item excluded because a canonical candidate with the same canonicalId was selected. */
+  | 'excluded.superseded_by_canonical'
+  /** Derived item included as supporting context alongside or in place of its canonical counterpart. */
+  | 'included.supporting_derived'
+  /** Item excluded because a higher-authority-layer candidate for the same canonicalId won the conflict. */
+  | 'excluded.authority_conflict';
 
 /**
  * Decision record for a single context candidate.
@@ -432,8 +439,13 @@ export interface ConflictResolutionRecord {
   /** Candidate ID of the derived item that lost. */
   derivedCandidateId: string;
 
-  /** The winner is always canonical per P7A. */
-  winner: 'canonical';
+  /**
+   * The winner of this conflict.
+   * 'canonical' — a canonical candidate (isCanonical=true / authorityTier='canonical') won.
+   * 'higher_authority_layer' — a non-canonical candidate from a higher-priority source layer
+   *   won (used when no canonical candidate exists in the conflict group; e.g. mem0 beats rag).
+   */
+  winner: 'canonical' | 'higher_authority_layer';
 
   /** Human-readable explanation of why the conflict was detected and resolved. */
   reason: string;

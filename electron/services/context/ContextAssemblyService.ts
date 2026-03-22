@@ -67,6 +67,7 @@ import { AffectiveGraphService } from '../graph/AffectiveGraphService';
 import { ContextScoringService } from './ContextScoringService';
 import { AffectiveWeightingService } from './AffectiveWeightingService';
 import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
+import { resolveMemoryAuthorityConflict } from './authorityConflictResolver';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
@@ -307,13 +308,16 @@ export class ContextAssemblyService {
 
     // P7D Feed 3: Global competitive selection — all candidates compete under ONE budget.
     // Per-layer quota enforcement is replaced by a single global token + item budget.
+    // P7D Feed 4: Cross-layer authority conflict resolution is applied before the greedy pass.
     const {
       injected,
       graphContextItems,
       latent,
       decisions: selectionDecisions,
+      conflictRecords,
     } = this._selectItemsGlobal(rankedAll, policy, warnings);
     allDecisions.push(...selectionDecisions);
+    conflictResolutionRecords.push(...conflictRecords);
 
     // 5. Combine injected (evidence) + graph_context + latent items.
     const allItems: ContextAssemblyItem[] = [...injected, ...graphContextItems, ...latent];
@@ -636,24 +640,39 @@ export class ContextAssemblyService {
    * when the global item and token budgets allow it; otherwise it is excluded or
    * moved to latent.
    *
+   * P7D Feed 4: Before the greedy pass, runs resolveMemoryAuthorityConflict() to
+   * detect and mark candidates that share the same canonicalId. The canonical
+   * candidate always wins. Derived candidates are either:
+   *   - Included as supporting context ('included.supporting_derived')
+   *   - Excluded when superseded by a canonical candidate ('excluded.superseded_by_canonical')
+   *   - Excluded when they lost a non-canonical authority conflict ('excluded.authority_conflict')
+   *
    * Rules (applied in order):
-   *   1. Iterate over ALL candidates in descending rank order (highest rank first).
-   *   2. Include a candidate when:
+   *   1. Run cross-layer authority conflict resolution (P7D Feed 4).
+   *   2. Iterate over ALL candidates in descending rank order (highest rank first).
+   *   3. Always exclude conflict losers with 'excluded.authority_conflict'.
+   *   4. Include a candidate when:
    *        - Global item cap has not been reached, AND
    *        - Global token cap (if set) has room for this candidate's token cost, AND
    *        - Per-document chunk cap has not been reached (evidence only).
-   *   3. Evidence candidates that do not fit are moved to 'latent' (not dropped),
+   *   5. Evidence candidates that do not fit are moved to 'latent' (not dropped),
    *      preserving their metadata and ranked order.
-   *   4. Graph_context candidates that do not fit are excluded with a decision record.
-   *   5. Optional minimum canonical floor: the top-ranked canonical candidates are
+   *   6. Graph_context candidates that do not fit are excluded with a decision record.
+   *   7. Optional minimum canonical floor: the top-ranked canonical candidates are
    *      guaranteed inclusion even when the global item budget would otherwise
    *      exclude them (see policy.contextBudget.minCanonicalItems).
-   *   6. A ContextDecision record is produced for every candidate.
-   *   7. Reason codes:
+   *   8. A ContextDecision record is produced for every candidate.
+   *   9. Reason codes:
    *        included  → 'included.cross_layer_top_rank' (+ 'included.high_authority'
    *                    when authorityTier === 'canonical')
+   *                  → 'included.supporting_derived' (when candidate is a derived
+   *                    member of a canonicalId conflict group)
    *        excluded  → 'excluded.cross_layer_budget_exceeded' (global cap hit)
+   *                  → 'excluded.superseded_by_canonical' (derived candidate excluded
+   *                    because canonical counterpart was selected and budget exhausted)
+   *                  → 'excluded.authority_conflict' (non-canonical conflict loser)
    *        latent    → 'excluded.cross_layer_budget_exceeded' + 'overflow.to_latent'
+   *                  → 'excluded.superseded_by_canonical' + 'overflow.to_latent'
    *        per-doc   → 'excluded.per_document_cap' + 'excluded.outcompeted_by_higher_rank'
    *                    + 'overflow.to_latent' (higher-ranked chunk from same doc took the slot)
    */
@@ -666,6 +685,7 @@ export class ContextAssemblyService {
     graphContextItems: ContextAssemblyItem[];
     latent: ContextAssemblyItem[];
     decisions: ContextDecision[];
+    conflictRecords: ConflictResolutionRecord[];
   } {
     const budget = policy.contextBudget;
     const globalItemCap = budget.maxItems;
@@ -690,6 +710,16 @@ export class ContextAssemblyService {
       }
     }
 
+    // P7D Feed 4: Detect and resolve cross-layer authority conflicts BEFORE selection.
+    // affective weighting must NOT override authority — conflicts are resolved here
+    // purely by the authority hierarchy, independently of any score component.
+    const {
+      supportingIds,
+      conflictLoserIds,
+      canonicalWinnerIds,
+      records: conflictRecords,
+    } = resolveMemoryAuthorityConflict(rankedAll);
+
     const injected: ContextAssemblyItem[] = [];
     const graphContextItems: ContextAssemblyItem[] = [];
     const latent: ContextAssemblyItem[] = [];
@@ -702,6 +732,27 @@ export class ContextAssemblyService {
       const isEvidence = rc.layerAssignment === 'evidence';
       const isMustInclude = mustIncludeIds.has(rc.id);
       const tokenCost = rc.estimatedTokens;
+      const isConflictLoser = conflictLoserIds.has(rc.id);
+      const isSupporting = supportingIds.has(rc.id);
+      const isCanonicalWinner = canonicalWinnerIds.has(rc.id);
+
+      // P7D Feed 4: Always exclude authority-conflict losers regardless of budget.
+      if (isConflictLoser) {
+        decisions.push({
+          candidateId: rc.id,
+          sourceType: rc.sourceType,
+          authorityTier: rc.authorityTier,
+          finalScore: rc.scoreBreakdown.finalScore,
+          estimatedTokens: tokenCost,
+          status: 'excluded',
+          layerAssignment: rc.layerAssignment,
+          reasons: ['excluded.authority_conflict'],
+          conflictResolved: true,
+          affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
+          affectiveReasonCode: rc.affectiveReasonCode ?? null,
+        });
+        continue;
+      }
 
       // Check global budget. Must-include canonical items bypass the cap.
       const budgetExhausted =
@@ -712,6 +763,11 @@ export class ContextAssemblyService {
       if (budgetExhausted) {
         if (isEvidence) {
           latent.push({ ...rankedCandidateToItem(rc), selectionClass: 'latent' });
+          // P7D Feed 4: Use superseded_by_canonical for supporting candidates excluded
+          // due to budget exhaustion; use standard budget_exceeded reason otherwise.
+          const budgetExclusionReason: ContextDecisionReason = isSupporting
+            ? 'excluded.superseded_by_canonical'
+            : 'excluded.cross_layer_budget_exceeded';
           decisions.push({
             candidateId: rc.id,
             sourceType: rc.sourceType,
@@ -720,11 +776,17 @@ export class ContextAssemblyService {
             estimatedTokens: tokenCost,
             status: 'latent',
             layerAssignment: rc.layerAssignment,
-            reasons: ['excluded.cross_layer_budget_exceeded', 'overflow.to_latent'],
+            reasons: [budgetExclusionReason, 'overflow.to_latent'],
+            conflictResolved: isSupporting || isCanonicalWinner,
             affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
             affectiveReasonCode: rc.affectiveReasonCode ?? null,
           });
         } else {
+          // P7D Feed 4: Use superseded_by_canonical for supporting candidates excluded
+          // due to budget exhaustion; use standard budget_exceeded reason otherwise.
+          const budgetExclusionReason: ContextDecisionReason = isSupporting
+            ? 'excluded.superseded_by_canonical'
+            : 'excluded.cross_layer_budget_exceeded';
           decisions.push({
             candidateId: rc.id,
             sourceType: rc.sourceType,
@@ -733,7 +795,8 @@ export class ContextAssemblyService {
             estimatedTokens: tokenCost,
             status: 'excluded',
             layerAssignment: rc.layerAssignment,
-            reasons: ['excluded.cross_layer_budget_exceeded'],
+            reasons: [budgetExclusionReason],
+            conflictResolved: isSupporting || isCanonicalWinner,
             affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
             affectiveReasonCode: rc.affectiveReasonCode ?? null,
           });
@@ -776,10 +839,17 @@ export class ContextAssemblyService {
         graphContextItems.push(item);
       }
 
-      const reasons: ContextDecisionReason[] =
-        rc.authorityTier === 'canonical'
+      // P7D Feed 4: Choose the correct inclusion reason.
+      // - isSupporting → 'included.supporting_derived' (derived candidate included
+      //   as supporting context alongside or instead of its canonical counterpart)
+      // - canonical authority → 'included.high_authority' co-emitted
+      // - default → 'included.cross_layer_top_rank'
+      const reasons: ContextDecisionReason[] = isSupporting
+        ? ['included.supporting_derived']
+        : rc.authorityTier === 'canonical'
           ? ['included.high_authority', 'included.cross_layer_top_rank']
           : ['included.cross_layer_top_rank'];
+
       decisions.push({
         candidateId: rc.id,
         sourceType: rc.sourceType,
@@ -789,6 +859,7 @@ export class ContextAssemblyService {
         status: 'included',
         layerAssignment: rc.layerAssignment,
         reasons,
+        conflictResolved: isSupporting || isCanonicalWinner,
         affectiveAdjustment: rc.scoreBreakdown.affectiveAdjustment || null,
         affectiveReasonCode: rc.affectiveReasonCode ?? null,
       });
@@ -803,7 +874,7 @@ export class ContextAssemblyService {
       );
     }
 
-    return { injected, graphContextItems, latent, decisions };
+    return { injected, graphContextItems, latent, decisions, conflictRecords };
   }
 
   /**
