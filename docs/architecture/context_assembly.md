@@ -107,6 +107,22 @@ P7B (implemented in this service) ensures context assembly is deterministic:
 
 - **Diagnostics always populated.** `ContextAssemblyResult.diagnostics` (`ContextAssemblyDiagnostics`) is always set. It includes the full candidate pool by layer, score breakdowns, all decisions, tie-break records, and final token usage by layer.
 
+### P7D Extended Diagnostics (Feed 5)
+
+The diagnostics layer has been extended for full cross-layer traceability:
+- **`crossLayerCandidatePool`**: Records every candidate considered across all layers (RAG, Graph, Affective) with their full `ScoreBreakdown`.
+- **`crossLayerRankingOrder`**: A deterministic list of candidate IDs in their final unified ranking.
+- **`authorityConflicts`**: Audit log of every resolution where a higher-authority item suppressed a lower-authority item sharing a `canonicalId`.
+- **`normalizationDetails`**: Statistical bridge (min/max/avg) showing how diverse source scores were mapped into the unified ranking space.
+
+### Determinism Proof (Feed 6)
+
+The system is verified deterministic via [ContextAssemblyDeterminism.test.ts](file:///d:/src/client1/tala-app/electron/__tests__/context/ContextAssemblyDeterminism.test.ts), which proves:
+1. **Same Input → Identical Output**: Deep equality of results across repeated runs.
+2. **Consistent Tie-Breaking**: Total-order sorting survives score collisions.
+3. **Authority Dominance**: Higher-layer canonical items always outrank lower-layer derived regardless of base score.
+4. **Stable Budgeting**: Greedy selection is stable under item and token caps.
+
 See `docs/architecture/p7b_context_determinism.md` for the full scoring model, tie-break rules, and budget model.
 
 ---
