@@ -52,6 +52,11 @@ export type GroundingMode = 'strict' | 'graph_assisted' | 'exploratory';
  *
  * These types describe what kind of knowledge unit a node represents.
  * Used for per-type budget limits and traversal filtering.
+ *
+ * Affective node types ('astro_state', 'emotion_tag', 'affect_state') are
+ * modulatory only — they never serve as evidence and are gated by
+ * AffectiveModulationPolicy. They influence graph_context ordering and prompt
+ * structure but do not override primary evidence.
  */
 export type GraphNodeType =
   | 'notebook'
@@ -63,13 +68,24 @@ export type GraphNodeType =
   | 'artifact'
   | 'policy'
   | 'session_memory'
-  | 'summary';
+  | 'summary'
+  // ── Affective node types (modulatory, not evidential) ──────────────────────
+  /** Current astrological state snapshot. Modulatory; never treated as evidence. */
+  | 'astro_state'
+  /** Discrete emotion tag attached to a turn, observation, or artifact. */
+  | 'emotion_tag'
+  /** Composite affective state aggregated from multiple sources. */
+  | 'affect_state';
 
 /**
  * The canonical set of edge (relationship) types in the TALA memory graph.
  *
  * These describe how two nodes are related. Used for traversal filtering and
  * trust-level enforcement.
+ *
+ * Affective edge types ('modulates', 'amplifies', 'suppresses',
+ * 'resonates_with', 'active_during') are used exclusively by affective nodes
+ * and are gated by AffectiveModulationPolicy.
  */
 export type GraphEdgeType =
   | 'contains'
@@ -84,7 +100,18 @@ export type GraphEdgeType =
   | 'depends_on'
   | 'references'
   | 'governs'
-  | 'same_as';
+  | 'same_as'
+  // ── Affective edge types (modulatory, gated by AffectiveModulationPolicy) ──
+  /** An affective node modulates the character of a connected node. */
+  | 'modulates'
+  /** An affective node amplifies the salience of a connected node. */
+  | 'amplifies'
+  /** An affective node suppresses the salience of a connected node. */
+  | 'suppresses'
+  /** Two nodes share complementary affective resonance. */
+  | 'resonates_with'
+  /** An affective state was active during the creation of a connected node. */
+  | 'active_during';
 
 /**
  * The trust level assigned to a graph edge.
@@ -121,6 +148,77 @@ export type EdgeTrustLevel =
  * - 'latent'         — background knowledge or priors without direct retrieval source.
  */
 export type MemorySelectionClass = 'evidence' | 'graph_context' | 'summary' | 'latent';
+
+// ─── Affective Modulation Policy ─────────────────────────────────────────────
+
+/**
+ * Governs if and how astro/emotional state may modulate graph_context ordering
+ * and prompt context structure.
+ *
+ * CRITICAL CONSTRAINTS:
+ *   - Affective signals MUST NOT override primary evidence.
+ *   - Affective nodes are NEVER treated as evidence.
+ *   - When enabled === false (or in strict mode), no affective modulation occurs.
+ *   - All affective context items MUST be labeled as modulatory/non-authoritative.
+ *   - allowEvidenceReordering is deliberately limited — affective signals must not
+ *     rerank evidence items above the order determined by retrieval scoring.
+ *   - affectiveWeight is a bounded modifier, not an absolute score override.
+ */
+export interface AffectiveModulationPolicy {
+  /** Whether affective modulation is active for this assembly pass. */
+  enabled: boolean;
+
+  /**
+   * Maximum number of affective context items (astro_state, emotion_tag,
+   * affect_state nodes) that may appear in the assembled context.
+   * 0 disables affective items even when enabled === true.
+   */
+  maxAffectiveNodes: number;
+
+  /**
+   * When true, the active emotional/astro state may influence the tone
+   * descriptor appended to the [AFFECTIVE CONTEXT] prompt block.
+   * Has no effect on evidence content.
+   */
+  allowToneModulation: boolean;
+
+  /**
+   * When true, affective signals may influence the ordering of graph_context
+   * items (NOT evidence items). Evidence ordering is always governed by
+   * retrieval scores only.
+   */
+  allowGraphOrderingInfluence: boolean;
+
+  /**
+   * When true, the affective state may trigger additional graph_context
+   * expansion (e.g., surfacing emotionally resonant topics). Bounded by
+   * maxAffectiveNodes. Does not expand evidence retrieval.
+   */
+  allowGraphExpansionInfluence: boolean;
+
+  /**
+   * When true, affective signals may apply a bounded reordering to evidence
+   * items. Defaults to false; must remain false or very constrained since
+   * reordering evidence by affect risks compromising grounding quality.
+   */
+  allowEvidenceReordering: boolean;
+
+  /**
+   * A [0, 1] weight scalar applied when computing affective influence on
+   * graph_context ordering. Capped at 0.3 by policy enforcement in the
+   * service layer — values above 0.3 are silently clamped.
+   * 0 disables any scoring influence.
+   */
+  affectiveWeight: number;
+
+  /**
+   * When true, all affective context items must carry an explicit label
+   * marking them as modulatory/non-authoritative (e.g., "[Affective context —
+   * not evidence]"). Defaults to true; should only be set false in future
+   * RP-mode contexts with explicit user consent.
+   */
+  requireLabeling: boolean;
+}
 
 // ─── Graph Traversal Policy ───────────────────────────────────────────────────
 
@@ -262,6 +360,18 @@ export interface MemoryPolicy {
 
   /** Budget constraints for the assembled context block. */
   contextBudget: ContextBudgetPolicy;
+
+  /**
+   * Affective modulation constraints governing how astro/emotional state may
+   * influence graph_context ordering and prompt context structure.
+   *
+   * Optional — when absent the service applies a disabled default equivalent
+   * to the STRICT policy affective defaults (no modulation).
+   *
+   * Affective modulation is backend-owned. Renderer code must not read or
+   * write this field.
+   */
+  affectiveModulation?: AffectiveModulationPolicy;
 }
 
 // ─── Context Assembly ─────────────────────────────────────────────────────────
