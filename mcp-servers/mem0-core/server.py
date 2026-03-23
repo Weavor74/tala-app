@@ -85,6 +85,30 @@ def status() -> str:
         "storage_path": "[REDACTED]"
     })
 
+def _normalize_mem0_result(r):
+    """
+    Normalizes a Mem0 result item into a stable shape.
+    Handles various backend response structures.
+    """
+    # Extract text (required)
+    text = r.get("text") or r.get("content") or str(r)
+    
+    # Extract metadata (optional)
+    metadata = r.get("metadata") or {}
+    
+    # Extract score (optional, default 0)
+    score = r.get("score") or 0.0
+    
+    # Extract ID (optional, deterministic fallback)
+    id_val = r.get("id") or r.get("memory_id") or f"mem_{hash(text) % 1000000}"
+    
+    return {
+        "id": str(id_val),
+        "text": text,
+        "score": float(score),
+        "metadata": metadata
+    }
+
 # --- OPERATIONAL TOOLS ---
 
 @mcp.tool(name="mem0_add")
@@ -95,22 +119,44 @@ def mem0_add(text: str, user_id: str = "local_user", metadata: dict = None) -> s
     try:
         mem = get_memory()
         if mem is None:
-            return "Error: Memory system is in a degraded state (initialization failed)."
-        mem.add(text, user_id=user_id, metadata=metadata)
-        return "Memory added successfully."
+            return json.dumps({"error": "Memory system is in a degraded state (initialization failed)."})
+        result = mem.add(text, user_id=user_id, metadata=metadata)
+        return json.dumps({"success": True, "message": "Memory added successfully.", "result": result})
     except Exception as e:
-        return f"Error adding memory: {str(e)}"
+        return json.dumps({"error": str(e)})
 
 @mcp.tool(name="mem0_search")
-def mem0_search(query: str, user_id: str = "local_user", limit: int = 5) -> str:
+def mem0_search(query: str, user_id: str = "local_user", limit: int = 5, filters: dict = None) -> str:
     """Search for relevant memories."""
     try:
         mem = get_memory()
         if mem is None:
             return json.dumps({"error": "Memory system is in a degraded state."})
-        results = mem.search(query, user_id=user_id, limit=limit)
-        memories = [{"text": r["text"], "score": r.get("score", 0)} for r in results]
-        return json.dumps(memories)
+        
+        # Search the backend
+        # Note: mem0 search usually doesn't take filters directly in the call, 
+        # so we perform post-retrieval filtering for maximum compatibility.
+        raw_results = mem.search(query, user_id=user_id, limit=limit)
+        
+        # Normalize all results
+        normalized = [_normalize_mem0_result(r) for r in raw_results]
+        
+        # Apply filters (role, source)
+        if filters:
+            filtered = []
+            for item in normalized:
+                match = True
+                for key, val in filters.items():
+                    # Check if the filter key exists in metadata
+                    item_val = item["metadata"].get(key)
+                    if item_val != val:
+                        match = False
+                        break
+                if match:
+                    filtered.append(item)
+            return json.dumps(filtered)
+            
+        return json.dumps(normalized)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

@@ -313,25 +313,27 @@ export class MemoryService {
         // Preferred: MCP
         if (this.client && RuntimeFlags.ENABLE_MEM0_REMOTE && !RuntimeFlags.ENABLE_PG_CANONICAL_ONLY) {
             try {
-                // If not RP mode, we might want to exclude RP memories
-                // If Mem0 server supports metadata filtering, we should use it here.
-                // For now, we'll filter locally after retrieval if needed, 
-                // but we can pass mode to the prompt for future server-side filtering.
                 const result = await this.client.callTool({
                     name: "mem0_search",
                     arguments: { query, limit, filters: mode === 'rp' ? { role: 'rp' } : { role: 'core' } }
                 });
-                // Parse JSON response from the server
+
                 if (result && result.content && Array.isArray(result.content)) {
                     const textContent = result.content.find((c: any) => c.type === 'text');
                     if (textContent && textContent.text) {
                         try {
-                            const memories = JSON.parse(textContent.text);
-                            if (Array.isArray(memories)) {
-                                return memories.map((m: any) => this.normalizeMemory({
+                            const parsed = JSON.parse(textContent.text);
+                            
+                            // Check for remote error object
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.error) {
+                                console.warn(`[Memory] Remote search returned error: ${parsed.error}. Falling back to local.`);
+                            } else if (Array.isArray(parsed)) {
+                                // Map remote results to normalized MemoryItems
+                                return parsed.map((m: any) => this.normalizeMemory({
                                     id: m.id || 'remote',
                                     text: m.text || String(m),
                                     timestamp: Date.now(),
+                                    score: m.score,
                                     metadata: m.metadata || {}
                                 }));
                             }
@@ -523,10 +525,23 @@ export class MemoryService {
 
         if (this.client && RuntimeFlags.ENABLE_MEM0_REMOTE) {
             try {
-                await this.client.callTool({
+                const result = await this.client.callTool({
                     name: "mem0_add",
                     arguments: { text, metadata: finalMetadata }
                 });
+                if (result && result.content && Array.isArray(result.content)) {
+                    const textContent = result.content.find((c: any) => c.type === 'text');
+                    if (textContent && textContent.text) {
+                        try {
+                            const parsed = JSON.parse(textContent.text);
+                            if (parsed.error) {
+                                console.warn(`[Memory] Remote add reported error: ${parsed.error}`);
+                            }
+                        } catch (e) {
+                            // Non-JSON response (legacy compat), ignore
+                        }
+                    }
+                }
             } catch (e) {
                 console.warn("[Memory] Remote add failed");
             }
