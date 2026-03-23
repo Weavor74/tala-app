@@ -1829,80 +1829,48 @@ export class IpcRouter {
      * to bot detection than the full site. Parses results via regex.
      * Returns up to 30 results with title, snippet, and URL.
      */
+    /**
+     * Legacy remote search entrypoint.
+     * Deprecated in Phase 3. Now shims to RetrievalOrchestrator with DuckDuckGo provider.
+     * Returns up to 30 results with title, snippet, and URL.
+     */
     ipcMain.handle('search-remote', async (event, query) => {
-      const https = require('https');
-      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
-      return new Promise((resolve) => {
-        // Lite version is much more resilient to bot detection
-        const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
-
-        const options = {
-          headers: {
-            'User-Agent': userAgent,
-            'Referer': 'https://lite.duckduckgo.com/'
-          }
-        };
-
-        https.get(url, options, (res: any) => {
-          let data = '';
-          res.on('data', (chunk: any) => { data += chunk; });
-          res.on('end', () => {
-            try {
-              const results: any[] = [];
-              // REGEX-based parsing is more robust than splitting by tags which might vary
-              const linkRegex = /class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-              const snippetRegex = /class="result-snippet"[^>]*>([\s\S]*?)<\/td>/;
-
-              let match;
-              while ((match = linkRegex.exec(data)) !== null) {
-                const rawLink = match[1];
-                const rawTitle = match[2];
-
-                // Extract URL
-                let link = rawLink;
-                if (link.includes('uddg=')) {
-                  const parts = link.split('uddg=');
-                  if (parts.length > 1) {
-                    link = decodeURIComponent(parts[1].split('&')[0]);
-                  }
-                }
-                link = link.startsWith('http') ? link : `https:${link}`;
-
-                // Extract Title
-                const title = rawTitle.replace(/<[^>]*>/g, '').trim();
-
-                // Attempt to find a snippet after this match
-                // We look at the substring starting from where the link ended
-                const restOfData = data.substring(linkRegex.lastIndex);
-                // We only look a short distance ahead to avoid finding the wrong snippet
-                const snippetMatch = restOfData.substring(0, 1000).match(snippetRegex);
-                const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]*>/g, '').trim() : 'No description available.';
-
-                if (title && link) {
-                  results.push({ title, snippet, url: link });
-                }
-
-                if (results.length >= 30) break; // Limit results
-              }
-
-              if (results.length === 0) {
-                if (data.includes('robot') || data.includes('captcha')) {
-                  resolve([{ title: 'Search Blocked', snippet: 'Access restricted by search provider. This usually resets after a few minutes.', url: '' }]);
-                } else {
-                  resolve([{ title: 'No Results', snippet: 'Try a different search term or check your connection.', url: '' }]);
-                }
-              } else {
-                resolve(results);
-              }
-            } catch (e) {
-              resolve([{ title: 'Error', snippet: 'Failed to process web results.', url: '' }]);
-            }
-          });
-        }).on('error', (err: any) => {
-          resolve([{ title: 'Error', snippet: err.message, url: '' }]);
+      const orchestrator = getRetrievalOrchestrator();
+      if (!orchestrator) {
+        console.warn('[IpcRouter] search-remote shim: Orchestrator not initialized');
+        return [];
+      }
+      try {
+        const response = await orchestrator.retrieve({
+          query,
+          mode: 'keyword',
+          scope: 'global',
+          providerIds: ['duckduckgo'],
+          topK: 30,
         });
-      });
+
+        // Map back to legacy shape: Array<{ title, snippet, url }>
+        const results = response.results.map((r) => ({
+          title: r.title,
+          snippet: r.snippet ?? '',
+          url: r.uri ?? '',
+        }));
+
+        if (results.length === 0) {
+          return [
+            {
+              title: 'No Results',
+              snippet: 'Try a different search term or check your connection.',
+              url: '',
+            },
+          ];
+        }
+
+        return results;
+      } catch (err: any) {
+        console.error('[IpcRouter] search-remote shim failed:', err?.message ?? String(err));
+        return [{ title: 'Error', snippet: 'Failed to process web results.', url: '' }];
+      }
     });
 
     /**

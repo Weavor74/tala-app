@@ -35,6 +35,15 @@ export const RuntimeFlags = {
     },
 
     /**
+     * ENABLE_DUCKDUCKGO_SEARCH
+     * If true, RetrievalOrchestrator will register and use the DuckDuckGoSearchProvider.
+     * This provides a universal, zero-config web search fallback.
+     */
+    get ENABLE_DUCKDUCKGO_SEARCH(): boolean {
+        return process.env.ENABLE_DUCKDUCKGO_SEARCH !== 'false';
+    },
+
+    /**
      * ENABLE_PG_CANONICAL_ONLY
      * If true, MemoryService skips remote search entirely and only uses the canonical 
      * database path. This is a stricter form of isolation than ENABLE_MEM0_REMOTE=false.

@@ -5,13 +5,11 @@
  * - **Local Search:** Searches workspace files by name/content via the
  *   RetrievalOrchestrator (LocalSearchProvider, providerId='local').
  * - **Web Search:** Queries configured external providers via
- *   RetrievalOrchestrator (ExternalApiSearchProvider) or falls back to the
- *   legacy DuckDuckGo Lite IPC path when no external provider is configured.
+ *   RetrievalOrchestrator (ExternalApiSearchProvider) or uses the
+ *   unified DuckDuckGo provider as a zero-config fallback.
  *
  * All searches flow through RetrievalOrchestrator so both local and external
- * providers are normalized into the same result shape. Legacy `searchFiles`
- * and `searchRemote` IPC calls are kept as fallback paths for backward
- * compatibility when the orchestrator is unavailable.
+ * providers are normalized into the same result shape.
  *
  * Each search creates a `search_run` record in PostgreSQL, and results are
  * registered in `search_run_results`. From there users can:
@@ -68,19 +66,7 @@ interface SearchProps {
     onAdd?: () => void;
 }
 
-// ─── Legacy search fallback ───────────────────────────────────────────────────
-
-/**
- * Fallback search when RetrievalOrchestrator IPC is unavailable.
- * Uses the original searchFiles / searchRemote IPC paths.
- * Kept for backward compatibility during the transition period.
- */
-async function _legacySearch(api: any, query: string, mode: 'local' | 'remote'): Promise<Result[]> {
-    if (mode === 'local') {
-        return (await api.searchFiles?.(query)) || [];
-    }
-    return (await api.searchRemote?.(query)) || [];
-}
+// ─── Search Execution ────────────────────────────────────────────────────────
 
 /**
  * Search panel with local/web toggle, query input, result list,
@@ -289,9 +275,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         try {
             let fetchedResults: Result[] = [];
 
-            // Attempt retrieval via RetrievalOrchestrator first (canonical path).
-            // providerIds: 'local' for Local mode, omit for Web to use all enabled providers.
-            if (api.retrievalRetrieve) {
+            // Execute canonical retrieval via RetrievalOrchestrator.
+            // providerIds: 'local' for Local mode, omit for Web to use all enabled providers (API + DDG).
+            if (api?.retrievalRetrieve) {
                 const providerIds = mode === 'local' ? ['local'] : undefined;
                 const retrievalRes = await api.retrievalRetrieve({
                     query: query.trim(),
@@ -299,6 +285,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                     scope: 'global',
                     providerIds,
                 });
+
                 if (retrievalRes?.ok && retrievalRes.response?.results) {
                     fetchedResults = (retrievalRes.response.results as Array<{
                         title: string; uri?: string | null; sourcePath?: string | null;
@@ -315,13 +302,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         externalId: r.externalId ?? undefined,
                         metadata: r.metadata,
                     }));
-                } else {
-                    // Fall through to legacy path if orchestrator returned error
-                    fetchedResults = await _legacySearch(api, query, mode);
                 }
-            } else {
-                // Orchestrator not yet exposed — use legacy IPC paths
-                fetchedResults = await _legacySearch(api, query, mode);
             }
 
             setResults(fetchedResults);

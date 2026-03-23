@@ -11,6 +11,7 @@ import {
   resolveActiveSearchProviderConfig,
 } from './providers/ExternalApiSearchProvider';
 import { SemanticSearchProvider } from './providers/SemanticSearchProvider';
+import { DuckDuckGoSearchProvider } from './providers/DuckDuckGoSearchProvider';
 import { loadSettings } from '../SettingsManager';
 import { RuntimeFlags } from '../RuntimeFlags';
 import type { FileService } from '../FileService';
@@ -74,6 +75,12 @@ export function initRetrievalOrchestrator(
       new SemanticSearchProvider(options.embeddingsRepo),
     );
     console.log('[RetrievalOrchestratorRegistry] Registered semantic provider.');
+  }
+
+  // 4. DuckDuckGo search provider (newly unified fallback)
+  if (RuntimeFlags.ENABLE_DUCKDUCKGO_SEARCH) {
+    _orchestrator.registerProvider(new DuckDuckGoSearchProvider());
+    console.log('[RetrievalOrchestratorRegistry] Registered DuckDuckGo provider.');
   }
 
   return _orchestrator;
