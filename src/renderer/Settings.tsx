@@ -135,6 +135,7 @@ export const Settings = () => {
     const [installingEngine, setInstallingEngine] = useState<string | null>(null);
     const [installProgress, setInstallProgress] = useState(0);
     const [scSubTab, setScSubTab] = useState<'providers' | 'advanced'>('providers');
+    const [retrievalProviders, setRetrievalProviders] = useState<any[]>([]);
 
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
@@ -199,6 +200,17 @@ export const Settings = () => {
             setMcpCapabilities(null);
         }
     }, [selectedMcpId, settings.mcpServers]); // Re-fetch if enabled status changes
+    
+    // Retrieval Provider Fetcher
+    useEffect(() => {
+        if (activeTab === 'search' && (window as any).tala?.retrievalListProviders) {
+            (window as any).tala.retrievalListProviders().then((res: any) => {
+                if (res.ok) {
+                    setRetrievalProviders(res.providers || []);
+                }
+            });
+        }
+    }, [activeTab]);
 
     // Load Functions
     const loadFunctions = () => {
@@ -1922,16 +1934,45 @@ export const Settings = () => {
                             </div>
 
                             <div style={{ marginBottom: 20, background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #007acc' }}>
-                                <label style={labelStyle}>ACTIVE SEARCH PROVIDER</label>
-                                <select
-                                    style={{ ...selectStyle, marginBottom: 0 }}
-                                    value={settings.search.activeProviderId}
-                                    onChange={e => update('search', 'activeProviderId', e.target.value)}
-                                >
-                                    {(settings.search.providers || []).map((p: any) => (
-                                        <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
-                                    ))}
-                                </select>
+                                <div style={{ display: 'flex', gap: 20 }}>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={labelStyle}>PREFERRED SEARCH PROVIDER</label>
+                                        <select
+                                            style={{ ...selectStyle, marginBottom: 10 }}
+                                            value={settings.search.preferredProviderId || 'auto'}
+                                            onChange={e => update('search', 'preferredProviderId', e.target.value)}
+                                        >
+                                            <option value="auto">Auto (Recommended)</option>
+                                            <option value="local">Local Files Only</option>
+                                            <option value="duckduckgo">DuckDuckGo (Web)</option>
+                                            {retrievalProviders.filter(p => p.id.startsWith('external:')).map(p => (
+                                                <option key={p.id} value={p.id}>{p.id.replace('external:', 'External: ').toUpperCase()}</option>
+                                            ))}
+                                            {/* Show current external if not in list yet (e.g. registry just updated) */}
+                                            {settings.search.activeProviderId && !retrievalProviders.some(p => p.id === `external:${settings.search.activeProviderId}`) && (
+                                                <option value={`external:${settings.search.activeProviderId}`}>External: {settings.search.activeProviderId.toUpperCase()}</option>
+                                            )}
+                                        </select>
+                                        <div style={{ fontSize: 10, color: '#888' }}>
+                                            Determines the preferred engine for global search requests.
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={labelStyle}>ACTIVE EXTERNAL PROVIDER</label>
+                                        <select
+                                            style={{ ...selectStyle, marginBottom: 10 }}
+                                            value={settings.search.activeProviderId}
+                                            onChange={e => update('search', 'activeProviderId', e.target.value)}
+                                        >
+                                            {(settings.search.providers || []).map((p: any) => (
+                                                <option key={p.id} value={p.id}>{p.name} ({p.type.toUpperCase()})</option>
+                                            ))}
+                                        </select>
+                                        <div style={{ fontSize: 10, color: '#888' }}>
+                                            The actual engine used when any 'External' provider is selected.
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -3661,9 +3702,6 @@ Tone: Minimalist, calm, practical.
                                                             spellCheck={false}
                                                         />
                                                     </div>
-                                                    <div style={{ marginTop: 10, fontSize: 11, color: '#666' }}>
-                                                        Call this in chat with: <code style={{ color: '#ce9178' }}>/{fn.name} [args]</code>
-                                                    </div>
                                                 </div>
                                             );
                                         })()}
@@ -3685,10 +3723,10 @@ Tone: Minimalist, calm, practical.
 
                 {/* ABOUT TAB */}
                 {activeTab === 'about' && <AboutPanel />}
-            </div >
+            </div>
 
             {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}
-        </div >
+        </div>
     );
 };
 

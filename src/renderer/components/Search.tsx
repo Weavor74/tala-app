@@ -285,12 +285,18 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
 
             // Execute canonical retrieval via RetrievalOrchestrator.
             if (api?.retrievalRetrieve) {
+                const settings = api.getSettings ? await api.getSettings() : null;
+                const preferredId = settings?.search?.preferredProviderId;
+                const providerIds = (preferredId && preferredId !== 'auto') ? [preferredId] : undefined;
+
                 const providerCategory = mode === 'local' ? 'local' : 'external';
-                console.log(`[SearchUI] Calling retrievalRetrieve with mode: keyword, scope: global, category: ${providerCategory}`);
+                console.log(`[SearchUI] Calling retrievalRetrieve with mode: keyword, scope: global, category: ${providerCategory}, preferred: ${preferredId}`);
+                
                 const retrievalRes = await api.retrievalRetrieve({
                     query: query.trim(),
                     mode: 'keyword',
                     scope: 'global',
+                    providerIds,
                     providerCategory,
                 });
 

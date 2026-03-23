@@ -99,6 +99,11 @@ export interface SearchProvider {
 
 export interface SearchConfig {
     activeProviderId: string;
+    /**
+     * Global preference for search provider.
+     * Values: 'auto', 'local', 'duckduckgo', or any 'external:*' ID.
+     */
+    preferredProviderId?: string;
     providers: SearchProvider[];
 }
 

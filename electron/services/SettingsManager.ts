@@ -92,6 +92,7 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
     guardrails: [],
     search: {
         activeProviderId: 'default-google',
+        preferredProviderId: 'auto',
         providers: [
             { id: 'default-google', name: 'Google Search', type: 'google', enabled: false },
             { id: 'default-brave', name: 'Brave Search', type: 'brave', enabled: false }

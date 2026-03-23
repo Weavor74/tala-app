@@ -169,30 +169,64 @@ export class RetrievalOrchestrator {
     const eligible: SearchProvider[] = [];
     const category = request.providerCategory || 'all';
 
-    for (const [id, provider] of this.providers) {
-      // 1. Explicit ID filter
-      if (request.providerIds && !request.providerIds.includes(id)) {
-        continue;
-      }
+    // Track if we specifically ignored a requested provider due to category mismatch
+    const ignoredRequested: string[] = [];
 
-      // 2. Mode support filter
+    for (const [id, provider] of this.providers) {
+      // 1. Mode support filter (always required)
       if (!provider.supportedModes.includes(request.mode)) {
         continue;
       }
 
-      // 3. Category filter
+      // 2. Category compatibility check
+      let isCompatible = true;
       if (category !== 'all') {
         const isExternal = id === 'duckduckgo' || id.startsWith('external:');
         const isLocal = id === 'local' || id === 'semantic';
 
-        if (category === 'external' && !isExternal) continue;
-        if (category === 'local' && !isLocal) continue;
+        if (category === 'external' && !isExternal) isCompatible = false;
+        if (category === 'local' && !isLocal) isCompatible = false;
       }
 
-      eligible.push(provider);
+      // 3. Selection logic
+      if (request.providerIds) {
+        // Explicit selection: must be in the list AND compatible with category
+        if (request.providerIds.includes(id)) {
+          if (isCompatible) {
+            eligible.push(provider);
+          } else {
+            ignoredRequested.push(id);
+          }
+        }
+      } else {
+        // Default selection: must be compatible with category
+        if (isCompatible) {
+          eligible.push(provider);
+        }
+      }
     }
 
-    console.log(`[RetrievalOrchestrator] Selected providers for category "${category}":`, eligible.map(p => p.id));
+    if (ignoredRequested.length > 0) {
+      console.warn(`[RetrievalOrchestrator] Ignored requested providers due to category mismatch (${category}):`, ignoredRequested);
+    }
+
+    // Fallback: if explicit selection failed to find any compatible providers, 
+    // fall back to category defaults to avoid zero results.
+    if (request.providerIds && eligible.length === 0) {
+      console.log(`[RetrievalOrchestrator] No compatible providers found for requested IDs. Falling back to category "${category}" defaults.`);
+      for (const [id, provider] of this.providers) {
+        if (!provider.supportedModes.includes(request.mode)) continue;
+        
+        const isExternal = id === 'duckduckgo' || id.startsWith('external:');
+        const isLocal = id === 'local' || id === 'semantic';
+        
+        if (category === 'external' && isExternal) eligible.push(provider);
+        if (category === 'local' && isLocal) eligible.push(provider);
+        if (category === 'all') eligible.push(provider);
+      }
+    }
+
+    console.log(`[RetrievalOrchestrator] Selected providers for category "${category}" (request.providerIds=${request.providerIds}):`, eligible.map(p => p.id));
     return eligible;
   }
 
