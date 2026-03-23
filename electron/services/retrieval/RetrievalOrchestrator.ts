@@ -167,14 +167,32 @@ export class RetrievalOrchestrator {
 
   private selectProviders(request: RetrievalRequest): SearchProvider[] {
     const eligible: SearchProvider[] = [];
+    const category = request.providerCategory || 'all';
+
     for (const [id, provider] of this.providers) {
+      // 1. Explicit ID filter
       if (request.providerIds && !request.providerIds.includes(id)) {
         continue;
       }
-      if (provider.supportedModes.includes(request.mode)) {
-        eligible.push(provider);
+
+      // 2. Mode support filter
+      if (!provider.supportedModes.includes(request.mode)) {
+        continue;
       }
+
+      // 3. Category filter
+      if (category !== 'all') {
+        const isExternal = id === 'duckduckgo' || id.startsWith('external:');
+        const isLocal = id === 'local' || id === 'semantic';
+
+        if (category === 'external' && !isExternal) continue;
+        if (category === 'local' && !isLocal) continue;
+      }
+
+      eligible.push(provider);
     }
+
+    console.log(`[RetrievalOrchestrator] Selected providers for category "${category}":`, eligible.map(p => p.id));
     return eligible;
   }
 

@@ -259,6 +259,14 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         }
     };
 
+    const handleClear = () => {
+        setQuery('');
+        setResults([]);
+        setSelectedKeys(new Set());
+        setLoading(false);
+        setCurrentSearchRunId(null);
+    };
+
     React.useEffect(() => {
         loadNotebooks();
     }, []);
@@ -276,15 +284,14 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             let fetchedResults: Result[] = [];
 
             // Execute canonical retrieval via RetrievalOrchestrator.
-            // providerIds: 'local' for Local mode, omit for Web to use all enabled providers (API + DDG).
             if (api?.retrievalRetrieve) {
-                const providerIds = mode === 'local' ? ['local'] : undefined;
-                console.log(`[SearchUI] Calling retrievalRetrieve with mode: keyword, scope: global, providers:`, providerIds);
+                const providerCategory = mode === 'local' ? 'local' : 'external';
+                console.log(`[SearchUI] Calling retrievalRetrieve with mode: keyword, scope: global, category: ${providerCategory}`);
                 const retrievalRes = await api.retrievalRetrieve({
                     query: query.trim(),
                     mode: 'keyword',
                     scope: 'global',
-                    providerIds,
+                    providerCategory,
                 });
 
                 console.log(`[SearchUI] retrievalRetrieve response received:`, retrievalRes);
@@ -342,6 +349,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') handleSearch();
+        if (e.key === 'Escape') handleClear();
     };
 
     const toggleSelection = (key: string) => {
@@ -413,6 +421,24 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             outline: 'none'
                         }}
                     />
+                    {(query || results.length > 0) && (
+                        <button
+                            onClick={handleClear}
+                            title="Clear search results and input (Esc)"
+                            style={{
+                                background: 'transparent',
+                                border: '1px solid #444',
+                                color: '#888',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '11px',
+                                transition: 'color 0.2s'
+                            }}
+                        >
+                            CLEAR
+                        </button>
+                    )}
                     <button
                         onClick={handleSearch}
                         disabled={loading}

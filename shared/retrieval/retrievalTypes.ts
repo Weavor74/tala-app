@@ -181,6 +181,13 @@ export interface RetrievalRequest {
    * Useful for targeted retrieval (e.g., "semantic only from pgvector provider").
    */
   providerIds?: string[];
+  /**
+   * High-level categorization for provider selection.
+   * - 'all'      — include all eligible providers (default).
+   * - 'local'    — include only local filesystem or memory providers.
+   * - 'external' — include only web search or external API providers.
+   */
+  providerCategory?: 'all' | 'local' | 'external';
   /** Forwarded verbatim to each provider as RetrievalProviderOptions.filters. */
   filters?: Record<string, unknown>;
 }
