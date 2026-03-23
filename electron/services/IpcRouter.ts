@@ -1630,8 +1630,10 @@ export class IpcRouter {
      * Returns a RetrievalResponse with merged, deduplicated, sorted results.
      */
     ipcMain.handle('retrieval:retrieve', async (_e, request: RetrievalRequest) => {
+      console.log(`[IPC] retrieval:retrieve received for query: "${request.query}"`);
       const orchestrator = getRetrievalOrchestrator();
       if (!orchestrator) {
+        console.warn(`[IPC] RetrievalOrchestrator not initialized!`);
         return { ok: false, error: 'RetrievalOrchestrator not initialized' };
       }
       try {
@@ -1835,6 +1837,7 @@ export class IpcRouter {
      * Returns up to 30 results with title, snippet, and URL.
      */
     ipcMain.handle('search-remote', async (event, query) => {
+      console.log(`[IPC] legacy search-remote called for query: "${query}"`);
       const orchestrator = getRetrievalOrchestrator();
       if (!orchestrator) {
         console.warn('[IpcRouter] search-remote shim: Orchestrator not initialized');

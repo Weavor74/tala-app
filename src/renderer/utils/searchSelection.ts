@@ -18,16 +18,14 @@
  * module remains a pure TypeScript unit.
  */
 export interface SearchResultInput {
-    /** Canonical URL for web results. */
-    url?: string;
+    /** Canonical URI for web results. */
+    uri?: string;
     /** Absolute file-system path for local results. */
-    path?: string;
+    sourcePath?: string;
     /** Human-readable title. */
     title?: string;
     /** Short excerpt. */
     snippet?: string;
-    /** Legacy content field used by local search fallback. */
-    content?: string;
     /** Retrieval provider ID, e.g. 'local', 'external:brave'. */
     providerId?: string;
     /** Source category, e.g. 'web', 'local_file'. */
@@ -58,53 +56,33 @@ export interface NotebookItemInput {
  * Returns a stable, provider-agnostic key for a search result.
  *
  * Priority:
- *   1. `url`  — canonical for web results
- *   2. `path` — canonical for local file results
+ *   1. `uri`  — canonical for web results
+ *   2. `sourcePath` — canonical for local file results
  *   3. `result:<fallbackIndex>` — last resort for results with neither
- *
- * The key doubles as the `item_key` in `notebook_items`, so it must remain
- * stable between the time a user checks a result and the time "Save Selected"
- * is invoked.
  */
-export function resultKey(url?: string, path?: string, fallbackIndex = 0): string {
-    return url ?? path ?? `result:${fallbackIndex}`;
+export function resultKey(uri?: string, sourcePath?: string, fallbackIndex = 0): string {
+    return uri ?? sourcePath ?? `result:${fallbackIndex}`;
 }
 
 // ─── Result → NotebookItem mapping ───────────────────────────────────────────
 
 /**
  * Maps a single search result into a `NotebookItemInput` for persistence.
- *
- * This mapping is a *metadata-only* operation — it does NOT fetch, scrape,
- * embed, or ingest any content. The resulting record is a curated reference
- * that can be resolved into full content later via an explicit ingestion step.
- *
- * All normalized fields from `NormalizedSearchResult` are preserved:
- *   - itemKey (= item_key)
- *   - title
- *   - uri
- *   - sourcePath (= source_path)
- *   - snippet
- *   - providerId → metadata_json.providerId
- *   - externalId → metadata_json.externalId (when present)
- *   - metadata   → merged into metadata_json
  */
 export function resultToNotebookItem(r: SearchResultInput, fallbackIndex: number): NotebookItemInput {
-    const key = resultKey(r.url, r.path, fallbackIndex);
+    const key = resultKey(r.uri, r.sourcePath, fallbackIndex);
 
     const meta: Record<string, unknown> = { ...r.metadata };
-    // Root-level canonical fields (providerId, externalId) take precedence over
-    // any same-named keys that may already be in r.metadata.
     if (r.providerId) meta.providerId = r.providerId;
     if (r.externalId != null) meta.externalId = r.externalId;
 
     return {
         item_key: key,
         item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
-        source_path: r.path,
-        title: r.title ?? r.path,
-        uri: r.url,
-        snippet: (r.snippet || r.content)?.slice(0, 500),
+        source_path: r.sourcePath,
+        title: r.title ?? r.sourcePath,
+        uri: r.uri,
+        snippet: r.snippet?.slice(0, 500),
         metadata_json: Object.keys(meta).length > 0 ? meta : undefined,
     };
 }
@@ -112,9 +90,7 @@ export function resultToNotebookItem(r: SearchResultInput, fallbackIndex: number
 // ─── Filter helpers ───────────────────────────────────────────────────────────
 
 /**
- * Returns the subset of `results` whose stable key is in `selectedKeys`,
- * paired with the original index so that index-based fallback keys remain
- * consistent with what was stored in the selection Set.
+ * Returns the subset of `results` whose stable key is in `selectedKeys`.
  */
 export function filterSelectedResults<T extends SearchResultInput>(
     results: T[],
@@ -122,15 +98,14 @@ export function filterSelectedResults<T extends SearchResultInput>(
 ): Array<{ result: T; index: number }> {
     return results
         .map((r, i) => ({ result: r, index: i }))
-        .filter(({ result, index }) => selectedKeys.has(resultKey(result.url, result.path, index)));
+        .filter(({ result, index }) => selectedKeys.has(resultKey(result.uri, result.sourcePath, index)));
 }
 
 /**
  * Builds a Set of stable keys from *all* results.
- * Used to implement "Select All" without iterating results twice in the component.
  */
 export function allResultKeys(results: SearchResultInput[]): Set<string> {
     const keys = new Set<string>();
-    results.forEach((r, i) => keys.add(resultKey(r.url, r.path, i)));
+    results.forEach((r, i) => keys.add(resultKey(r.uri, r.sourcePath, i)));
     return keys;
 }

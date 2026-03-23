@@ -78,6 +78,7 @@ export class RetrievalOrchestrator {
    * - Caps the final result list at request.topK when provided.
    */
   async retrieve(request: RetrievalRequest): Promise<RetrievalResponse> {
+    console.log(`[RetrievalOrchestrator] retrieve starting for query: "${request.query}" (mode: ${request.mode})`);
     const startMs = Date.now();
     const warnings: string[] = [];
 
@@ -98,6 +99,7 @@ export class RetrievalOrchestrator {
     // 4. Merge and deduplicate
     const results = this.mergeResults(providerResults, request.mode, scopeResolved, request.topK);
 
+    console.log(`[RetrievalOrchestrator] retrieve completed in ${Date.now() - startMs}ms with ${results.length} results.`);
     return {
       query: request.query,
       mode: request.mode,

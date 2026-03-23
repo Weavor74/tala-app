@@ -41,11 +41,10 @@ import {
  * Aligns with `SearchResultInput` in searchSelection.ts.
  */
 interface Result {
-    path?: string;
-    content?: string;
-    title?: string;
+    sourcePath?: string;
     snippet?: string;
-    url?: string;
+    title?: string;
+    uri?: string;
     /** ID of the retrieval provider that produced this result (e.g., 'local', 'external:brave'). */
     providerId?: string;
     /** Source category from the provider (e.g., 'local_file', 'web'). */
@@ -177,9 +176,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         let successCount = 0;
         let failCount = 0;
 
-        const urls = results
-            .filter((r, i) => r.url && selectedKeys.has(resultKey(r.url, r.path, i)))
-            .map(r => r.url as string);
+        const uris = results
+            .filter((r, i) => r.uri && selectedKeys.has(resultKey(r.uri, r.sourcePath, i)))
+            .map(r => r.uri as string);
 
         const notebookItems: Array<{
             item_key: string; item_type: string;
@@ -187,26 +186,26 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             provider_id?: string;
         }> = [];
 
-        for (const url of urls) {
-            const resItem = results.find(r => r.url === url);
+        for (const uri of uris) {
+            const resItem = results.find(r => r.uri === uri);
             const title = resItem?.title || 'Web Resource';
-            setScraping(url);
+            setScraping(uri);
             try {
-                const res = await api.scrapeUrl(url, title);
+                const res = await api.scrapeUrl(uri, title);
                 if (res.success && res.path) {
                     successCount++;
                     notebookItems.push({
-                        item_key: url,
+                        item_key: uri,
                         item_type: 'web',
                         source_path: res.path,
-                        title: resItem?.title ?? url,
-                        uri: url,
+                        title: resItem?.title ?? uri,
+                        uri: uri,
                         snippet: resItem?.snippet ?? undefined,
                         provider_id: resItem?.providerId ?? undefined,
                     });
                     setSelectedKeys(prev => {
                         const next = new Set(prev);
-                        next.delete(url);
+                        next.delete(uri);
                         return next;
                     });
                 } else {
@@ -266,6 +265,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
 
     const handleSearch = async () => {
         if (!query.trim()) return;
+        console.log(`[SearchUI] handleSearch triggered for query: "${query.trim()}" in mode: ${mode}`);
         setLoading(true);
         setSelectedKeys(new Set()); // Reset selection when a new search is run
         setCurrentSearchRunId(null);
@@ -279,12 +279,15 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             // providerIds: 'local' for Local mode, omit for Web to use all enabled providers (API + DDG).
             if (api?.retrievalRetrieve) {
                 const providerIds = mode === 'local' ? ['local'] : undefined;
+                console.log(`[SearchUI] Calling retrievalRetrieve with mode: keyword, scope: global, providers:`, providerIds);
                 const retrievalRes = await api.retrievalRetrieve({
                     query: query.trim(),
                     mode: 'keyword',
                     scope: 'global',
                     providerIds,
                 });
+
+                console.log(`[SearchUI] retrievalRetrieve response received:`, retrievalRes);
 
                 if (retrievalRes?.ok && retrievalRes.response?.results) {
                     fetchedResults = (retrievalRes.response.results as Array<{
@@ -293,10 +296,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         externalId?: string | null; metadata?: Record<string, unknown>;
                     }>).map(r => ({
                         title: r.title,
-                        url: r.uri ?? undefined,
-                        path: r.sourcePath ?? undefined,
+                        uri: r.uri ?? undefined,
+                        sourcePath: r.sourcePath ?? undefined,
                         snippet: r.snippet ?? undefined,
-                        content: r.snippet ?? undefined,
                         providerId: r.providerId,
                         sourceType: r.sourceType ?? undefined,
                         externalId: r.externalId ?? undefined,
@@ -316,12 +318,12 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         setCurrentSearchRunId(searchRunId);
 
                         const runResults = fetchedResults.map((r, i) => ({
-                            item_key: r.url || r.path || `result-${i}`,
+                            item_key: r.uri || r.sourcePath || `result-${i}`,
                             item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
-                            source_path: r.path ?? undefined,
-                            title: r.title ?? r.path ?? undefined,
-                            uri: r.url ?? undefined,
-                            snippet: (r.snippet || r.content)?.slice(0, 500) ?? undefined,
+                            source_path: r.sourcePath ?? undefined,
+                            title: r.title ?? r.sourcePath ?? undefined,
+                            uri: r.uri ?? undefined,
+                            snippet: r.snippet?.slice(0, 500) ?? undefined,
                             provider_id: r.providerId ?? undefined,
                         }));
                         await api.researchAddSearchRunResults(searchRunId, runResults);
@@ -569,9 +571,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                 )}
 
                 {results.map((res, i) => {
-                    const key = resultKey(res.url, res.path, i);
+                    const key = resultKey(res.uri, res.sourcePath, i);
                     const isSelected = selectedKeys.has(key);
-                    const isScraping = res.url === scraping;
+                    const isScraping = res.uri === scraping;
 
                     return (
                         <div
@@ -609,24 +611,24 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                 <div
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        if (mode === 'local' && res.path) onOpenFile?.(res.path);
+                                        if (mode === 'local' && res.sourcePath) onOpenFile?.(res.sourcePath);
                                     }}
                                     style={{
                                         fontWeight: 'bold',
                                         color: '#9cdcfe',
                                         marginBottom: '5px',
-                                        cursor: mode === 'local' && res.path ? 'pointer' : 'default'
+                                        cursor: mode === 'local' && res.sourcePath ? 'pointer' : 'default'
                                     }}
                                 >
-                                    {res.title || res.path}
+                                    {res.title || res.sourcePath}
                                 </div>
                                 <div style={{ fontSize: '13px', color: '#d4d4d4', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                    {res.content || res.snippet}
+                                    {res.snippet}
                                 </div>
-                                {res.url && (
+                                {res.uri && (
                                     <div style={{ display: 'flex', gap: 10, marginTop: 5, alignItems: 'center' }}>
                                         <a
-                                            href={res.url}
+                                            href={res.uri}
                                             target="_blank"
                                             rel="noreferrer"
                                             onClick={e => e.stopPropagation()}
@@ -645,9 +647,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                     </div>
                                 )}
                                 {/* Provider badge for local results */}
-                                {res.providerId === 'local' && res.path && (
+                                {res.providerId === 'local' && res.sourcePath && (
                                     <div style={{ fontSize: 10, color: '#888', marginTop: 3, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {res.path}
+                                        {res.sourcePath}
                                     </div>
                                 )}
                             </div>
