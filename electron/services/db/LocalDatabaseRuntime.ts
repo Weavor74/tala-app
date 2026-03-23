@@ -1,26 +1,25 @@
 /**
  * Local Database Runtime
  *
- * Resolves platform-specific paths and connection settings for the
+ * Resolves portable, app-root-relative paths and connection settings for the
  * Tala-managed native PostgreSQL runtime.
  *
- * Platform storage roots:
- *   Windows:  %APPDATA%\Tala\
- *   macOS:    ~/Library/Application Support/Tala/
- *   Linux:    ~/.local/share/Tala/
+ * Default Resolution (AppRoot-relative):
+ *   Runtime Root: [APP_ROOT]/runtime/postgres/  — bundled binaries (read-only)
+ *   Data Root:    [APP_ROOT]/data/postgres/     — cluster data (writable)
+ *   Logs Root:    [APP_ROOT]/data/logs/postgres/ — server logs (writable)
  *
- * Under each root:
- *   postgres-runtime/   — bundled PostgreSQL binaries (read-only in production)
- *   data/postgres/      — PostgreSQL cluster data directory (writable)
- *   logs/postgres/      — PostgreSQL server log output (writable)
+ * Resolution Order:
+ *   1. Explicit settings override (absolute or relative to AppRoot/DataRoot)
+ *   2. Portable AppRoot-relative default
  *
- * This module is Electron-layer only; it uses Node.js APIs (os, path) and
- * must not be imported from shared/ or the renderer.
+ * This module is Electron-layer only; it uses Node.js APIs and PathResolver,
+ * and must not be imported from shared/ or the renderer.
  */
 
-import os from 'os';
 import path from 'path';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
+import { resolveRuntimePath, resolveDataPath } from '../PathResolver';
 
 /** Resolved path set for the local runtime. */
 export interface RuntimePaths {
@@ -78,33 +77,11 @@ export class LocalDatabaseRuntime {
   }
 
   /**
-   * The platform-specific Tala application data root.
-   *
-   *   Windows:  %APPDATA%\Tala
-   *   macOS:    ~/Library/Application Support/Tala
-   *   Linux:    ~/.local/share/Tala
-   */
-  getAppDataRoot(): string {
-    switch (this.platform) {
-      case 'win32':
-        return path.join(
-          process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-          'Tala'
-        );
-      case 'darwin':
-        return path.join(os.homedir(), 'Library', 'Application Support', 'Tala');
-      default:
-        return path.join(os.homedir(), '.local', 'share', 'Tala');
-    }
-  }
-
-  /**
    * Runtime root: directory containing the bundled PostgreSQL binaries.
-   * In a packaged release, binaries are placed here by the build/packaging step.
-   * In development, this directory must be populated manually or via a setup script.
+   * In a packaged release, binaries are typically in APP_ROOT/runtime/postgres.
    */
   getRuntimeRoot(): string {
-    return this.options.runtimePathOverride ?? path.join(this.getAppDataRoot(), 'postgres-runtime');
+    return resolveRuntimePath('postgres', this.options.runtimePathOverride);
   }
 
   /**
@@ -112,12 +89,12 @@ export class LocalDatabaseRuntime {
    * Tala initialises this via initdb on first run and writes cluster data here.
    */
   getDataRoot(): string {
-    return this.options.dataPathOverride ?? path.join(this.getAppDataRoot(), 'data', 'postgres');
+    return resolveDataPath('postgres', this.options.dataPathOverride);
   }
 
   /** Logs root: directory for PostgreSQL server log files. */
   getLogsRoot(): string {
-    return path.join(this.getAppDataRoot(), 'logs', 'postgres');
+    return resolveDataPath(path.join('logs', 'postgres'));
   }
 
   /** Directory containing the PostgreSQL executables within the runtime root. */

@@ -17,6 +17,7 @@ import './bootstrap';
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { APP_ROOT, LOCAL_DATA_DIR, resolveDataPath } from './services/PathResolver';
 import { AgentService } from './services/AgentService';
 import { FileService } from './services/FileService';
 import { TerminalService } from './services/TerminalService';
@@ -52,9 +53,8 @@ import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchest
 // ═══════════════════════════════════════════════════════════════════════
 
 // Paths derived after bootstrap redirection
-const USER_DATA_DIR = app.getPath('userData');
-const SYSTEM_SETTINGS_PATH = path.join(USER_DATA_DIR, 'app_settings.json');
-const EXE_DIR = path.dirname(app.getPath('exe'));
+const USER_DATA_DIR = LOCAL_DATA_DIR;
+const SYSTEM_SETTINGS_PATH = resolveDataPath('app_settings.json');
 
 // Deployment Mode: Force local tracking for maximum autonomy
 let deploymentMode: 'usb' | 'local' | 'remote' = 'local';
@@ -67,11 +67,11 @@ if (fs.existsSync(SETTINGS_PATH)) {
   } catch (e) { }
 }
 
-const USER_DATA_PATH = path.join(USER_DATA_DIR, 'user_profile.json');
+const USER_DATA_PATH = resolveDataPath('user_profile.json');
 // Determine effective workspace: defaults to local /workspace if not in dev
 const EFFECTIVE_WORKSPACE_ROOT = (process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
-  ? process.cwd()
-  : path.join(USER_DATA_DIR, 'workspace');
+  ? APP_ROOT
+  : path.join(LOCAL_DATA_DIR, 'workspace');
 
 // Ensure workspace exists
 if (!fs.existsSync(EFFECTIVE_WORKSPACE_ROOT)) {
@@ -183,7 +183,7 @@ workflowService.initScheduler(async (workflowId) => {
   }
 });
 
-const TEMP_SYSTEM_PATH = path.join(USER_DATA_DIR, 'temp_system_info.json');
+const TEMP_SYSTEM_PATH = resolveDataPath('temp_system_info.json');
 
 // Detect environment on launch
 systemService.detectEnv(fileService.getRoot()).then(info => {

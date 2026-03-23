@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { resolveAppPath } from './PathResolver';
 
 /**
  * Contains comprehensive information about the user's system environment,
@@ -96,9 +97,9 @@ export class SystemService {
             : os.platform() === 'darwin' ? 'python-mac' : 'python-linux';
         const pyExe = os.platform() === 'win32' ? 'python.exe' : path.join('bin', 'python3');
         const candidates = [
-            path.join(process.cwd(), 'bin', platformDir, pyExe),
-            path.join(process.cwd(), 'bin', 'python-portable', os.platform() === 'win32' ? 'python.exe' : 'python'),
-            path.join(process.cwd(), 'bin', 'python', os.platform() === 'win32' ? 'python.exe' : path.join('bin', 'python3')),
+            resolveAppPath(path.join('bin', platformDir, pyExe)),
+            resolveAppPath(path.join('bin', 'python-portable', os.platform() === 'win32' ? 'python.exe' : 'python')),
+            resolveAppPath(path.join('bin', 'python', os.platform() === 'win32' ? 'python.exe' : path.join('bin', 'python3'))),
         ];
         const bundledPython = candidates.find(p => fs.existsSync(p)) || candidates[candidates.length - 1];
 

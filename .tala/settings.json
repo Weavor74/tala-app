@@ -273,19 +273,21 @@
   ],
   "guardrails": [],
   "search": {
-    "activeProviderId": "default-google",
+    "activeProviderId": "default-brave",
     "providers": [
       {
         "id": "default-google",
-        "name": "Google Search",
-        "type": "google",
-        "enabled": false
+        "name": "Brave",
+        "type": "brave",
+        "enabled": true
       },
       {
         "id": "default-brave",
         "name": "Brave Search",
         "type": "brave",
-        "enabled": false
+        "enabled": true,
+        "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ",
+        "endpoint": "https://api.search.brave.com/res/v1/web/search"
       }
     ]
   },

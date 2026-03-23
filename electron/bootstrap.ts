@@ -26,21 +26,7 @@
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
-
-/**
- * The root directory of the application.
- * In production (packaged), this is the folder containing the executable.
- * In development, this is the project root (process.cwd()).
- */
-const APP_ROOT = app.isPackaged
-    ? path.dirname(app.getPath('exe'))
-    : app.getAppPath();
-
-/**
- * The canonical local data storage directory.
- * All persistent app state (except the workspace) is stored here.
- */
-const LOCAL_DATA_DIR = path.join(APP_ROOT, 'data');
+import { APP_ROOT, LOCAL_DATA_DIR } from './services/PathResolver';
 
 // Create local data directory if it doesn't exist
 if (!fs.existsSync(LOCAL_DATA_DIR)) {

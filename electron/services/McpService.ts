@@ -19,8 +19,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
+import { resolveAppPath } from './PathResolver';
 import type { McpServerConfig } from '../../shared/settings';
 import { auditLogger } from './AuditLogger';
 
@@ -196,7 +197,7 @@ export class McpService {
                     }
                 }
 
-                const serverCwd = config.cwd ? path.resolve(process.cwd(), config.cwd) : undefined;
+                const serverCwd = config.cwd ? resolveAppPath('', config.cwd) : undefined;
 
                 transport = new StdioClientTransport({
                     command: command,
