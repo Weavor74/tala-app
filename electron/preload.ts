@@ -583,5 +583,9 @@ contextBridge.exposeInMainWorld('tala', {
          * Call after saving search settings to apply changes immediately.
          */
         refreshExternalProvider: () => ipcRenderer.invoke('retrieval:refreshExternalProvider'),
+        /**
+         * Test a specific external search provider connection.
+         */
+        testProvider: (providerId: string) => ipcRenderer.invoke('retrieval:testProvider', providerId),
     },
 });

@@ -48,6 +48,110 @@ export class ExternalSearchProviderError extends Error {
   }
 }
 
+// ─── Phase 2 Hardening: Cache & Health Tracking ───────────────────────────────
+
+class InMemorySearchCache {
+  private cache = new Map<string, { results: NormalizedSearchResult[], expiry: number }>();
+  
+  get(providerId: string, query: string): NormalizedSearchResult[] | null {
+    const key = `${providerId}:${query}`;
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.results;
+  }
+  
+  set(providerId: string, query: string, results: NormalizedSearchResult[]) {
+    const key = `${providerId}:${query}`;
+    this.cache.set(key, { results, expiry: Date.now() + 120000 }); // 120s TTL
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+export const providerCache = new InMemorySearchCache();
+
+export class ProviderHealthTracker {
+  private status = new Map<string, { successCount: number, failureCount: number, consecutiveFailures: number, lastFailureTimestamp: number }>();
+
+  private getOrCreate(providerId: string) {
+    if (!this.status.has(providerId)) {
+      this.status.set(providerId, { successCount: 0, failureCount: 0, consecutiveFailures: 0, lastFailureTimestamp: 0 });
+    }
+    return this.status.get(providerId)!;
+  }
+
+  recordSuccess(providerId: string) {
+    const stats = this.getOrCreate(providerId);
+    stats.successCount++;
+    stats.consecutiveFailures = 0;
+  }
+
+  recordFailure(providerId: string) {
+    const stats = this.getOrCreate(providerId);
+    stats.failureCount++;
+    stats.consecutiveFailures++;
+    stats.lastFailureTimestamp = Date.now();
+  }
+
+  isDegraded(providerId: string): boolean {
+    return this.getOrCreate(providerId).consecutiveFailures >= 3;
+  }
+
+  getStats(providerId: string) {
+    return this.getOrCreate(providerId);
+  }
+
+  resetAll() {
+    this.status.clear();
+  }
+}
+
+export const providerHealthTracker = new ProviderHealthTracker();
+
+// ─── Phase 2 Hardening: Strict Validation ─────────────────────────────────────
+
+export function validateNormalizedResults(providerId: string, results: NormalizedSearchResult[]): NormalizedSearchResult[] {
+  if (results.length === 0) return results;
+  const valid: NormalizedSearchResult[] = [];
+  let invalidCount = 0;
+
+  for (const r of results) {
+    if (!r.title || typeof r.title !== 'string' || r.title.trim() === '') {
+      invalidCount++;
+      continue;
+    }
+    if (!r.uri || typeof r.uri !== 'string' || !r.uri.startsWith('http')) {
+      invalidCount++;
+      continue;
+    }
+    if (r.snippet && typeof r.snippet !== 'string') {
+      invalidCount++;
+      continue;
+    }
+    valid.push(r);
+  }
+
+  if (invalidCount > 0) {
+    console.log(`[ExternalSearch][${providerId}] Dropped ${invalidCount} invalid results during normalization`);
+  }
+
+  if (results.length > 0 && invalidCount / results.length > 0.5) {
+    throw new ExternalSearchProviderError(
+      providerId,
+      'normalize',
+      `More than 50% of results (${invalidCount}/${results.length}) were invalid (missing title or valid URI).`
+    );
+  }
+
+  return valid;
+}
+
 // ─── Generic external result shape ───────────────────────────────────────────
 
 /**
@@ -221,6 +325,7 @@ interface HttpRequestOptions {
   headers: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 interface HttpResponse {
@@ -228,7 +333,7 @@ interface HttpResponse {
   body: string;
 }
 
-function doHttpRequest(opts: HttpRequestOptions): Promise<HttpResponse> {
+export async function doHttpRequest(opts: HttpRequestOptions): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(opts.url);
     const isHttps = parsed.protocol === 'https:';
@@ -247,6 +352,17 @@ function doHttpRequest(opts: HttpRequestOptions): Promise<HttpResponse> {
       res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
       res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: data }));
     });
+
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        req.destroy();
+        return reject(new Error('AbortError'));
+      }
+      opts.signal.addEventListener('abort', () => {
+        req.destroy();
+        reject(new Error('AbortError'));
+      });
+    }
 
     if (opts.timeoutMs) {
       req.setTimeout(opts.timeoutMs, () => {
@@ -298,7 +414,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
     const startMs = Date.now();
 
     if (!this._config) {
-      console.warn(`[ExternalApiSearchProvider] No search provider configured — returning 0 results`);
+      console.warn(`[ExternalSearch][${this._id}] FAIL phase=config (not configured)`);
       return {
         providerId: this._id,
         results: [],
@@ -308,7 +424,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
     }
 
     if (!this._config.enabled) {
-      console.warn(`[ExternalApiSearchProvider][${this._id}] Provider is disabled — returning 0 results`);
+      console.warn(`[ExternalSearch][${this._id}] FAIL phase=config (disabled)`);
       return {
         providerId: this._id,
         results: [],
@@ -317,14 +433,31 @@ export class ExternalApiSearchProvider implements SearchProvider {
       };
     }
 
-    console.log(`[ExternalApiSearchProvider][${this._id}] search started — query="${query}" type="${this._config.type}"`);
+    // Phase 2: Check Caching
+    const cached = providerCache.get(this._id, query);
+    if (cached) {
+      const limited = options.topK != null ? cached.slice(0, options.topK) : cached;
+      console.log(`[ExternalSearch][${this._id}] OK ${limited.length} results in 0ms (cached)`);
+      return {
+        providerId: this._id,
+        results: limited,
+        durationMs: 0,
+        error: null,
+      };
+    }
+
+    // Phase 2: AbortController with 8s timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const adapted = await this._executeSearch(query, this._config);
+      const adapted = await this._executeSearch(query, this._config, controller.signal);
+      clearTimeout(timeoutId);
+
       const topK = options.topK;
       const limited = topK != null ? adapted.slice(0, topK) : adapted;
 
-      const results: NormalizedSearchResult[] = limited.map((r, i) => ({
+      let results: NormalizedSearchResult[] = limited.map((r, i) => ({
         itemKey: `${this._id}:${r.uri || (r.externalId ? `id:${r.externalId}` : `title:${r.title.toLowerCase().replace(/\s+/g, '-').slice(0, 64)}`) || String(i)}`,
         title: r.title,
         uri: r.uri || null,
@@ -343,12 +476,19 @@ export class ExternalApiSearchProvider implements SearchProvider {
         },
       }));
 
+      // Phase 2: Strict Result Validation
+      results = validateNormalizedResults(this._id, results);
+
       const durationMs = Date.now() - startMs;
+      
       if (results.length > 0) {
-        console.log(`[ExternalApiSearchProvider][${this._id}] search succeeded — ${results.length} results in ${durationMs}ms`);
+        console.log(`[ExternalSearch][${this._id}] OK ${results.length} results in ${durationMs}ms`);
+        providerCache.set(this._id, query, results);
       } else {
-        console.log(`[ExternalApiSearchProvider][${this._id}] search returned 0 results (valid empty response) in ${durationMs}ms`);
+        console.log(`[ExternalSearch][${this._id}] EMPTY 0 results in ${durationMs}ms`);
       }
+
+      providerHealthTracker.recordSuccess(this._id);
 
       return {
         providerId: this._id,
@@ -356,12 +496,27 @@ export class ExternalApiSearchProvider implements SearchProvider {
         durationMs,
         error: null,
       };
-    } catch (err) {
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
       const durationMs = Date.now() - startMs;
+      providerHealthTracker.recordFailure(this._id);
+
+      // Phase 2: Normalize timeout errors
+      if (err instanceof Error && err.message === 'AbortError') {
+        const timeoutErr = new ExternalSearchProviderError(this._id, 'request', 'External search request timed out after 8000ms');
+        console.error(`[ExternalSearch][${this._id}] TIMEOUT after ${durationMs}ms`);
+        return {
+          providerId: this._id,
+          results: [],
+          durationMs,
+          error: timeoutErr.message,
+        };
+      }
+
       if (err instanceof ExternalSearchProviderError) {
         console.error(
-          `[ExternalApiSearchProvider][${this._id}] search FAILED — phase=${err.phase}` +
-          (err.statusCode ? ` statusCode=${err.statusCode}` : '') +
+          `[ExternalSearch][${this._id}] FAIL phase=${err.phase}` +
+          (err.statusCode ? ` status=${err.statusCode}` : '') +
           ` message="${err.message}"` +
           (err.responsePreview ? ` preview="${err.responsePreview}"` : ''),
         );
@@ -372,8 +527,9 @@ export class ExternalApiSearchProvider implements SearchProvider {
           error: err.message,
         };
       }
+      
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ExternalApiSearchProvider][${this._id}] search FAILED — phase=request message="${msg}"`);
+      console.error(`[ExternalSearch][${this._id}] FAIL phase=request message="${msg}"`);
       return {
         providerId: this._id,
         results: [],
@@ -388,22 +544,23 @@ export class ExternalApiSearchProvider implements SearchProvider {
   private async _executeSearch(
     query: string,
     cfg: SettingsSearchProvider,
+    signal?: AbortSignal,
   ): Promise<AdaptedExternalResult[]> {
     switch (cfg.type) {
       case 'serper':
       case 'google':
-        return this._searchSerper(query, cfg);
+        return this._searchSerper(query, cfg, signal);
 
       case 'brave':
-        return this._searchBrave(query, cfg);
+        return this._searchBrave(query, cfg, signal);
 
       case 'tavily':
-        return this._searchTavily(query, cfg);
+        return this._searchTavily(query, cfg, signal);
 
       case 'custom':
       case 'rest':
       default:
-        return this._searchGenericRest(query, cfg);
+        return this._searchGenericRest(query, cfg, signal);
     }
   }
 
@@ -411,6 +568,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
   private async _searchSerper(
     query: string,
     cfg: SettingsSearchProvider,
+    signal?: AbortSignal,
   ): Promise<AdaptedExternalResult[]> {
     const providerId = this._id;
     if (!cfg.apiKey) {
@@ -427,6 +585,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
       },
       body,
       timeoutMs: 10000,
+      signal,
     });
 
     if (!isOk(res.statusCode)) {
@@ -458,6 +617,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
   private async _searchBrave(
     query: string,
     cfg: SettingsSearchProvider,
+    signal?: AbortSignal,
   ): Promise<AdaptedExternalResult[]> {
     const providerId = this._id;
 
@@ -487,6 +647,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
         'X-Subscription-Token': cfg.apiKey,
       },
       timeoutMs: 10000,
+      signal,
     });
 
     if (!isOk(res.statusCode)) {
@@ -518,6 +679,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
   private async _searchTavily(
     query: string,
     cfg: SettingsSearchProvider,
+    signal?: AbortSignal,
   ): Promise<AdaptedExternalResult[]> {
     const providerId = this._id;
     if (!cfg.apiKey) {
@@ -531,6 +693,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
       headers: { 'Content-Type': 'application/json' },
       body,
       timeoutMs: 10000,
+      signal,
     });
 
     if (!isOk(res.statusCode)) {
@@ -565,6 +728,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
   private async _searchGenericRest(
     query: string,
     cfg: SettingsSearchProvider,
+    signal?: AbortSignal,
   ): Promise<AdaptedExternalResult[]> {
     const providerId = this._id;
     if (!cfg.endpoint) {
@@ -585,6 +749,7 @@ export class ExternalApiSearchProvider implements SearchProvider {
       url: urlObj.toString(),
       headers,
       timeoutMs: 10000,
+      signal,
     });
 
     if (!isOk(res.statusCode)) {
@@ -690,4 +855,30 @@ export function resolveCuratedSearchProviderConfig(
   }
 
   return null;
+}
+
+// ─── Phase 2: Provider Self Test ──────────────────────────────────────────────
+
+/**
+ * Runs a standalone execution test of a provider by its ID.
+ * Returns structured success/latency/error results for the Settings UI.
+ */
+export async function testProvider(searchConfig: { activeProviderId: string; providers: SettingsSearchProvider[] } | undefined, providerId: string): Promise<{ success: boolean; latencyMs: number; error?: string }> {
+  const pId = providerId.replace(/^external:/, '');
+  const cfg = searchConfig?.providers?.find(p => p.id === pId);
+  if (!cfg) {
+    return { success: false, latencyMs: 0, error: 'Provider not configured' };
+  }
+
+  const provider = new ExternalApiSearchProvider(cfg);
+  try {
+    const res = await provider.search('test query', { scopeType: 'global', uris: [], itemKeys: [], sourcePaths: [] }, { topK: 1 });
+    if (res.error) {
+      return { success: false, latencyMs: res.durationMs, error: res.error };
+    }
+    return { success: true, latencyMs: res.durationMs };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, latencyMs: 0, error: msg };
+  }
 }

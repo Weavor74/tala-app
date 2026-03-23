@@ -28,6 +28,7 @@ import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
 import { getResearchRepository, getContentRepository } from './db/initMemoryStore';
 import { ContentIngestionService } from './ingestion/ContentIngestionService';
 import { getRetrievalOrchestrator, refreshExternalProvider, getAvailableCuratedProviders } from './retrieval/RetrievalOrchestratorRegistry';
+import { testProvider } from './retrieval/providers/ExternalApiSearchProvider';
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';

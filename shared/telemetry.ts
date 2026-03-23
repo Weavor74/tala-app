@@ -28,6 +28,7 @@ export type TelemetrySubsystem =
     | 'agent'
     | 'router'
     | 'memory'
+    | 'retrieval'
     | 'inference'
     | 'local_inference'
     | 'mcp'
@@ -197,6 +198,13 @@ export type TelemetryEventType =
     | 'browser_task_step'
     | 'browser_task_finalized'
     | 'browser_task_continuation'
+    // External search
+    | 'external_search_started'
+    | 'external_search_succeeded'
+    | 'external_search_empty'
+    | 'external_search_failed'
+    | 'external_search_timeout'
+    | 'external_search_fallback'
     // Generic
     | 'operational'
     | 'developer_debug';

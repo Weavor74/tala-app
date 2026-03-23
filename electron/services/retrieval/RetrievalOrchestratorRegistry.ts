@@ -10,6 +10,7 @@ import {
   ExternalApiSearchProvider,
   resolveCuratedSearchProviderConfig,
   canonicalizeProviderId,
+  providerHealthTracker,
 } from './providers/ExternalApiSearchProvider';
 import { SemanticSearchProvider } from './providers/SemanticSearchProvider';
 import { DuckDuckGoSearchProvider } from './providers/DuckDuckGoSearchProvider';
@@ -154,12 +155,19 @@ export function getAvailableCuratedProviders(settingsPath?: string): Array<{
   displayName: string;
   configured: boolean;
   enabled: boolean;
+  degraded: boolean;
   reasonUnavailable?: string;
 }> {
   const path = settingsPath ?? _settingsPath ?? '';
   const result: ReturnType<typeof getAvailableCuratedProviders> = [
     // DuckDuckGo is always available (no API key needed)
-    { providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true },
+    { 
+      providerId: 'duckduckgo', 
+      displayName: 'DuckDuckGo (no API key)', 
+      configured: true, 
+      enabled: true,
+      degraded: providerHealthTracker.isDegraded('duckduckgo')
+    },
   ];
 
   if (!path) return result;
@@ -175,16 +183,20 @@ export function getAvailableCuratedProviders(settingsPath?: string): Array<{
       const hasKey = !!(p.apiKey && p.apiKey.trim().length > 0);
       const needsKey = p.type !== 'custom' || !p.endpoint;
       const configured = hasKey || (p.type === 'rest' && !!p.endpoint);
+      const degraded = providerHealthTracker.isDegraded(`external:${p.id}`);
 
       result.push({
         providerId: canonicalId,
         displayName: p.name,
         configured,
         enabled: p.enabled && configured,
+        degraded,
         reasonUnavailable: !p.enabled
           ? 'Provider disabled in settings'
           : !configured && needsKey
           ? 'API key not configured'
+          : degraded
+          ? 'Provider degraded (3+ failures)'
           : undefined,
       });
     }

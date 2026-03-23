@@ -26,6 +26,8 @@ import type {
   SearchProviderResult,
   NormalizedSearchResult,
 } from '../../../shared/retrieval/retrievalTypes';
+import { telemetry } from '../TelemetryService';
+import { providerHealthTracker } from './providers/ExternalApiSearchProvider';
 
 // ─── Hybrid scoring constants ─────────────────────────────────────────────────
 
@@ -88,6 +90,11 @@ export class RetrievalOrchestrator {
    * - Caps the final result list at request.topK when provided.
    */
   async retrieve(request: RetrievalRequest): Promise<RetrievalResponse> {
+    const queryHash = Buffer.from(request.query).toString('base64').substring(0, 16);
+    if (request.providerCategory === 'external') {
+      telemetry.emit('retrieval', 'external_search_started', 'info', 'RetrievalOrchestrator', `External search started`, 'success', { payload: { mode: request.mode, queryHash } });
+    }
+
     console.log(`[RetrievalOrchestrator] retrieve starting for query: "${request.query}" (mode: ${request.mode})`);
     const startMs = Date.now();
     const warnings: string[] = [];
@@ -99,17 +106,63 @@ export class RetrievalOrchestrator {
     const eligible = this.selectProviders(request);
 
     // 3. Execute providers in parallel
-    const providerResults = await this.executeProviders(
+    let providerResults = await this.executeProviders(
       eligible,
       request,
       scopeResolved,
       warnings,
     );
 
+    // Phase 2: Dynamic Fallback for Curated External Providers
+    // If the category is 'external' without explicit IDs, and the curated provider failed, try fallback
+    if (
+      !request.providerIds &&
+      request.providerCategory === 'external' &&
+      this._curatedProviderId != null
+    ) {
+      // If we ran exactly one provider and it errored (not just empty results)
+      if (providerResults.length === 1 && providerResults[0].error) {
+        const failedId = providerResults[0].providerId;
+        const fallback = this.providers.get('duckduckgo') ?? this.providers.get('external:duckduckgo');
+        
+        if (fallback && fallback.id !== failedId) {
+          console.warn(`[RetrievalOrchestrator] FALLBACK external:${failedId.replace('external:', '')} → ${fallback.id}`);
+          telemetry.emit('retrieval', 'external_search_fallback', 'warn', 'RetrievalOrchestrator', `Falling back from ${failedId} to ${fallback.id}`, 'failure', { payload: { failedProvider: failedId, fallbackProvider: fallback.id, queryHash } });
+          
+          const fallbackResults = await this.executeProviders([fallback], request, scopeResolved, warnings);
+          if (!fallbackResults[0].error) {
+            // Replace the errored provider result with the successful fallback
+            providerResults = fallbackResults;
+          } else {
+            // Both failed, include both in results for maximum diagnostics
+            providerResults.push(fallbackResults[0]);
+          }
+        }
+      }
+    }
+
     // 4. Merge and deduplicate
     const results = this.mergeResults(providerResults, request.mode, scopeResolved, request.topK);
+    const durationMs = Date.now() - startMs;
+    console.log(`[RetrievalOrchestrator] retrieve completed in ${durationMs}ms with ${results.length} results.`);
 
-    console.log(`[RetrievalOrchestrator] retrieve completed in ${Date.now() - startMs}ms with ${results.length} results.`);
+    // Emit terminal telemetry
+    if (request.providerCategory === 'external') {
+      const activeResults = providerResults.find(pr => !pr.error) ?? providerResults[0];
+      const activeId = activeResults?.providerId ?? 'none';
+      
+      if (results.length > 0) {
+        telemetry.emit('retrieval', 'external_search_succeeded', 'info', 'RetrievalOrchestrator', `Found ${results.length} results`, 'success', { payload: { providerId: activeId, resultCount: results.length, durationMs, queryHash } });
+      } else if (!providerResults.some(pr => pr.error)) {
+        telemetry.emit('retrieval', 'external_search_empty', 'info', 'RetrievalOrchestrator', `Found 0 results`, 'success', { payload: { providerId: activeId, resultCount: 0, durationMs, queryHash } });
+      } else {
+        const errorInfo = providerResults.map(pr => pr.error).join(' | ');
+        const isTimeout = errorInfo.toLowerCase().includes('time');
+        const telemetryEvent = isTimeout ? 'external_search_timeout' : 'external_search_failed';
+        telemetry.emit('retrieval', telemetryEvent, 'warn', 'RetrievalOrchestrator', `Search failed: ${errorInfo}`, 'failure', { payload: { providerId: activeId, durationMs, queryHash, error: errorInfo } });
+      }
+    }
+
     return {
       query: request.query,
       mode: request.mode,
@@ -117,7 +170,7 @@ export class RetrievalOrchestrator {
       results,
       providerResults,
       totalResults: results.length,
-      durationMs: Date.now() - startMs,
+      durationMs,
       warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
@@ -195,7 +248,11 @@ export class RetrievalOrchestrator {
         this.providers.get(`external:${this._curatedProviderId}`);
 
       if (curatedProvider && curatedProvider.supportedModes.includes(request.mode)) {
-        console.log(`[RetrievalOrchestrator] Using curated external provider: ${curatedProvider.id}`);
+        if (providerHealthTracker.isDegraded(curatedProvider.id)) {
+          console.warn(`[RetrievalOrchestrator] Curated provider ${curatedProvider.id} is DEGRADED. Will attempt it, but it may fail.`);
+        } else {
+          console.log(`[RetrievalOrchestrator] Using curated external provider: ${curatedProvider.id}`);
+        }
         return [curatedProvider];
       }
 

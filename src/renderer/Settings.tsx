@@ -141,8 +141,11 @@ export const Settings = () => {
         displayName: string;
         configured: boolean;
         enabled: boolean;
+        degraded: boolean;
         reasonUnavailable?: string;
     }>>([]);
+    const [testQuerying, setTestQuerying] = useState<string | null>(null);
+    const [testResults, setTestResults] = useState<{ [id: string]: { success: boolean, latencyMs: number, error?: string } }>({});
 
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
@@ -1985,15 +1988,18 @@ export const Settings = () => {
                                             {curatedProviders.length === 0 && (
                                                 <option value="duckduckgo">DuckDuckGo (no API key)</option>
                                             )}
-                                            {curatedProviders.map(p => (
-                                                <option
-                                                    key={p.providerId}
-                                                    value={p.providerId}
-                                                    disabled={!p.enabled}
-                                                >
-                                                    {p.displayName}{!p.enabled && p.reasonUnavailable ? ` — ${p.reasonUnavailable}` : ''}
-                                                </option>
-                                            ))}
+                                            {curatedProviders.map(p => {
+                                                const icon = p.degraded ? '❌' : (p.configured ? '✅' : '⚠');
+                                                return (
+                                                    <option
+                                                        key={p.providerId}
+                                                        value={p.providerId}
+                                                        disabled={!p.enabled}
+                                                    >
+                                                        {icon} {p.displayName}{!p.enabled && p.reasonUnavailable ? ` — ${p.reasonUnavailable}` : ''}
+                                                    </option>
+                                                );
+                                            })}
                                         </select>
                                         <div style={{ fontSize: 10, color: '#888' }}>
                                             The engine used for curated external web search. DuckDuckGo requires no API key.
