@@ -8,7 +8,8 @@ import { RetrievalOrchestrator } from './RetrievalOrchestrator';
 import { LocalSearchProvider } from './providers/LocalSearchProvider';
 import {
   ExternalApiSearchProvider,
-  resolveActiveSearchProviderConfig,
+  resolveCuratedSearchProviderConfig,
+  canonicalizeProviderId,
 } from './providers/ExternalApiSearchProvider';
 import { SemanticSearchProvider } from './providers/SemanticSearchProvider';
 import { DuckDuckGoSearchProvider } from './providers/DuckDuckGoSearchProvider';
@@ -54,19 +55,19 @@ export function initRetrievalOrchestrator(
   // 1. Local search provider (always present)
   _orchestrator.registerProvider(new LocalSearchProvider(options.fileService));
 
-  // 2. External API search provider (if enabled by flags)
+  // 2. External API search provider (if configured and flag enabled)
   const settings = tryLoadSettings(options.settingsPath);
-  const activeConfig = resolveActiveSearchProviderConfig(settings?.search);
-  
+  const activeConfig = resolveCuratedSearchProviderConfig(settings?.search);
+
   _externalProvider = new ExternalApiSearchProvider(activeConfig);
-  
-  // We only wire it into the orchestrator if a provider is actually configured
-  // AND the legacy search flag is enabled.
+
   if (activeConfig && RuntimeFlags.ENABLE_LEGACY_REMOTE_SEARCH) {
     _orchestrator.registerProvider(_externalProvider);
     console.log(`[RetrievalOrchestratorRegistry] Registered external provider: ${_externalProvider.id}`);
+  } else if (!activeConfig) {
+    console.log('[RetrievalOrchestratorRegistry] External provider not registered: no configured provider in settings');
   } else {
-    console.log('[RetrievalOrchestratorRegistry] External provider not registered (no config or flag disabled)');
+    console.log('[RetrievalOrchestratorRegistry] External provider not registered: ENABLE_LEGACY_REMOTE_SEARCH=false');
   }
 
   // 3. Optional Semantic search provider (pgvector)
@@ -77,7 +78,7 @@ export function initRetrievalOrchestrator(
     console.log('[RetrievalOrchestratorRegistry] Registered semantic provider.');
   }
 
-  // 4. DuckDuckGo search provider (newly unified fallback)
+  // 4. DuckDuckGo search provider (zero-config fallback)
   if (RuntimeFlags.ENABLE_DUCKDUCKGO_SEARCH) {
     _orchestrator.registerProvider(new DuckDuckGoSearchProvider());
     console.log('[RetrievalOrchestratorRegistry] Registered DuckDuckGo provider.');
@@ -95,13 +96,13 @@ export function getRetrievalOrchestrator(): RetrievalOrchestrator | null {
 
 /**
  * Re-registers the ExternalApiSearchProvider with updated settings.
- * P7E enhancement: uses loadSettings() to ensure we have the latest config state.
+ * Uses curatedSearchProviderId from settings to select the canonical provider.
  */
 export function refreshExternalProvider(settings?: SearchConfig): void {
   if (!_orchestrator) return;
 
   const effectiveSettings = settings ?? (loadSettings(_settingsPath || '').search as SearchConfig);
-  const activeConfig = resolveActiveSearchProviderConfig(effectiveSettings);
+  const activeConfig = resolveCuratedSearchProviderConfig(effectiveSettings);
 
   // Unregister all previously registered external providers
   const providers = _orchestrator.listProviders();
@@ -120,7 +121,78 @@ export function refreshExternalProvider(settings?: SearchConfig): void {
   if (activeConfig && RuntimeFlags.ENABLE_LEGACY_REMOTE_SEARCH) {
     _orchestrator.registerProvider(_externalProvider);
     console.log(`[RetrievalOrchestratorRegistry] External provider refreshed: ${_externalProvider.id}`);
+  } else if (!activeConfig) {
+    console.log('[RetrievalOrchestratorRegistry] External provider refresh: no configured provider — external search disabled');
   }
+}
+
+/**
+ * Get the currently selected curated search provider ID from settings.
+ * Returns 'duckduckgo' as the fallback if nothing is configured.
+ */
+export function getCuratedSearchProviderId(settingsPath?: string): string {
+  const path = settingsPath ?? _settingsPath ?? '';
+  if (!path) return 'duckduckgo';
+  try {
+    const s = loadSettings(path);
+    const search = s.search as SearchConfig | undefined;
+    if (!search) return 'duckduckgo';
+
+    const curatedId = search.curatedSearchProviderId || search.activeProviderId || '';
+    return canonicalizeProviderId(curatedId) || 'duckduckgo';
+  } catch {
+    return 'duckduckgo';
+  }
+}
+
+/**
+ * Returns metadata about available curated search providers for the UI dropdown.
+ * Includes configured and unconfigured providers with availability status.
+ */
+export function getAvailableCuratedProviders(settingsPath?: string): Array<{
+  providerId: string;
+  displayName: string;
+  configured: boolean;
+  enabled: boolean;
+  reasonUnavailable?: string;
+}> {
+  const path = settingsPath ?? _settingsPath ?? '';
+  const result: ReturnType<typeof getAvailableCuratedProviders> = [
+    // DuckDuckGo is always available (no API key needed)
+    { providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true },
+  ];
+
+  if (!path) return result;
+
+  try {
+    const s = loadSettings(path);
+    const providers = (s.search?.providers ?? []) as Array<{
+      id: string; name: string; type: string; enabled: boolean; apiKey?: string; endpoint?: string;
+    }>;
+
+    for (const p of providers) {
+      const canonicalId = canonicalizeProviderId(p.id);
+      const hasKey = !!(p.apiKey && p.apiKey.trim().length > 0);
+      const needsKey = p.type !== 'custom' || !p.endpoint;
+      const configured = hasKey || (p.type === 'rest' && !!p.endpoint);
+
+      result.push({
+        providerId: canonicalId,
+        displayName: p.name,
+        configured,
+        enabled: p.enabled && configured,
+        reasonUnavailable: !p.enabled
+          ? 'Provider disabled in settings'
+          : !configured && needsKey
+          ? 'API key not configured'
+          : undefined,
+      });
+    }
+  } catch {
+    // Return at minimum DuckDuckGo
+  }
+
+  return result;
 }
 
 /**

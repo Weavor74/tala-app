@@ -91,11 +91,13 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
     mcpServers: [],
     guardrails: [],
     search: {
-        activeProviderId: 'default-google',
+        // Use canonical IDs (no 'default-' prefix) so provider IDs are 'external:brave', 'external:google', etc.
+        activeProviderId: 'google',
         preferredProviderId: 'auto',
+        curatedSearchProviderId: '',
         providers: [
-            { id: 'default-google', name: 'Google Search', type: 'google', enabled: false },
-            { id: 'default-brave', name: 'Brave Search', type: 'brave', enabled: false }
+            { id: 'google', name: 'Google Search', type: 'google', enabled: false },
+            { id: 'brave', name: 'Brave Search', type: 'brave', enabled: false }
         ]
     },
     workflows: {},
@@ -212,6 +214,39 @@ export function loadSettings(settingsPath: string, caller: string = 'unknown'): 
 
         // Deep merge with defaults to fill missing keys at any level
         const result = deepMerge(defaults, parsed);
+
+        // ─── Legacy search provider ID migration ───────────────────────────────
+        // Older settings used 'default-brave' / 'default-google' as IDs.
+        // Rewrite to canonical IDs so registration produces 'external:brave', etc.
+        const LEGACY_ID_MAP: Record<string, string> = {
+            'default-brave': 'brave',
+            'default-google': 'google',
+            'default-serper': 'serper',
+            'default-tavily': 'tavily',
+        };
+        if (result.search) {
+            if (result.search.activeProviderId && LEGACY_ID_MAP[result.search.activeProviderId]) {
+                const canonical = LEGACY_ID_MAP[result.search.activeProviderId];
+                console.log(`[SettingsManager] migrating search.activeProviderId: '${result.search.activeProviderId}' → '${canonical}'`);
+                result.search.activeProviderId = canonical;
+            }
+            if (result.search.curatedSearchProviderId && LEGACY_ID_MAP[result.search.curatedSearchProviderId]) {
+                const canonical = LEGACY_ID_MAP[result.search.curatedSearchProviderId];
+                console.log(`[SettingsManager] migrating search.curatedSearchProviderId: '${result.search.curatedSearchProviderId}' → '${canonical}'`);
+                result.search.curatedSearchProviderId = canonical;
+            }
+            if (Array.isArray(result.search.providers)) {
+                result.search.providers = result.search.providers.map((p: Record<string, unknown>) => {
+                    if (typeof p.id === 'string' && LEGACY_ID_MAP[p.id]) {
+                        const canonical = LEGACY_ID_MAP[p.id];
+                        console.log(`[SettingsManager] migrating search.providers[].id: '${p.id}' → '${canonical}'`);
+                        return { ...p, id: canonical };
+                    }
+                    return p;
+                });
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         // Update cache
         settingsCache = result;

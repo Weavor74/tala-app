@@ -35,6 +35,7 @@ const NOTEBOOK_BOOST = 0.1;
 
 export class RetrievalOrchestrator {
   private readonly providers = new Map<string, SearchProvider>();
+  private _curatedProviderId: string | null = null;
 
   /**
    * @param researchRepo  Optional ResearchRepository used to expand notebook
@@ -59,6 +60,15 @@ export class RetrievalOrchestrator {
    */
   unregisterProvider(id: string): boolean {
     return this.providers.delete(id);
+  }
+
+  /**
+   * Set the curated search provider ID (from settings).
+   * This is used by selectProviders when providerCategory is 'external'
+   * to ensure only one deterministic provider is used.
+   */
+  setCuratedProviderId(id: string | null): void {
+    this._curatedProviderId = id;
   }
 
   /** Return a snapshot of all currently registered providers. */
@@ -172,6 +182,30 @@ export class RetrievalOrchestrator {
     // Track if we specifically ignored a requested provider due to category mismatch
     const ignoredRequested: string[] = [];
 
+    // For external-category requests without explicit providerIds, prefer the
+    // curated provider to avoid fanning out to all external backends at once.
+    const curatedExternalMode =
+      !request.providerIds &&
+      category === 'external' &&
+      this._curatedProviderId != null;
+
+    if (curatedExternalMode && this._curatedProviderId) {
+      const curatedProvider = this.providers.get(this._curatedProviderId) ??
+        // Also try as 'external:<id>' in case stored without prefix
+        this.providers.get(`external:${this._curatedProviderId}`);
+
+      if (curatedProvider && curatedProvider.supportedModes.includes(request.mode)) {
+        console.log(`[RetrievalOrchestrator] Using curated external provider: ${curatedProvider.id}`);
+        return [curatedProvider];
+      }
+
+      // Curated provider unavailable — fall through to deterministic fallback
+      console.warn(
+        `[RetrievalOrchestrator] Curated provider "${this._curatedProviderId}" not registered or doesn't support mode "${request.mode}". ` +
+        `Falling back to first available external provider.`
+      );
+    }
+
     for (const [id, provider] of this.providers) {
       // 1. Mode support filter (always required)
       if (!provider.supportedModes.includes(request.mode)) {
@@ -202,6 +236,10 @@ export class RetrievalOrchestrator {
         // Default selection: must be compatible with category
         if (isCompatible) {
           eligible.push(provider);
+
+          // For external category fallback mode: stop at first compatible provider
+          // to avoid fanning out when curated provider was unavailable
+          if (curatedExternalMode) break;
         }
       }
     }
@@ -210,23 +248,30 @@ export class RetrievalOrchestrator {
       console.warn(`[RetrievalOrchestrator] Ignored requested providers due to category mismatch (${category}):`, ignoredRequested);
     }
 
-    // Fallback: if explicit selection failed to find any compatible providers, 
+    // Fallback: if explicit selection failed to find any compatible providers,
     // fall back to category defaults to avoid zero results.
     if (request.providerIds && eligible.length === 0) {
       console.log(`[RetrievalOrchestrator] No compatible providers found for requested IDs. Falling back to category "${category}" defaults.`);
       for (const [id, provider] of this.providers) {
         if (!provider.supportedModes.includes(request.mode)) continue;
-        
+
         const isExternal = id === 'duckduckgo' || id.startsWith('external:');
         const isLocal = id === 'local' || id === 'semantic';
-        
+
         if (category === 'external' && isExternal) eligible.push(provider);
         if (category === 'local' && isLocal) eligible.push(provider);
         if (category === 'all') eligible.push(provider);
       }
     }
 
-    console.log(`[RetrievalOrchestrator] Selected providers for category "${category}" (request.providerIds=${request.providerIds}):`, eligible.map(p => p.id));
+    if (eligible.length === 0) {
+      console.warn(
+        `[RetrievalOrchestrator] No providers selected for category="${category}" mode="${request.mode}". ` +
+        `${category === 'external' ? 'No external search provider is configured or registered.' : 'Check provider registration.'}`
+      );
+    }
+
+    console.log(`[RetrievalOrchestrator] Selected providers for category "${category}" (request.providerIds=${JSON.stringify(request.providerIds)}):`, eligible.map(p => p.id));
     return eligible;
   }
 

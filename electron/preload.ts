@@ -570,4 +570,18 @@ contextBridge.exposeInMainWorld('tala', {
         /** Retrieves A2UI surface and action diagnostics summary. */
         getDiagnostics: () => ipcRenderer.invoke('a2ui:getDiagnostics'),
     },
+    // ─── Retrieval ────────────────────────────────────────────────
+    retrieval: {
+        /**
+         * Returns the list of available curated search providers for the Settings UI dropdown.
+         * Each entry includes: providerId, displayName, configured, enabled, and optionally
+         * reasonUnavailable.
+         */
+        getCuratedProviders: () => ipcRenderer.invoke('retrieval:getCuratedProviders'),
+        /**
+         * Forces a reload of the external search provider from current settings.
+         * Call after saving search settings to apply changes immediately.
+         */
+        refreshExternalProvider: () => ipcRenderer.invoke('retrieval:refreshExternalProvider'),
+    },
 });

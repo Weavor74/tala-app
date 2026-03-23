@@ -27,7 +27,7 @@ import { A2UIActionBridge } from './A2UIActionBridge';
 import type { A2UISurfaceId, A2UIActionDispatch } from '../../shared/a2uiTypes';
 import { getResearchRepository, getContentRepository } from './db/initMemoryStore';
 import { ContentIngestionService } from './ingestion/ContentIngestionService';
-import { getRetrievalOrchestrator, refreshExternalProvider } from './retrieval/RetrievalOrchestratorRegistry';
+import { getRetrievalOrchestrator, refreshExternalProvider, getAvailableCuratedProviders } from './retrieval/RetrievalOrchestratorRegistry';
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
@@ -232,6 +232,15 @@ export class IpcRouter {
 
       // Reload Agent Brain
       agent.reloadConfig();
+
+      // Refresh external search provider if search config changed
+      if (data.search) {
+        try {
+          refreshExternalProvider(newSettings.search);
+        } catch (e) {
+          console.warn('[IpcRouter] save-settings: failed to refresh external provider:', e);
+        }
+      }
 
       return true;
     });
@@ -1873,6 +1882,37 @@ export class IpcRouter {
       } catch (err: any) {
         console.error('[IpcRouter] search-remote shim failed:', err?.message ?? String(err));
         return [{ title: 'Error', snippet: 'Failed to process web results.', url: '' }];
+      }
+    });
+
+    // ─── Retrieval: Curated Provider ─────────────────────────────────────────
+
+    /**
+     * Returns the available curated search providers for the Settings UI dropdown.
+     * Includes availability status (configured, enabled, reasonUnavailable).
+     * DuckDuckGo is always included as the zero-config fallback option.
+     */
+    ipcMain.handle('retrieval:getCuratedProviders', async () => {
+      try {
+        return getAvailableCuratedProviders(getSettingsPath());
+      } catch (e: any) {
+        console.error('[IpcRouter] retrieval:getCuratedProviders failed:', e);
+        return [{ providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true }];
+      }
+    });
+
+    /**
+     * Refreshes the external search provider from current settings.
+     * Called by the Settings UI after saving a new curated provider selection.
+     */
+    ipcMain.handle('retrieval:refreshExternalProvider', async () => {
+      try {
+        const s = loadSettings(getSettingsPath());
+        refreshExternalProvider(s.search);
+        return { success: true };
+      } catch (e: any) {
+        console.error('[IpcRouter] retrieval:refreshExternalProvider failed:', e);
+        return { success: false, error: e.message };
       }
     });
 

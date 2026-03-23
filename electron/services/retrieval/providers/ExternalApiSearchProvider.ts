@@ -9,15 +9,11 @@
  * - Generic adapter: supports all SearchProvider.type values defined in settings
  *   (google, brave, serper, tavily, custom, rest) through a shared REST request
  *   shape, with per-type response mapping.
- * - Fail gracefully: network/config errors are captured and returned as
- *   SearchProviderResult.error; the orchestrator emits warnings, UI is unaffected.
- * - Stable providerId: 'external:<settingsProviderId>' e.g. 'external:google'
+ * - Fail loudly with structured errors: network/config/parse errors throw
+ *   ExternalSearchProviderError with a phase tag so they are visible in logs
+ *   and diagnostics. Silent 0-result returns only occur on valid empty responses.
+ * - Stable providerId: 'external:<settingsProviderId>' e.g. 'external:brave'
  * - Source metadata preserved in NormalizedSearchResult.metadata.
- *
- * TODO (refresh-on-settings-apply): Currently reads settings at construction
- * time. When the Settings apply-changes event is wired through a settings
- * reload bus, call refreshFromSettings() to pick up the new active provider
- * without restarting the application.
  *
  * Node.js — lives in electron/. Not imported by renderer code.
  */
@@ -33,6 +29,24 @@ import type {
   RetrievalMode,
 } from '../../../../shared/retrieval/retrievalTypes';
 import type { SearchProvider as SettingsSearchProvider } from '../../../../shared/settings';
+
+// ─── Structured error type ────────────────────────────────────────────────────
+
+export type ExternalSearchPhase = 'config' | 'request' | 'response' | 'parse' | 'normalize';
+
+export class ExternalSearchProviderError extends Error {
+  constructor(
+    public readonly providerId: string,
+    public readonly phase: ExternalSearchPhase,
+    message: string,
+    public readonly statusCode?: number,
+    public readonly responsePreview?: string,
+    public readonly cause?: unknown,
+  ) {
+    super(`[${providerId}][${phase}] ${message}`);
+    this.name = 'ExternalSearchProviderError';
+  }
+}
 
 // ─── Generic external result shape ───────────────────────────────────────────
 
@@ -54,9 +68,21 @@ interface AdaptedExternalResult {
  * Adapt a raw JSON response from a Serper-compatible API (Google via serper.dev).
  * Response: { organic: [{title, link, snippet}] }
  */
-function adaptSerperResponse(json: unknown): AdaptedExternalResult[] {
+function adaptSerperResponse(providerId: string, json: unknown): AdaptedExternalResult[] {
+  if (!json || typeof json !== 'object') {
+    throw new ExternalSearchProviderError(providerId, 'parse', 'Serper response is not an object');
+  }
   const data = json as Record<string, unknown>;
-  const organic = (data['organic'] as unknown[]) ?? [];
+  const organic = data['organic'];
+  if (!Array.isArray(organic)) {
+    throw new ExternalSearchProviderError(
+      providerId,
+      'normalize',
+      `Serper response missing "organic" array; got keys: ${Object.keys(data).join(', ')}`,
+      undefined,
+      JSON.stringify(data).slice(0, 200),
+    );
+  }
   return organic.map((item: unknown, i: number) => {
     const r = item as Record<string, unknown>;
     return {
@@ -73,10 +99,31 @@ function adaptSerperResponse(json: unknown): AdaptedExternalResult[] {
  * Adapt a raw JSON response from the Brave Search API.
  * Response: { web: { results: [{title, url, description}] } }
  */
-function adaptBraveResponse(json: unknown): AdaptedExternalResult[] {
+function adaptBraveResponse(providerId: string, json: unknown): AdaptedExternalResult[] {
+  if (!json || typeof json !== 'object') {
+    throw new ExternalSearchProviderError(providerId, 'parse', 'Brave response is not an object');
+  }
   const data = json as Record<string, unknown>;
   const web = data['web'] as Record<string, unknown> | undefined;
-  const results = (web?.['results'] as unknown[]) ?? [];
+
+  if (!web || typeof web !== 'object') {
+    throw new ExternalSearchProviderError(
+      providerId,
+      'normalize',
+      `Brave response missing "web" object; got top-level keys: ${Object.keys(data).join(', ')}`,
+      undefined,
+      JSON.stringify(data).slice(0, 300),
+    );
+  }
+
+  const results = web['results'];
+  if (!Array.isArray(results)) {
+    // web.results being absent/empty is a valid "no results" case only if
+    // the web object itself is present. Log it but don't error.
+    console.warn(`[ExternalApiSearchProvider][${providerId}] Brave web.results is not an array — returning 0 results (valid empty response)`);
+    return [];
+  }
+
   return results.map((item: unknown, i: number) => {
     const r = item as Record<string, unknown>;
     return {
@@ -93,9 +140,21 @@ function adaptBraveResponse(json: unknown): AdaptedExternalResult[] {
  * Adapt a raw JSON response from the Tavily Search API.
  * Response: { results: [{title, url, content, score}] }
  */
-function adaptTavilyResponse(json: unknown): AdaptedExternalResult[] {
+function adaptTavilyResponse(providerId: string, json: unknown): AdaptedExternalResult[] {
+  if (!json || typeof json !== 'object') {
+    throw new ExternalSearchProviderError(providerId, 'parse', 'Tavily response is not an object');
+  }
   const data = json as Record<string, unknown>;
-  const results = (data['results'] as unknown[]) ?? [];
+  const results = data['results'];
+  if (!Array.isArray(results)) {
+    throw new ExternalSearchProviderError(
+      providerId,
+      'normalize',
+      `Tavily response missing "results" array; got keys: ${Object.keys(data).join(', ')}`,
+      undefined,
+      JSON.stringify(data).slice(0, 200),
+    );
+  }
   return results.map((item: unknown, i: number) => {
     const r = item as Record<string, unknown>;
     return {
@@ -113,7 +172,7 @@ function adaptTavilyResponse(json: unknown): AdaptedExternalResult[] {
  * Expected shape: an array of objects with at least title + url/uri fields.
  * Also handles a { results: [...] } wrapper.
  */
-function adaptGenericResponse(json: unknown): AdaptedExternalResult[] {
+function adaptGenericResponse(providerId: string, json: unknown): AdaptedExternalResult[] {
   let items: unknown[] = [];
   if (Array.isArray(json)) {
     items = json;
@@ -122,7 +181,19 @@ function adaptGenericResponse(json: unknown): AdaptedExternalResult[] {
     if (Array.isArray(data['results'])) items = data['results'] as unknown[];
     else if (Array.isArray(data['items'])) items = data['items'] as unknown[];
     else if (Array.isArray(data['data'])) items = data['data'] as unknown[];
+    else {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'normalize',
+        `Generic REST response has no recognizable results array; keys: ${Object.keys(data).join(', ')}`,
+        undefined,
+        JSON.stringify(data).slice(0, 200),
+      );
+    }
+  } else {
+    throw new ExternalSearchProviderError(providerId, 'parse', 'Generic REST response is not an object or array');
   }
+
   return items.map((item: unknown, i: number) => {
     const r = (item ?? {}) as Record<string, unknown>;
     return {
@@ -152,7 +223,12 @@ interface HttpRequestOptions {
   timeoutMs?: number;
 }
 
-function doHttpRequest(opts: HttpRequestOptions): Promise<string> {
+interface HttpResponse {
+  statusCode: number;
+  body: string;
+}
+
+function doHttpRequest(opts: HttpRequestOptions): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(opts.url);
     const isHttps = parsed.protocol === 'https:';
@@ -169,7 +245,7 @@ function doHttpRequest(opts: HttpRequestOptions): Promise<string> {
     const req = lib.request(reqOptions, (res) => {
       let data = '';
       res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-      res.on('end', () => resolve(data));
+      res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: data }));
     });
 
     if (opts.timeoutMs) {
@@ -222,22 +298,26 @@ export class ExternalApiSearchProvider implements SearchProvider {
     const startMs = Date.now();
 
     if (!this._config) {
+      console.warn(`[ExternalApiSearchProvider] No search provider configured — returning 0 results`);
       return {
         providerId: this._id,
         results: [],
         durationMs: 0,
-        error: 'ExternalApiSearchProvider: no search provider configured in Settings.',
+        error: '[config] ExternalApiSearchProvider: no search provider configured in Settings.',
       };
     }
 
     if (!this._config.enabled) {
+      console.warn(`[ExternalApiSearchProvider][${this._id}] Provider is disabled — returning 0 results`);
       return {
         providerId: this._id,
         results: [],
         durationMs: 0,
-        error: `ExternalApiSearchProvider: provider "${this._config.id}" is disabled.`,
+        error: `[config] ExternalApiSearchProvider: provider "${this._config.id}" is disabled.`,
       };
     }
+
+    console.log(`[ExternalApiSearchProvider][${this._id}] search started — query="${query}" type="${this._config.type}"`);
 
     try {
       const adapted = await this._executeSearch(query, this._config);
@@ -245,8 +325,6 @@ export class ExternalApiSearchProvider implements SearchProvider {
       const limited = topK != null ? adapted.slice(0, topK) : adapted;
 
       const results: NormalizedSearchResult[] = limited.map((r, i) => ({
-        // Prefer stable URI-based key; fall back to externalId; use title-hash as last resort
-        // to avoid position-based keys that change across searches for the same result.
         itemKey: `${this._id}:${r.uri || (r.externalId ? `id:${r.externalId}` : `title:${r.title.toLowerCase().replace(/\s+/g, '-').slice(0, 64)}`) || String(i)}`,
         title: r.title,
         uri: r.uri || null,
@@ -265,19 +343,42 @@ export class ExternalApiSearchProvider implements SearchProvider {
         },
       }));
 
+      const durationMs = Date.now() - startMs;
+      if (results.length > 0) {
+        console.log(`[ExternalApiSearchProvider][${this._id}] search succeeded — ${results.length} results in ${durationMs}ms`);
+      } else {
+        console.log(`[ExternalApiSearchProvider][${this._id}] search returned 0 results (valid empty response) in ${durationMs}ms`);
+      }
+
       return {
         providerId: this._id,
         results,
-        durationMs: Date.now() - startMs,
+        durationMs,
         error: null,
       };
     } catch (err) {
+      const durationMs = Date.now() - startMs;
+      if (err instanceof ExternalSearchProviderError) {
+        console.error(
+          `[ExternalApiSearchProvider][${this._id}] search FAILED — phase=${err.phase}` +
+          (err.statusCode ? ` statusCode=${err.statusCode}` : '') +
+          ` message="${err.message}"` +
+          (err.responsePreview ? ` preview="${err.responsePreview}"` : ''),
+        );
+        return {
+          providerId: this._id,
+          results: [],
+          durationMs,
+          error: err.message,
+        };
+      }
       const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ExternalApiSearchProvider][${this._id}] search FAILED — phase=request message="${msg}"`);
       return {
         providerId: this._id,
         results: [],
-        durationMs: Date.now() - startMs,
-        error: `ExternalApiSearchProvider (${this._config.id}): ${msg}`,
+        durationMs,
+        error: `[request] ${this._config.id}: ${msg}`,
       };
     }
   }
@@ -311,19 +412,46 @@ export class ExternalApiSearchProvider implements SearchProvider {
     query: string,
     cfg: SettingsSearchProvider,
   ): Promise<AdaptedExternalResult[]> {
+    const providerId = this._id;
+    if (!cfg.apiKey) {
+      throw new ExternalSearchProviderError(providerId, 'config', 'Serper API key is not configured');
+    }
     const endpoint = cfg.endpoint ?? 'https://google.serper.dev/search';
     const body = JSON.stringify({ q: query });
-    const raw = await doHttpRequest({
+    const res = await doHttpRequest({
       method: 'POST',
       url: endpoint,
       headers: {
         'Content-Type': 'application/json',
-        'X-API-KEY': cfg.apiKey ?? '',
+        'X-API-KEY': cfg.apiKey,
       },
       body,
       timeoutMs: 10000,
     });
-    return adaptSerperResponse(JSON.parse(raw));
+
+    if (!isOk(res.statusCode)) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'response',
+        `Serper returned HTTP ${res.statusCode}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(res.body);
+    } catch (e) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'parse',
+        `Failed to parse Serper response as JSON: ${(e as Error).message}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+    return adaptSerperResponse(providerId, json);
   }
 
   /** Brave Search API: GET https://api.search.brave.com/res/v1/web/search */
@@ -331,19 +459,59 @@ export class ExternalApiSearchProvider implements SearchProvider {
     query: string,
     cfg: SettingsSearchProvider,
   ): Promise<AdaptedExternalResult[]> {
+    const providerId = this._id;
+
+    if (!cfg.apiKey) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'config',
+        'Brave Search API key (X-Subscription-Token) is not configured. Add your Brave API key in Settings → Search.',
+      );
+    }
+
     const base = cfg.endpoint ?? 'https://api.search.brave.com/res/v1/web/search';
-    const url = `${base}?q=${encodeURIComponent(query)}`;
-    const raw = await doHttpRequest({
+    const urlObj = new URL(base);
+    urlObj.searchParams.set('q', query);
+    const url = urlObj.toString();
+
+    // Log URL without the API key for diagnostics
+    console.log(`[ExternalApiSearchProvider][${providerId}] GET ${url}`);
+
+    const res = await doHttpRequest({
       method: 'GET',
       url,
       headers: {
+        // Do NOT include Accept-Encoding — Node.js native https does not
+        // auto-decompress, and gzip responses cannot be parsed as JSON.
         'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'X-Subscription-Token': cfg.apiKey ?? '',
+        'X-Subscription-Token': cfg.apiKey,
       },
       timeoutMs: 10000,
     });
-    return adaptBraveResponse(JSON.parse(raw));
+
+    if (!isOk(res.statusCode)) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'response',
+        `Brave Search returned HTTP ${res.statusCode}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(res.body);
+    } catch (e) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'parse',
+        `Failed to parse Brave response as JSON: ${(e as Error).message}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+    return adaptBraveResponse(providerId, json);
   }
 
   /** Tavily Search API: POST https://api.tavily.com/search */
@@ -351,45 +519,125 @@ export class ExternalApiSearchProvider implements SearchProvider {
     query: string,
     cfg: SettingsSearchProvider,
   ): Promise<AdaptedExternalResult[]> {
+    const providerId = this._id;
+    if (!cfg.apiKey) {
+      throw new ExternalSearchProviderError(providerId, 'config', 'Tavily API key is not configured');
+    }
     const endpoint = cfg.endpoint ?? 'https://api.tavily.com/search';
-    const body = JSON.stringify({ api_key: cfg.apiKey ?? '', query });
-    const raw = await doHttpRequest({
+    const body = JSON.stringify({ api_key: cfg.apiKey, query });
+    const res = await doHttpRequest({
       method: 'POST',
       url: endpoint,
       headers: { 'Content-Type': 'application/json' },
       body,
       timeoutMs: 10000,
     });
-    return adaptTavilyResponse(JSON.parse(raw));
+
+    if (!isOk(res.statusCode)) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'response',
+        `Tavily returned HTTP ${res.statusCode}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(res.body);
+    } catch (e) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'parse',
+        `Failed to parse Tavily response as JSON: ${(e as Error).message}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+    return adaptTavilyResponse(providerId, json);
   }
 
   /**
    * Generic REST / custom provider.
    * Attempts GET first with query as ?q= parameter.
-   * If the provider requires POST, the endpoint should be configured
-   * to accept GET or the adapter extended.
    */
   private async _searchGenericRest(
     query: string,
     cfg: SettingsSearchProvider,
   ): Promise<AdaptedExternalResult[]> {
+    const providerId = this._id;
     if (!cfg.endpoint) {
-      throw new Error(`Custom/REST search provider "${cfg.id}" has no endpoint configured.`);
+      throw new ExternalSearchProviderError(
+        providerId,
+        'config',
+        `Custom/REST search provider "${cfg.id}" has no endpoint configured.`,
+      );
     }
-    const sep = cfg.endpoint.includes('?') ? '&' : '?';
-    const url = `${cfg.endpoint}${sep}q=${encodeURIComponent(query)}`;
+    const urlObj = new URL(cfg.endpoint);
+    urlObj.searchParams.set('q', query);
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     if (cfg.apiKey) {
       headers['Authorization'] = `Bearer ${cfg.apiKey}`;
     }
-    const raw = await doHttpRequest({
+    const res = await doHttpRequest({
       method: 'GET',
-      url,
+      url: urlObj.toString(),
       headers,
       timeoutMs: 10000,
     });
-    return adaptGenericResponse(JSON.parse(raw));
+
+    if (!isOk(res.statusCode)) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'response',
+        `Custom REST provider returned HTTP ${res.statusCode}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+
+    let json: unknown;
+    try {
+      json = JSON.parse(res.body);
+    } catch (e) {
+      throw new ExternalSearchProviderError(
+        providerId,
+        'parse',
+        `Failed to parse custom REST response as JSON: ${(e as Error).message}`,
+        res.statusCode,
+        res.body.slice(0, 300),
+      );
+    }
+    return adaptGenericResponse(providerId, json);
   }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function isOk(statusCode: number): boolean {
+  return statusCode >= 200 && statusCode < 300;
+}
+
+// ─── Legacy ID aliases ────────────────────────────────────────────────────────
+
+/**
+ * Maps legacy provider IDs stored in older settings to canonical IDs.
+ * e.g., "default-brave" → "brave"
+ */
+const LEGACY_PROVIDER_ID_MAP: Record<string, string> = {
+  'default-brave': 'brave',
+  'default-google': 'google',
+  'default-serper': 'serper',
+  'default-tavily': 'tavily',
+};
+
+/**
+ * Normalize a provider ID from settings to its canonical form.
+ * Returns the canonical ID, or the original if no mapping is found.
+ */
+export function canonicalizeProviderId(id: string): string {
+  return LEGACY_PROVIDER_ID_MAP[id] ?? id;
 }
 
 // ─── Factory helper ───────────────────────────────────────────────────────────
@@ -397,13 +645,49 @@ export class ExternalApiSearchProvider implements SearchProvider {
 /**
  * Resolve the active, enabled SearchProvider from the settings search config.
  * Returns null if no active/enabled provider is found.
+ * Applies legacy ID migration transparently.
  */
 export function resolveActiveSearchProviderConfig(
   searchConfig: { activeProviderId: string; providers: SettingsSearchProvider[] } | undefined,
 ): SettingsSearchProvider | null {
   if (!searchConfig?.providers?.length) return null;
-  const active = searchConfig.providers.find(
-    p => p.id === searchConfig.activeProviderId && p.enabled,
-  );
+
+  const canonicalActiveId = canonicalizeProviderId(searchConfig.activeProviderId);
+
+  const active = searchConfig.providers.find(p => {
+    const canonicalId = canonicalizeProviderId(p.id);
+    return (canonicalId === canonicalActiveId || p.id === searchConfig.activeProviderId) && p.enabled;
+  });
+
   return active ?? null;
+}
+
+/**
+ * Resolve the curated search provider config from settings.
+ * Uses curatedSearchProviderId if present, otherwise falls back to activeProviderId.
+ * Returns null if no configured+enabled provider found.
+ */
+export function resolveCuratedSearchProviderConfig(
+  searchConfig: { activeProviderId: string; curatedSearchProviderId?: string; providers: SettingsSearchProvider[] } | undefined,
+): SettingsSearchProvider | null {
+  if (!searchConfig?.providers?.length) return null;
+
+  const targetId = searchConfig.curatedSearchProviderId || searchConfig.activeProviderId;
+  const canonicalTarget = canonicalizeProviderId(targetId);
+
+  // Try curated first
+  const curated = searchConfig.providers.find(p => {
+    const canonicalId = canonicalizeProviderId(p.id);
+    return (canonicalId === canonicalTarget || p.id === targetId) && p.enabled;
+  });
+  if (curated) return curated;
+
+  // Fall back to any enabled provider
+  const fallback = searchConfig.providers.find(p => p.enabled);
+  if (fallback) {
+    console.log(`[ExternalApiSearchProvider] Curated provider "${targetId}" not found/enabled; falling back to "${fallback.id}"`);
+    return fallback;
+  }
+
+  return null;
 }

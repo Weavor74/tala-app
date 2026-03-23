@@ -136,6 +136,13 @@ export const Settings = () => {
     const [installProgress, setInstallProgress] = useState(0);
     const [scSubTab, setScSubTab] = useState<'providers' | 'advanced'>('providers');
     const [retrievalProviders, setRetrievalProviders] = useState<any[]>([]);
+    const [curatedProviders, setCuratedProviders] = useState<Array<{
+        providerId: string;
+        displayName: string;
+        configured: boolean;
+        enabled: boolean;
+        reasonUnavailable?: string;
+    }>>([]);
 
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
@@ -208,6 +215,15 @@ export const Settings = () => {
                 if (res.ok) {
                     setRetrievalProviders(res.providers || []);
                 }
+            });
+        }
+        // Load curated search providers for the curated provider dropdown
+        if (activeTab === 'search' && (window as any).tala?.retrieval?.getCuratedProviders) {
+            (window as any).tala.retrieval.getCuratedProviders().then((providers: any[]) => {
+                setCuratedProviders(providers || []);
+            }).catch(() => {
+                // Fallback: DuckDuckGo only
+                setCuratedProviders([{ providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true }]);
             });
         }
     }, [activeTab]);
@@ -1955,6 +1971,35 @@ export const Settings = () => {
                                         </select>
                                         <div style={{ fontSize: 10, color: '#888' }}>
                                             Determines the preferred engine for global search requests.
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={labelStyle}>CURATED SEARCH PROVIDER</label>
+                                        <select
+                                            style={{ ...selectStyle, marginBottom: 10 }}
+                                            value={(settings.search as any).curatedSearchProviderId || 'duckduckgo'}
+                                            onChange={e => {
+                                                update('search', 'curatedSearchProviderId', e.target.value);
+                                            }}
+                                        >
+                                            {curatedProviders.length === 0 && (
+                                                <option value="duckduckgo">DuckDuckGo (no API key)</option>
+                                            )}
+                                            {curatedProviders.map(p => (
+                                                <option
+                                                    key={p.providerId}
+                                                    value={p.providerId}
+                                                    disabled={!p.enabled}
+                                                >
+                                                    {p.displayName}{!p.enabled && p.reasonUnavailable ? ` — ${p.reasonUnavailable}` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div style={{ fontSize: 10, color: '#888' }}>
+                                            The engine used for curated external web search. DuckDuckGo requires no API key.
+                                            {(settings.search as any).curatedSearchProviderId && (settings.search as any).curatedSearchProviderId !== 'duckduckgo' && (
+                                                <span style={{ color: '#007acc' }}> Apply Settings to activate.</span>
+                                            )}
                                         </div>
                                     </div>
                                     <div style={{ flex: 1 }}>
