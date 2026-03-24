@@ -1,4 +1,13 @@
 /**
+ * ⚠️ TALA INVARIANT — PROVIDER MAPPING
+ *
+ * - providerId MUST map to correct implementation
+ * - NEVER alias providers incorrectly (e.g. google → brave)
+ * - External providers are OPTIONAL
+ * - Missing API keys must degrade gracefully, NOT fail
+ */
+
+/**
  * RetrievalOrchestratorRegistry
  *
  * Singleton manager for the RetrievalOrchestrator instance used at runtime.

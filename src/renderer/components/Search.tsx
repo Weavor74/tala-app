@@ -375,7 +375,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         setCurrentSearchRunId(searchRunId);
 
                         const runResults = fetchedResults.map((r, i) => ({
-                            item_key: r.uri || r.sourcePath || `result-${i}`,
+                            item_key: resultKey(r.uri, r.sourcePath, i),
                             item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
                             source_path: r.sourcePath ?? undefined,
                             title: r.title ?? r.sourcePath ?? undefined,

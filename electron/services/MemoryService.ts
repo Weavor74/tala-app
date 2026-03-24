@@ -76,6 +76,12 @@ export class MemoryService {
     /** In-memory array of all locally stored memories, loaded from disk at startup. */
     private localMemories: MemoryItem[] = [];
 
+    /**
+     * Returns true when the MCP client is connected to the mem0-core server.
+     * Used by AgentService.getStartupStatus() to surface real mem0 readiness.
+     */
+    public getReadyStatus(): boolean { return this.client !== null; }
+
     // --- SCORING CONSTANTS (PHASE 2) ---
     private static readonly WEIGHT_SEMANTIC = 0.35;
     private static readonly WEIGHT_SALIENCE = 0.25;
@@ -240,14 +246,16 @@ export class MemoryService {
             }
         };
 
-        const timeoutPromise = new Promise<void>((resolve, reject) => {
+        // Resolve (not reject) on timeout so igniteSoul() is not hard-aborted.
+        // A late-connecting mem0 server (e.g. waiting for Ollama model warmup) can
+        // still complete in the background and set this.client, after which
+        // getReadyStatus() will return true. This matches AstroService semantics.
+        const timeoutPromise = new Promise<void>((resolve) => {
             setTimeout(() => {
                 if (!this.client) {
-                    console.warn('[MemoryService] Ignition timed out (15000ms). Rejecting promise.');
-                    reject(new Error("Mem0 Core ignition timed out. Server failed to start."));
-                } else {
-                    resolve();
+                    console.warn('[MemoryService] Ignition timed out (15000ms). Proceeding in background.');
                 }
+                resolve();
             }, 15000);
         });
 

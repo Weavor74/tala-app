@@ -3723,7 +3723,9 @@ Failure to provide a tool call will result in system termination.`;
             rag: (this.rag as any).getReadyStatus ? (this.rag as any).getReadyStatus() : true,
             memory: (this.memory as any).getReadyStatus ? (this.memory as any).getReadyStatus() : true,
             astro: (this.astro as any).getReadyStatus ? (this.astro as any).getReadyStatus() : true,
-            world: (this.world as any).getReadyStatus ? (this.world as any).getReadyStatus() : true
+            world: (this.world as any).getReadyStatus ? (this.world as any).getReadyStatus() : true,
+            memoryGraph: (this.mcpService as any)?.isServiceCallable?.('tala-memory-graph') ?? false,
+            soulReady: this.isSoulReady,
         };
     }
 

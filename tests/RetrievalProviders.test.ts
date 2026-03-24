@@ -20,6 +20,7 @@ import { LocalSearchProvider } from '../electron/services/retrieval/providers/Lo
 import {
   ExternalApiSearchProvider,
   resolveActiveSearchProviderConfig,
+  providerCache,
 } from '../electron/services/retrieval/providers/ExternalApiSearchProvider';
 import { RetrievalOrchestrator } from '../electron/services/retrieval/RetrievalOrchestrator';
 import type {
@@ -175,6 +176,13 @@ describe('ExternalApiSearchProvider', () => {
      * internal _executeSearch via a subclass override or monkey-patch approach.
      * We test the normalizeToResult step by patching the private method.
      */
+
+    // Clear the module-level providerCache between tests so cached results from
+    // one test (e.g. "respects topK") do not short-circuit _executeSearch calls
+    // in subsequent tests that reuse the same provider id and query string.
+    beforeEach(() => {
+      providerCache.clear();
+    });
 
     it('normalizes serper-style response into NormalizedSearchResult', async () => {
       const provider = new ExternalApiSearchProvider(

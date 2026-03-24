@@ -311,6 +311,12 @@ export class OllamaBrain implements IBrain {
 
             // --- Per-token heartbeat watchdog ---
             // Aborts if the model stops emitting tokens for a significant period.
+            // IMPORTANT — semantic distinction from stream-open timeout:
+            //   TOKEN_SILENCE_MS fires AFTER the stream has opened (post-first-token).
+            //   It guards mid-stream stalls. It does NOT enable provider fallback
+            //   because partial content would already have been streamed to the caller.
+            //   Do NOT unify with STREAM_OPEN_TIMEOUT_LOCAL_MS in inferenceTimeouts.ts
+            //   even if the numeric value happens to match.
             const TOKEN_SILENCE_MS = 90_000;  // 90 s of stream silence = stall
             const THINK_TIMEOUT_MS = 60_000; // 60 s inside a <think> block = runaway reasoning
             let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;

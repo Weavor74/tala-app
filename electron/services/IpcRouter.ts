@@ -1,3 +1,11 @@
+/**
+ * ⚠️ TALA INVARIANT — IPC REGISTRATION
+ *
+ * - Each ipcMain.handle channel must be registered EXACTLY ONCE
+ * - Duplicate handlers WILL crash the app and break persistence
+ * - Always use removeHandler(channel) before re-registering
+ * - Do NOT register the same channel in multiple locations
+ */
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
@@ -15,7 +23,6 @@ import { GitService } from './GitService';
 import { BackupService } from './BackupService';
 import { InferenceService } from './InferenceService';
 import { loadSettings, saveSettings, deepMerge, getActiveMode, setActiveMode } from './SettingsManager';
-import { RuntimeFlags } from './RuntimeFlags';
 import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
@@ -1665,23 +1672,6 @@ export class IpcRouter {
         supportedModes: p.supportedModes,
       }));
       return { ok: true, providers };
-    });
-
-    /**
-     * Refresh the external search provider registration from current settings.
-     * Call after user applies settings changes in the Search tab.
-     */
-    ipcMain.handle('retrieval:refreshExternalProvider', async () => {
-      if (!RuntimeFlags.ENABLE_EXTERNAL_PROVIDER_REFRESH_ON_SAVE) {
-        console.log('[IpcRouter] External provider refresh is DISABLED via feature flag.');
-        return { ok: true }; // Silent skip
-      }
-      try {
-        refreshExternalProvider();
-        return { ok: true };
-      } catch (err: any) {
-        return { ok: false, error: err?.message ?? String(err) };
-      }
     });
 
     // ═══════════════════════════════════════════════════════════════════════

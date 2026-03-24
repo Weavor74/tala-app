@@ -37,6 +37,9 @@ export class WorldService {
         console.log('[WorldService] World Engine ignited successfully.');
     }
 
+    /** Returns true when the World Engine process is running and ready. */
+    public getReadyStatus(): boolean { return this.isReady; }
+
     public shutdown() {
         if (this.process) {
             this.process.kill();
