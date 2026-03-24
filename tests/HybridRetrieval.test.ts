@@ -718,4 +718,66 @@ describe('Hybrid Retrieval', () => {
       expect(res.results[0].score).toBeCloseTo(0.3);
     });
   });
+
+  // ── Cross-provider itemKey format deduplication ───────────────────────────
+  // These tests lock in the hybrid dedup contract for the real-world scenario
+  // where two external providers assign different itemKey formats to the same
+  // URL. DuckDuckGo uses 'web:ddg:<url>'; ExternalApiSearchProvider uses
+  // 'external:<id>:<url>'. Without URI-based dedup the user sees duplicates.
+
+  describe('cross-provider itemKey format deduplication', () => {
+    it('deduplicates results from DuckDuckGo and an external provider that share the same URI', async () => {
+      const sharedUri = 'https://example.com/article';
+      // DuckDuckGo-style key
+      const ddg = makeProvider('duckduckgo', ['keyword', 'hybrid'], [
+        makeResult({ itemKey: `web:ddg:${sharedUri}`, title: 'DDG Result', providerId: 'duckduckgo', score: 0.6, uri: sharedUri }),
+      ]);
+      // External API provider-style key (e.g. external:brave:<url>)
+      const ext = makeProvider('external:brave', ['keyword', 'hybrid'], [
+        makeResult({ itemKey: `external:brave:${sharedUri}`, title: 'Brave Result', providerId: 'external:brave', score: 0.8, uri: sharedUri }),
+      ]);
+      orchestrator.registerProvider(ddg);
+      orchestrator.registerProvider(ext);
+
+      const res = await orchestrator.retrieve({ query: 'q', mode: 'hybrid', scope: 'global' });
+
+      // Must deduplicate to one result despite different itemKey prefixes
+      expect(res.results).toHaveLength(1);
+    });
+
+    it('does NOT deduplicate results that share only a provider-prefix in itemKey but have different URIs', async () => {
+      const ddg = makeProvider('duckduckgo', ['keyword', 'hybrid'], [
+        makeResult({ itemKey: 'web:ddg:https://a.com', title: 'A', providerId: 'duckduckgo', score: 0.6, uri: 'https://a.com' }),
+      ]);
+      const ext = makeProvider('external:brave', ['keyword', 'hybrid'], [
+        makeResult({ itemKey: 'external:brave:https://b.com', title: 'B', providerId: 'external:brave', score: 0.8, uri: 'https://b.com' }),
+      ]);
+      orchestrator.registerProvider(ddg);
+      orchestrator.registerProvider(ext);
+
+      const res = await orchestrator.retrieve({ query: 'q', mode: 'hybrid', scope: 'global' });
+
+      // These are genuinely different URLs — must NOT be merged
+      expect(res.results).toHaveLength(2);
+    });
+
+    it('dedup in keyword mode uses first-occurrence-wins even for different itemKey formats with same URI', async () => {
+      // In keyword (non-hybrid) mode, dedup is by itemKey only — no URI fallback.
+      // Two different itemKeys for the same URL are treated as distinct results.
+      const sharedUri = 'https://example.com/doc';
+      const p1 = makeProvider('p1', ['keyword'], [
+        makeResult({ itemKey: `web:ddg:${sharedUri}`, title: 'DDG', providerId: 'p1', score: 0.6, uri: sharedUri }),
+      ]);
+      const p2 = makeProvider('p2', ['keyword'], [
+        makeResult({ itemKey: `external:brave:${sharedUri}`, title: 'Brave', providerId: 'p2', score: 0.8, uri: sharedUri }),
+      ]);
+      orchestrator.registerProvider(p1);
+      orchestrator.registerProvider(p2);
+
+      const res = await orchestrator.retrieve({ query: 'q', mode: 'keyword', scope: 'global' });
+
+      // Keyword mode uses itemKey-only dedup; both pass through
+      expect(res.results).toHaveLength(2);
+    });
+  });
 });

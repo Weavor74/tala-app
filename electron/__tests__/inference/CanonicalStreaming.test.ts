@@ -16,6 +16,10 @@ import type {
     InferenceProviderDescriptor,
     StreamInferenceRequest,
 } from '../../../shared/inferenceProviderTypes';
+import {
+    STREAM_OPEN_TIMEOUT_CLOUD_MS,
+    STREAM_OPEN_TIMEOUT_LOCAL_MS,
+} from '../../services/inference/inferenceTimeouts';
 
 // ─── Telemetry mock ───────────────────────────────────────────────────────────
 
@@ -283,7 +287,7 @@ describe('InferenceService.executeStream()', () => {
         const service = makeService();
 
         const brain = makeBrain(async () => {
-            const err = new Error('Stream open timeout after 15000ms');
+            const err = new Error(`Stream open timeout after ${STREAM_OPEN_TIMEOUT_CLOUD_MS}ms`);
             err.name = 'StreamOpenTimeoutError';
             throw err;
         });
@@ -402,5 +406,19 @@ describe('InferenceService.executeStream()', () => {
 
         expect(result.success).toBe(true);
         expect(result.toolCalls).toBeUndefined();
+    });
+
+    // ── Stream-open timeout contract ───────────────────────────────────────────
+
+    it('local stream-open timeout is at least STREAM_OPEN_TIMEOUT_LOCAL_MS (cold-start guard)', () => {
+        // Protects the runtime repair: local timeout must be long enough for Ollama
+        // to load a model from disk on first request (cold start ≥ 30 s historically).
+        expect(STREAM_OPEN_TIMEOUT_LOCAL_MS).toBeGreaterThanOrEqual(60_000);
+    });
+
+    it('local stream-open timeout exceeds cloud stream-open timeout', () => {
+        // Local providers require a longer pre-first-token window than cloud providers.
+        // A future change that accidentally equates them would be a regression.
+        expect(STREAM_OPEN_TIMEOUT_LOCAL_MS).toBeGreaterThan(STREAM_OPEN_TIMEOUT_CLOUD_MS);
     });
 });

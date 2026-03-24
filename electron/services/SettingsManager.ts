@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
+import { LEGACY_PROVIDER_ID_MAP, CANONICAL_PROVIDER_TYPE_MAP } from './retrieval/providerConstants';
 
 /**
  * High-Integrity Settings Management Engine.
@@ -176,6 +177,45 @@ export function deepMerge(target: any, source: any): any {
 }
 
 /**
+ * Normalizes a single search provider entry loaded from settings.
+ *
+ * Applies two corrections in order:
+ *   1. Legacy ID migration — rewrites old 'default-brave' / 'default-google'
+ *      style IDs to canonical short IDs ('brave', 'google', …) and corrects
+ *      the `type` field to match.
+ *   2. ID/type mismatch guard — if a settings entry has a known canonical ID
+ *      but a wrong type (e.g. {id:'google', type:'brave'}), the type is fixed.
+ *      This prevents a corrupt settings file from routing external:google to
+ *      the Brave endpoint (or vice versa).
+ *
+ * Exported so that unit tests can verify the normalization contract directly
+ * without needing a real settings file on disk.
+ */
+export function normalizeProviderEntry(p: Record<string, unknown>): Record<string, unknown> {
+    if (typeof p.id === 'string' && LEGACY_PROVIDER_ID_MAP[p.id]) {
+        const canonical = LEGACY_PROVIDER_ID_MAP[p.id];
+        const canonicalType = CANONICAL_PROVIDER_TYPE_MAP[canonical];
+        if (canonicalType && p.type !== canonicalType) {
+            console.log(`[SettingsManager] migrating search.providers[]: id '${p.id}' → '${canonical}', type '${p.type}' → '${canonicalType}'`);
+            return { ...p, id: canonical, type: canonicalType };
+        }
+        console.log(`[SettingsManager] migrating search.providers[].id: '${p.id}' → '${canonical}'`);
+        return { ...p, id: canonical };
+    }
+    // Guard: detect id/type mismatch for known standard providers even without
+    // a legacy prefix. This prevents a saved-but-corrupt settings entry from
+    // silently routing 'external:google' to the Brave endpoint (or vice versa).
+    if (typeof p.id === 'string' && typeof p.type === 'string') {
+        const expectedType = CANONICAL_PROVIDER_TYPE_MAP[p.id];
+        if (expectedType && p.type !== expectedType) {
+            console.warn(`[SettingsManager] provider id='${p.id}' has mismatched type='${p.type}' (expected '${expectedType}'). Correcting to prevent provider mapping drift.`);
+            return { ...p, type: expectedType };
+        }
+    }
+    return p;
+}
+
+/**
  * Securely loads the application configuration.
  * 
  * **Load Sequence:**
@@ -221,54 +261,19 @@ export function loadSettings(settingsPath: string, caller: string = 'unknown'): 
         // Also normalise the 'type' field: if a legacy entry had a mismatched type
         // (e.g. {id:'default-google', type:'brave'}), the canonical type is restored
         // alongside the ID so the provider never hits the wrong endpoint.
-        const LEGACY_ID_MAP: Record<string, string> = {
-            'default-brave': 'brave',
-            'default-google': 'google',
-            'default-serper': 'serper',
-            'default-tavily': 'tavily',
-        };
-        // Canonical type for each known standard provider ID.
-        const CANONICAL_TYPE_MAP: Record<string, string> = {
-            'brave': 'brave',
-            'google': 'google',
-            'serper': 'serper',
-            'tavily': 'tavily',
-        };
         if (result.search) {
-            if (result.search.activeProviderId && LEGACY_ID_MAP[result.search.activeProviderId]) {
-                const canonical = LEGACY_ID_MAP[result.search.activeProviderId];
+            if (result.search.activeProviderId && LEGACY_PROVIDER_ID_MAP[result.search.activeProviderId]) {
+                const canonical = LEGACY_PROVIDER_ID_MAP[result.search.activeProviderId];
                 console.log(`[SettingsManager] migrating search.activeProviderId: '${result.search.activeProviderId}' → '${canonical}'`);
                 result.search.activeProviderId = canonical;
             }
-            if (result.search.curatedSearchProviderId && LEGACY_ID_MAP[result.search.curatedSearchProviderId]) {
-                const canonical = LEGACY_ID_MAP[result.search.curatedSearchProviderId];
+            if (result.search.curatedSearchProviderId && LEGACY_PROVIDER_ID_MAP[result.search.curatedSearchProviderId]) {
+                const canonical = LEGACY_PROVIDER_ID_MAP[result.search.curatedSearchProviderId];
                 console.log(`[SettingsManager] migrating search.curatedSearchProviderId: '${result.search.curatedSearchProviderId}' → '${canonical}'`);
                 result.search.curatedSearchProviderId = canonical;
             }
             if (Array.isArray(result.search.providers)) {
-                result.search.providers = result.search.providers.map((p: Record<string, unknown>) => {
-                    if (typeof p.id === 'string' && LEGACY_ID_MAP[p.id]) {
-                        const canonical = LEGACY_ID_MAP[p.id];
-                        const canonicalType = CANONICAL_TYPE_MAP[canonical];
-                        if (canonicalType && p.type !== canonicalType) {
-                            console.log(`[SettingsManager] migrating search.providers[]: id '${p.id}' → '${canonical}', type '${p.type}' → '${canonicalType}'`);
-                            return { ...p, id: canonical, type: canonicalType };
-                        }
-                        console.log(`[SettingsManager] migrating search.providers[].id: '${p.id}' → '${canonical}'`);
-                        return { ...p, id: canonical };
-                    }
-                    // Guard: detect id/type mismatch for known standard providers even without
-                    // a legacy prefix. This prevents a saved-but-corrupt settings entry from
-                    // silently routing 'external:google' to the Brave endpoint (or vice versa).
-                    if (typeof p.id === 'string' && typeof p.type === 'string') {
-                        const expectedType = CANONICAL_TYPE_MAP[p.id];
-                        if (expectedType && p.type !== expectedType) {
-                            console.warn(`[SettingsManager] provider id='${p.id}' has mismatched type='${p.type}' (expected '${expectedType}'). Correcting to prevent provider mapping drift.`);
-                            return { ...p, type: expectedType };
-                        }
-                    }
-                    return p;
-                });
+                result.search.providers = result.search.providers.map(normalizeProviderEntry);
             }
         }
         // ─────────────────────────────────────────────────────────────────────
