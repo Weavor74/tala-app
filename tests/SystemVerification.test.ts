@@ -17,9 +17,12 @@
  *   3. AgentService.getStartupStatus() source contract — verified by static
  *      inspection (same approach as IpcChannelUniqueness.test.ts) to avoid
  *      the deep AgentService constructor chain in test context. Confirms that
- *      soulReady and the four service fields are all present in the return.
+ *      soulReady and the five service fields are all present in the return.
  *   4. Delegation: MemoryService and WorldService have getReadyStatus() so
  *      getStartupStatus() does not fall back silently to true for those fields.
+ *   5. memoryGraph field — surfaces tala-memory-graph readiness via McpService
+ *      isServiceCallable() so the graph status is observable alongside the
+ *      other optional services.
  *
  * What this does NOT cover (already locked in elsewhere):
  *   - IPC channel uniqueness    → electron/__tests__/IpcChannelUniqueness.test.ts
@@ -119,6 +122,14 @@ describe('AgentService.getStartupStatus() source contract', () => {
 
     it('soulReady delegates to this.isSoulReady', () => {
         expect(agentServiceSource).toContain('soulReady: this.isSoulReady');
+    });
+
+    it('getStartupStatus() includes the memoryGraph field (tala-memory-graph readiness)', () => {
+        expect(agentServiceSource).toContain('memoryGraph:');
+    });
+
+    it('memoryGraph field delegates through McpService.isServiceCallable — not a hardcoded constant', () => {
+        expect(agentServiceSource).toContain("isServiceCallable?.('tala-memory-graph')");
     });
 
     it('memory field delegates through getReadyStatus — not a hardcoded constant', () => {
