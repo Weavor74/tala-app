@@ -102,6 +102,12 @@ content               → snippet
 - Network error / timeout → returns `error` field, no throw
 - All errors surface as `RetrievalResponse.warnings[]` via the orchestrator
 
+**Provider mapping invariant** (`SettingsManager.ts` enforces on every `loadSettings()` call):
+- `id` and `type` fields must agree for all standard providers. A mismatch (e.g. `{id:'google', type:'brave'}`) silently routes `external:google` to the Brave endpoint — a provider mapping regression.
+- `SettingsManager.loadSettings()` applies two guards:
+  1. **Legacy migration**: `default-brave/google/serper/tavily` IDs are renamed to canonical form and their `type` is also normalised to match (prevents a broken settings file from being carried forward).
+  2. **Drift guard**: if a provider has a known standard `id` (`brave`, `google`, `serper`, `tavily`) but a mismatched `type`, the `type` is silently corrected and a warning is logged.
+
 **Settings config shape** (`shared/settings.ts`):
 ```typescript
 interface SearchConfig {
