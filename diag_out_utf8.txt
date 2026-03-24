@@ -1,0 +1,141 @@
+﻿
+> tala-app@0.0.0 test
+> vitest run electron/__tests__/context/ContextAssemblyDiagnostics.test.ts
+
+
+[1m[46m RUN [49m[22m [36mv4.1.0 [39m[90mD:/src/client1/tala-app[39m
+
+[90mstdout[2m | electron/__tests__/context/ContextAssemblyDiagnostics.test.ts[2m > [22m[2mContextAssemblyService Diagnostics Extensions (Feed 5)[2m > [22m[2manswers "why X beat Y" via score breakdown in the pool
+[22m[39mPOOL: [
+  {
+    "id": "topic:evidence",
+    "scoreBreakdown": {
+      "semanticScore": 0,
+      "recencyScore": 0.5,
+      "authorityScore": 0.75,
+      "sourceWeight": 0.8,
+      "graphDepthPenalty": 0,
+      "affectiveAdjustment": 0,
+      "finalScore": 0.3425,
+      "tokenEfficiency": 0.7518796992481203,
+      "normalizedScore": 0.20601503759398496
+    }
+  },
+  {
+    "id": "e1",
+    "scoreBreakdown": {
+      "semanticScore": 0.9,
+      "recencyScore": 0.5,
+      "authorityScore": 0.5,
+      "sourceWeight": 0.8,
+      "graphDepthPenalty": 0,
+      "affectiveAdjustment": 0,
+      "finalScore": 0.6400000000000001,
+      "tokenEfficiency": 1,
+      "normalizedScore": 0.5120000000000001
+    }
+  },
+  {
+    "id": "e2",
+    "scoreBreakdown": {
+      "semanticScore": 0.8,
+      "recencyScore": 0.5,
+      "authorityScore": 0.5,
+      "sourceWeight": 0.8,
+      "graphDepthPenalty": 0,
+      "affectiveAdjustment": 0,
+      "finalScore": 0.6000000000000001,
+      "tokenEfficiency": 1,
+      "normalizedScore": 0.4800000000000001
+    }
+  }
+]
+
+ [31mΓ¥»[39m electron/__tests__/context/ContextAssemblyDiagnostics.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 11[2mms[22m[39m
+     [32mΓ£ô[39m populates all new Feed 5 diagnostic fields[32m 5[2mms[22m[39m
+     [32mΓ£ô[39m correctly ranks candidates in crossLayerRankingOrder[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m answers "why X beat Y" via score breakdown in the pool[39m[32m 4[2mms[22m[39m
+node.exe : 
+At C:\Program Files\nod
+ejs\npm.ps1:29 char:3
++   & $NODE_EXE 
+$NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (:String) [],    
+ RemoteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»[39m[1m[41m 
+Failed Tests 1 [49m[2
+2m[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»[39m
+
+[41m[1m FAIL 
+[22m[49m electron/__t
+ests__/context/ContextA
+ssemblyDiagnostics.test
+.ts[2m > [22mContextA
+ssemblyService 
+Diagnostics Extensions 
+(Feed 5)[2m > 
+[22manswers "why X 
+beat Y" via score 
+breakdown in the pool
+[31m[1mAssertionError
+[22m: expected 
+0.20601503759398496 to 
+be greater than or 
+equal to 
+0.5120000000000001[39m
+[36m [2mΓ¥»[22m elec
+tron/__tests__/context/
+ContextAssemblyDiagnost
+ics.test.ts:[2m78:54[
+22m[39m
+
+    [90m 76|[39m     
+[35mif[39m (first 
+[33m&&[39m second) {
+    [90m 77|[39m     
+    
+console.log('POOL:', JS
+ON.stringify(diag.cross
+LayerCandidatePoΓÇª
+    [90m 78|[39m     
+    expect(first.scoreB
+reakdown.normalizedScor
+e).toBeGreaterThanOrΓÇª
+    [90m   |[39m     
+                       
+                       
+   [31m^[39m
+    [90m 79|[39m     
+    [90m// 
+Explainability: we can 
+see the full 
+breakdown[39m
+    [90m 80|[39m     
+    [34mexpect[39m(fi
+rst[33m.[39mscoreBrea
+kdown[33m.[39msemanti
+cScore)[33m.[39m[34m
+toBeDefined[39m()[33m
+;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/1]ΓÄ»[2
+2m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[90m (3)[39m
+[2m   Start at [22m 21:06:59
+[2m   Duration [22m 335ms[2m (transform 121ms, setup 0ms, import 150ms, tests 11ms, environment 0ms)[22m
+

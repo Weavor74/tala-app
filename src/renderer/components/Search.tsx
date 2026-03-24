@@ -128,6 +128,47 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         if (selectedKeys.size === 0 || !selectedNotebookId) return;
         setLoading(true);
 
+        const selectedItemKeys = Array.from(selectedKeys);
+
+        // Try atomic PostgreSQL DB paths first whenever a search run exists
+        if (currentSearchRunId) {
+            if (selectedNotebookId === 'CREATE_NEW_NB') {
+                const name = prompt("Enter New Notebook Name:");
+                if (!name) { setLoading(false); return; }
+                if (api?.researchCreateNotebookFromSearchRun) {
+                    const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name, undefined, selectedItemKeys);
+                    if (res?.ok) {
+                        setSelectedNotebookId(res.notebook.id);
+                        setSelectedKeys(new Set());
+                        setLoading(false);
+                        alert(`Saved ${res.itemCount} item(s) to notebook.`);
+                        if (onAdd) onAdd();
+                        return;
+                    } else if (res?.error) {
+                        alert(`Save Failed: ${res.error}`);
+                        setLoading(false);
+                        return;
+                    }
+                }
+            } else {
+                if (api?.researchAddSearchRunResultsToNotebook) {
+                    const res = await api.researchAddSearchRunResultsToNotebook(currentSearchRunId, selectedNotebookId, selectedItemKeys);
+                    if (res?.ok) {
+                        setSelectedKeys(new Set());
+                        setLoading(false);
+                        alert(`Saved ${res.itemCount} item(s) to notebook.`);
+                        if (onAdd) onAdd();
+                        return;
+                    } else if (res?.error) {
+                        alert(`Save Failed: ${res.error}`);
+                        setLoading(false);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Fallback: non-DB path or no current search run
         const targetId = await resolveTargetNotebook(selectedNotebookId);
         if (!targetId) { setLoading(false); return; }
 
@@ -137,11 +178,14 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         );
 
         if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
-            await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+            const res = await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+            if (!res?.ok && res?.error) {
+                alert(`Save Failed: ${res.error}`);
+                setLoading(false);
+                return;
+            }
         } else if (notebookItems.length > 0 && api?.getSettings) {
             // Settings-based fallback (DB unavailable): only source_paths can be persisted.
-            // Web-only items (uri but no source_path) are not saved in this degraded mode —
-            // use the PostgreSQL-backed path for full notebook_item persistence.
             const settings = await api.getSettings();
             const nbs = [...(settings.notebooks || [])];
             const nbIdx = nbs.findIndex((n: any) => n.id === targetId);

@@ -329,7 +329,7 @@ describe('ContextAssembly Determinism Proof (Feed 6)', () => {
       makeResult({ itemKey: 'e2', title: 'Evidence B', providerId: 'local', score: 0.7, snippet: 'B'.repeat(40) }),
     ];
     const graphItems = [
-      makeGraphContextItem({ sourceKey: 'g1', score: 0.2, content: 'G'.repeat(40) }),
+      makeGraphContextItem({ sourceKey: 'g1', score: 0.2, content: 'G'.repeat(40), graphEdgeTrust: null }),
     ];
 
     const runAssembly = async () => {

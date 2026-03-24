@@ -1,0 +1,386 @@
+﻿
+> tala-app@0.0.0 test
+> vitest run electron/__tests__/context/ContextAssemblyDiagnostics.test.ts electron/__tests__/context/ContextAssemblyDeterminism.test.ts tests/P7DUnifiedCandidateArena.test.ts
+
+
+[1m[46m RUN [49m[22m [36mv4.1.0 [39m[90mD:/src/client1/tala-app[39m
+
+ [31mΓ¥»[39m electron/__tests__/context/ContextAssemblyDiagnostics.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 10[2mms[22m[39m
+     [32mΓ£ô[39m populates all new Feed 5 diagnostic fields[32m 5[2mms[22m[39m
+     [32mΓ£ô[39m correctly ranks candidates in crossLayerRankingOrder[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m answers "why X beat Y" via score breakdown in the pool[39m[32m 3[2mms[22m[39m
+ [31mΓ¥»[39m electron/__tests__/context/ContextAssemblyDeterminism.test.ts [2m([22m[2m8 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 21[2mms[22m[39m
+     [32mΓ£ô[39m Proof 1: Same inputs produce identical context and diagnostics[32m 7[2mms[22m[39m
+     [32mΓ£ô[39m Proof 2: Cross-layer tie resolves deterministically[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m Proof 3: Canonical always outranks derived candidates[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m Proof 4: Affective weighting does not break determinism[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m Proof 5: Token budget enforcement is stable under cross-layer competition[39m[32m 7[2mms[22m[39m
+     [32mΓ£ô[39m Proof 6: Source normalization behaves predictably[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m Proof 7: Diagnostics fully explain decisions[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m Proof 8: Removing a top candidate changes ranking predictably[32m 0[2mms[22m[39m
+ [31mΓ¥»[39m tests/P7DUnifiedCandidateArena.test.ts [2m([22m[2m17 tests[22m[2m | [22m[31m4 failed[39m[2m)[22m[32m 23[2mms[22m[39m
+     [32mΓ£ô[39m evidence and graph_context candidates both appear in diagnostics after assembly[32m 4[2mms[22m[39m
+     [32mΓ£ô[39m totalCandidatesConsidered includes both evidence and graph candidates[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m decisions cover every candidate ΓÇö no candidate is silently dropped[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m evidence candidates have sourceLayer rag in diagnostics candidatePool[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m graph_context candidates have sourceLayer graph in diagnostics candidatePool[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m evidence candidates have isCanonical=false (retrieval items have null authority)[39m[32m 6[2mms[22m[39m
+[31m     [31m├ù[31m graph_context items with canonical edge trust have isCanonical=true[39m[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m graph_context items with derived edge trust have isCanonical=false[39m[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m canonicalId is set from metadata.canonicalId when present[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m canonicalId is undefined when metadata.canonicalId is absent[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m score breakdowns are present for all candidates in unified pool[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m same inputs produce identical assembly results across multiple runs (determinism)[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m affective items appear as graph_context candidates in unified pool[39m[32m 2[2mms[22m[39m
+     [32mΓ£ô[39m affective weighting reason codes are present in unified pool candidates[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m evidence budget cap is enforced: excess evidence moves to latent[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m global budget cap is enforced: excess graph candidates excluded[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m evidence and graph_context items both survive to result when within budget[32m 0[2mms[22m[39m
+node.exe : 
+At C:\Program Files\nod
+ejs\npm.ps1:29 char:3
++   & $NODE_EXE 
+$NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (:String) [],    
+ RemoteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»[39m[1m[41m 
+Failed Tests 6 [49m[2
+2m[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»[39m
+
+[41m[1m FAIL 
+[22m[49m tests/P7DUni
+fiedCandidateArena.test
+.ts[2m > [22mP7D: 
+source metadata on 
+candidates[2m > 
+[22mevidence 
+candidates have 
+isCanonical=false 
+(retrieval items have 
+null authority)
+[31m[1mAssertionError
+[22m: expected 
+undefined to be false 
+// Object.is 
+equality[39m
+
+[32m- Expected:[39m
+false
+
+[31m+ Received:[39m
+undefined
+
+[36m [2mΓ¥»[22m test
+s/P7DUnifiedCandidateAr
+ena.test.ts:[2m270:34
+[22m[39m
+    [90m268|[39m
+    [90m269|[39m     
+[35mconst[39m pool 
+[33m=[39m result[33m
+.[39mdiagnostics[33m!
+[39m[33m.[39mcandida
+tePoolByLayer[[32m'evi
+dence'[39m][33m![39m
+[33m;[39m
+    [90m270|[39m     
+[34mexpect[39m(pool[
+[34m0[39m][33m![39m
+[33m.[39misCanonical)
+[33m.[39m[34mtoBe[39
+m([35mfalse[39m)[33m
+;[39m
+    [90m   |[39m     
+                       
+      [31m^[39m
+    [90m271|[39m   
+})[33m;[39m
+    [90m272|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/6]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/P7DUni
+fiedCandidateArena.test
+.ts[2m > [22mP7D: 
+source metadata on 
+candidates[2m > 
+[22mgraph_context 
+items with canonical 
+edge trust have 
+isCanonical=true
+[31m[1mAssertionError
+[22m: expected 
+undefined to be true 
+// Object.is 
+equality[39m
+
+[32m- Expected:[39m
+true
+
+[31m+ Received:[39m
+undefined
+
+[36m [2mΓ¥»[22m test
+s/P7DUnifiedCandidateAr
+ena.test.ts:[2m287:34
+[22m[39m
+    [90m285|[39m     
+const pool = result.dia
+gnostics!.candidatePool
+ByLayer['graph_conteΓÇª
+    [90m286|[39m     
+[34mexpect[39m(pool[
+33m.[39mlength)[33m.
+[39m[34mtoBe[39m([34
+m1[39m)[33m;[39m
+    [90m287|[39m     
+[34mexpect[39m(pool[
+[34m0[39m][33m![39m
+[33m.[39misCanonical)
+[33m.[39m[34mtoBe[39
+m([35mtrue[39m)[33m;
+[39m
+    [90m   |[39m     
+                       
+      [31m^[39m
+    [90m288|[39m   
+})[33m;[39m
+    [90m289|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/6]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/P7DUni
+fiedCandidateArena.test
+.ts[2m > [22mP7D: 
+source metadata on 
+candidates[2m > 
+[22mgraph_context 
+items with derived 
+edge trust have 
+isCanonical=false
+[31m[1mAssertionError
+[22m: expected 
+undefined to be false 
+// Object.is 
+equality[39m
+
+[32m- Expected:[39m
+false
+
+[31m+ Received:[39m
+undefined
+
+[36m [2mΓ¥»[22m test
+s/P7DUnifiedCandidateAr
+ena.test.ts:[2m303:34
+[22m[39m
+    [90m301|[39m
+    [90m302|[39m     
+const pool = result.dia
+gnostics!.candidatePool
+ByLayer['graph_conteΓÇª
+    [90m303|[39m     
+[34mexpect[39m(pool[
+[34m0[39m][33m![39m
+[33m.[39misCanonical)
+[33m.[39m[34mtoBe[39
+m([35mfalse[39m)[33m
+;[39m
+    [90m   |[39m     
+                       
+      [31m^[39m
+    [90m304|[39m   
+})[33m;[39m
+    [90m305|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/6]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/P7DUni
+fiedCandidateArena.test
+.ts[2m > [22mP7D: 
+P7C affective 
+weighting gates intact 
+after unification[2m 
+> [22maffective items 
+appear as 
+graph_context 
+candidates in unified 
+pool
+[31m[1mAssertionError
+[22m: expected 'rag' 
+to be 'graph' // 
+Object.is equality[39m
+
+Expected: [32m"[7mg[
+27mra[7mph[27m"[39m
+Received: [31m"ra[7mg
+[27m"[39m
+
+[36m [2mΓ¥»[22m test
+s/P7DUnifiedCandidateAr
+ena.test.ts:[2m410:29
+[22m[39m
+    [90m408|[39m     
+[90m// Affective 
+items should carry 
+sourceLayer 
+'graph'[39m
+    [90m409|[39m     
+[35mfor[39m 
+([35mconst[39m c 
+[35mof[39m affPool) {
+    [90m410|[39m     
+  [34mexpect[39m(c[3
+3m.[39msourceLayer)[3
+3m.[39m[34mtoBe[39m(
+[32m'graph'[39m)[33m
+;[39m
+    [90m   |[39m     
+                       
+ [31m^[39m
+    [90m411|[39m     
+}
+    [90m412|[39m   
+})[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/6]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m electron/__t
+ests__/context/ContextA
+ssemblyDeterminism.test
+.ts[2m > 
+[22mContextAssembly 
+Determinism Proof 
+(Feed 6)[2m > 
+[22mProof 5: Token 
+budget enforcement is 
+stable under 
+cross-layer competition
+[31m[1mAssertionError
+[22m: expected [ 'incl
+uded.cross_layer_top_ra
+nk' ] to include 'exclu
+ded.cross_layer_budget_
+exceeded'[39m
+[36m [2mΓ¥»[22m elec
+tron/__tests__/context/
+ContextAssemblyDetermin
+ism.test.ts:[2m354:36
+[22m[39m
+    [90m352|[39m     
+const latentDecision = 
+run1.diagnostics!.decis
+ions.find(d => d.canΓÇª
+    [90m353|[39m
+    [90m354|[39m     
+expect(graphDecision?.r
+easons).toContain('excl
+uded.cross_layer_budΓÇª
+    [90m   |[39m     
+                       
+        [31m^[39m
+    [90m355|[39m     
+[34mexpect[39m(latent
+Decision[33m?.[39mrea
+sons)[33m.[39m[34mto
+Contain[39m([32m'over
+flow.to_latent'[39m)[
+33m;[39m
+    [90m356|[39m   
+})[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/6]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m electron/__t
+ests__/context/ContextA
+ssemblyDiagnostics.test
+.ts[2m > [22mContextA
+ssemblyService 
+Diagnostics Extensions 
+(Feed 5)[2m > 
+[22manswers "why X 
+beat Y" via score 
+breakdown in the pool
+[31m[1mAssertionError
+[22m: expected 
+0.20601503759398496 to 
+be greater than or 
+equal to 
+0.5120000000000001[39m
+[36m [2mΓ¥»[22m elec
+tron/__tests__/context/
+ContextAssemblyDiagnost
+ics.test.ts:[2m77:54[
+22m[39m
+    [90m 75|[39m
+    [90m 76|[39m     
+[35mif[39m (first 
+[33m&&[39m second) {
+    [90m 77|[39m     
+    expect(first.scoreB
+reakdown.normalizedScor
+e).toBeGreaterThanOrΓÇª
+    [90m   |[39m     
+                       
+                       
+   [31m^[39m
+    [90m 78|[39m     
+    [90m// 
+Explainability: we can 
+see the full 
+breakdown[39m
+    [90m 79|[39m     
+    [34mexpect[39m(fi
+rst[33m.[39mscoreBrea
+kdown[33m.[39msemanti
+cScore)[33m.[39m[34m
+toBeDefined[39m()[33m
+;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/6]ΓÄ»[2
+2m[39m
+
+
+[2m Test Files [22m [1m[31m3 failed[39m[22m[90m (3)[39m
+[2m      Tests [22m [1m[31m6 failed[39m[22m[2m | [22m[1m[32m22 passed[39m[22m[90m (28)[39m
+[2m   Start at [22m 21:03:50
+[2m   Duration [22m 391ms[2m (transform 449ms, setup 0ms, import 553ms, tests 54ms, environment 0ms)[22m
+

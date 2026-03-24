@@ -1510,11 +1510,11 @@ export class IpcRouter {
     });
 
     /** Create a new notebook from all results in a search run. */
-    ipcMain.handle('research:createNotebookFromSearchRun', async (_e, searchRunId: string, notebookName: string, description?: string) => {
+    ipcMain.handle('research:createNotebookFromSearchRun', async (_e, searchRunId: string, notebookName: string, description?: string, selectedItemKeys?: string[]) => {
       const repo = getResearchRepository();
       if (!repo) return { ok: false, error: 'Research repository not initialized' };
       try {
-        const result = await repo.createNotebookFromSearchRun(searchRunId, notebookName, description);
+        const result = await repo.createNotebookFromSearchRun(searchRunId, notebookName, description, selectedItemKeys);
         return { ok: true, ...result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
@@ -1522,11 +1522,11 @@ export class IpcRouter {
     });
 
     /** Copy all results from a search run into an existing notebook. */
-    ipcMain.handle('research:addSearchRunResultsToNotebook', async (_e, searchRunId: string, notebookId: string) => {
+    ipcMain.handle('research:addSearchRunResultsToNotebook', async (_e, searchRunId: string, notebookId: string, selectedItemKeys?: string[]) => {
       const repo = getResearchRepository();
       if (!repo) return { ok: false, error: 'Research repository not initialized' };
       try {
-        const result = await repo.addSearchRunResultsToNotebook(searchRunId, notebookId);
+        const result = await repo.addSearchRunResultsToNotebook(searchRunId, notebookId, selectedItemKeys);
         return { ok: true, ...result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };

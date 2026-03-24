@@ -1,0 +1,27 @@
+D:/src/client1/tala-app/tests/ContextAssemblyService.test.ts
+  - preserves title, uri, sourceKey, score from retrieval result
+  - affective items carry metadata.affective=true
+
+D:/src/client1/tala-app/tests/GraphTraversalService.test.ts
+  - graph_context items in ContextAssemblyResult have correct edge type
+
+D:/src/client1/tala-app/tests/P7CAffectiveWeighting.test.ts
+  - evidence affective reason code is layer_not_eligible when allowEvidenceReordering=false
+
+D:/src/client1/tala-app/tests/P7DCrossLayerAuthorityEnforcement.test.ts
+  - derived graph candidate included alongside canonical gets included.supporting_derived
+
+D:/src/client1/tala-app/tests/RetrievalProviders.test.ts
+  - returns graceful error result when _executeSearch throws
+  - preserves metadata fields (providerType, providerName, endpoint)
+
+D:/src/client1/tala-app/tests/WorldModel.test.ts
+  - builds workspace state for an existing workspace root
+  - classifies workspace as mixed when both src/electron and docs are present
+  - builds repo state as a git repo when .git is present
+  - detects key directories correctly
+  - classifies project as electron_app when both electron and src are present
+  - marks hasArchitectureDocs when docs directory is present
+
+D:/src/client1/tala-app/electron/__tests__/inference/CanonicalStreaming.test.ts
+  - stream failure after partial output does NOT retry, returns isPartial=true

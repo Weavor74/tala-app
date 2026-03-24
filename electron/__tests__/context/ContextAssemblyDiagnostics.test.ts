@@ -70,8 +70,9 @@ describe('ContextAssemblyService Diagnostics Extensions (Feed 5)', () => {
     expect(result.diagnostics).toBeDefined();
     const diag = result.diagnostics!;
 
-    const first = diag.crossLayerCandidatePool[0];
-    const second = diag.crossLayerCandidatePool[1];
+    // e1 has higher semantic score than e2, so it should have a higher normalized score
+    const first = diag.crossLayerCandidatePool.find(c => c.id === 'e1');
+    const second = diag.crossLayerCandidatePool.find(c => c.id === 'e2');
 
     if (first && second) {
         expect(first.scoreBreakdown.normalizedScore).toBeGreaterThanOrEqual(second.scoreBreakdown.normalizedScore);

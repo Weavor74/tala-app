@@ -54,7 +54,7 @@ describe('resultKey', () => {
 describe('resultToNotebookItem', () => {
     it('maps a web result to a notebook item with correct fields', () => {
         const result: SearchResultInput = {
-            url: 'https://example.com/page',
+            uri: 'https://example.com/page',
             title: 'Example Page',
             snippet: 'A short excerpt from the page.',
             providerId: 'external:brave',
@@ -73,9 +73,9 @@ describe('resultToNotebookItem', () => {
 
     it('maps a local file result to a notebook item with correct fields', () => {
         const result: SearchResultInput = {
-            path: '/workspace/research/notes.md',
+            sourcePath: '/workspace/research/notes.md',
             title: 'Research Notes',
-            content: 'Some content from the file.',
+            snippet: 'Some content from the file.',
             providerId: 'local',
             sourceType: 'local_file',
         };
@@ -92,16 +92,16 @@ describe('resultToNotebookItem', () => {
     });
 
     it('infers item_type from providerId when sourceType is absent', () => {
-        const webResult: SearchResultInput = { url: 'https://x.com', providerId: 'external:bing' };
+        const webResult: SearchResultInput = { uri: 'https://x.com', providerId: 'external:bing' };
         expect(resultToNotebookItem(webResult, 0).item_type).toBe('web');
 
-        const localResult: SearchResultInput = { path: '/a/b.txt', providerId: 'local' };
+        const localResult: SearchResultInput = { sourcePath: '/a/b.txt', providerId: 'local' };
         expect(resultToNotebookItem(localResult, 1).item_type).toBe('local_file');
     });
 
     it('preserves provider provenance in metadata_json', () => {
         const result: SearchResultInput = {
-            url: 'https://search.example.com/result',
+            uri: 'https://search.example.com/result',
             providerId: 'external:serpapi',
             externalId: 'serpapi-result-abc123',
             metadata: { rank: 1, domain: 'example.com' },
@@ -116,25 +116,25 @@ describe('resultToNotebookItem', () => {
 
     it('truncates long snippets to 500 characters', () => {
         const longText = 'x'.repeat(1000);
-        const result: SearchResultInput = { url: 'https://ex.com', snippet: longText };
+        const result: SearchResultInput = { uri: 'https://ex.com', snippet: longText };
         const item = resultToNotebookItem(result, 0);
         expect(item.snippet?.length).toBe(500);
     });
 
     it('falls back to content when snippet is absent', () => {
-        const result: SearchResultInput = { path: '/f.md', content: 'body text' };
+        const result: SearchResultInput = { sourcePath: '/f.md', snippet: 'body text' };
         const item = resultToNotebookItem(result, 0);
         expect(item.snippet).toBe('body text');
     });
 
     it('uses path as title fallback when title is absent', () => {
-        const result: SearchResultInput = { path: '/workspace/document.md' };
+        const result: SearchResultInput = { sourcePath: '/workspace/document.md' };
         const item = resultToNotebookItem(result, 0);
         expect(item.title).toBe('/workspace/document.md');
     });
 
     it('omits metadata_json when no provenance data is available', () => {
-        const result: SearchResultInput = { url: 'https://ex.com' };
+        const result: SearchResultInput = { uri: 'https://ex.com' };
         const item = resultToNotebookItem(result, 0);
         // No providerId, externalId, or metadata → metadata_json should be absent
         expect(item.metadata_json).toBeUndefined();
@@ -145,7 +145,7 @@ describe('resultToNotebookItem', () => {
         // synchronously and must not contain a reference to scrapeUrl or any
         // content-fetching mechanism. We verify by inspecting the return type and
         // confirming no promise is returned.
-        const result: SearchResultInput = { url: 'https://target.com', title: 'Target' };
+        const result: SearchResultInput = { uri: 'https://target.com', title: 'Target' };
         const returnValue = resultToNotebookItem(result, 0);
 
         // Return value must be a plain object, not a Promise
@@ -158,10 +158,10 @@ describe('resultToNotebookItem', () => {
 
 describe('filterSelectedResults', () => {
     const results: SearchResultInput[] = [
-        { url: 'https://a.com', title: 'A' },
-        { url: 'https://b.com', title: 'B' },
-        { path: '/local/c.md', title: 'C' },
-        { path: '/local/d.md', title: 'D' },
+        { uri: 'https://a.com', title: 'A' },
+        { uri: 'https://b.com', title: 'B' },
+        { sourcePath: '/local/c.md', title: 'C' },
+        { sourcePath: '/local/d.md', title: 'D' },
     ];
 
     it('returns only items whose key is in the selection set', () => {
@@ -195,8 +195,8 @@ describe('filterSelectedResults', () => {
 describe('allResultKeys', () => {
     it('returns a set containing the stable key for every result', () => {
         const results: SearchResultInput[] = [
-            { url: 'https://x.com' },
-            { path: '/a/b.md' },
+            { uri: 'https://x.com' },
+            { sourcePath: '/a/b.md' },
             { title: 'fallback only' }, // no url or path → result:2
         ];
         const keys = allResultKeys(results);
@@ -217,7 +217,7 @@ describe('notebook item shape contract', () => {
     it('produces items with the required fields for researchAddItemsToNotebook', () => {
         const results: SearchResultInput[] = [
             {
-                url: 'https://paper.example.com/abstract',
+                uri: 'https://paper.example.com/abstract',
                 title: 'Interesting Paper',
                 snippet: 'Abstract of the paper.',
                 providerId: 'external:semantic_scholar',
@@ -225,9 +225,9 @@ describe('notebook item shape contract', () => {
                 externalId: 'ss-42',
             },
             {
-                path: '/research/local-notes.md',
+                sourcePath: '/research/local-notes.md',
                 title: 'Local Notes',
-                content: 'My own notes about the topic.',
+                snippet: 'My own notes about the topic.',
                 providerId: 'local',
                 sourceType: 'local_file',
             },

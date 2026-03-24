@@ -689,7 +689,7 @@ export class ContextAssemblyService {
       const isGraph = item.sourceType === 'graph_node';
       
       const layerAssignment: ContextLayerName = isAffective || isGraph ? 'graph_context' : (isMemory ? 'canonical_memory' : 'evidence');
-      const sourceLayer = isGraph ? 'graph' : (isMemory ? 'canonical_memory' : 'rag');
+      const sourceLayer = (isGraph || isAffective) ? 'graph' : (isMemory ? 'canonical_memory' : 'rag');
       const id = item.sourceKey ?? `unknown-${rank}`;
       
       // Map authority from metadata or graphEdgeTrust
@@ -703,6 +703,7 @@ export class ContextAssemblyService {
         sourceKey: item.sourceKey,
         timestamp: (item.metadata?.fetchedAt as string | undefined) ?? undefined,
         authorityTier,
+        isCanonical: authorityTier === 'canonical',
         score: item.score ?? 0,
         sourceLayer,
         estimatedTokens: estimateTokens(item.content),

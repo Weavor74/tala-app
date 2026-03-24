@@ -396,9 +396,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Get results for a search run. */
     researchGetSearchRunResults: (searchRunId: string) => ipcRenderer.invoke('research:getSearchRunResults', searchRunId),
     /** Create a notebook from all results in a search run. */
-    researchCreateNotebookFromSearchRun: (searchRunId: string, notebookName: string, description?: string) => ipcRenderer.invoke('research:createNotebookFromSearchRun', searchRunId, notebookName, description),
+    researchCreateNotebookFromSearchRun: (searchRunId: string, notebookName: string, description?: string, selectedItemKeys?: string[]) => ipcRenderer.invoke('research:createNotebookFromSearchRun', searchRunId, notebookName, description, selectedItemKeys),
     /** Copy all results from a search run into an existing notebook. */
-    researchAddSearchRunResultsToNotebook: (searchRunId: string, notebookId: string) => ipcRenderer.invoke('research:addSearchRunResultsToNotebook', searchRunId, notebookId),
+    researchAddSearchRunResultsToNotebook: (searchRunId: string, notebookId: string, selectedItemKeys?: string[]) => ipcRenderer.invoke('research:addSearchRunResultsToNotebook', searchRunId, notebookId, selectedItemKeys),
     /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
     researchResolveNotebookScope: (notebookId: string) => ipcRenderer.invoke('research:resolveNotebookScope', notebookId),
 

@@ -1,0 +1,507 @@
+﻿
+> tala-app@0.0.0 test
+> vitest run tests/SearchSelection.test.ts
+
+
+[1m[46m RUN [49m[22m [36mv4.1.0 [39m[90mD:/src/client1/tala-app[39m
+
+ [31mΓ¥»[39m tests/SearchSelection.test.ts [2m([22m[2m21 tests[22m[2m | [22m[31m8 failed[39m[2m)[22m[32m 17[2mms[22m[39m
+     [32mΓ£ô[39m returns the URL when present[32m 2[2mms[22m[39m
+     [32mΓ£ô[39m returns the file path when URL is absent[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m returns a fallback index string when both url and path are absent[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m uses index 0 as default fallback[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m prefers URL over path[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m maps a web result to a notebook item with correct fields[39m[32m 6[2mms[22m[39m
+[31m     [31m├ù[31m maps a local file result to a notebook item with correct fields[39m[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m infers item_type from providerId when sourceType is absent[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m preserves provider provenance in metadata_json[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m truncates long snippets to 500 characters[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m falls back to content when snippet is absent[39m[32m 1[2mms[22m[39m
+[31m     [31m├ù[31m uses path as title fallback when title is absent[39m[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m omits metadata_json when no provenance data is available[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m does NOT reference a scrape or ingest API ΓÇö pure metadata mapping[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m returns only items whose key is in the selection set[39m[32m 2[2mms[22m[39m
+     [32mΓ£ô[39m returns empty array when nothing is selected (zero-selection guard)[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m returns all items when all keys are selected[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m preserves the original index for each result[39m[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m returns a set containing the stable key for every result[39m[32m 0[2mms[22m[39m
+     [32mΓ£ô[39m returns empty set for empty results[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m produces items with the required fields for researchAddItemsToNotebook[39m[32m 1[2mms[22m[39m
+node.exe : 
+At C:\Program Files\nod
+ejs\npm.ps1:29 char:3
++   & $NODE_EXE 
+$NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (:String) [],    
+ RemoteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»[39m[1m[41m 
+Failed Tests 8 [49m[2
+2m[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mresultToNotebook
+Item[2m > [22mmaps a 
+web result to a 
+notebook item with 
+correct fields
+[31m[1mAssertionError
+[22m: expected 
+'result:0' to be 'https
+://example.com/page' 
+// Object.is 
+equality[39m
+
+Expected: [32m"https:/
+/example.com/page"[39m
+Received: 
+[31m"result:0"[39m
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m65:31[22m[39m
+    [90m 63|[39m     
+    const item: 
+NotebookItemInput = res
+ultToNotebookItem(resul
+t, 0ΓÇª
+    [90m 64|[39m
+    [90m 65|[39m     
+    [34mexpect[39m(it
+em[33m.[39mitem_key)
+[33m.[39m[34mtoBe[39
+m([32m'https://example
+.com/page'[39m)[33m;
+[39m
+    [90m   |[39m     
+                       
+   [31m^[39m
+    [90m 66|[39m     
+    [34mexpect[39m(it
+em[33m.[39mitem_type)
+[33m.[39m[34mtoBe[3
+9m([32m'web'[39m)[33
+m;[39m
+    [90m 67|[39m     
+    [34mexpect[39m(it
+em[33m.[39mtitle)[33
+m.[39m[34mtoBe[39m(
+[32m'Example 
+Page'[39m)[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mresultToNotebook
+Item[2m > [22mmaps a 
+local file result to a 
+notebook item with 
+correct fields
+[31m[1mAssertionError
+[22m: expected 
+'result:2' to be '/work
+space/research/notes.md
+' // Object.is 
+equality[39m
+
+Expected: [32m"/worksp
+ace/research/notes.md"
+[39m
+Received: 
+[31m"result:2"[39m
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m84:31[22m[39m
+    [90m 82|[39m     
+    const item: 
+NotebookItemInput = res
+ultToNotebookItem(resul
+t, 2ΓÇª
+    [90m 83|[39m
+    [90m 84|[39m     
+    [34mexpect[39m(it
+em[33m.[39mitem_key)
+[33m.[39m[34mtoBe[39
+m([32m'/workspace/rese
+arch/notes.md'[39m)[3
+3m;[39m
+    [90m   |[39m     
+                       
+   [31m^[39m
+    [90m 85|[39m     
+    [34mexpect[39m(it
+em[33m.[39mitem_type)
+[33m.[39m[34mtoBe[3
+9m([32m'local_file'[3
+9m)[33m;[39m
+    [90m 86|[39m     
+    [34mexpect[39m(it
+em[33m.[39mtitle)[33
+m.[39m[34mtoBe[39m(
+[32m'Research 
+Notes'[39m)[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mresultToNotebook
+Item[2m > [22mfalls 
+back to content when 
+snippet is absent
+[31m[1mAssertionError
+[22m: expected 
+undefined to be 'body 
+text' // Object.is 
+equality[39m
+
+[32m- Expected:[39m
+"body text"
+
+[31m+ Received:[39m
+undefined
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m127:30[22m[39m
+    [90m125|[39m     
+    const result: 
+SearchResultInput = { 
+path: '/f.md', 
+content: 'bΓÇª
+    [90m126|[39m     
+    [35mconst[39m 
+item [33m=[39m [34mr
+esultToNotebookItem[39
+m(result[33m,[39m 
+[34m0[39m)[33m;[39m
+    [90m127|[39m     
+    [34mexpect[39m(it
+em[33m.[39msnippet)[
+33m.[39m[34mtoBe[39m
+([32m'body 
+text'[39m)[33m;[39m
+    [90m   |[39m     
+                       
+  [31m^[39m
+    [90m128|[39m     
+})[33m;[39m
+    [90m129|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mresultToNotebook
+Item[2m > [22muses 
+path as title fallback 
+when title is absent
+[31m[1mAssertionError
+[22m: expected 
+undefined to be '/works
+pace/document.md' // 
+Object.is equality[39m
+
+[32m- Expected:[39m
+"/workspace/document.md
+"
+
+[31m+ Received:[39m
+undefined
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m133:28[22m[39m
+    [90m131|[39m     
+    const result: 
+SearchResultInput = { 
+path: 
+'/workspace/documentΓÇª
+    [90m132|[39m     
+    [35mconst[39m 
+item [33m=[39m [34mr
+esultToNotebookItem[39
+m(result[33m,[39m 
+[34m0[39m)[33m;[39m
+    [90m133|[39m     
+    [34mexpect[39m(it
+em[33m.[39mtitle)[33
+m.[39m[34mtoBe[39m(
+[32m'/workspace/documen
+t.md'[39m)[33m;[39m
+    [90m   |[39m     
+                       
+[31m^[39m
+    [90m134|[39m     
+})[33m;[39m
+    [90m135|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mfilterSelectedRe
+sults[2m > 
+[22mreturns only 
+items whose key is in 
+the selection set
+[31m[1mAssertionError
+[22m: expected [] to 
+have a length of 2 but 
+got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 0[39m
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m170:26[22m[39m
+    [90m168|[39m     
+    [35mconst[39m 
+selected [33m=[39m 
+[35mnew[39m [33mSet
+[39m([[32m'https://a.c
+om'[39m[33m,[39m [3
+2m'/local/d.md'[39m])
+[33m;[39m
+    [90m169|[39m     
+    [35mconst[39m 
+filtered [33m=[39m [
+34mfilterSelectedResult
+s[39m(results[33m,[3
+9m selected)[33m;[39m
+    [90m170|[39m     
+    [34mexpect[39m(fi
+ltered)[33m.[39m[34m
+toHaveLength[39m([34m
+2[39m)[33m;[39m
+    [90m   |[39m     
+                     
+[31m^[39m
+    [90m171|[39m     
+    [34mexpect[39m(fi
+ltered[[34m0[39m][33
+m.[39mresult[33m.[39
+mtitle)[33m.[39m[34m
+toBe[39m([32m'A'[39m
+)[33m;[39m
+    [90m172|[39m     
+    [34mexpect[39m(fi
+ltered[[34m1[39m][33
+m.[39mresult[33m.[39
+mtitle)[33m.[39m[34m
+toBe[39m([32m'D'[39m
+)[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mfilterSelectedRe
+sults[2m > 
+[22mpreserves the 
+original index for 
+each result
+[31m[1mTypeError[22m
+: Cannot read 
+properties of 
+undefined (reading 
+'index')[39m
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m189:28[22m[39m
+    [90m187|[39m     
+    [35mconst[39m 
+selected [33m=[39m 
+[35mnew[39m [33mSet
+[39m([[32m'/local/c.md
+'[39m])[33m;[39m
+    [90m188|[39m     
+    [35mconst[39m 
+filtered [33m=[39m [
+34mfilterSelectedResult
+s[39m(results[33m,[3
+9m selected)[33m;[39m
+    [90m189|[39m     
+    [34mexpect[39m(fi
+ltered[[34m0[39m][33
+m.[39mindex)[33m.[39
+m[34mtoBe[39m([34m2
+[39m)[33m;[39m
+    [90m   |[39m     
+                       
+[31m^[39m
+    [90m190|[39m     
+})[33m;[39m
+    [90m191|[39m 
+})[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> 
+[22mallResultKeys[2m 
+> [22mreturns a set 
+containing the stable 
+key for every result
+[31m[1mAssertionError
+[22m: expected false 
+to be true // 
+Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m204:43[22m[39m
+    [90m202|[39m     
+    [35mconst[39m 
+keys [33m=[39m [34ma
+llResultKeys[39m(resul
+ts)[33m;[39m
+    [90m203|[39m     
+    [34mexpect[39m(ke
+ys[33m.[39msize)[33m
+.[39m[34mtoBe[39m([
+34m3[39m)[33m;[39m
+    [90m204|[39m     
+    [34mexpect[39m(ke
+ys[33m.[39m[34mhas[
+39m([32m'https://x.com
+'[39m))[33m.[39m[34
+mtoBe[39m([35mtrue[3
+9m)[33m;[39m
+    [90m   |[39m     
+                       
+               
+[31m^[39m
+    [90m205|[39m     
+    [34mexpect[39m(ke
+ys[33m.[39m[34mhas[
+39m([32m'/a/b.md'[39m
+))[33m.[39m[34mtoBe
+[39m([35mtrue[39m)[3
+3m;[39m
+    [90m206|[39m     
+    [34mexpect[39m(ke
+ys[33m.[39m[34mhas[
+39m([32m'result:2'[39
+m))[33m.[39m[34mtoBe
+[39m([35mtrue[39m)[
+33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[7/8]ΓÄ»[2
+2m[39m
+
+[41m[1m FAIL 
+[22m[49m tests/Search
+Selection.test.ts[2m 
+> [22mnotebook item 
+shape contract[2m > 
+[22mproduces items 
+with the required 
+fields for researchAddI
+temsToNotebook
+[31m[1mAssertionError
+[22m: expected 
+'result:0' to be 'https
+://paper.example.com/ab
+stract' // Object.is 
+equality[39m
+
+Expected: [32m"https:/
+/paper.example.com/abst
+ract"[39m
+Received: 
+[31m"result:0"[39m
+
+[36m [2mΓ¥»[22m test
+s/SearchSelection.test.
+ts:[2m247:43[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m8 failed[39m[22m[2m | [22m[1m[32m13 passed[39m[22m[90m (21)[39m
+[2m   Start at [22m 21:02:17
+[2m   Duration [22m 276ms[2m (transform 43ms, setup 0ms, import 61ms, tests 17ms, environment 0ms)[22m
+
+    [90m245|[39m
+    [90m246|[39m     
+    [90m// Web 
+item[39m
+    [90m247|[39m     
+    expect(notebookItem
+s[0].item_key).toBe('ht
+tps://paper.example.ΓÇª
+    [90m   |[39m     
+                       
+               
+[31m^[39m
+    [90m248|[39m     
+    expect(notebookItem
+s[0].uri).toBe('https:/
+/paper.example.com/aΓÇª
+    [90m249|[39m     
+    expect(notebookItem
+s[0].metadata_json?.pro
+viderId).toBe('exterΓÇª
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ
+»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»[8/8]ΓÄ»[2
+2m[39m
+

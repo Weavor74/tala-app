@@ -274,10 +274,15 @@ export class ResearchRepository {
   async createNotebookFromSearchRun(
     searchRunId: string,
     notebookName: string,
-    description?: string
+    description?: string,
+    selectedItemKeys?: string[]
   ): Promise<{ notebook: NotebookRecord; itemCount: number }> {
     const notebook = await this.createNotebook({ name: notebookName, description });
-    const results = await this.getSearchRunResults(searchRunId);
+    let results = await this.getSearchRunResults(searchRunId);
+    if (selectedItemKeys && selectedItemKeys.length > 0) {
+      const keys = new Set(selectedItemKeys);
+      results = results.filter(r => keys.has(r.item_key));
+    }
     const items: AddNotebookItemInput[] = results.map(r => ({
       item_key: r.item_key,
       item_type: r.item_type,
@@ -297,9 +302,14 @@ export class ResearchRepository {
   /** Copy all results from a search run into an existing notebook. */
   async addSearchRunResultsToNotebook(
     searchRunId: string,
-    notebookId: string
+    notebookId: string,
+    selectedItemKeys?: string[]
   ): Promise<{ itemCount: number }> {
-    const results = await this.getSearchRunResults(searchRunId);
+    let results = await this.getSearchRunResults(searchRunId);
+    if (selectedItemKeys && selectedItemKeys.length > 0) {
+      const keys = new Set(selectedItemKeys);
+      results = results.filter(r => keys.has(r.item_key));
+    }
     const items: AddNotebookItemInput[] = results.map(r => ({
       item_key: r.item_key,
       item_type: r.item_type,
