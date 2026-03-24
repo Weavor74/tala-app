@@ -1,3 +1,11 @@
+/**
+ * ⚠️ TALA INVARIANT — IPC REGISTRATION
+ *
+ * - Each ipcMain.handle channel must be registered EXACTLY ONCE
+ * - Duplicate handlers WILL crash the app and break persistence
+ * - Always use removeHandler(channel) before re-registering
+ * - Do NOT register the same channel in multiple locations
+ */
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
