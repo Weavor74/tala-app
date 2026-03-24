@@ -167,7 +167,9 @@ export class InferenceService {
      * 2. embedded_llamacpp (scope='embedded') — CPU inference is slow to produce the
      *    first token, especially on a cold model load.  Give it 90 seconds.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
-     * 3. Other local providers (scope='local') — 30 seconds (45 seconds for large prompts).
+     * 3. Other local providers (scope='local', e.g. Ollama) — 90 seconds baseline.
+     *    Ollama may load the model from disk on a cold start, which can exceed 30 s.
+     *    For large prompts (>4 000 chars) this extends to 120 seconds.
      * 4. Cloud providers (scope='cloud') — 15 seconds (network round-trip only).
      *
      * The timeout only guards the pre-first-token window; once streaming has opened
@@ -189,9 +191,11 @@ export class InferenceService {
         }
 
         // Other local providers (Ollama, external llama.cpp, vLLM, koboldcpp):
-        // still local network, but usually warm — 30 seconds is sufficient.
+        // 90 s baseline — Ollama may need to load the model from disk on first request
+        // (cold start), which can easily exceed the former 30 s default.
+        // Scale up to 120 s for large prompts that take longer to prefill.
         if (provider.scope === 'local') {
-            return promptChars > 4000 ? 45000 : 30000;
+            return promptChars > 4000 ? 120000 : 90000;
         }
 
         // Cloud providers: only network latency matters — 15 seconds.
