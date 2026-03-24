@@ -104,14 +104,14 @@ foreach ($Mod in $McpModules) {
     Write-Host "[$Mod]" -ForegroundColor Yellow
 
     if (-not (Test-Path $ModPath)) {
-        Log-Warn "$Mod — directory not found, skipping."
+        Log-Warn "$Mod - directory not found, skipping."
         $SkipCount++
         Write-Host ""
         continue
     }
 
     if (-not (Test-Path $ReqFile)) {
-        Log-Warn "$Mod — no requirements.txt found, skipping."
+        Log-Warn "$Mod - no requirements.txt found, skipping."
         $SkipCount++
         Write-Host ""
         continue
@@ -129,12 +129,12 @@ foreach ($Mod in $McpModules) {
             continue
         }
     } else {
-        Log-Info "  Venv already exists — refreshing dependencies"
+        Log-Info "  Venv already exists - refreshing dependencies"
     }
 
     $VenvPip = Join-Path $VenvPath "Scripts\pip.exe"
 
-    # Upgrade pip quietly (non-fatal — old pip still works)
+    # Upgrade pip quietly (non-fatal - old pip still works)
     & $VenvPip install --quiet --upgrade pip 2>&1 | Out-Null
 
     & $VenvPip install --quiet -r $ReqFile 2>&1
@@ -142,7 +142,7 @@ foreach ($Mod in $McpModules) {
         Log-Ok "$Mod venv ready"
         $PassCount++
     } else {
-        Log-Error "  pip install failed for $Mod — check output above"
+        Log-Error "  pip install failed for $Mod - check output above"
         $FailCount++
     }
 
@@ -184,7 +184,7 @@ if ($ollamaExe) {
         Log-Warn "Start with: ollama serve"
     }
 } else {
-    Log-Warn "Ollama not found in PATH — required by mem0-core."
+    Log-Warn "Ollama not found in PATH - required by mem0-core."
 }
 
 Write-Host ""
