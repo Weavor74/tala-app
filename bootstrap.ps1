@@ -314,7 +314,7 @@ Write-Host "You can now start TALA by running:"
 Write-Host "  npm run dev"
 Write-Host ""
 Write-Host "PostgreSQL + Tala DB provisioning:"
-Write-Host '  The "tala" database and "tala" user were created (or already existed).'
+Write-Host "  The `"tala`" database and `"tala`" user were created (or already existed)."
 Write-Host "  Schema (tables/indexes) will be created by Tala's migration runner on first startup."
 Write-Host ""
 Write-Host "To verify the full environment, run:"
