@@ -187,7 +187,7 @@ class MemorySystem:
                 except:
                     attrs = {}
                 
-                is_user = attrs.get('entity_type') == 'user' or name.lower() in ['user', 'primary-user', 'human', 'anonymous-user']
+                is_user = attrs.get('entity_type') == 'user' or name.lower() in ['user', 'primary-user', 'human']
                 
                 if is_user:
                     # Check if ID is NOT a valid UUID

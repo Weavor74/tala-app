@@ -545,7 +545,7 @@ export class ContextAssemblyService {
       const isSupporting = supportingIds.has(rc.id);
       const isCanonicalWinner = canonicalWinnerIds.has(rc.id);
 
-      if (isConflictLoser || isSupporting) {
+      if (isConflictLoser) {
         decisions.push({
           candidateId: rc.id,
           sourceType: rc.sourceType,
@@ -700,6 +700,8 @@ export class ContextAssemblyService {
         id,
         content: item.content,
         title: item.title,
+        uri: item.uri,
+        sourceType: item.sourceType ?? undefined,
         sourceKey: item.sourceKey,
         timestamp: (item.metadata?.fetchedAt as string | undefined) ?? undefined,
         authorityTier,
@@ -711,6 +713,8 @@ export class ContextAssemblyService {
         canonicalId: item.metadata?.canonicalId as string | undefined,
         selectionClass: item.selectionClass,
         layerAssignment,
+        graphEdgeType: item.graphEdgeType ?? null,
+        graphEdgeTrust: item.graphEdgeTrust ?? null,
         metadata: item.metadata,
         scoreBreakdown: {} as any, // Will be filled in map
         rank: 0,
@@ -732,7 +736,7 @@ export class ContextAssemblyService {
         candidate.layerAssignment as 'evidence' | 'graph_context',
       );
       const affectiveAdjustment = affectEnabled ? result.adjustment : 0;
-      const affectiveReasonCode = affectEnabled ? result.reasonCode : null;
+      const affectiveReasonCode = result.reasonCode;
       const scoreBreakdown = this._scoringService.computeCandidateScore(candidate, affectiveAdjustment, undefined, weightMultipliers);
 
       return { ...candidate, scoreBreakdown, rank: 0, affectiveReasonCode };
