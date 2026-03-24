@@ -29,6 +29,7 @@ import type {
   RetrievalMode,
 } from '../../../../shared/retrieval/retrievalTypes';
 import type { SearchProvider as SettingsSearchProvider } from '../../../../shared/settings';
+import { LEGACY_PROVIDER_ID_MAP } from '../providerConstants';
 
 // ─── Structured error type ────────────────────────────────────────────────────
 
@@ -786,16 +787,9 @@ function isOk(statusCode: number): boolean {
 
 // ─── Legacy ID aliases ────────────────────────────────────────────────────────
 
-/**
- * Maps legacy provider IDs stored in older settings to canonical IDs.
- * e.g., "default-brave" → "brave"
- */
-const LEGACY_PROVIDER_ID_MAP: Record<string, string> = {
-  'default-brave': 'brave',
-  'default-google': 'google',
-  'default-serper': 'serper',
-  'default-tavily': 'tavily',
-};
+// LEGACY_PROVIDER_ID_MAP is imported from providerConstants.ts — that file is
+// the single source of truth shared with SettingsManager.ts.  Do not redefine
+// the map here; extend providerConstants.ts if a new legacy alias is needed.
 
 /**
  * Normalize a provider ID from settings to its canonical form.

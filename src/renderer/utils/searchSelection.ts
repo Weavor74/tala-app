@@ -59,6 +59,11 @@ export interface NotebookItemInput {
  *   1. `uri`  — canonical for web results
  *   2. `sourcePath` — canonical for local file results
  *   3. `result:<fallbackIndex>` — last resort for results with neither
+ *
+ * NOTE: The `result:<fallbackIndex>` fallback is positional (index-based) and
+ * is only stable within a single search run. Do NOT use it as a notebook
+ * persistence key — it will not round-trip correctly across separate searches.
+ * Only pass results with a URI or sourcePath to researchAddItemsToNotebook().
  */
 export function resultKey(uri?: string, sourcePath?: string, fallbackIndex = 0): string {
     return uri ?? sourcePath ?? `result:${fallbackIndex}`;

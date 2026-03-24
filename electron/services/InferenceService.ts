@@ -20,6 +20,14 @@ import { auditLogger } from './AuditLogger';
 import { telemetry } from './TelemetryService';
 import { InferenceProviderRegistry, type ProviderRegistryConfig } from './inference/InferenceProviderRegistry';
 import { ProviderSelectionService } from './inference/ProviderSelectionService';
+import {
+    LARGE_PROMPT_CHAR_THRESHOLD,
+    STREAM_OPEN_TIMEOUT_LOCAL_MS,
+    STREAM_OPEN_TIMEOUT_LOCAL_LARGE_PROMPT_MS,
+    STREAM_OPEN_TIMEOUT_EMBEDDED_MS,
+    STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS,
+    STREAM_OPEN_TIMEOUT_CLOUD_MS,
+} from './inference/inferenceTimeouts';
 import type {
     InferenceSelectionRequest,
     InferenceSelectionResult,
@@ -185,21 +193,24 @@ export class InferenceService {
         const promptChars = InferenceService.countPromptChars(messages);
 
         // Embedded llama.cpp: generous timeout — cold model loads on CPU can exceed 30 s.
-        // Scale up slightly for very large prompts (>4 000 chars ≈ >1 000 tokens).
+        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars ≈ >1 000 tokens).
         if (provider.scope === 'embedded' || provider.providerType === 'embedded_llamacpp') {
-            return promptChars > 4000 ? 120000 : 90000;
+            return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
+                ? STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS
+                : STREAM_OPEN_TIMEOUT_EMBEDDED_MS;
         }
 
         // Other local providers (Ollama, external llama.cpp, vLLM, koboldcpp):
-        // 90 s baseline — Ollama may need to load the model from disk on first request
-        // (cold start), which can easily exceed the former 30 s default.
-        // Scale up to 120 s for large prompts that take longer to prefill.
+        // Baseline covers cold-start model loading from disk (can exceed former 30 s default).
+        // Scale up for large prompts that take longer to prefill.
         if (provider.scope === 'local') {
-            return promptChars > 4000 ? 120000 : 90000;
+            return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
+                ? STREAM_OPEN_TIMEOUT_LOCAL_LARGE_PROMPT_MS
+                : STREAM_OPEN_TIMEOUT_LOCAL_MS;
         }
 
-        // Cloud providers: only network latency matters — 15 seconds.
-        return 15000;
+        // Cloud providers: only network latency matters.
+        return STREAM_OPEN_TIMEOUT_CLOUD_MS;
     }
 
     /**
