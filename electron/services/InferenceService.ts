@@ -511,7 +511,10 @@ export class InferenceService {
                 if (streamOpenedForCurrentProvider && tokensEmitted > 0) {
                     const completedAt = new Date().toISOString();
                     const durationMs = Date.now() - new Date(startedAt).getTime();
-                    const isAbort = combinedSignal.aborted || lastError.name === 'AbortError';
+                    // Use req.signal (caller's intent), not combinedSignal — attemptController is
+                    // always aborted on any error to release the TCP connection, so combinedSignal.aborted
+                    // is true for ALL failures, not just user-requested cancellations.
+                    const isAbort = req.signal?.aborted || lastError.name === 'AbortError';
                     const isTimeout = !isAbort && (lastError.name === 'StreamOpenTimeoutError' || lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT'));
 
                     const streamStatus: StreamInferenceResult['streamStatus'] =
