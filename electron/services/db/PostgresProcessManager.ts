@@ -37,8 +37,7 @@ export class MissingRuntimeAssetsError extends Error {
       `See docs/architecture/memory_bootstrap.md for setup instructions.\n\n` +
       `Alternatives:\n` +
       `  1. Set TALA_DB_CONNECTION_STRING to connect to an existing PostgreSQL instance.\n` +
-      `  2. Run "npm run memory:up" to start a Docker-based PostgreSQL (requires Docker).\n` +
-      `  3. Install PostgreSQL manually and set TALA_DB_HOST / TALA_DB_PORT / TALA_DB_USER / TALA_DB_PASSWORD.`
+      `  2. Install PostgreSQL natively and set TALA_DB_HOST / TALA_DB_PORT / TALA_DB_USER / TALA_DB_PASSWORD.`
     );
     this.name = 'MissingRuntimeAssetsError';
   }

@@ -30,7 +30,7 @@
     "memory:heal": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=apply-safe",
     "memory:up": "node scripts/memory-cmd.js up",
     "memory:down": "node scripts/memory-cmd.js down",
-    "memory:logs": "docker compose -f docker-compose.memory.yml logs -f",
+    "memory:logs": "node scripts/memory-cmd.js logs",
     "memory:reset": "node scripts/memory-cmd.js down --reset && node scripts/memory-cmd.js up",
     "dev:with-memory": "npm run memory:up && npm run dev",
     "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",

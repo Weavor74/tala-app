@@ -3,20 +3,18 @@
 # bootstrap-memory.sh — Tala local memory stack bootstrap (Linux / macOS)
 # ===========================================================================
 #
-# Ensures the local PostgreSQL + pgvector memory store is running before
-# the app starts.
+# Pre-flight check for the Tala canonical memory store.
+# The app manages its own native PostgreSQL runtime via DatabaseBootstrapCoordinator.
+# Docker is NOT used by this script — the canonical memory path is native-first.
 #
 # Behavior:
-#   1. If TALA_DB_CONNECTION_STRING is set, exits 0 immediately — the caller
-#      has supplied a DB, nothing to provision.
-#   2. Checks whether the default local DB (localhost:5432) is reachable.
+#   1. If TALA_DB_CONNECTION_STRING is set, exits 0 — caller has supplied a DB.
+#   2. Checks whether a local PostgreSQL instance is already reachable.
 #      If yes, exits 0 — DB is already running.
-#   3. Verifies Docker and docker compose are available.
-#      If not, logs a warning and exits 0 (degraded mode — app will continue
-#      without memory).
-#   4. Starts docker-compose.memory.yml.
-#   5. Waits for the container healthcheck to pass (up to ~60 s).
-#   6. Exits 0 on success, or exits 0 with a warning on timeout (degraded).
+#   3. Checks whether native runtime binary assets are present.
+#      If yes, exits 0 — the app will start the runtime automatically on launch.
+#   4. No viable path found — exits 0 with a degraded-mode warning and
+#      actionable guidance. The app will continue without canonical memory.
 #
 # Usage:
 #   bash scripts/bootstrap-memory.sh
@@ -32,19 +30,19 @@ set -euo pipefail
 # Resolve repo root from this script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COMPOSE_FILE="$REPO_ROOT/docker-compose.memory.yml"
+
+# Native runtime binary path (mirrors LocalDatabaseRuntime: APP_ROOT/runtime/postgres/bin/postgres)
+NATIVE_BINARY="$REPO_ROOT/runtime/postgres/bin/postgres"
 
 # Color helpers
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-RED='\033[0;31m'
 NC='\033[0m'
 
-log_info()  { echo -e "${CYAN}[memory-bootstrap]${NC} $*"; }
-log_ok()    { echo -e "${GREEN}[memory-bootstrap] OK:${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[memory-bootstrap] WARN:${NC} $*"; }
-log_error() { echo -e "${RED}[memory-bootstrap] ERROR:${NC} $*"; }
+log_info() { echo -e "${CYAN}[memory-bootstrap]${NC} $*"; }
+log_ok()   { echo -e "${GREEN}[memory-bootstrap] OK:${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[memory-bootstrap] WARN:${NC} $*"; }
 
 # ---------------------------------------------------------------------------
 # 1. If TALA_DB_CONNECTION_STRING is set, skip local provisioning
@@ -54,10 +52,10 @@ if [ -n "${TALA_DB_CONNECTION_STRING:-}" ]; then
   exit 0
 fi
 
-log_info "Starting local memory bootstrap..."
+log_info "Checking local memory availability..."
 
 # ---------------------------------------------------------------------------
-# 2. Check whether the default local DB is already reachable
+# 2. Check whether a local PostgreSQL instance is already reachable
 # ---------------------------------------------------------------------------
 PROBE="$SCRIPT_DIR/check-db-reachable.js"
 if node "$PROBE" 2>/dev/null; then
@@ -65,72 +63,25 @@ if node "$PROBE" 2>/dev/null; then
   exit 0
 fi
 
-log_info "Local PostgreSQL not reachable. Attempting Docker bootstrap..."
-
 # ---------------------------------------------------------------------------
-# 3. Verify Docker is available
+# 3. Check whether native runtime binary assets are present.
+#    If they are, the app will start PostgreSQL automatically on launch.
 # ---------------------------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
-  log_warn "Docker is not installed or not in PATH."
-  log_warn "Memory store will be unavailable — app will run in degraded mode."
-  exit 0
-fi
-
-# Detect docker compose invocation (plugin vs standalone)
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE_CMD="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE_CMD="docker-compose"
-else
-  log_warn "docker compose / docker-compose not found."
-  log_warn "Memory store will be unavailable — app will run in degraded mode."
-  exit 0
-fi
-
-if ! docker info >/dev/null 2>&1; then
-  log_warn "Docker daemon is not running."
-  log_warn "Memory store will be unavailable — app will run in degraded mode."
+if [ -f "$NATIVE_BINARY" ]; then
+  log_ok "Native PostgreSQL runtime assets found at: $NATIVE_BINARY"
+  log_info "The app will start the native runtime automatically on launch."
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Start the memory stack
+# 4. No viable path — degraded mode. The app will continue without memory.
 # ---------------------------------------------------------------------------
-log_info "Starting memory stack: $COMPOSE_FILE"
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --remove-orphans
-
-# ---------------------------------------------------------------------------
-# 5. Wait for healthcheck (up to ~60 s)
-# ---------------------------------------------------------------------------
-log_info "Waiting for tala-memory-db to become healthy..."
-MAX_WAIT=60
-ELAPSED=0
-INTERVAL=3
-
-while [ $ELAPSED -lt $MAX_WAIT ]; do
-  STATUS=$(docker inspect --format='{{.State.Health.Status}}' tala-memory-db 2>/dev/null || echo "missing")
-
-  if [ "$STATUS" = "healthy" ]; then
-    log_ok "tala-memory-db is healthy and ready."
-    exit 0
-  fi
-
-  if [ "$STATUS" = "missing" ]; then
-    # Container hasn't started yet — also check plain TCP
-    if node "$PROBE" 2>/dev/null; then
-      log_ok "PostgreSQL is reachable."
-      exit 0
-    fi
-  fi
-
-  sleep $INTERVAL
-  ELAPSED=$((ELAPSED + INTERVAL))
-  log_info "Waiting... ($ELAPSED/${MAX_WAIT}s, status: $STATUS)"
-done
-
-# ---------------------------------------------------------------------------
-# 6. Timeout — degraded mode, do not crash the app
-# ---------------------------------------------------------------------------
-log_warn "Memory stack did not become healthy within ${MAX_WAIT}s."
-log_warn "App will start in degraded mode. Run 'npm run memory:logs' to diagnose."
+log_warn "No running PostgreSQL instance found and no native runtime assets present."
+log_warn "App will start in degraded mode — canonical memory will be unavailable."
+log_warn ""
+log_warn "To resolve, choose one of the following:"
+log_warn "  a) Set TALA_DB_CONNECTION_STRING to connect to an existing PostgreSQL instance."
+log_warn "  b) Install PostgreSQL and set TALA_DB_HOST / TALA_DB_PORT / TALA_DB_USER / TALA_DB_PASSWORD."
+log_warn "  c) Place native PostgreSQL runtime assets at: $NATIVE_BINARY"
+log_warn "     See docs/architecture/memory_bootstrap.md for details."
 exit 0
