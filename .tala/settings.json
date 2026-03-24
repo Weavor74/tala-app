@@ -273,16 +273,20 @@
   ],
   "guardrails": [],
   "search": {
-    "activeProviderId": "default-brave",
+    "activeProviderId": "brave",
+    "preferredProviderId": "auto",
+    "curatedSearchProviderId": "",
     "providers": [
       {
-        "id": "default-google",
+        "id": "google",
         "name": "Brave",
         "type": "brave",
-        "enabled": true
+        "enabled": true,
+        "endpoint": "https://api.search.brave.com/res/v1/web/search",
+        "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ"
       },
       {
-        "id": "default-brave",
+        "id": "brave",
         "name": "Brave Search",
         "type": "brave",
         "enabled": true,
@@ -306,7 +310,7 @@
     "maxProposalsPerDay": 5
   },
   "agentModes": {
-    "activeMode": "hybrid",
+    "activeMode": "rp",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,
