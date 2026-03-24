@@ -35,7 +35,8 @@
     "dev:with-memory": "npm run memory:up && npm run dev",
     "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",
     "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts",
-    "setup:verify": "bash scripts/verify-setup.sh"
+    "setup:verify": "bash scripts/verify-setup.sh",
+    "setup:venvs": "bash scripts/setup-mcp-venvs.sh"
   },
   "build": {
     "appId": "com.antigravity.tala",

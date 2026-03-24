@@ -104,6 +104,7 @@ PYTHON_MODULES=(
     "mcp-servers/tala-core"
     "mcp-servers/mem0-core"
     "mcp-servers/astro-engine"
+    "mcp-servers/tala-memory-graph"
     "mcp-servers/world-engine"
 )
 for MOD in "${PYTHON_MODULES[@]}"; do
