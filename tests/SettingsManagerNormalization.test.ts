@@ -27,25 +27,25 @@ describe('SettingsManager — normalizeProviderEntry', () => {
     // ── Stage 1: Legacy ID migration ──────────────────────────────────────────
 
     describe('Stage 1: legacy ID migration', () => {
-        it('normalises default-brave to canonical brave id and type', () => {
+        it('normalizes default-brave to canonical brave id and type', () => {
             const result = normalizeProviderEntry({ id: 'default-brave', type: 'brave', name: 'Brave', enabled: true });
             expect(result.id).toBe('brave');
             expect(result.type).toBe('brave');
         });
 
-        it('normalises default-google to canonical google id and type', () => {
+        it('normalizes default-google to canonical google id and type', () => {
             const result = normalizeProviderEntry({ id: 'default-google', type: 'google', name: 'Google', enabled: true });
             expect(result.id).toBe('google');
             expect(result.type).toBe('google');
         });
 
-        it('normalises default-serper to canonical serper id and type', () => {
+        it('normalizes default-serper to canonical serper id and type', () => {
             const result = normalizeProviderEntry({ id: 'default-serper', type: 'serper', name: 'Serper', enabled: true });
             expect(result.id).toBe('serper');
             expect(result.type).toBe('serper');
         });
 
-        it('normalises default-tavily to canonical tavily id and type', () => {
+        it('normalizes default-tavily to canonical tavily id and type', () => {
             const result = normalizeProviderEntry({ id: 'default-tavily', type: 'tavily', name: 'Tavily', enabled: true });
             expect(result.id).toBe('tavily');
             expect(result.type).toBe('tavily');

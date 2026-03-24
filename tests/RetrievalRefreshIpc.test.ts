@@ -102,7 +102,7 @@ describe('retrieval:refreshExternalProvider IPC handler', () => {
     it('returns { success: false, error } when refreshExternalProvider throws', async () => {
         mockLoadSettings.mockReturnValue({ search: {} });
         mockRefreshExternalProvider.mockImplementation(() => {
-            throw new Error('Registry not initialised');
+            throw new Error('Registry not initialized');
         });
 
         const result = await handleRefreshExternalProvider(
@@ -112,7 +112,7 @@ describe('retrieval:refreshExternalProvider IPC handler', () => {
         );
 
         expect(result.success).toBe(false);
-        expect(result.error).toBe('Registry not initialised');
+        expect(result.error).toBe('Registry not initialized');
     });
 
     it('returns { success: false, error } when loadSettings throws', async () => {
