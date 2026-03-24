@@ -34,7 +34,7 @@ describe('PathResolver', () => {
   });
 
   it('should resolveAppPath with absolute override', () => {
-    const override = 'C:/absolute/path';
+    const override = process.platform === 'win32' ? 'C:/absolute/path' : '/absolute/path';
     const result = resolveAppPath('test/path', override);
     expect(result).toBe(override);
   });
