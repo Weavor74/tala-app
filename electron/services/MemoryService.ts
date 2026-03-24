@@ -76,6 +76,12 @@ export class MemoryService {
     /** In-memory array of all locally stored memories, loaded from disk at startup. */
     private localMemories: MemoryItem[] = [];
 
+    /**
+     * Returns true when the MCP client is connected to the mem0-core server.
+     * Used by AgentService.getStartupStatus() to surface real mem0 readiness.
+     */
+    public getReadyStatus(): boolean { return this.client !== null; }
+
     // --- SCORING CONSTANTS (PHASE 2) ---
     private static readonly WEIGHT_SEMANTIC = 0.35;
     private static readonly WEIGHT_SALIENCE = 0.25;
