@@ -246,14 +246,16 @@ export class MemoryService {
             }
         };
 
-        const timeoutPromise = new Promise<void>((resolve, reject) => {
+        // Resolve (not reject) on timeout so igniteSoul() is not hard-aborted.
+        // A late-connecting mem0 server (e.g. waiting for Ollama model warmup) can
+        // still complete in the background and set this.client, after which
+        // getReadyStatus() will return true. This matches AstroService semantics.
+        const timeoutPromise = new Promise<void>((resolve) => {
             setTimeout(() => {
                 if (!this.client) {
-                    console.warn('[MemoryService] Ignition timed out (15000ms). Rejecting promise.');
-                    reject(new Error("Mem0 Core ignition timed out. Server failed to start."));
-                } else {
-                    resolve();
+                    console.warn('[MemoryService] Ignition timed out (15000ms). Proceeding in background.');
                 }
+                resolve();
             }, 15000);
         });
 
