@@ -1,3 +1,11 @@
+/**
+ * ⚠️ TALA INVARIANT — INFERENCE STREAMING
+ *
+ * - Stream MUST produce tokens
+ * - Do NOT alter request body format without validation
+ * - Do NOT introduce blocking or timeouts that kill valid responses
+ * - Ollama/local inference must always remain functional
+ */
 import http from 'http';
 import https from 'https';
 import net from 'net';
