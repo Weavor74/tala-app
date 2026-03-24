@@ -144,8 +144,6 @@ export const Settings = () => {
         degraded: boolean;
         reasonUnavailable?: string;
     }>>([]);
-    const [testQuerying, setTestQuerying] = useState<string | null>(null);
-    const [testResults, setTestResults] = useState<{ [id: string]: { success: boolean, latencyMs: number, error?: string } }>({});
 
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
@@ -226,7 +224,7 @@ export const Settings = () => {
                 setCuratedProviders(providers || []);
             }).catch(() => {
                 // Fallback: DuckDuckGo only
-                setCuratedProviders([{ providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true }]);
+                setCuratedProviders([{ providerId: 'duckduckgo', displayName: 'DuckDuckGo (no API key)', configured: true, enabled: true, degraded: false }]);
             });
         }
     }, [activeTab]);
@@ -5075,6 +5073,5 @@ class ${selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '')}(Validato
         </div>
     );
 }
-
 
 
