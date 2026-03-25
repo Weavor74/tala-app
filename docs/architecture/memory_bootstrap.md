@@ -109,9 +109,15 @@ Under each root:
 
 | Subdirectory | Purpose |
 |---|---|
-| `postgres-runtime/` | Bundled PostgreSQL binaries (read-only in production) |
+| `runtime/postgres/` | Bundled PostgreSQL binaries (read-only in production); `bin/postgres` is the presence sentinel |
 | `data/postgres/` | PostgreSQL cluster data directory (writable) |
-| `logs/postgres/` | PostgreSQL server log output (writable) |
+| `data/logs/postgres/` | PostgreSQL server log output; log file is `postgres.log` |
+
+`npm run memory:up` checks for `runtime/postgres/bin/postgres[.exe]` (relative to the app/repo root)
+to determine whether native runtime assets are present before deciding whether to log degraded guidance.
+
+`npm run memory:logs` tails `data/logs/postgres/postgres.log`. If the file does not exist yet (the
+native runtime has not started), the command exits immediately with an informative message.
 
 Path resolution is handled by `LocalDatabaseRuntime` and can be overridden via
 `databaseBootstrap.localRuntime.runtimePathOverride` / `dataPathOverride` in
@@ -146,9 +152,10 @@ binaries into the app distribution) is a separate delivery milestone.
 Until platform binaries are bundled:
 - The native runtime path will log a clear `MissingRuntimeAssetsError` with
   actionable guidance.
-- The app falls back to degraded mode (or Docker if explicitly enabled).
-- Developers can use `npm run memory:up` (Docker) or set
-  `TALA_DB_CONNECTION_STRING` to use an existing PostgreSQL instance.
+- The app falls back to degraded mode.
+- Developers can set `TALA_DB_CONNECTION_STRING` to connect to an existing
+  PostgreSQL instance, or install PostgreSQL natively and configure
+  `TALA_DB_HOST` / `TALA_DB_PORT` / `TALA_DB_USER` / `TALA_DB_PASSWORD`.
 
 pgvector is required for canonical memory embeddings. If the runtime bundle
 includes PostgreSQL but not pgvector, a warning is surfaced during bootstrap
@@ -169,26 +176,26 @@ includes PostgreSQL but not pgvector, a warning is surfaced during bootstrap
 | `shared/dbBootstrapConfig.ts` | Bootstrap configuration types (shared, renderer-safe) |
 | `shared/dbConfig.ts` | DatabaseConfig types and defaults |
 | `docker-compose.memory.yml` | Optional Docker-based local PostgreSQL + pgvector |
-| `scripts/memory-cmd.js` | Cross-platform dispatcher for Docker memory commands |
+| `scripts/memory-cmd.js` | Cross-platform dispatcher for memory commands (up / down / logs) |
 
 ---
 
-## Docker Support (Optional Developer Convenience)
-
-Docker remains supported as an explicit developer workflow. It is **not** used
-during standard app startup.
+## Developer Convenience Commands
 
 | Command | Description |
 |---|---|
-| `npm run memory:up` | Start Docker-based PostgreSQL + pgvector stack |
-| `npm run memory:down` | Stop Docker-based stack (data preserved) |
-| `npm run memory:logs` | Tail Docker container logs |
-| `npm run memory:reset` | Destroy Docker volume + recreate (wipes all data) |
-| `npm run dev:with-memory` | Start Docker memory stack then launch dev |
+| `npm run memory:up` | Pre-flight check: verify running PostgreSQL or native runtime assets; exit with actionable guidance if neither available |
+| `npm run memory:down` | Stop the Docker-based stack if it was started manually (data preserved) |
+| `npm run memory:logs` | Tail `data/logs/postgres/postgres.log`; prints informative message and exits if the file does not exist yet |
+| `npm run memory:reset` | Stop Docker-based stack and remove volume + re-run memory:up |
+| `npm run dev:with-memory` | Run memory:up pre-flight check then launch dev |
 
-To allow the app to fall back to a running Docker instance during bootstrap:
+**Docker is not started automatically by `memory:up`.** If you prefer to run
+PostgreSQL via Docker for development, start it manually and optionally enable
+the Docker fallback probe:
 
 ```bash
+docker compose -f docker-compose.memory.yml up -d
 TALA_DB_ALLOW_DOCKER_FALLBACK=true npm run dev
 ```
 
