@@ -5,24 +5,24 @@ Tala local memory stack bootstrap (Windows PowerShell)
 .DESCRIPTION
 Pre-flight check for the Tala canonical memory store.
 The app manages its own native PostgreSQL runtime via DatabaseBootstrapCoordinator.
-Docker is NOT used by this script — the canonical memory path is native-first.
+Docker is NOT used by this script - the canonical memory path is native-first.
 
 Behavior:
-  1. If TALA_DB_CONNECTION_STRING is set, exits 0 — caller has supplied a DB.
+  1. If TALA_DB_CONNECTION_STRING is set, exits 0 - caller has supplied a DB.
   2. Checks whether a local PostgreSQL instance is already reachable.
-     If yes, exits 0 — DB is already running.
+     If yes, exits 0 - DB is already running.
   3. Checks whether native runtime binary assets are present.
-     If yes, exits 0 — the app will start the runtime automatically on launch.
-  4. No viable path found — exits 0 with a degraded-mode warning and
+     If yes, exits 0 - the app will start the runtime automatically on launch.
+  4. No viable path found - exits 0 with a degraded-mode warning and
      actionable guidance. The app will continue without canonical memory.
 
 Usage:
   .\scripts\bootstrap-memory.ps1
 
 Environment variables respected:
-  TALA_DB_CONNECTION_STRING — if set, skip all local provisioning
-  TALA_DB_HOST              — override host for reachability check
-  TALA_DB_PORT              — override port for reachability check
+  TALA_DB_CONNECTION_STRING - if set, skip all local provisioning
+  TALA_DB_HOST              - override host for reachability check
+  TALA_DB_PORT              - override port for reachability check
 #>
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -43,7 +43,7 @@ function Log-Warn { param($msg) Write-Host "[memory-bootstrap] WARN: $msg" -Fore
 # 1. If TALA_DB_CONNECTION_STRING is set, skip local provisioning
 # ---------------------------------------------------------------------------
 if ($env:TALA_DB_CONNECTION_STRING) {
-    Log-Ok "TALA_DB_CONNECTION_STRING is set — using provided DB, skipping local bootstrap."
+    Log-Ok "TALA_DB_CONNECTION_STRING is set - using provided DB, skipping local bootstrap."
     exit 0
 }
 
@@ -69,10 +69,10 @@ if (Test-Path $NativeBinary) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. No viable path — degraded mode. The app will continue without memory.
+# 4. No viable path - degraded mode. The app will continue without memory.
 # ---------------------------------------------------------------------------
 Log-Warn "No running PostgreSQL instance found and no native runtime assets present."
-Log-Warn "App will start in degraded mode — canonical memory will be unavailable."
+Log-Warn "App will start in degraded mode - canonical memory will be unavailable."
 Log-Warn ""
 Log-Warn "To resolve, choose one of the following:"
 Log-Warn "  a) Set TALA_DB_CONNECTION_STRING to connect to an existing PostgreSQL instance."
