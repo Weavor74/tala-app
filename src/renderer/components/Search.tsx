@@ -262,7 +262,14 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
 
         // Persist notebook items to PostgreSQL
         if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
-            await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+            const saveRes = await api.researchAddItemsToNotebook(targetId, notebookItems, currentSearchRunId ?? undefined);
+            if (!saveRes?.ok) {
+                setScraping(null);
+                setLoading(false);
+                alert(`Notebook save failed: ${saveRes?.error ?? 'Unknown error'}\nContent scraped: ${successCount} file(s) — retry saving them manually.`);
+                if (onAdd) onAdd();
+                return;
+            }
         } else if (notebookItems.length > 0 && api?.getSettings) {
             // Fallback: settings-based
             const settings = await api.getSettings();
@@ -287,8 +294,12 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             const res = await api.researchListNotebooks();
             if (res?.ok) {
                 setNotebooks(res.notebooks || []);
-                if (res.notebooks?.length > 0 && !selectedNotebookId) {
-                    setSelectedNotebookId(res.notebooks[0].id);
+                if (!selectedNotebookId) {
+                    // Auto-select first existing notebook, or default to create-new so
+                    // action buttons are enabled immediately on a fresh install.
+                    setSelectedNotebookId(
+                        res.notebooks?.length > 0 ? res.notebooks[0].id : 'CREATE_NEW_NB'
+                    );
                 }
                 return;
             }
@@ -297,8 +308,10 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         if (api?.getSettings) {
             const settings = await api.getSettings();
             setNotebooks(settings.notebooks || []);
-            if (settings.notebooks?.length > 0 && !selectedNotebookId) {
-                setSelectedNotebookId(settings.notebooks[0].id);
+            if (!selectedNotebookId) {
+                setSelectedNotebookId(
+                    settings.notebooks?.length > 0 ? settings.notebooks[0].id : 'CREATE_NEW_NB'
+                );
             }
         }
     };
@@ -585,8 +598,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                     </div>
                 )}
 
-                {/* Save All Results toolbar (shown when search run was registered and nothing is selected) */}
-                {currentSearchRunId && results.length > 0 && selectedKeys.size === 0 && (
+                {/* Save All Results toolbar (shown when results exist and nothing is selected) */}
+                {results.length > 0 && selectedKeys.size === 0 && (
                     <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', background: '#1e2d1e', padding: '5px 10px', borderRadius: 4, border: '1px solid #2a4a2a' }}>
                         <span style={{ fontSize: 11, opacity: 0.7, flex: 1 }}>Save all {results.length} results to notebook</span>
                         <select
@@ -602,22 +615,43 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         </select>
                         <button
                             onClick={async () => {
-                                if (!selectedNotebookId || !currentSearchRunId) return;
-                                if (selectedNotebookId === 'CREATE_NEW_NB') {
-                                    const name = prompt("Notebook name:");
-                                    if (!name?.trim()) return;
-                                    if (!api?.researchCreateNotebookFromSearchRun) return;
-                                    const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name.trim());
-                                    if (res?.ok) {
-                                        alert(`Notebook "${name.trim()}" created with ${res.itemCount} items.`);
-                                        if (onAdd) onAdd();
+                                if (!selectedNotebookId) return;
+                                if (currentSearchRunId) {
+                                    // Preferred path: search run registered — use atomic DB methods.
+                                    if (selectedNotebookId === 'CREATE_NEW_NB') {
+                                        const name = prompt("Notebook name:");
+                                        if (!name?.trim()) return;
+                                        if (!api?.researchCreateNotebookFromSearchRun) return;
+                                        const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name.trim());
+                                        if (res?.ok) {
+                                            alert(`Notebook "${name.trim()}" created with ${res.itemCount} items.`);
+                                            if (onAdd) onAdd();
+                                        } else {
+                                            alert(`Save failed: ${res?.error ?? 'Unknown error'}`);
+                                        }
+                                    } else {
+                                        if (!api?.researchAddSearchRunResultsToNotebook) return;
+                                        const res = await api.researchAddSearchRunResultsToNotebook(currentSearchRunId, selectedNotebookId);
+                                        if (res?.ok) {
+                                            alert(`Added ${res.itemCount} items to notebook.`);
+                                            if (onAdd) onAdd();
+                                        } else {
+                                            alert(`Save failed: ${res?.error ?? 'Unknown error'}`);
+                                        }
                                     }
                                 } else {
-                                    if (!api?.researchAddSearchRunResultsToNotebook) return;
-                                    const res = await api.researchAddSearchRunResultsToNotebook(currentSearchRunId, selectedNotebookId);
-                                    if (res?.ok) {
-                                        alert(`Added ${res.itemCount} items to notebook.`);
-                                        if (onAdd) onAdd();
+                                    // Fallback: no search run registered — save items directly.
+                                    const targetId = await resolveTargetNotebook(selectedNotebookId);
+                                    if (!targetId) return;
+                                    const notebookItems = results.map((r, i) => resultToNotebookItem(r, i));
+                                    if (notebookItems.length > 0 && api?.researchAddItemsToNotebook) {
+                                        const res = await api.researchAddItemsToNotebook(targetId, notebookItems);
+                                        if (res?.ok) {
+                                            alert(`Saved ${res.added ?? notebookItems.length} item(s) to notebook.`);
+                                            if (onAdd) onAdd();
+                                        } else {
+                                            alert(`Save failed: ${res?.error ?? 'Unknown error'}`);
+                                        }
                                     }
                                 }
                             }}
