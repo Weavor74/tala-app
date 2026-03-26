@@ -80,7 +80,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     /** Keys of results the user has selected (url || path || result:<index>). */
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [notebooks, setNotebooks] = useState<any[]>([]);
-    const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || '');
+    const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || 'CREATE_NEW_NB');
     /** The search_run id from the most recent search, used to register notebook items. */
     const [currentSearchRunId, setCurrentSearchRunId] = useState<string | null>(null);
 
@@ -294,9 +294,9 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
             const res = await api.researchListNotebooks();
             if (res?.ok) {
                 setNotebooks(res.notebooks || []);
-                if (!selectedNotebookId) {
-                    // Auto-select first existing notebook, or default to create-new so
-                    // action buttons are enabled immediately on a fresh install.
+                // Auto-select first existing notebook when none is explicitly chosen yet
+                // (includes the 'CREATE_NEW_NB' placeholder so a real ID wins over it).
+                if (!selectedNotebookId || selectedNotebookId === 'CREATE_NEW_NB') {
                     setSelectedNotebookId(
                         res.notebooks?.length > 0 ? res.notebooks[0].id : 'CREATE_NEW_NB'
                     );
@@ -308,7 +308,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         if (api?.getSettings) {
             const settings = await api.getSettings();
             setNotebooks(settings.notebooks || []);
-            if (!selectedNotebookId) {
+            if (!selectedNotebookId || selectedNotebookId === 'CREATE_NEW_NB') {
                 setSelectedNotebookId(
                     settings.notebooks?.length > 0 ? settings.notebooks[0].id : 'CREATE_NEW_NB'
                 );
@@ -335,7 +335,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         setSelectedKeys(new Set()); // Reset selection when a new search is run
         setCurrentSearchRunId(null);
 
-        if (!api) return;
+        if (!api) { setLoading(false); return; }
 
         try {
             let fetchedResults: Result[] = [];
@@ -552,7 +552,6 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             onChange={e => setSelectedNotebookId(e.target.value)}
                             style={{ flex: 1, background: '#1e1e1e', border: '1px solid #444', color: '#fff', fontSize: 11, padding: '2px 5px', borderRadius: 2 }}
                         >
-                            <option value="">Select Notebook...</option>
                             <option value="CREATE_NEW_NB">+ Create New Notebook...</option>
                             {notebooks.map(nb => (
                                 <option key={nb.id} value={nb.id}>{nb.name}</option>
@@ -607,7 +606,6 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             onChange={e => setSelectedNotebookId(e.target.value)}
                             style={{ background: '#1e1e1e', border: '1px solid #444', color: '#fff', fontSize: 11, padding: '2px 5px', borderRadius: 2 }}
                         >
-                            <option value="">Select Notebook...</option>
                             <option value="CREATE_NEW_NB">+ Create New Notebook from Search</option>
                             {notebooks.map(nb => (
                                 <option key={nb.id} value={nb.id}>{nb.name}</option>
