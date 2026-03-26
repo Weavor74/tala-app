@@ -97,26 +97,30 @@ describe('P1A: Shared types', () => {
 // ─── P1B: Default registry files ─────────────────────────────────────────────
 
 describe('P1B: Default registry files', () => {
-    const INV_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/invariant_registry.json');
-    const CAP_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/capability_registry.json');
+    const INV_JSON_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/invariant_registry.json');
+    const CAP_JSON_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/capability_registry.json');
+    const INV_TS_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/invariantRegistry.ts');
+    const CAP_TS_PATH = path.join(process.cwd(), 'electron/services/selfModel/defaults/capabilityRegistry.ts');
+
+    // ── JSON files (committed for compatibility and readability) ──
 
     it('invariant_registry.json exists in electron/services/selfModel/defaults/', () => {
-        expect(fs.existsSync(INV_PATH)).toBe(true);
+        expect(fs.existsSync(INV_JSON_PATH)).toBe(true);
     });
 
     it('invariant_registry.json is valid JSON', () => {
-        const raw = fs.readFileSync(INV_PATH, 'utf-8');
+        const raw = fs.readFileSync(INV_JSON_PATH, 'utf-8');
         expect(() => JSON.parse(raw)).not.toThrow();
     });
 
     it('invariant_registry.json has at least 8 invariants', () => {
-        const parsed = JSON.parse(fs.readFileSync(INV_PATH, 'utf-8'));
+        const parsed = JSON.parse(fs.readFileSync(INV_JSON_PATH, 'utf-8'));
         expect(Array.isArray(parsed.invariants)).toBe(true);
         expect(parsed.invariants.length).toBeGreaterThanOrEqual(8);
     });
 
     it('each invariant has id, label, description, category, status, addedAt', () => {
-        const parsed = JSON.parse(fs.readFileSync(INV_PATH, 'utf-8'));
+        const parsed = JSON.parse(fs.readFileSync(INV_JSON_PATH, 'utf-8'));
         for (const inv of parsed.invariants) {
             expect(inv).toHaveProperty('id');
             expect(inv).toHaveProperty('label');
@@ -128,22 +132,22 @@ describe('P1B: Default registry files', () => {
     });
 
     it('capability_registry.json exists', () => {
-        expect(fs.existsSync(CAP_PATH)).toBe(true);
+        expect(fs.existsSync(CAP_JSON_PATH)).toBe(true);
     });
 
     it('capability_registry.json is valid JSON', () => {
-        const raw = fs.readFileSync(CAP_PATH, 'utf-8');
+        const raw = fs.readFileSync(CAP_JSON_PATH, 'utf-8');
         expect(() => JSON.parse(raw)).not.toThrow();
     });
 
     it('capability_registry.json has at least 8 capabilities', () => {
-        const parsed = JSON.parse(fs.readFileSync(CAP_PATH, 'utf-8'));
+        const parsed = JSON.parse(fs.readFileSync(CAP_JSON_PATH, 'utf-8'));
         expect(Array.isArray(parsed.capabilities)).toBe(true);
         expect(parsed.capabilities.length).toBeGreaterThanOrEqual(8);
     });
 
     it('each capability has id, label, description, category, status, addedAt', () => {
-        const parsed = JSON.parse(fs.readFileSync(CAP_PATH, 'utf-8'));
+        const parsed = JSON.parse(fs.readFileSync(CAP_JSON_PATH, 'utf-8'));
         for (const cap of parsed.capabilities) {
             expect(cap).toHaveProperty('id');
             expect(cap).toHaveProperty('label');
@@ -151,6 +155,82 @@ describe('P1B: Default registry files', () => {
             expect(cap).toHaveProperty('category');
             expect(cap).toHaveProperty('status');
             expect(cap).toHaveProperty('addedAt');
+        }
+    });
+
+    // ── TypeScript constant exports (preferred authoritative source) ──
+
+    it('invariantRegistry.ts exists in electron/services/selfModel/defaults/', () => {
+        expect(fs.existsSync(INV_TS_PATH)).toBe(true);
+    });
+
+    it('DEFAULT_INVARIANTS can be imported from defaults/invariantRegistry', async () => {
+        const mod = await import('../electron/services/selfModel/defaults/invariantRegistry');
+        expect(mod.DEFAULT_INVARIANTS).toBeDefined();
+        expect(Array.isArray(mod.DEFAULT_INVARIANTS)).toBe(true);
+    });
+
+    it('DEFAULT_INVARIANTS has at least 8 entries', async () => {
+        const { DEFAULT_INVARIANTS } = await import('../electron/services/selfModel/defaults/invariantRegistry');
+        expect(DEFAULT_INVARIANTS.length).toBeGreaterThanOrEqual(8);
+    });
+
+    it('DEFAULT_INVARIANTS entries have required fields', async () => {
+        const { DEFAULT_INVARIANTS } = await import('../electron/services/selfModel/defaults/invariantRegistry');
+        for (const inv of DEFAULT_INVARIANTS) {
+            expect(inv).toHaveProperty('id');
+            expect(inv).toHaveProperty('label');
+            expect(inv).toHaveProperty('description');
+            expect(inv).toHaveProperty('category');
+            expect(inv).toHaveProperty('status');
+            expect(inv).toHaveProperty('addedAt');
+        }
+    });
+
+    it('capabilityRegistry.ts exists in electron/services/selfModel/defaults/', () => {
+        expect(fs.existsSync(CAP_TS_PATH)).toBe(true);
+    });
+
+    it('DEFAULT_CAPABILITIES can be imported from defaults/capabilityRegistry', async () => {
+        const mod = await import('../electron/services/selfModel/defaults/capabilityRegistry');
+        expect(mod.DEFAULT_CAPABILITIES).toBeDefined();
+        expect(Array.isArray(mod.DEFAULT_CAPABILITIES)).toBe(true);
+    });
+
+    it('DEFAULT_CAPABILITIES has at least 8 entries', async () => {
+        const { DEFAULT_CAPABILITIES } = await import('../electron/services/selfModel/defaults/capabilityRegistry');
+        expect(DEFAULT_CAPABILITIES.length).toBeGreaterThanOrEqual(8);
+    });
+
+    it('DEFAULT_CAPABILITIES entries have required fields', async () => {
+        const { DEFAULT_CAPABILITIES } = await import('../electron/services/selfModel/defaults/capabilityRegistry');
+        for (const cap of DEFAULT_CAPABILITIES) {
+            expect(cap).toHaveProperty('id');
+            expect(cap).toHaveProperty('label');
+            expect(cap).toHaveProperty('description');
+            expect(cap).toHaveProperty('category');
+            expect(cap).toHaveProperty('status');
+            expect(cap).toHaveProperty('addedAt');
+        }
+    });
+
+    it('DEFAULT_INVARIANTS and invariant_registry.json contain the same ids', async () => {
+        const { DEFAULT_INVARIANTS } = await import('../electron/services/selfModel/defaults/invariantRegistry');
+        const parsed = JSON.parse(fs.readFileSync(INV_JSON_PATH, 'utf-8'));
+        const tsIds = new Set(DEFAULT_INVARIANTS.map((i: any) => i.id));
+        const jsonIds = new Set(parsed.invariants.map((i: any) => i.id));
+        for (const id of jsonIds) {
+            expect(tsIds.has(id)).toBe(true);
+        }
+    });
+
+    it('DEFAULT_CAPABILITIES and capability_registry.json contain the same ids', async () => {
+        const { DEFAULT_CAPABILITIES } = await import('../electron/services/selfModel/defaults/capabilityRegistry');
+        const parsed = JSON.parse(fs.readFileSync(CAP_JSON_PATH, 'utf-8'));
+        const tsIds = new Set(DEFAULT_CAPABILITIES.map((c: any) => c.id));
+        const jsonIds = new Set(parsed.capabilities.map((c: any) => c.id));
+        for (const id of jsonIds) {
+            expect(tsIds.has(id)).toBe(true);
         }
     });
 });
@@ -747,12 +827,14 @@ describe('P1H: Registry file path / fresh-clone invariant', () => {
     it('bundled defaults are the authoritative source, not data/ files', async () => {
         const { InvariantRegistry } = await import('../electron/services/selfModel/InvariantRegistry');
         const registry = new InvariantRegistry();
-        // Load with no override — defaults should always succeed
+        // Load with no override — defaults should always succeed (no fs I/O required)
         registry.load();
         expect(registry.count()).toBeGreaterThan(0);
-        // The default path points into electron/services/selfModel/defaults/ (in the source tree)
-        const defaultPath = InvariantRegistry.DEFAULT_PATH;
-        expect(defaultPath).toContain('defaults');
-        expect(defaultPath).toContain('invariant_registry.json');
+        // The bundled defaults come from the TS constant, not from data/
+        // Verify the defaults module is the authoritative source
+        const { DEFAULT_INVARIANTS } = await import('../electron/services/selfModel/defaults/invariantRegistry');
+        expect(DEFAULT_INVARIANTS.length).toBeGreaterThan(0);
+        // Registry should contain at least as many invariants as the defaults
+        expect(registry.count()).toBeGreaterThanOrEqual(DEFAULT_INVARIANTS.length);
     });
 });

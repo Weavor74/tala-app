@@ -4,36 +4,39 @@
  * Phase 1 Self-Model Foundation
  *
  * Loads and serves the registry of Tala's architectural and behavioral
- * invariants. Defaults are bundled with the application; a runtime override
- * file in the user data directory can extend or override defaults.
+ * invariants. Bundled defaults are imported from TypeScript constants in
+ * defaults/invariantRegistry.ts and are available on a fresh clone with no
+ * manual file placement. An optional runtime override JSON file in the user
+ * data directory may extend or override defaults but is never required.
  *
  * Non-fatal: missing runtime override silently falls back to bundled defaults.
  */
 
 import fs from 'fs';
-import path from 'path';
-import type { SelfModelInvariant, InvariantCategory, InvariantStatus } from '../../../shared/selfModelTypes';
+import type { SelfModelInvariant, InvariantCategory } from '../../../shared/selfModelTypes';
+import { DEFAULT_INVARIANTS } from './defaults/invariantRegistry';
 
 export class InvariantRegistry {
-    static readonly DEFAULT_PATH = path.join(__dirname, 'defaults', 'invariant_registry.json');
-
     private invariants: SelfModelInvariant[] = [];
 
     /**
-     * Loads invariants from the bundled defaults. If runtimeOverridePath is
-     * provided and the file exists, its invariants are merged on top (by id).
+     * Loads invariants from the bundled TypeScript defaults. If
+     * runtimeOverridePath is provided and the file exists, its invariants are
+     * merged on top (by id). The bundled defaults are always authoritative as
+     * the baseline — no fs I/O is required for the bundled set.
      */
     load(runtimeOverridePath?: string): void {
-        const defaults = this._readFile(InvariantRegistry.DEFAULT_PATH);
         const merged: Map<string, SelfModelInvariant> = new Map();
-        for (const inv of defaults) {
+        for (const inv of DEFAULT_INVARIANTS) {
             merged.set(inv.id, inv);
         }
 
         if (runtimeOverridePath) {
             try {
                 if (fs.existsSync(runtimeOverridePath)) {
-                    const overrides = this._readFile(runtimeOverridePath);
+                    const raw = fs.readFileSync(runtimeOverridePath, 'utf-8');
+                    const parsed = JSON.parse(raw);
+                    const overrides: SelfModelInvariant[] = parsed.invariants ?? [];
                     for (const inv of overrides) {
                         merged.set(inv.id, inv);
                     }
@@ -64,11 +67,5 @@ export class InvariantRegistry {
 
     count(): number {
         return this.invariants.length;
-    }
-
-    private _readFile(filePath: string): SelfModelInvariant[] {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const parsed = JSON.parse(raw);
-        return parsed.invariants as SelfModelInvariant[];
     }
 }
