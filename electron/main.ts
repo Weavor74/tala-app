@@ -34,6 +34,14 @@ import { loadSettings, saveSettings } from './services/SettingsManager';
 import { IpcRouter } from './services/IpcRouter';
 import { ReflectionService } from './services/reflection/ReflectionService';
 import { ReflectionAppService } from './services/reflection/ReflectionAppService';
+import { InvariantRegistry } from './services/selfModel/InvariantRegistry';
+import { CapabilityRegistry } from './services/selfModel/CapabilityRegistry';
+import { OwnershipMapper } from './services/selfModel/OwnershipMapper';
+import { SelfModelScanner } from './services/selfModel/SelfModelScanner';
+import { SelfModelBuilder } from './services/selfModel/SelfModelBuilder';
+import { SelfModelQueryService } from './services/selfModel/SelfModelQueryService';
+import { SelfModelRefreshService } from './services/selfModel/SelfModelRefreshService';
+import { SelfModelAppService } from './services/selfModel/SelfModelAppService';
 import { VoiceService } from './services/VoiceService';
 import { SoulService } from './services/soul/SoulService';
 import { UserProfileService } from './services/UserProfileService';
@@ -91,6 +99,15 @@ const workflowService = new WorkflowService(fileService.getRoot());
 const agent = new AgentService(terminalService, functionService, mcpService, inferenceService, userProfileService);
 const reflectionService = new ReflectionService(USER_DATA_DIR, SYSTEM_SETTINGS_PATH);
 const reflectionAppService = new ReflectionAppService(reflectionService);
+
+const invariantRegistry = new InvariantRegistry();
+const capabilityRegistry = new CapabilityRegistry();
+const ownershipMapper = new OwnershipMapper();
+const selfModelScanner = new SelfModelScanner();
+const selfModelBuilder = new SelfModelBuilder();
+const selfModelQueryService = new SelfModelQueryService(invariantRegistry, capabilityRegistry, ownershipMapper, selfModelScanner, selfModelBuilder);
+const selfModelRefreshService = new SelfModelRefreshService(invariantRegistry, capabilityRegistry, selfModelQueryService, USER_DATA_DIR);
+const selfModelAppService = new SelfModelAppService(selfModelRefreshService, selfModelQueryService);
 const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent);
@@ -117,6 +134,7 @@ const codeControlService = new CodeControlService(fileService, terminalService, 
 // Register Handlers
 soulService.registerIpcHandlers();
 reflectionService.start();
+selfModelRefreshService.init().catch(e => console.error('[SelfModel] init failed:', e));
 
 // ═══════════════════════════════════════════════════════════════════════
 // GLOBAL ERROR LOGGING

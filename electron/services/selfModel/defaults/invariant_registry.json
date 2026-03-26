@@ -1,0 +1,94 @@
+{
+  "invariants": [
+    {
+      "id": "inv-ipc-channel-uniqueness",
+      "label": "IPC Channel Uniqueness",
+      "description": "Each ipcMain.handle channel must be registered exactly once across the entire Electron process. Duplicate handlers will crash the app and break persistence.",
+      "category": "architectural",
+      "status": "active",
+      "enforcedBy": "IpcRouter",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-local-first-data",
+      "label": "Local-First Data Storage",
+      "description": "All persistent user data must be stored locally in the user data directory. No user data may be transmitted to remote servers without explicit user consent and configuration.",
+      "category": "architectural",
+      "status": "active",
+      "enforcedBy": "SettingsManager",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-telemetry-nonblocking",
+      "label": "Telemetry Non-Blocking",
+      "description": "Telemetry and audit log emissions must never block the main inference or IPC response path. All telemetry calls are fire-and-forget with caught errors.",
+      "category": "behavioral",
+      "status": "active",
+      "enforcedBy": "TelemetryService",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-error-nonfatal-noncritical",
+      "label": "Error Non-Fatal in Non-Critical Paths",
+      "description": "Errors in non-critical subsystems (reflection, maintenance, telemetry, astro) must not crash the app or block the user. All non-critical paths use try/catch with logged recovery.",
+      "category": "behavioral",
+      "status": "active",
+      "enforcedBy": "AgentService",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-no-plaintext-secret-logging",
+      "label": "No Plaintext Secret Logging",
+      "description": "API keys, tokens, passwords, and other secrets must never be written to log files, telemetry payloads, or IPC responses. All log paths use the redact() sanitizer.",
+      "category": "safety",
+      "status": "active",
+      "enforcedBy": "AuditLogger",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-context-bridge-security",
+      "label": "Context Bridge Security",
+      "description": "The Electron contextBridge must not expose raw ipcRenderer, Node.js APIs, or event objects to the renderer. Only whitelisted, purpose-bound functions may be exposed via window.tala.",
+      "category": "safety",
+      "status": "active",
+      "enforcedBy": "preload",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-identity-consistency",
+      "label": "Identity Consistency",
+      "description": "Tala's core identity, values, and behavioral boundaries must remain consistent across sessions and mode transitions. Identity state is never silently reset by inference or tool calls.",
+      "category": "ethical",
+      "status": "active",
+      "enforcedBy": "SoulService",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-inference-fallback-ordering",
+      "label": "Inference Fallback Ordering",
+      "description": "When the primary inference provider is unavailable, the system must attempt fallback providers in the configured priority order before returning an error. No silent drops are permitted.",
+      "category": "behavioral",
+      "status": "active",
+      "enforcedBy": "InferenceService",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-memory-write-isolation",
+      "label": "Memory Write Isolation",
+      "description": "Memory writes must be scoped to the active session or workspace. Cross-session writes require explicit context justification and are logged with their source.",
+      "category": "architectural",
+      "status": "active",
+      "enforcedBy": "MemoryService",
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "inv-audit-completeness",
+      "label": "Audit Log Completeness",
+      "description": "All user-initiated actions, inference invocations, and tool executions must produce at least one audit log entry. Silent execution is not permitted for any action that modifies state.",
+      "category": "safety",
+      "status": "active",
+      "enforcedBy": "AuditLogger",
+      "addedAt": "2024-01-01"
+    }
+  ]
+}
