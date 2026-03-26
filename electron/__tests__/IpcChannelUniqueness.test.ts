@@ -32,6 +32,7 @@ const IPC_REGISTRATION_FILES = [
     'electron/services/IpcRouter.ts',
     'electron/services/reflection/ReflectionAppService.ts',
     'electron/services/soul/SoulService.ts',
+    'electron/services/selfModel/SelfModelAppService.ts',
 ];
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
@@ -98,6 +99,16 @@ describe('IPC channel uniqueness', () => {
         expect(
             overlap,
             `Channels registered in BOTH IpcRouter.ts and SoulService.ts: ${overlap.join(', ')}`,
+        ).toHaveLength(0);
+    });
+
+    it('no channel registered in IpcRouter.ts is also registered in SelfModelAppService.ts', () => {
+        const router = new Set(extractChannels(path.join(REPO_ROOT, 'electron/services/IpcRouter.ts')));
+        const selfModel = extractChannels(path.join(REPO_ROOT, 'electron/services/selfModel/SelfModelAppService.ts'));
+        const overlap = selfModel.filter(ch => router.has(ch));
+        expect(
+            overlap,
+            `Channels registered in BOTH IpcRouter.ts and SelfModelAppService.ts: ${overlap.join(', ')}`,
         ).toHaveLength(0);
     });
 
