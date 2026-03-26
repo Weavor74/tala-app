@@ -1,0 +1,135 @@
+{
+  "version": "1.0",
+  "lastReviewedAt": "2026-03-26",
+  "invariants": [
+    {
+      "id": "inv-001",
+      "title": "IPC Channel Uniqueness",
+      "description": "Every ipcMain.handle() registration must use a unique channel name across all registration files (main.ts, IpcRouter.ts, ReflectionAppService.ts, SoulService.ts, SelfModelAppService.ts). Duplicate registrations cause silent handler override and non-deterministic routing.",
+      "severity": "critical",
+      "appliesToSubsystems": ["electron-main", "reflection", "soul", "self-model"],
+      "enforcementMode": "test_covered",
+      "testFileRefs": ["electron/__tests__/IpcChannelUniqueness.test.ts"],
+      "verificationHints": [
+        "Run electron/__tests__/IpcChannelUniqueness.test.ts",
+        "Search for duplicate strings across all ipcMain.handle() calls"
+      ],
+      "notes": "Duplicates are silent: the second registration wins. The first handler is lost with no error."
+    },
+    {
+      "id": "inv-002",
+      "title": "Deterministic Handler Registration",
+      "description": "IPC handlers must be registered exactly once per process lifecycle in a deterministic order. Registration must not depend on runtime state (e.g., settings values, feature flags) that could vary between runs.",
+      "severity": "high",
+      "appliesToSubsystems": ["electron-main", "reflection", "soul"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify no conditional ipcMain.handle() calls in startup paths",
+        "Check that handler registration is not deferred or retried"
+      ]
+    },
+    {
+      "id": "inv-003",
+      "title": "Provider Mapping Consistency",
+      "description": "LEGACY_PROVIDER_ID_MAP and CANONICAL_PROVIDER_TYPE_MAP in providerConstants.ts are the single source of truth for provider normalization. SettingsManager and ExternalApiSearchProvider must import from providerConstants.ts, not define their own maps.",
+      "severity": "high",
+      "appliesToSubsystems": ["retrieval", "electron-main"],
+      "enforcementMode": "design_only",
+      "testFileRefs": ["tests/RetrievalProviders.test.ts"],
+      "verificationHints": [
+        "grep for LEGACY_PROVIDER_ID_MAP outside providerConstants.ts",
+        "Verify all provider normalization imports providerConstants.ts"
+      ]
+    },
+    {
+      "id": "inv-004",
+      "title": "Strict Result Identity Across Retrieval Pipeline",
+      "description": "Search results must maintain stable identity (id, uri, score) from search through selection to ingestion. Mutating result objects between pipeline stages or re-scoring after selection is prohibited.",
+      "severity": "high",
+      "appliesToSubsystems": ["retrieval", "context-assembly"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify SearchResult objects are not mutated after _executeSearch returns",
+        "Check that result id is stable from search to context assembly"
+      ]
+    },
+    {
+      "id": "inv-005",
+      "title": "Memory Authority Ordering",
+      "description": "The canonical memory authority order is: canonical_memory (0) > mem0 (1) > graph (2) > rag (3). Higher-priority sources always supersede lower-priority sources in conflict resolution. RAG results must never override canonical memory.",
+      "severity": "critical",
+      "appliesToSubsystems": ["memory", "context-assembly", "retrieval"],
+      "enforcementMode": "test_covered",
+      "testFileRefs": [
+        "tests/P7DCrossLayerAuthorityEnforcement.test.ts",
+        "tests/P7DUnifiedCandidateArena.test.ts"
+      ],
+      "verificationHints": [
+        "See AUTHORITY_LAYER_PRIORITY in authorityConflictResolver.ts",
+        "Verify canonical_memory=0 in the priority map"
+      ]
+    },
+    {
+      "id": "inv-006",
+      "title": "RAG Is Retrieval, Not Truth Authority",
+      "description": "RAG results are evidence candidates only. They must not be treated as ground truth and must not override canonical memory or user-authored notes. RAG authority level is always lowest (3) in conflict resolution.",
+      "severity": "critical",
+      "appliesToSubsystems": ["retrieval", "memory", "context-assembly"],
+      "enforcementMode": "test_covered",
+      "testFileRefs": ["tests/P7DCrossLayerAuthorityEnforcement.test.ts"],
+      "verificationHints": [
+        "Verify rag=3 in AUTHORITY_LAYER_PRIORITY",
+        "Verify RAG items are excluded when canonical_memory item covers the same fact"
+      ]
+    },
+    {
+      "id": "inv-007",
+      "title": "Local-First Behavior",
+      "description": "All core inference, memory, retrieval, and IPC operations must function without any cloud dependency. Remote capabilities (cloud providers, external APIs) are additive and must degrade gracefully when unavailable, never blocking local operation.",
+      "severity": "critical",
+      "appliesToSubsystems": ["inference", "memory", "retrieval", "electron-main"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify Ollama/local inference path does not require any network call",
+        "Verify app starts and operates with no internet connection"
+      ]
+    },
+    {
+      "id": "inv-008",
+      "title": "Safe Remote Fallback Without Local Breakage",
+      "description": "When a remote provider, cloud API, or external MCP server is unavailable, the system must continue operating with local capabilities. Remote failure must not cause exceptions or state corruption in the local pipeline.",
+      "severity": "high",
+      "appliesToSubsystems": ["inference", "retrieval", "mcp"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify inference timeout resolves (not rejects) for cloud providers",
+        "Verify MCP service reports DEGRADED, not FAILED, when a server is unreachable"
+      ]
+    },
+    {
+      "id": "inv-009",
+      "title": "Non-Fatal Degradation for Failed Providers/Tools/Services",
+      "description": "A failed provider, MCP tool, or background service must not crash or block the agent pipeline. Services must report degraded status and allow the agent to continue with reduced capability rather than throwing unhandled errors.",
+      "severity": "high",
+      "appliesToSubsystems": ["inference", "retrieval", "mcp", "memory", "self-model"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify MemoryService.ignite() resolves (not rejects) on timeout",
+        "Verify InvariantRegistry.load() returns false (not throws) for missing file",
+        "Verify McpService still starts when a server subprocess fails"
+      ]
+    },
+    {
+      "id": "inv-010",
+      "title": "Stable Shared Contract Expectations",
+      "description": "Shared TypeScript contracts in shared/ must be backward-compatible. Removing or renaming fields without versioning breaks all consumers. Changes to shared contracts must be coordinated across electron/ and src/ simultaneously.",
+      "severity": "high",
+      "appliesToSubsystems": ["shared", "electron-main", "renderer"],
+      "enforcementMode": "design_only",
+      "verificationHints": [
+        "Verify TypeScript compiles cleanly (electron tsconfig + renderer tsconfig)",
+        "Check that shared type changes do not remove fields used in IPC payloads"
+      ]
+    }
+  ]
+}

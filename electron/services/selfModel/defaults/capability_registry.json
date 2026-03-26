@@ -1,0 +1,122 @@
+{
+  "version": "1.0",
+  "lastReviewedAt": "2026-03-26",
+  "capabilities": [
+    {
+      "id": "cap-001",
+      "name": "Read files",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelScanner.ts",
+      "executionPath": "fs.readFileSync / git ls-files subprocess",
+      "constraints": ["Sandboxed to APP_ROOT in production", "Requires file to be within repo or data dir"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Used by scanner/builder to enumerate and classify repo files."
+    },
+    {
+      "id": "cap-002",
+      "name": "Search code",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelScanner.ts",
+      "executionPath": "Lightweight regex over file content; no AST",
+      "constraints": ["Heuristic only — not semantic code analysis"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Used to detect export patterns and import edges."
+    },
+    {
+      "id": "cap-003",
+      "name": "Patch files",
+      "available": false,
+      "authoritySource": "Not implemented in Phase 1",
+      "executionPath": "N/A",
+      "constraints": ["Explicitly excluded from Phase 1 scope — no self-editing"],
+      "notes": "Phase 1 is read-only. File patching capability deferred to a future self-modification phase."
+    },
+    {
+      "id": "cap-004",
+      "name": "Run tests",
+      "available": false,
+      "authoritySource": "Not implemented in Phase 1",
+      "executionPath": "N/A",
+      "constraints": ["No test runner invocation from the app process in Phase 1"],
+      "notes": "Tests are run externally via npm run test. No in-app test runner yet."
+    },
+    {
+      "id": "cap-005",
+      "name": "Inspect logs",
+      "available": true,
+      "authoritySource": "electron/services/IpcRouter.ts",
+      "executionPath": "IPC: logs:getRecentLogs / LogViewerPanel",
+      "ipcChannels": ["logs:getRecentLogs", "logs:clearLogs"],
+      "allowedModes": ["engineering", "maintenance", "assistant"],
+      "notes": "Live log viewing via LogViewerPanel in Settings > Logging tab."
+    },
+    {
+      "id": "cap-006",
+      "name": "Run scripts",
+      "available": false,
+      "authoritySource": "Not implemented in Phase 1",
+      "executionPath": "N/A",
+      "constraints": ["No script runner surface in Phase 1"],
+      "notes": "Scripts in scripts/ are invoked externally, not from within the app."
+    },
+    {
+      "id": "cap-007",
+      "name": "Inspect git status",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelScanner.ts",
+      "executionPath": "child_process.spawnSync('git', ['ls-files'])",
+      "constraints": ["Requires git to be installed and repo to have a valid .git directory"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Used during self-model scan to enumerate tracked files. Falls back to fs walk if git unavailable."
+    },
+    {
+      "id": "cap-008",
+      "name": "Inspect git diff",
+      "available": false,
+      "authoritySource": "Not implemented in Phase 1",
+      "executionPath": "N/A",
+      "constraints": ["Diff inspection not yet exposed via IPC"],
+      "notes": "Drift detection uses file mtimes/hashes, not git diff. Full git diff inspection deferred."
+    },
+    {
+      "id": "cap-009",
+      "name": "Refresh self-model",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelRefreshService.ts",
+      "executionPath": "SelfModelRefreshService.refresh() → SelfModelAppService → IPC: selfModel:refresh",
+      "ipcChannels": ["selfModel:refresh"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Full refresh scans repo, rebuilds inventory and ownership map, detects drift, and writes artifacts atomically."
+    },
+    {
+      "id": "cap-010",
+      "name": "Query subsystem ownership",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelQueryService.ts",
+      "executionPath": "SelfModelQueryService.findOwningSubsystem() → IPC: selfModel:queryOwnership",
+      "ipcChannels": ["selfModel:queryOwnership", "selfModel:getOwnershipMap"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Returns owning subsystem, authority files, related tests, and confidence level."
+    },
+    {
+      "id": "cap-011",
+      "name": "Query invariants",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelQueryService.ts",
+      "executionPath": "SelfModelQueryService.getInvariantsForSubsystem() → IPC: selfModel:queryInvariants",
+      "ipcChannels": ["selfModel:queryInvariants", "selfModel:getInvariants"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Returns invariants applicable to a given subsystem by subsystem ID."
+    },
+    {
+      "id": "cap-012",
+      "name": "Query blast radius",
+      "available": true,
+      "authoritySource": "electron/services/selfModel/SelfModelQueryService.ts",
+      "executionPath": "SelfModelQueryService.explainBlastRadius() → IPC: selfModel:queryBlastRadius",
+      "ipcChannels": ["selfModel:queryBlastRadius"],
+      "allowedModes": ["engineering", "maintenance"],
+      "notes": "Returns direct dependents and transitively affected subsystems for a given target. Used for pre-change impact assessment."
+    }
+  ]
+}

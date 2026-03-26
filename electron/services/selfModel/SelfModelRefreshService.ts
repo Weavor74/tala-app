@@ -51,8 +51,8 @@ export class SelfModelRefreshService {
     private readonly repoRoot: string;
     private readonly builder: SelfModelBuilder;
     private readonly mapper: OwnershipMapper;
-    private readonly invariantRegistry: InvariantRegistry;
-    private readonly capabilityRegistry: CapabilityRegistry;
+    private invariantRegistry: InvariantRegistry;
+    private capabilityRegistry: CapabilityRegistry;
     private queryService: SelfModelQueryService | null = null;
 
     private lastIndex: SystemInventoryIndex | null = null;
@@ -64,7 +64,7 @@ export class SelfModelRefreshService {
         this.dataDir = dataDir;
         this.builder = new SelfModelBuilder(repoRoot);
         this.mapper = new OwnershipMapper(repoRoot);
-        // Load registries from data dir (hand-authored files)
+        // Registry instances use dataDir; init() will fall back to bundled defaults if needed.
         this.invariantRegistry = new InvariantRegistry(dataDir);
         this.capabilityRegistry = new CapabilityRegistry(dataDir);
     }
@@ -77,8 +77,17 @@ export class SelfModelRefreshService {
      */
     public init(): void {
         this._ensureDataDir();
-        this.invariantRegistry.load();
-        this.capabilityRegistry.load();
+
+        // Try loading from the runtime data dir first; fall back to bundled defaults.
+        const defaultsDir = path.join(__dirname, 'defaults');
+        if (!this.invariantRegistry.load()) {
+            this.invariantRegistry = new InvariantRegistry(defaultsDir);
+            this.invariantRegistry.load();
+        }
+        if (!this.capabilityRegistry.load()) {
+            this.capabilityRegistry = new CapabilityRegistry(defaultsDir);
+            this.capabilityRegistry.load();
+        }
 
         // Load existing generated artifacts if present
         this.lastIndex = this.builder.loadExistingIndex(this._indexPath());

@@ -54,9 +54,13 @@ import type {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Path to the actual repo root (where data/self_model/ lives). */
+/** Path to the actual repo root. */
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const SELF_MODEL_DATA_DIR = path.join(REPO_ROOT, 'data', 'self_model');
+/**
+ * Bundled hand-authored registry files live in electron/services/selfModel/defaults/
+ * so they are committed to source control (data/ is gitignored).
+ */
+const SELF_MODEL_DATA_DIR = path.join(REPO_ROOT, 'electron', 'services', 'selfModel', 'defaults');
 
 function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'tala-self-model-test-'));
@@ -373,7 +377,7 @@ describe('P1D — InvariantRegistry', () => {
         registry = new InvariantRegistry(SELF_MODEL_DATA_DIR);
     });
 
-    it('loads successfully from data/self_model/invariant_registry.json', () => {
+    it('loads successfully from electron/services/selfModel/defaults/invariant_registry.json', () => {
         const loaded = registry.load();
         expect(loaded).toBe(true);
         expect(registry.isLoaded()).toBe(true);
@@ -453,7 +457,7 @@ describe('P1E — CapabilityRegistry', () => {
         registry = new CapabilityRegistry(SELF_MODEL_DATA_DIR);
     });
 
-    it('loads successfully from data/self_model/capability_registry.json', () => {
+    it('loads successfully from electron/services/selfModel/defaults/capability_registry.json', () => {
         const loaded = registry.load();
         expect(loaded).toBe(true);
         expect(registry.isLoaded()).toBe(true);
