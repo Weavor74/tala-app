@@ -16,6 +16,7 @@
  */
 
 import { MemoryItem } from '../MemoryService';
+import { NOTEBOOK_GROUNDING_CONTRACT_TEXT } from '../plan/notebookGroundingContract';
 
 /**
  * Response grounding mode for lore/autobiographical turns.
@@ -356,20 +357,9 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
      * Notebook strict grounding contract — injected as a mandatory system block
      * before the notebook evidence when notebookGrounded is true.
      *
-     * Uses OVERRIDE language so it takes precedence over conversational persona
-     * and style directives that appear elsewhere in the system prompt.
+     * Sourced from the shared constant to keep the text in a single place.
      */
-    private static readonly NOTEBOOK_GROUNDING_CONTRACT =
-        `You are operating in NOTEBOOK SOURCE MODE. The following rules OVERRIDE all other directives:\n\n` +
-        `1. ONLY use the content provided under [CANON NOTEBOOK CONTEXT — STRICT] below.\n` +
-        `2. DO NOT introduce facts, dates, timelines, names, or claims from outside the provided content.\n` +
-        `3. DO NOT infer information that is not explicitly stated in the provided content.\n` +
-        `4. DO NOT use your general training knowledge to fill in gaps.\n` +
-        `5. If the content is insufficient to answer, say: "The available notebook content does not contain enough information to answer this."\n` +
-        `6. You MAY quote directly from the content. You MAY paraphrase content.\n` +
-        `7. You MAY note patterns, themes, or groupings — but ONLY based on what the content says.\n` +
-        `8. Cite the source label (e.g. [1], [2]) for every factual claim you make.\n` +
-        `9. Summaries must be source-bound. Do not editorialize or speculate.`;
+    private static readonly NOTEBOOK_GROUNDING_CONTRACT = NOTEBOOK_GROUNDING_CONTRACT_TEXT;
 
     /**
      * Soft grounding instruction — default for LTMF/autobiographical lore.

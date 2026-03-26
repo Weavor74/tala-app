@@ -47,6 +47,7 @@ import type {
   MemoryPolicy,
   ContextAssemblyItem,
   AffectiveModulationPolicy,
+  ContextAssemblyResult,
 } from '../shared/policy/memoryPolicyTypes';
 
 vi.mock('electron', () => ({
@@ -1113,7 +1114,7 @@ describe('ContextAssemblyService', () => {
      */
     function makeNotebookStrictResult(
       evidenceItems: ContextAssemblyItem[],
-    ): import('../shared/policy/memoryPolicyTypes').ContextAssemblyResult {
+    ): ContextAssemblyResult {
       return {
         items: evidenceItems,
         policy: {
@@ -1124,7 +1125,7 @@ describe('ContextAssemblyService', () => {
           graphTraversal: { enabled: false, maxHopDepth: 0, maxRelatedNodes: 0, maxNodesPerType: {} },
           contextBudget: { maxItems: 10, maxTokens: 4096, maxItemsPerClass: { evidence: 8, graph_context: 0, latent: 2 }, evidencePriority: true },
           affectiveModulation: { enabled: false, maxAffectiveNodes: 0, allowToneModulation: false, allowGraphOrderingInfluence: false, allowGraphExpansionInfluence: false, allowEvidenceReordering: false, affectiveWeight: 0, requireLabeling: true },
-        } as import('../shared/policy/memoryPolicyTypes').MemoryPolicy,
+        } as MemoryPolicy,
         totalItems: evidenceItems.length,
         itemCountByClass: { evidence: evidenceItems.filter(i => i.selectionClass === 'evidence').length },
         estimatedTokens: evidenceItems.reduce((s, i) => s + Math.ceil(i.content.length / 4), 0),

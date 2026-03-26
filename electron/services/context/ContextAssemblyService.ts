@@ -74,6 +74,7 @@ import { AffectiveWeightingService } from './AffectiveWeightingService';
 import { ContextStrategyResolver } from './ContextStrategyResolver';
 import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
 import { resolveMemoryAuthorityConflict } from './authorityConflictResolver';
+import { NOTEBOOK_GROUNDING_CONTRACT_TEXT } from '../plan/notebookGroundingContract';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
@@ -370,22 +371,12 @@ export class ContextAssemblyService {
   /**
    * Strict grounding contract injected at the top of notebook-scoped prompts.
    *
+   * Sourced from the shared constant so the text lives in a single place.
    * Placed before [CANON NOTEBOOK CONTEXT — STRICT] so the model reads the rules
    * before processing any evidence. Uses OVERRIDE language to take precedence over
    * all other style and behaviour directives in the broader system prompt.
    */
-  private static readonly NOTEBOOK_GROUNDING_CONTRACT =
-    `[NOTEBOOK GROUNDING CONTRACT — MANDATORY]\n` +
-    `You are operating in NOTEBOOK SOURCE MODE. The following rules OVERRIDE all other directives:\n\n` +
-    `1. ONLY use the content provided under [CANON NOTEBOOK CONTEXT — STRICT] below.\n` +
-    `2. DO NOT introduce facts, dates, timelines, names, or claims from outside the provided content.\n` +
-    `3. DO NOT infer information that is not explicitly stated in the provided content.\n` +
-    `4. DO NOT use your general training knowledge to fill in gaps.\n` +
-    `5. If the content is insufficient to answer, say: "The available notebook content does not contain enough information to answer this."\n` +
-    `6. You MAY quote directly from the content. You MAY paraphrase content.\n` +
-    `7. You MAY note patterns, themes, or groupings — but ONLY based on what the content says.\n` +
-    `8. Cite the source label (e.g. [1], [2]) for every factual claim you make.\n` +
-    `9. Summaries must be source-bound. Do not editorialize or speculate.`;
+  private static readonly NOTEBOOK_GROUNDING_CONTRACT = NOTEBOOK_GROUNDING_CONTRACT_TEXT;
 
   // ─── Prompt Block Renderer ────────────────────────────────────────────────
 
@@ -407,7 +398,9 @@ export class ContextAssemblyService {
 
     // NOTEBOOK GROUNDING CONTRACT (injected first so the model reads rules before evidence)
     if (isNotebookStrict) {
-      sections.push(ContextAssemblyService.NOTEBOOK_GROUNDING_CONTRACT);
+      sections.push(
+        `[NOTEBOOK GROUNDING CONTRACT — MANDATORY]\n${ContextAssemblyService.NOTEBOOK_GROUNDING_CONTRACT}`,
+      );
     }
 
     // EVIDENCE BLOCK — label differs between notebook-strict and standard modes
