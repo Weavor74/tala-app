@@ -255,24 +255,62 @@ describe('MemoryPolicyService', () => {
     });
   });
 
-  // ── Mutation safety ────────────────────────────────────────────────────────
+  // ── Notebook auto-strict ───────────────────────────────────────────────────
 
-  describe('mutation safety', () => {
-    it('does not mutate DEFAULT_STRICT_POLICY', () => {
-      const originalMaxItems = DEFAULT_STRICT_POLICY.contextBudget.maxItems;
-      const request = makeRequest({ groundingMode: 'strict', contextBudget: { maxItems: 99 } });
-      service.resolvePolicy(request);
-      expect(DEFAULT_STRICT_POLICY.contextBudget.maxItems).toBe(originalMaxItems);
+  describe('notebook auto-strict grounding', () => {
+    it('defaults groundingMode to strict when notebookId is present and groundingMode is omitted', () => {
+      const partial = {
+        query: 'summarize notebook',
+        policy: { notebookId: 'nb-1' },
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.groundingMode).toBe('strict');
     });
 
-    it('does not mutate DEFAULT_GRAPH_ASSISTED_POLICY', () => {
-      const originalHopDepth = DEFAULT_GRAPH_ASSISTED_POLICY.graphTraversal.maxHopDepth;
-      const request = makeRequest({
-        groundingMode: 'graph_assisted',
-        graphTraversal: { enabled: true, maxHopDepth: 99, maxRelatedNodes: 1, maxNodesPerType: {} },
-      });
-      service.resolvePolicy(request);
-      expect(DEFAULT_GRAPH_ASSISTED_POLICY.graphTraversal.maxHopDepth).toBe(originalHopDepth);
+    it('notebook+strict uses DEFAULT_STRICT_POLICY: graphTraversal disabled', () => {
+      const partial = {
+        query: 'summarize notebook',
+        policy: { notebookId: 'nb-1' },
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.graphTraversal.enabled).toBe(false);
+    });
+
+    it('notebook+strict uses DEFAULT_STRICT_POLICY: affective modulation disabled', () => {
+      const partial = {
+        query: 'summarize notebook',
+        policy: { notebookId: 'nb-1' },
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.affectiveModulation.enabled).toBe(false);
+    });
+
+    it('notebook+strict scope is set to notebook', () => {
+      const partial = {
+        query: 'summarize notebook',
+        policy: { notebookId: 'nb-2' },
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.scope).toBe('notebook');
+      expect(resolved.notebookId).toBe('nb-2');
+    });
+
+    it('caller-supplied groundingMode overrides the notebook auto-strict default', () => {
+      const partial = {
+        query: 'explore notebook',
+        policy: { notebookId: 'nb-1', groundingMode: 'exploratory' },
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.groundingMode).toBe('exploratory');
+    });
+
+    it('notebook auto-strict does not affect requests without a notebookId', () => {
+      const partial = {
+        query: 'general query',
+        policy: {},
+      } as any;
+      const resolved = service.resolvePolicy(partial);
+      expect(resolved.groundingMode).toBe('graph_assisted');
     });
   });
 });

@@ -99,8 +99,19 @@ export class TalaContextRouter {
      *
      * Returns a fully-populated `TurnContext` that carries all routing decisions
      * required for a deterministic, auditable agent turn.
+     *
+     * @param notebookActive - When true, the agent has an active notebook context.
+     *   This forces `responseMode = 'memory_grounded_strict'` and activates the
+     *   notebook grounding path in `ContextAssembler.assemble()` regardless of intent
+     *   classification or user phrasing.
      */
-    public async process(turnId: string, query: string, mode: Mode, docIntel?: DocumentationIntelligenceService): Promise<TurnContext> {
+    public async process(
+        turnId: string,
+        query: string,
+        mode: Mode,
+        docIntel?: DocumentationIntelligenceService,
+        notebookActive?: boolean,
+    ): Promise<TurnContext> {
         const turnStartedAt = Date.now();
         const correlationId = uuidv4();
 
@@ -291,18 +302,34 @@ export class TalaContextRouter {
         }
 
         // 7. Assembly & Handoff
-        // Derive response grounding mode for lore turns with approved memories.
-        // Strict mode is activated when the user's query contains precision-demanding
-        // phrases; soft mode is the default for all other lore/autobiographical turns.
+        // Derive response grounding mode.
+        //
+        // Notebook active:  always 'memory_grounded_strict' — the user has an open notebook
+        //   and all replies must be restricted to retrieved notebook content, regardless of
+        //   intent or phrasing.
+        //
+        // Lore intent:  'memory_grounded_strict' when the user's query contains explicit
+        //   precision-demanding phrases; otherwise 'memory_grounded_soft'.
         let responseMode: ResponseMode | undefined;
-        if (intent.class === 'lore' && resolved.length > 0) {
+        if (notebookActive) {
+            responseMode = 'memory_grounded_strict';
+            console.log(`[TalaRouter] Notebook context active — forcing responseMode=memory_grounded_strict`);
+        } else if (intent.class === 'lore' && resolved.length > 0) {
             const isStrictGrounding = TalaContextRouter.STRICT_GROUNDING_PATTERNS.some(p => p.test(query));
             responseMode = isStrictGrounding ? 'memory_grounded_strict' : 'memory_grounded_soft';
             console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
         }
 
         // Pass retrievalSuppressed flag to tell assembler not to emit a fallback block when retrieval was intentionally gated.
-        const assemblyResult = ContextAssembler.assemble(resolved, mode, intent.class, retrievalSuppressed, docContext, responseMode);
+        const assemblyResult = ContextAssembler.assemble(
+            resolved,
+            mode,
+            intent.class,
+            retrievalSuppressed,
+            docContext,
+            responseMode,
+            notebookActive,
+        );
         const promptBlocks = assemblyResult.blocks;
         const fallbackUsed = promptBlocks.some((b: import('./ContextAssembler').ContextBlock) => b.header.includes('FALLBACK CONTRACT'));
 

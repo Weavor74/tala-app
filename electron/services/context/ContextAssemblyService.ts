@@ -74,6 +74,7 @@ import { AffectiveWeightingService } from './AffectiveWeightingService';
 import { ContextStrategyResolver } from './ContextStrategyResolver';
 import { applyDeterministicTieBreak, compareContextCandidates } from './contextCandidateComparator';
 import { resolveMemoryAuthorityConflict } from './authorityConflictResolver';
+import { NOTEBOOK_GROUNDING_CONTRACT_TEXT } from '../plan/notebookGroundingContract';
 
 // ─── Approximate token estimator ─────────────────────────────────────────────
 // Rough 4-chars-per-token heuristic. Sufficient for soft budget enforcement.
@@ -365,15 +366,44 @@ export class ContextAssemblyService {
     };
   }
 
+  // ─── Notebook Strict Grounding Contract ─────────────────────────────────────
+
+  /**
+   * Strict grounding contract injected at the top of notebook-scoped prompts.
+   *
+   * Sourced from the shared constant so the text lives in a single place.
+   * Placed before [CANON NOTEBOOK CONTEXT — STRICT] so the model reads the rules
+   * before processing any evidence. Uses OVERRIDE language to take precedence over
+   * all other style and behaviour directives in the broader system prompt.
+   */
+  private static readonly NOTEBOOK_GROUNDING_CONTRACT = NOTEBOOK_GROUNDING_CONTRACT_TEXT;
+
   // ─── Prompt Block Renderer ────────────────────────────────────────────────
 
   /**
    * Render assembled context into a deterministic prompt string.
+   *
+   * Notebook strict mode (groundingMode === 'strict' + scope === 'notebook'):
+   *   - Prepends [NOTEBOOK GROUNDING CONTRACT — MANDATORY] before any evidence.
+   *   - Labels evidence as [CANON NOTEBOOK CONTEXT — STRICT] with explicit source URIs.
+   *   - Omits [DIRECT GRAPH CONTEXT] and [AFFECTIVE CONTEXT] (both are disabled by
+   *     DEFAULT_STRICT_POLICY, so they will not be present at this point; the guard
+   *     here is a belt-and-suspenders safeguard).
    */
   renderPromptBlocks(result: ContextAssemblyResult): string {
     const sections: string[] = [];
+    const policy = result.policy;
+    const isNotebookStrict =
+      policy.groundingMode === 'strict' && policy.scope === 'notebook';
 
-    // PRIMARY EVIDENCE
+    // NOTEBOOK GROUNDING CONTRACT (injected first so the model reads rules before evidence)
+    if (isNotebookStrict) {
+      sections.push(
+        `[NOTEBOOK GROUNDING CONTRACT — MANDATORY]\n${ContextAssemblyService.NOTEBOOK_GROUNDING_CONTRACT}`,
+      );
+    }
+
+    // EVIDENCE BLOCK — label differs between notebook-strict and standard modes
     const evidenceItems = result.items.filter(i => i.selectionClass === 'evidence');
     if (evidenceItems.length > 0) {
       const lines = evidenceItems.map((item, idx) => {
@@ -382,46 +412,52 @@ export class ContextAssemblyService {
         const sourceLabel = source ? ` (${source})` : '';
         return `${label}${sourceLabel}\n${item.content}`;
       });
-      sections.push(`[PRIMARY EVIDENCE]\n${lines.join('\n\n')}`);
+      const blockHeader = isNotebookStrict
+        ? '[CANON NOTEBOOK CONTEXT — STRICT]'
+        : '[PRIMARY EVIDENCE]';
+      sections.push(`${blockHeader}\n${lines.join('\n\n')}`);
     }
 
-    // DIRECT GRAPH CONTEXT
-    const graphItems = result.items.filter(
-      i => i.selectionClass === 'graph_context' && !i.metadata?.affective,
-    );
-    if (graphItems.length > 0) {
-      const lines = graphItems.map((item, idx) => {
-        const label = item.title ? `[G${idx + 1}] ${item.title}` : `[G${idx + 1}]`;
-        const edge = item.graphEdgeType ? ` (edge: ${item.graphEdgeType})` : '';
-        return `${label}${edge}\n${item.content}`;
-      });
-      sections.push(`[DIRECT GRAPH CONTEXT]\n${lines.join('\n\n')}`);
-    }
-
-    // AFFECTIVE CONTEXT
-    const affectiveItems = result.items.filter(
-      i => i.selectionClass === 'graph_context' && i.metadata?.affective === true,
-    );
-    if (affectiveItems.length > 0) {
-      const lines = affectiveItems.map(item => {
-        const nodeType = item.metadata?.affectiveNodeType as string | undefined;
-        if (nodeType === 'astro_state') {
-          return `- Current Astro State: ${item.content}`;
-        }
-        if (nodeType === 'emotion_tag') {
-          const moodLabel = item.metadata?.moodLabel as string | undefined;
-          return `- Emotion Tag: ${moodLabel ?? item.content}`;
-        }
-        return `- ${item.title ?? item.content}`;
-      });
-      sections.push(
-        `[AFFECTIVE CONTEXT]\n${lines.join('\n')}\n` +
-        `These signals may influence tone or graph-context emphasis, but do not change factual grounding.`,
+    // DIRECT GRAPH CONTEXT — omitted in notebook strict mode (belt-and-suspenders guard)
+    if (!isNotebookStrict) {
+      const graphItems = result.items.filter(
+        i => i.selectionClass === 'graph_context' && !i.metadata?.affective,
       );
+      if (graphItems.length > 0) {
+        const lines = graphItems.map((item, idx) => {
+          const label = item.title ? `[G${idx + 1}] ${item.title}` : `[G${idx + 1}]`;
+          const edge = item.graphEdgeType ? ` (edge: ${item.graphEdgeType})` : '';
+          return `${label}${edge}\n${item.content}`;
+        });
+        sections.push(`[DIRECT GRAPH CONTEXT]\n${lines.join('\n\n')}`);
+      }
+    }
+
+    // AFFECTIVE CONTEXT — omitted in notebook strict mode (belt-and-suspenders guard)
+    if (!isNotebookStrict) {
+      const affectiveItems = result.items.filter(
+        i => i.selectionClass === 'graph_context' && i.metadata?.affective === true,
+      );
+      if (affectiveItems.length > 0) {
+        const lines = affectiveItems.map(item => {
+          const nodeType = item.metadata?.affectiveNodeType as string | undefined;
+          if (nodeType === 'astro_state') {
+            return `- Current Astro State: ${item.content}`;
+          }
+          if (nodeType === 'emotion_tag') {
+            const moodLabel = item.metadata?.moodLabel as string | undefined;
+            return `- Emotion Tag: ${moodLabel ?? item.content}`;
+          }
+          return `- ${item.title ?? item.content}`;
+        });
+        sections.push(
+          `[AFFECTIVE CONTEXT]\n${lines.join('\n')}\n` +
+          `These signals may influence tone or graph-context emphasis, but do not change factual grounding.`,
+        );
+      }
     }
 
     // POLICY CONSTRAINTS
-    const policy = result.policy;
     const scopeLine = policy.notebookId
       ? `scope: ${policy.scope} (notebookId: ${policy.notebookId})`
       : `scope: ${policy.scope}`;

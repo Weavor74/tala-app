@@ -1846,11 +1846,12 @@ Exported standalone package from Tala.
         // Gathers memory, doc, astro, reflection notes with mode/intent-aware gating.
         const agentId = settings.agent?.activeProfileId || 'tala';
         const userId = this.userProfile?.getIdentityContext().userId || 'User';
+        const notebookActive = !!this.activeNotebookContext.id;
         const orchResult = await this.preInferenceOrchestrator.orchestrate(
             turnId,
             userMessage,
             activeMode as any,
-            { agentId, userId },
+            { agentId, userId, notebookActive },
         );
 
         const turnObject = orchResult.turnContext;
@@ -2043,6 +2044,7 @@ Exported standalone package from Tala.
             toolSigs: toolSigs,
             userIdentity: userIdentity,
             compactPacket,
+            notebookGrounded: notebookActive,
         });
 
         // --- PHASE 3A: RECORD COGNITIVE CONTEXT IN DIAGNOSTICS ---

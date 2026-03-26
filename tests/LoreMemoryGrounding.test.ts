@@ -351,3 +351,129 @@ describe('LoreMemoryGrounding — TalaContextRouter strict trigger detection', (
         expect(groundingBlock).toBeDefined();
     });
 });
+
+// ─── 9. Notebook strict grounding via notebookActive flag ─────────────────────
+
+describe('LoreMemoryGrounding — notebook strict grounding via TalaContextRouter', () => {
+    let router: TalaContextRouter;
+    const mockSearch = vi.fn();
+    const mockRagSearch = vi.fn();
+
+    const notebookMem = makeMemory('rag-nb-1', 'Notebook chunk about project architecture.', {
+        source: 'rag', role: 'assistant', type: 'research',
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSearch.mockResolvedValue([notebookMem]);
+        mockRagSearch.mockResolvedValue([
+            { text: notebookMem.text, score: 0.9, docId: 'nb-doc-1' },
+        ]);
+        router = new TalaContextRouter(
+            { search: mockSearch } as any,
+            { searchStructured: mockRagSearch } as any,
+        );
+    });
+
+    it('forces responseMode=memory_grounded_strict when notebookActive=true regardless of query phrasing', async () => {
+        const ctx = await router.process(
+            'turn-nb-1',
+            'summarize the notebook sources',
+            'assistant',
+            undefined,
+            true,
+        );
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
+    it('notebook active + no memory content still forces strict responseMode', async () => {
+        mockSearch.mockResolvedValue([]);
+        mockRagSearch.mockResolvedValue([]);
+        const ctx = await router.process(
+            'turn-nb-2',
+            'what are the key themes?',
+            'assistant',
+            undefined,
+            true,
+        );
+        // responseMode is set because notebookActive overrides the usual lore-only gate
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
+    it('emits [NOTEBOOK GROUNDING CONTRACT — MANDATORY] block when notebookActive and memories present', async () => {
+        const ctx = await router.process(
+            'turn-nb-3',
+            'summarize the notebook',
+            'assistant',
+            undefined,
+            true,
+        );
+        const contractBlock = ctx.promptBlocks.find(
+            b => b.header.includes('NOTEBOOK GROUNDING CONTRACT'),
+        );
+        expect(contractBlock).toBeDefined();
+    });
+
+    it('emits [CANON NOTEBOOK CONTEXT — STRICT] block when notebookActive and memories present', async () => {
+        const ctx = await router.process(
+            'turn-nb-4',
+            'summarize the notebook',
+            'assistant',
+            undefined,
+            true,
+        );
+        const notebookBlock = ctx.promptBlocks.find(
+            b => b.header.includes('CANON NOTEBOOK CONTEXT'),
+        );
+        expect(notebookBlock).toBeDefined();
+    });
+
+    it('notebook grounding contract block forbids external knowledge injection', async () => {
+        const ctx = await router.process(
+            'turn-nb-5',
+            'summarize the notebook',
+            'assistant',
+            undefined,
+            true,
+        );
+        const contractBlock = ctx.promptBlocks.find(
+            b => b.header.includes('NOTEBOOK GROUNDING CONTRACT'),
+        );
+        expect(contractBlock?.content).toMatch(/DO NOT.*general training knowledge/i);
+        expect(contractBlock?.content).toMatch(/ONLY use the content/i);
+    });
+
+    it('does NOT emit [NOTEBOOK GROUNDING CONTRACT] when notebookActive is false (lore turn)', async () => {
+        // Plain lore turn without notebook flag — should use standard lore grounding
+        const ctx = await router.process(
+            'turn-nb-6',
+            'tell me about when you were 17',
+            'rp',
+            undefined,
+            false,
+        );
+        const contractBlock = ctx.promptBlocks.find(
+            b => b.header.includes('NOTEBOOK GROUNDING CONTRACT'),
+        );
+        expect(contractBlock).toBeUndefined();
+    });
+
+    it('does NOT emit [FALLBACK CONTRACT] in notebook mode when no memories returned', async () => {
+        mockSearch.mockResolvedValue([]);
+        mockRagSearch.mockResolvedValue([]);
+        const ctx = await router.process(
+            'turn-nb-7',
+            'summarize the notebook',
+            'assistant',
+            undefined,
+            true,
+        );
+        const fallbackBlock = ctx.promptBlocks.find(
+            b => b.header.includes('FALLBACK CONTRACT'),
+        );
+        // Fallback contract must NOT appear — absence of evidence is communicated
+        // through the grounding contract's insufficiency rule instead.
+        expect(fallbackBlock).toBeUndefined();
+    });
+});
+

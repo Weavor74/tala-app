@@ -18,6 +18,15 @@ export interface PromptContext {
      * Phase 3A: Live Cognitive Path Integration.
      */
     compactPacket?: CompactPromptPacket;
+    /**
+     * When true, the agent is operating under a notebook context that requires
+     * strict source-bound grounding.  Global emotional-bias and memory-context
+     * blocks are suppressed so they cannot compete with notebook evidence or
+     * invite external-knowledge synthesis.
+     *
+     * Set by AgentService when activeNotebookContext.id is non-null.
+     */
+    notebookGrounded?: boolean;
 }
 
 /**
@@ -124,6 +133,37 @@ export class CompactPromptBuilder {
             '  • NEVER claim an action was performed unless the tool output confirms it.',
             '  • If a tool fails, report the error exactly as received.',
         ].join('\n');
+
+        // In notebook grounding mode the emotional-bias block and global memory context
+        // are suppressed entirely.  The notebook grounding contract and evidence are
+        // injected through the memoryContext channel (from ContextAssembler.assemble()
+        // with notebookGrounded=true), so feeding additional global-context blocks here
+        // would pollute the source-bound constraint with unrelated material.
+        if (context.notebookGrounded) {
+            // memoryContext already carries [NOTEBOOK GROUNDING CONTRACT] and
+            // [CANON NOTEBOOK CONTEXT — STRICT] from ContextAssembler.
+            let systemPromptTemplate = (context.isSmallLocalModel ? repetitionSafety + "\n\n" : "")
+                + context.systemPromptBase
+                + (context.isSmallLocalModel ? "" : "\n\n" + repetitionSafety);
+
+            systemPromptTemplate = context.memoryContext + "\n\n" + systemPromptTemplate;
+
+            if (context.toolSigs && !context.toolSigs.includes('NO TOOLS AVAILABLE')) {
+                systemPromptTemplate += `\n\n[AVAILABLE TOOLS]\n${context.toolSigs}\n\n[PROTOCOL]: Output JSON \`{"tool": "name", "args": {}}\` to call a tool.`;
+            } else {
+                systemPromptTemplate += `\n\n[USER INTERACTION]\nSpeak naturally. Do not use JSON or technical formatting.`;
+            }
+
+            systemPromptTemplate += `
+\n### Runtime Safety Rules
+1. If a tool has already been executed recently in the same task, do not execute it again unless the user explicitly requests it.
+2. Do not repeat diagnostics, reflections, or tests automatically.
+3. If the same response would be produced again, stop and request clarification from the user.
+4. Tool results are informational only. Do not call tools again unless the user explicitly requests it.
+`;
+
+            return (context.userIdentity ? context.userIdentity + "\n\n" : "") + systemPromptTemplate;
+        }
 
         // When a CompactPromptPacket is available (Phase 3A), use its structured cognitive
         // blocks to replace the raw dynamicContext and memoryContext.

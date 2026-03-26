@@ -152,14 +152,15 @@ export class PreInferenceContextOrchestrator {
      * @param turnId - Unique turn identifier.
      * @param rawInput - Raw user input text.
      * @param mode - Active cognitive mode.
-     * @param options - Optional agent/user IDs for emotional state personalisation.
+     * @param options - Optional agent/user IDs for emotional state personalisation,
+     *   plus `notebookActive` to activate strict notebook grounding.
      * @returns Normalised pre-inference orchestration result.
      */
     public async orchestrate(
         turnId: string,
         rawInput: string,
         mode: Mode,
-        options: { agentId?: string; userId?: string } = {},
+        options: { agentId?: string; userId?: string; notebookActive?: boolean } = {},
     ): Promise<PreInferenceOrchestrationResult> {
         const orchestrationStart = Date.now();
         const sourcesQueried: string[] = [];
@@ -178,7 +179,13 @@ export class PreInferenceContextOrchestrator {
         try {
             // ── 1. Router context (memory + doc) — always run ─────────────────
             sourcesQueried.push('tala_router');
-            const turnContext = await this.talaRouter.process(turnId, rawInput, mode, this.docIntel ?? undefined);
+            const turnContext = await this.talaRouter.process(
+                turnId,
+                rawInput,
+                mode,
+                this.docIntel ?? undefined,
+                options.notebookActive,
+            );
 
             const isGreeting = turnContext.intent.isGreeting;
             const intentClass = turnContext.intent.class;
