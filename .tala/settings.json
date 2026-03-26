@@ -275,12 +275,12 @@
   "search": {
     "activeProviderId": "brave",
     "preferredProviderId": "auto",
-    "curatedSearchProviderId": "",
+    "curatedSearchProviderId": "google",
     "providers": [
       {
         "id": "google",
         "name": "Brave",
-        "type": "brave",
+        "type": "google",
         "enabled": true,
         "endpoint": "https://api.search.brave.com/res/v1/web/search",
         "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ"
