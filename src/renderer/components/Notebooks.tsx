@@ -357,7 +357,7 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                                                 .filter(i => activeSources.has(i.item_key))
                                                 .map(i => i.title || i.uri || i.source_path || i.item_key)
                                                 .join(', ');
-                                            const query = `Please provide a comprehensive summary and "Notebook Guide" based on the selected sources: ${titles}. What are the key themes and insights?`;
+                                            const query = `Please summarize ONLY the following notebook sources based strictly on their content: ${titles}. Do not add external information or infer facts not present in these sources. What are the key themes and insights found in the provided content?`;
                                             api.send('chat-message', { text: query });
                                             alert("Summary request sent to Tala.");
                                         }}

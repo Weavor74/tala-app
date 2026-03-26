@@ -42,7 +42,8 @@ export class MemoryPolicyService {
    *
    * Resolution rules (in order):
    *   1. groundingMode — taken from request.policy.groundingMode; defaults to
-   *      'graph_assisted' when absent/null at runtime.
+   *      'strict' when notebookId is present (notebook requests must always be
+   *      evidence-grounded), otherwise defaults to 'graph_assisted'.
    *   2. Base policy — selected by groundingMode from the three default policies.
    *   3. retrievalMode — taken from request.policy.retrievalMode if present;
    *      otherwise inherited from the base policy.
@@ -62,7 +63,10 @@ export class MemoryPolicyService {
     const raw = (request.policy ?? {}) as Partial<MemoryPolicy>;
 
     // 1. Determine groundingMode with a sensible default.
-    const groundingMode: GroundingMode = raw.groundingMode ?? 'graph_assisted';
+    //    When a notebookId is present and the caller has not explicitly chosen a mode,
+    //    default to 'strict' so notebook-scoped requests always ground in evidence only.
+    const groundingMode: GroundingMode =
+      raw.groundingMode ?? (raw.notebookId ? 'strict' : 'graph_assisted');
 
     // 2. Select the appropriate base policy.
     const base = this._selectBasePolicy(groundingMode);

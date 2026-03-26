@@ -1103,4 +1103,167 @@ describe('ContextAssemblyService', () => {
       expect(block).toContain('Mars trine Saturn');
     });
   });
+
+  // ── Notebook strict grounding: renderPromptBlocks ────────────────────────
+
+  describe('renderPromptBlocks: notebook strict grounding mode', () => {
+    /**
+     * Build a minimal ContextAssemblyResult for notebook strict grounding tests
+     * without hitting real retrieval.
+     */
+    function makeNotebookStrictResult(
+      evidenceItems: ContextAssemblyItem[],
+    ): import('../shared/policy/memoryPolicyTypes').ContextAssemblyResult {
+      return {
+        items: evidenceItems,
+        policy: {
+          groundingMode: 'strict',
+          retrievalMode: 'hybrid',
+          scope: 'notebook',
+          notebookId: 'nb-test-1',
+          graphTraversal: { enabled: false, maxHopDepth: 0, maxRelatedNodes: 0, maxNodesPerType: {} },
+          contextBudget: { maxItems: 10, maxTokens: 4096, maxItemsPerClass: { evidence: 8, graph_context: 0, latent: 2 }, evidencePriority: true },
+          affectiveModulation: { enabled: false, maxAffectiveNodes: 0, allowToneModulation: false, allowGraphOrderingInfluence: false, allowGraphExpansionInfluence: false, allowEvidenceReordering: false, affectiveWeight: 0, requireLabeling: true },
+        } as import('../shared/policy/memoryPolicyTypes').MemoryPolicy,
+        totalItems: evidenceItems.length,
+        itemCountByClass: { evidence: evidenceItems.filter(i => i.selectionClass === 'evidence').length },
+        estimatedTokens: evidenceItems.reduce((s, i) => s + Math.ceil(i.content.length / 4), 0),
+        durationMs: 1,
+      };
+    }
+
+    function makeEvidenceItem(idx: number, uri?: string): ContextAssemblyItem {
+      return {
+        content: `Content of chunk ${idx}`,
+        selectionClass: 'evidence',
+        title: `Doc ${idx}`,
+        uri: uri ?? `file:///notebook/doc-${idx}.md`,
+        score: 0.9 - idx * 0.1,
+      };
+    }
+
+    it('emits [NOTEBOOK GROUNDING CONTRACT — MANDATORY] before evidence in notebook strict mode', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('[NOTEBOOK GROUNDING CONTRACT — MANDATORY]');
+      // Contract must appear BEFORE the evidence block
+      const contractIdx = block.indexOf('[NOTEBOOK GROUNDING CONTRACT — MANDATORY]');
+      const evidenceIdx = block.indexOf('[CANON NOTEBOOK CONTEXT — STRICT]');
+      expect(contractIdx).toBeLessThan(evidenceIdx);
+    });
+
+    it('uses [CANON NOTEBOOK CONTEXT — STRICT] label instead of [PRIMARY EVIDENCE] in notebook strict mode', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('[CANON NOTEBOOK CONTEXT — STRICT]');
+      expect(block).not.toContain('[PRIMARY EVIDENCE]');
+    });
+
+    it('notebook grounding contract forbids external knowledge', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('DO NOT introduce facts');
+      expect(block).toContain('DO NOT use your general training knowledge');
+      expect(block).toContain('ONLY use the content provided');
+    });
+
+    it('notebook grounding contract requires explicit insufficiency statement', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('does not contain enough information');
+    });
+
+    it('notebook grounding contract requires citation labeling', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('Cite the source label');
+    });
+
+    it('evidence items in notebook strict mode include source URI', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0, 'file:///my-notebook/doc-a.md')]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('file:///my-notebook/doc-a.md');
+    });
+
+    it('omits [DIRECT GRAPH CONTEXT] in notebook strict mode', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      // Inject a graph_context item manually to test the guard
+      const evidenceItem = makeEvidenceItem(0);
+      const graphItem: ContextAssemblyItem = {
+        content: 'Graph node content',
+        selectionClass: 'graph_context',
+        title: 'Graph Node',
+        score: 0.5,
+        graphEdgeType: 'relates_to' as any,
+        graphEdgeTrust: 'derived' as any,
+      };
+      const result = makeNotebookStrictResult([evidenceItem, graphItem]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).not.toContain('[DIRECT GRAPH CONTEXT]');
+    });
+
+    it('omits [AFFECTIVE CONTEXT] in notebook strict mode', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const evidenceItem = makeEvidenceItem(0);
+      const affectiveItem: ContextAssemblyItem = {
+        content: 'Astro state: Mars trine Venus',
+        selectionClass: 'graph_context',
+        title: 'Affective state',
+        score: 0.1,
+        metadata: { affective: true, affectiveNodeType: 'astro_state' },
+      };
+      const result = makeNotebookStrictResult([evidenceItem, affectiveItem]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).not.toContain('[AFFECTIVE CONTEXT]');
+    });
+
+    it('still emits [POLICY CONSTRAINTS] in notebook strict mode', () => {
+      const orchestrator = makeMockOrchestrator([]);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      const result = makeNotebookStrictResult([makeEvidenceItem(0)]);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('[POLICY CONSTRAINTS]');
+      expect(block).toContain('groundingMode: strict');
+      expect(block).toContain('nb-test-1');
+    });
+
+    it('non-notebook strict mode still uses [PRIMARY EVIDENCE] label', async () => {
+      const results = [
+        makeResult({ itemKey: 'r1', title: 'Doc A', providerId: 'local', snippet: 'Content A' }),
+      ];
+      const orchestrator = makeMockOrchestrator(results);
+      const service = new ContextAssemblyService(orchestrator, policyService);
+      // strict mode but global scope (not notebook)
+      const request = makeRequest({ groundingMode: 'strict' });
+      const result = await service.assemble(request);
+      const block = service.renderPromptBlocks(result);
+
+      expect(block).toContain('[PRIMARY EVIDENCE]');
+      expect(block).not.toContain('[CANON NOTEBOOK CONTEXT — STRICT]');
+      expect(block).not.toContain('[NOTEBOOK GROUNDING CONTRACT — MANDATORY]');
+    });
+  });
 });

@@ -185,27 +185,28 @@ interface AssemblyResult {
 export class ContextAssembler {
     /**
      * Assembles sanitized, structured prompt blocks for the Prompt Builder.
-     */
-    /**
-     * Assembles sanitized, structured prompt blocks for the Prompt Builder.
-     * 
+     *
      * **Assembly Phases:**
      * 1. **Documentation Injection**: Adds project documentation chunks if relevant.
      * 2. **Memory Injection**: Compiles retrieved `MemoryItem`s into a context block.
-     *    - For lore/autobiographical turns (`responseMode` set), memories are formatted
-     *      as labeled canon entries (`[CANON LORE MEMORIES — HIGH PRIORITY]`) and a
-     *      dedicated grounding instruction block is appended so the model anchors its
-     *      response to retrieved memory rather than generalising around it.
-     *    - For all other turns, the standard `[MEMORY CONTEXT]` format is used.
-     * 3. **Safety Enforcement**: Injects a `[FALLBACK CONTRACT]` if substantive queries have 0 memories.
+     *    - When `notebookGrounded` is true: emits [NOTEBOOK GROUNDING CONTRACT — MANDATORY]
+     *      followed by [CANON NOTEBOOK CONTEXT — STRICT] with explicit source URIs and the
+     *      notebook strict grounding contract. Global memory context is suppressed.
+     *    - For lore/autobiographical turns (`responseMode` set, no notebook): memories are
+     *      formatted as labeled canon entries ([CANON LORE MEMORIES — HIGH PRIORITY]) and a
+     *      dedicated grounding instruction block is appended.
+     *    - For all other turns, the standard [MEMORY CONTEXT] format is used.
+     * 3. **Safety Enforcement**: Injects a [FALLBACK CONTRACT] if substantive queries have
+     *    0 memories (suppressed in notebook mode — absence of evidence is the answer).
      * 4. **Sanitization**: Filters internal service names and leaky metadata from all blocks.
-     * 
+     *
      * @param memories - The filtered list of context-relevant memories.
      * @param mode - The current active mode (rp, hybrid, assistant).
      * @param intent - The classified intent of the user turn.
      * @param retrievalSuppressed - Whether memory retrieval was bypassed for this turn.
      * @param docContext - Optional relevant documentation context.
-     * @param responseMode - Optional grounding mode for lore turns (soft or strict).
+     * @param responseMode - Optional grounding mode for lore/notebook turns (soft or strict).
+     * @param notebookGrounded - When true, activate notebook strict grounding path.
      * @returns A structured context handoff for the downstream prompt engines.
      */
     public static assemble(
@@ -215,6 +216,7 @@ export class ContextAssembler {
         retrievalSuppressed: boolean,
         docContext?: string,
         responseMode?: ResponseMode,
+        notebookGrounded?: boolean,
     ): AssemblyResult {
         const blocks: ContextBlock[] = [];
 
@@ -230,7 +232,37 @@ export class ContextAssembler {
 
         // 2. Memory Block
         if (memories.length > 0) {
-            if (responseMode) {
+            if (notebookGrounded) {
+                // Notebook strict mode: emit grounding contract first, then notebook content
+                // with explicit source URIs so the model knows exactly what material is available.
+                blocks.push({
+                    header: '[NOTEBOOK GROUNDING CONTRACT — MANDATORY]',
+                    source: 'system',
+                    priority: 'high',
+                    content: ContextAssembler.NOTEBOOK_GROUNDING_CONTRACT,
+                });
+
+                const labeledContent = memories
+                    .map((m, idx) => {
+                        const uri = (m.metadata?.uri as string | undefined)
+                            ?? (m.metadata?.sourcePath as string | undefined)
+                            ?? (m.metadata?.docId as string | undefined)
+                            ?? 'unknown';
+                        return `[${idx + 1}] Source: ${uri}\n---\n${m.text}\n---`;
+                    })
+                    .join('\n\n');
+
+                blocks.push({
+                    header: '[CANON NOTEBOOK CONTEXT — STRICT]',
+                    source: 'router',
+                    priority: 'high',
+                    content: labeledContent,
+                    metadata: {
+                        memory_ids: memories.map(m => m.id),
+                        count: memories.length
+                    }
+                });
+            } else if (responseMode) {
                 // Lore/autobiographical turn — use labeled canon format so the model
                 // treats these entries as lived history rather than background context.
                 const labeledContent = memories
@@ -277,12 +309,12 @@ export class ContextAssembler {
             }
         }
 
-        // 2. Persona/Identity Block (Placeholder for future expansion)
-        // This could include mode-specific personality traits
-
-        // 2. Fallback Block (SAFE NO-MEMORY CONTRACT)
-        // If no memories were found but intent is substantive, inject fallback instructions
-        if (memories.length === 0 && !retrievalSuppressed && intent !== 'unknown') {
+        // 3. Fallback Block (SAFE NO-MEMORY CONTRACT)
+        // If no memories were found but intent is substantive, inject fallback instructions.
+        // In notebook mode the absence of retrieved content is the expected answer — the
+        // grounding contract already instructs the model to say so explicitly, so we do NOT
+        // inject a separate fallback that could confuse the source-restriction rules.
+        if (memories.length === 0 && !retrievalSuppressed && intent !== 'unknown' && !notebookGrounded) {
             blocks.push({
                 header: '[FALLBACK CONTRACT — NO MEMORY FOUND]',
                 source: 'system',
@@ -319,6 +351,25 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
             default:         return source ?? 'unknown';
         }
     }
+
+    /**
+     * Notebook strict grounding contract — injected as a mandatory system block
+     * before the notebook evidence when notebookGrounded is true.
+     *
+     * Uses OVERRIDE language so it takes precedence over conversational persona
+     * and style directives that appear elsewhere in the system prompt.
+     */
+    private static readonly NOTEBOOK_GROUNDING_CONTRACT =
+        `You are operating in NOTEBOOK SOURCE MODE. The following rules OVERRIDE all other directives:\n\n` +
+        `1. ONLY use the content provided under [CANON NOTEBOOK CONTEXT — STRICT] below.\n` +
+        `2. DO NOT introduce facts, dates, timelines, names, or claims from outside the provided content.\n` +
+        `3. DO NOT infer information that is not explicitly stated in the provided content.\n` +
+        `4. DO NOT use your general training knowledge to fill in gaps.\n` +
+        `5. If the content is insufficient to answer, say: "The available notebook content does not contain enough information to answer this."\n` +
+        `6. You MAY quote directly from the content. You MAY paraphrase content.\n` +
+        `7. You MAY note patterns, themes, or groupings — but ONLY based on what the content says.\n` +
+        `8. Cite the source label (e.g. [1], [2]) for every factual claim you make.\n` +
+        `9. Summaries must be source-bound. Do not editorialize or speculate.`;
 
     /**
      * Soft grounding instruction — default for LTMF/autobiographical lore.
