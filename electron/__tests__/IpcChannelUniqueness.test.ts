@@ -32,6 +32,7 @@ const IPC_REGISTRATION_FILES = [
     'electron/services/IpcRouter.ts',
     'electron/services/reflection/ReflectionAppService.ts',
     'electron/services/soul/SoulService.ts',
+    'electron/services/selfModel/SelfModelAppService.ts',
 ];
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');

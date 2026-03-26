@@ -588,4 +588,19 @@ contextBridge.exposeInMainWorld('tala', {
          */
         testProvider: (providerId: string) => ipcRenderer.invoke('retrieval:testProvider', providerId),
     },
+
+    // ─── Self-Model (Phase 1) ─────────────────────────────────────────────────
+    selfModel: {
+        init: () => ipcRenderer.invoke('selfModel:init'),
+        refresh: () => ipcRenderer.invoke('selfModel:refresh'),
+        getRefreshStatus: () => ipcRenderer.invoke('selfModel:getRefreshStatus'),
+        getSnapshot: () => ipcRenderer.invoke('selfModel:getSnapshot'),
+        getInvariants: (filter?: any) => ipcRenderer.invoke('selfModel:getInvariants', filter),
+        getCapabilities: (filter?: any) => ipcRenderer.invoke('selfModel:getCapabilities', filter),
+        getArchitectureSummary: () => ipcRenderer.invoke('selfModel:getArchitectureSummary'),
+        getComponents: () => ipcRenderer.invoke('selfModel:getComponents'),
+        getOwnershipMap: () => ipcRenderer.invoke('selfModel:getOwnershipMap'),
+        queryInvariant: (filter?: any) => ipcRenderer.invoke('selfModel:queryInvariant', filter),
+        queryCapability: (filter?: any) => ipcRenderer.invoke('selfModel:queryCapability', filter),
+    },
 });

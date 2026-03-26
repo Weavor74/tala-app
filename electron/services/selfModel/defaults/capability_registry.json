@@ -1,0 +1,94 @@
+{
+  "capabilities": [
+    {
+      "id": "local-inference",
+      "label": "Local Inference",
+      "description": "Ability to run language model inference locally via Ollama or bundled GGUF models, without requiring an external API connection.",
+      "category": "inference",
+      "status": "available",
+      "requiredFor": ["chat", "reflection", "maintenance"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "canonical-memory",
+      "label": "Canonical Memory",
+      "description": "Persistent storage and retrieval of conversation memory, habits, and reinforced behavioral patterns across sessions.",
+      "category": "memory",
+      "status": "available",
+      "requiredFor": ["chat", "reflection", "soul-continuity"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "rag-retrieval",
+      "label": "RAG Retrieval",
+      "description": "Retrieval-augmented generation using embedded document chunks from the local knowledge base. Requires embedding model availability.",
+      "category": "retrieval",
+      "status": "available",
+      "requiredFor": ["document-qa", "context-injection"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "external-search",
+      "label": "External Search",
+      "description": "Web search and retrieval via configured external providers (Brave, SearXNG, or other curated providers). Requires network access and provider configuration.",
+      "category": "retrieval",
+      "status": "optional",
+      "requiredFor": ["web-grounding"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "reflection-dashboard",
+      "label": "Reflection Dashboard",
+      "description": "Real-time display of Tala's reflection pipeline state, active goals, proposal queue, and journal entries. Requires ReflectionService to be running.",
+      "category": "ui",
+      "status": "available",
+      "requiredFor": ["reflection-ui"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "settings-panel",
+      "label": "Settings Panel",
+      "description": "Full-featured settings UI for configuring inference providers, memory, tools, guardrails, and all other subsystems.",
+      "category": "ui",
+      "status": "available",
+      "requiredFor": ["user-configuration"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "mcp-tools",
+      "label": "MCP Tools",
+      "description": "Model Context Protocol tool invocation system for calling external tools, filesystem access, code execution, and other MCP-compatible services.",
+      "category": "tools",
+      "status": "available",
+      "requiredFor": ["tool-use", "code-execution", "file-access"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "soul-identity",
+      "label": "Soul & Identity",
+      "description": "Tala's core identity engine maintaining consistent values, behavioral boundaries, ethical framework evaluation, and narrative continuity across sessions.",
+      "category": "identity",
+      "status": "available",
+      "requiredFor": ["identity-consistency", "ethics-evaluation", "behavioral-boundaries"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "hybrid-memory-manager",
+      "label": "Hybrid Memory Manager",
+      "description": "Coordinated management of short-term, long-term, and episodic memory across multiple storage backends with salience scoring and access-count ranking.",
+      "category": "memory",
+      "status": "available",
+      "requiredFor": ["memory-retrieval", "context-assembly"],
+      "addedAt": "2024-01-01"
+    },
+    {
+      "id": "self-maintenance",
+      "label": "Self-Maintenance",
+      "description": "Automated detection and recovery from runtime degradation, provider failures, and environment issues. Operates in observation, recommend, or auto-recovery modes.",
+      "category": "tools",
+      "status": "available",
+      "requiredFor": ["runtime-health", "provider-recovery"],
+      "addedAt": "2024-01-01"
+    }
+  ]
+}
