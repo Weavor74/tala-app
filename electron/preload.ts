@@ -588,4 +588,30 @@ contextBridge.exposeInMainWorld('tala', {
          */
         testProvider: (providerId: string) => ipcRenderer.invoke('retrieval:testProvider', providerId),
     },
+
+    // ─── Self-Model (Phase 1) ─────────────────────────────────────
+    selfModel: {
+        /** Returns the current SelfModelMeta (generation timestamp, status, drift info). */
+        getMeta: () => ipcRenderer.invoke('selfModel:getMeta'),
+        /** Returns the current SelfModelHealthStatus string. */
+        checkStaleness: () => ipcRenderer.invoke('selfModel:checkStaleness'),
+        /** Returns the full SystemInventoryIndex, or null if not yet generated. */
+        getIndex: () => ipcRenderer.invoke('selfModel:getIndex'),
+        /** Returns the OwnershipMap, or null if not yet generated. */
+        getOwnershipMap: () => ipcRenderer.invoke('selfModel:getOwnershipMap'),
+        /** Returns the InvariantRegistry data. */
+        getInvariants: () => ipcRenderer.invoke('selfModel:getInvariants'),
+        /** Returns the CapabilityRegistry data. */
+        getCapabilities: () => ipcRenderer.invoke('selfModel:getCapabilities'),
+        /** Triggers a full self-model refresh. Returns updated SelfModelMeta. */
+        refresh: (force?: boolean) => ipcRenderer.invoke('selfModel:refresh', force),
+        /** Query ownership for a file path or search term. Returns OwnershipQueryResult. */
+        queryOwnership: (target: string) => ipcRenderer.invoke('selfModel:queryOwnership', { target }),
+        /** Get invariants for a subsystem id. Returns InvariantRecord[]. */
+        queryInvariants: (subsystemId: string) => ipcRenderer.invoke('selfModel:queryInvariants', { subsystemId }),
+        /** Explain the blast radius for a subsystem id or file path. Returns BlastRadiusResult. */
+        queryBlastRadius: (target: string) => ipcRenderer.invoke('selfModel:queryBlastRadius', { target }),
+        /** Returns a human-readable ownership explanation for a target. */
+        explainOwnership: (target: string) => ipcRenderer.invoke('selfModel:explainOwnership', { target }),
+    },
 });

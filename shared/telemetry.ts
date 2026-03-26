@@ -40,6 +40,7 @@ export type TelemetrySubsystem =
     | 'system'
     | 'world_model'
     | 'maintenance'
+    | 'self_model'
     | 'unknown';
 
 // ─── Event type categories ────────────────────────────────────────────────────
@@ -207,7 +208,14 @@ export type TelemetryEventType =
     | 'external_search_fallback'
     // Generic
     | 'operational'
-    | 'developer_debug';
+    | 'developer_debug'
+    // Phase 1 — Self-Model Foundation
+    | 'self_model_generated'
+    | 'self_model_stale'
+    | 'self_model_query_executed'
+    | 'self_model_refresh_requested'
+    | 'self_model_refresh_completed'
+    | 'self_model_refresh_failed';
 
 // ─── Event channel classification ────────────────────────────────────────────
 

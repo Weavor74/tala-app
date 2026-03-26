@@ -25,6 +25,7 @@ import { WorkflowEditor } from './components/WorkflowEditor';
 import { GitView } from './components/GitView';
 import { WORKFLOW_TEMPLATES } from './catalog/WorkflowTemplates';
 import { LogViewerPanel } from './components/LogViewerPanel';
+import SelfModelPanel from './components/SelfModelPanel';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -112,7 +113,7 @@ export const Settings = () => {
     const [workspaceSettings, setWorkspaceSettings] = useState<Partial<AppSettings>>({});
     const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS); // Interactive view
 
-    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about' | 'firewall' | 'logging'>('inference');
+    const [activeTab, setActiveTab] = useState<'auth' | 'storage' | 'backup' | 'inference' | 'server' | 'agent' | 'sourceControl' | 'workflows' | 'system' | 'guardrails' | 'search' | 'about' | 'firewall' | 'logging' | 'architecture'>('inference');
     const [workflowSubTab, setWorkflowSubTab] = useState<'workflow' | 'mcp' | 'function'>('workflow');
     const [status, setStatus] = useState('');
     const [downloading, setDownloading] = useState(false);
@@ -492,6 +493,7 @@ export const Settings = () => {
                     { id: 'auth', label: 'Auth' },
                     { id: 'firewall', label: 'Firewall' },
                     { id: 'logging', label: 'Logging' },
+                    { id: 'architecture', label: 'Architecture' },
                     { id: 'about', label: 'About' }
                 ].map(tab => (
                     <div
@@ -3772,6 +3774,7 @@ Tone: Minimalist, calm, practical.
 
                 {/* ABOUT TAB */}
                 {activeTab === 'about' && <AboutPanel />}
+                {activeTab === 'architecture' && <SelfModelPanel />}
             </div>
 
             {status && <div style={{ marginTop: 10, color: '#4ec9b0', fontSize: 12 }}>{status}</div>}

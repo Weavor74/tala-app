@@ -47,6 +47,8 @@ import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository, getEmbeddingsRepository } from './services/db/initMemoryStore';
 import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchestratorRegistry';
+import { SelfModelRefreshService } from './services/selfModel/SelfModelRefreshService';
+import { SelfModelAppService } from './services/selfModel/SelfModelAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -117,6 +119,12 @@ const codeControlService = new CodeControlService(fileService, terminalService, 
 // Register Handlers
 soulService.registerIpcHandlers();
 reflectionService.start();
+
+// ─── Self-Model Foundation (Phase 1) ─────────────────────────────────────────
+const selfModelDataDir = resolveDataPath('self_model');
+const selfModelRefreshService = new SelfModelRefreshService(APP_ROOT, selfModelDataDir);
+selfModelRefreshService.init();
+new SelfModelAppService(selfModelRefreshService).registerIpcHandlers();
 
 // ═══════════════════════════════════════════════════════════════════════
 // GLOBAL ERROR LOGGING
