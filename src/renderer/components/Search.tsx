@@ -83,9 +83,43 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const [selectedNotebookId, setSelectedNotebookId] = useState<string>(initialNotebookId || 'CREATE_NEW_NB');
     /** The search_run id from the most recent search, used to register notebook items. */
     const [currentSearchRunId, setCurrentSearchRunId] = useState<string | null>(null);
+    /** Controls visibility of the inline notebook-name input (Electron-safe prompt replacement). */
+    const [nbNameVisible, setNbNameVisible] = useState(false);
+    /** Draft value typed into the notebook-name input. */
+    const [nbNameValue, setNbNameValue] = useState('');
+    /** Pending Promise resolve from askNotebookName(), settled on confirm or cancel. */
+    const [nbNameResolve, setNbNameResolve] = useState<((v: string | null) => void) | null>(null);
 
     const api = (window as any).tala;
 
+    /**
+     * Electron-safe replacement for window.prompt().
+     * Shows the inline notebook-name input and resolves with the trimmed name
+     * entered by the user, or null when the user cancels.
+     */
+    const askNotebookName = (): Promise<string | null> =>
+        new Promise(resolve => {
+            setNbNameValue('');
+            // Wrap in arrow so React does not treat `resolve` as a state-updater function.
+            setNbNameResolve(() => resolve);
+            setNbNameVisible(true);
+        });
+
+    const confirmNbName = () => {
+        const name = nbNameValue.trim();
+        if (!name) return;
+        const settle = nbNameResolve;
+        setNbNameVisible(false);
+        setNbNameResolve(null);
+        settle?.(name);
+    };
+
+    const cancelNbName = () => {
+        const settle = nbNameResolve;
+        setNbNameVisible(false);
+        setNbNameResolve(null);
+        settle?.(null);
+    };
 
     /**
      * Resolves (or creates) the target notebook.
@@ -94,7 +128,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
     const resolveTargetNotebook = async (rawId: string): Promise<string | null> => {
         if (rawId !== 'CREATE_NEW_NB') return rawId;
 
-        const name = prompt("Enter New Notebook Name:");
+        const name = await askNotebookName();
         if (!name) return null;
 
         // Try PostgreSQL-backed creation first
@@ -133,7 +167,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
         // Try atomic PostgreSQL DB paths first whenever a search run exists
         if (currentSearchRunId) {
             if (selectedNotebookId === 'CREATE_NEW_NB') {
-                const name = prompt("Enter New Notebook Name:");
+                const name = await askNotebookName();
                 if (!name) { setLoading(false); return; }
                 if (api?.researchCreateNotebookFromSearchRun) {
                     const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name, undefined, selectedItemKeys);
@@ -617,7 +651,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                                 if (currentSearchRunId) {
                                     // Preferred path: search run registered — use atomic DB methods.
                                     if (selectedNotebookId === 'CREATE_NEW_NB') {
-                                        const name = prompt("Notebook name:");
+                                        const name = await askNotebookName();
                                         if (!name?.trim()) return;
                                         if (!api?.researchCreateNotebookFromSearchRun) return;
                                         const res = await api.researchCreateNotebookFromSearchRun(currentSearchRunId, name.trim());
@@ -670,6 +704,37 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                     </div>
                 )}
             </div>
+
+            {/* ── Inline notebook-name input ─────────────────────────────────────────
+                Electron-safe replacement for window.prompt(). Shown when any save
+                action needs a new notebook name. Keyboard: Enter = confirm, Esc = cancel. */}
+            {nbNameVisible && (
+                <div style={{ padding: '8px 20px', borderBottom: '1px solid #333', display: 'flex', gap: 8, alignItems: 'center', background: '#252526' }}>
+                    <span style={{ fontSize: 11, color: '#ccc', whiteSpace: 'nowrap' }}>Notebook name:</span>
+                    <input
+                        autoFocus
+                        type="text"
+                        value={nbNameValue}
+                        onChange={e => setNbNameValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') confirmNbName(); else if (e.key === 'Escape') cancelNbName(); }}
+                        placeholder="Enter notebook name…"
+                        style={{ flex: 1, background: '#1e1e1e', border: '1px solid #555', color: '#fff', fontSize: 11, padding: '4px 8px', borderRadius: 2, outline: 'none' }}
+                    />
+                    <button
+                        onClick={confirmNbName}
+                        disabled={!nbNameValue.trim()}
+                        style={{ background: nbNameValue.trim() ? '#0e639c' : '#444', border: 'none', color: 'white', fontSize: 11, padding: '4px 12px', borderRadius: 2, cursor: nbNameValue.trim() ? 'pointer' : 'default' }}
+                    >
+                        OK
+                    </button>
+                    <button
+                        onClick={cancelNbName}
+                        style={{ background: 'transparent', border: '1px solid #555', color: '#aaa', fontSize: 11, padding: '4px 12px', borderRadius: 2, cursor: 'pointer' }}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            )}
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
                 {results.length === 0 && !loading && (
