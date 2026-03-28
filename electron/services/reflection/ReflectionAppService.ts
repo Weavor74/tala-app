@@ -1,11 +1,15 @@
 import { ipcMain } from 'electron';
 import { ReflectionService } from './ReflectionService';
+import { SafeChangePlanner } from './SafeChangePlanner';
+import type { PlanTriggerInput } from '../../../shared/reflectionPlanTypes';
 
 export class ReflectionAppService {
     private reflectionService: ReflectionService;
+    private safePlanner?: SafeChangePlanner;
 
-    constructor(reflectionService: ReflectionService) {
+    constructor(reflectionService: ReflectionService, safePlanner?: SafeChangePlanner) {
         this.reflectionService = reflectionService;
+        this.safePlanner = safePlanner;
         this.registerIpcHandlers();
     }
 
@@ -198,6 +202,44 @@ export class ReflectionAppService {
                     successRate: 1.0,
                     lastHeartbeat: new Date().toISOString()
                 };
+            })
+        );
+
+        // ── Phase 2: Safe Change Planning IPC ─────────────────────────────────
+
+        ipcMain.handle('planning:triggerRun', (_, triggerInput: PlanTriggerInput) =>
+            this.executeWithTelemetry('planning:triggerRun', async () => {
+                if (!this.safePlanner) throw new Error('SafeChangePlanner not initialised');
+                return this.safePlanner.plan(triggerInput);
+            })
+        );
+
+        ipcMain.handle('planning:getRunStatus', (_, runId: string) =>
+            this.executeWithTelemetry('planning:getRunStatus', async () => {
+                if (!this.safePlanner) throw new Error('SafeChangePlanner not initialised');
+                const run = this.safePlanner.getRunStatus(runId);
+                return { run, found: run !== null };
+            })
+        );
+
+        ipcMain.handle('planning:listRecentRuns', (_, windowMs?: number) =>
+            this.executeWithTelemetry('planning:listRecentRuns', async () => {
+                if (!this.safePlanner) return [];
+                return this.safePlanner.listRecentRuns(windowMs);
+            })
+        );
+
+        ipcMain.handle('planning:listProposals', (_, windowMs?: number) =>
+            this.executeWithTelemetry('planning:listProposals', async () => {
+                if (!this.safePlanner) return [];
+                return this.safePlanner.listProposals(windowMs);
+            })
+        );
+
+        ipcMain.handle('planning:getRunTelemetry', (_, runId: string, limit?: number) =>
+            this.executeWithTelemetry('planning:getRunTelemetry', async () => {
+                if (!this.safePlanner) return [];
+                return this.safePlanner.getRunTelemetry(runId, limit);
             })
         );
     }
