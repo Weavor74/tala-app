@@ -71,6 +71,7 @@ export type ExecutionEligibilityCheckName =
     | 'proposal_status'        // proposal must be 'promoted'
     | 'proposal_freshness'     // not stale beyond configurable window
     | 'subsystem_lock'         // no active execution for this subsystem
+    | 'cooldown'               // subsystem not in post-execution cooldown (5 min success, 15 min failure)
     | 'required_fields'        // targetFiles, changes, verificationRequirements present
     | 'invariant_refs'         // blastRadius invariant references still resolve
     | 'rollback_plan_present'  // rollbackClassification.rollbackSteps non-empty (or no_rollback_needed)

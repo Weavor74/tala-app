@@ -298,6 +298,16 @@ describe('P3B — ExecutionEligibilityGate', () => {
         expect(result.blockedBy).toBe('subsystem_lock');
     });
 
+    it('blocks when subsystem is in post-execution cooldown', () => {
+        registry.setCooldown('inference', 'failure', 'previous execution failed');
+
+        const proposal = makeProposal({ status: 'promoted' });
+        const result = gate.evaluate(proposal, makeAuthorization(), knownInvariantIds);
+        expect(result.eligible).toBe(false);
+        expect(result.blockedBy).toBe('cooldown');
+        expect(result.message).toContain('cooldown');
+    });
+
     it('blocks when targetFiles is empty', () => {
         const proposal = makeProposal({ targetFiles: [] });
         const result = gate.evaluate(proposal, makeAuthorization(), knownInvariantIds);
@@ -364,7 +374,7 @@ describe('P3B — ExecutionEligibilityGate', () => {
         const result = gate.evaluate(proposal, makeAuthorization(), knownInvariantIds);
         expect(result.eligible).toBe(true);
         expect(result.blockedBy).toBeUndefined();
-        expect(result.checks).toHaveLength(8);
+        expect(result.checks).toHaveLength(9);
         expect(result.checks.every(c => c.passed)).toBe(true);
     });
 

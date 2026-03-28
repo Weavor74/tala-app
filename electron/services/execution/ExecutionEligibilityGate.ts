@@ -10,11 +10,12 @@
  *   1. proposal_status        — proposal must be 'promoted'
  *   2. proposal_freshness     — not stale beyond MAX_PROPOSAL_AGE_MS
  *   3. subsystem_lock         — no active execution for this subsystem
- *   4. required_fields        — targetFiles, changes, verificationRequirements present
- *   5. invariant_refs         — all threatened invariant IDs still exist
- *   6. rollback_plan_present  — rollbackSteps non-empty or no_rollback_needed
- *   7. verification_plan      — at least one verification requirement present
- *   8. authorization          — valid ExecutionAuthorization present
+ *   4. cooldown               — subsystem not in post-execution cooldown
+ *   5. required_fields        — targetFiles, changes, verificationRequirements present
+ *   6. invariant_refs         — all threatened invariant IDs still exist
+ *   7. rollback_plan_present  — rollbackSteps non-empty or no_rollback_needed
+ *   8. verification_plan      — at least one verification requirement present
+ *   9. authorization          — valid ExecutionAuthorization present
  */
 
 import type {
@@ -110,7 +111,19 @@ export class ExecutionEligibilityGate {
         }
         pass('subsystem_lock');
 
-        // ── Check 4: required_fields ────────────────────────────────────────────
+        // ── Check 4: cooldown ───────────────────────────────────────────────────
+        if (this.registry.isInCooldown(proposal.targetSubsystem)) {
+            const cd = this.registry.getCooldown(proposal.targetSubsystem);
+            const remainingMin = cd ? Math.ceil((cd.expiresAt - Date.now()) / 60_000) : 0;
+            return fail(
+                'cooldown',
+                `Subsystem '${proposal.targetSubsystem}' is in post-execution cooldown` +
+                    ` (${remainingMin} min remaining) — wait before re-executing`,
+            );
+        }
+        pass('cooldown');
+
+        // ── Check 5: required_fields ────────────────────────────────────────────
         if (!proposal.targetFiles || proposal.targetFiles.length === 0) {
             return fail('required_fields', 'Proposal has no targetFiles');
         }
@@ -125,7 +138,7 @@ export class ExecutionEligibilityGate {
         }
         pass('required_fields');
 
-        // ── Check 5: invariant_refs ─────────────────────────────────────────────
+        // ── Check 6: invariant_refs ─────────────────────────────────────────────
         if (proposal.blastRadius?.threatenedInvariantIds?.length) {
             const known = new Set(knownInvariantIds);
             const missing = proposal.blastRadius.threatenedInvariantIds.filter(id => !known.has(id));
@@ -138,7 +151,7 @@ export class ExecutionEligibilityGate {
         }
         pass('invariant_refs');
 
-        // ── Check 6: rollback_plan_present ──────────────────────────────────────
+        // ── Check 7: rollback_plan_present ──────────────────────────────────────
         const strategy = proposal.rollbackClassification.strategy;
         const steps = proposal.rollbackClassification.rollbackSteps ?? [];
         if (strategy !== 'no_rollback_needed' && steps.length === 0) {
@@ -149,7 +162,7 @@ export class ExecutionEligibilityGate {
         }
         pass('rollback_plan_present');
 
-        // ── Check 7: verification_plan ──────────────────────────────────────────
+        // ── Check 8: verification_plan ──────────────────────────────────────────
         const vr = proposal.verificationRequirements;
         const hasAnyVerification =
             vr.requiresBuild ||
@@ -165,7 +178,7 @@ export class ExecutionEligibilityGate {
         }
         pass('verification_plan');
 
-        // ── Check 8: authorization ──────────────────────────────────────────────
+        // ── Check 9: authorization ──────────────────────────────────────────────
         if (!authorization.authorizationToken) {
             return fail('authorization', 'Authorization token missing');
         }
