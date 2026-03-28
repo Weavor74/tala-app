@@ -88,7 +88,7 @@ export class VerificationRunner {
                 budget,
             );
             if (!stepBudget.allowed) {
-                timeoutOccurred = false;
+                // Budget exhaustion is distinct from timeout — don't conflate them
                 blockers.push(`Verification step budget exhausted`);
                 break;
             }

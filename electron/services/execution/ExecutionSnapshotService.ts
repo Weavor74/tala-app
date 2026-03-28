@@ -36,6 +36,12 @@ export class ExecutionSnapshotService {
      * @param proposal          The proposal about to be applied.
      * @param workspaceRoot     Absolute path to repository root.
      * @param knownInvariantIds All invariant IDs currently registered.
+     *
+     * NOTE: File-drift detection (hasFileChanges) compares hashes at execution time
+     * against a baseline. Because proposals do not carry planning-time file hashes,
+     * the current implementation can only record 'changed: false' (conservative/unknown).
+     * To enable drift detection, proposals would need to persist planning-time hashes.
+     * Invariant drift IS fully detectable and is the primary compatibility gate.
      */
     capture(
         executionId: string,

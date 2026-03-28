@@ -559,24 +559,32 @@ export class ExecutionOrchestrator {
         if (!run) return;
 
         const allRuns = this.registry.listRecent();
-        const budgetResult = this.budgetManager.consume(executionId, 'dashboardUpdatesUsed', run.budget);
+        const currentUsage = this.budgetManager.getUsage(executionId);
 
-        if (!budgetResult.allowed) return;
+        // Guard: check budget before attempting emit
+        if (run.budget.maxDashboardUpdates > 0 &&
+            currentUsage.dashboardUpdatesUsed >= run.budget.maxDashboardUpdates) {
+            return;
+        }
 
-        // Revert the consume — maybeEmit will track internally
-        // (We consume optimistically here as a guard)
-        this.dashboardBridge.maybeEmit(
+        const emitted = this.dashboardBridge.maybeEmit(
             milestone,
             run,
             allRuns,
-            0, // promotedProposalsReady — caller knows; 0 is safe default here
-            run.usage.dashboardUpdatesUsed,
+            0, // promotedProposalsReady — safe default; UI polls independently
+            currentUsage.dashboardUpdatesUsed,
             run.budget.maxDashboardUpdates,
         );
 
-        const updated = this.registry.getRun(executionId);
-        if (updated) {
-            updated.usage = this.budgetManager.getUsage(executionId);
+        // Consume budget only if the bridge actually emitted (not deduped or filtered)
+        if (emitted) {
+            this.budgetManager.consume(executionId, 'dashboardUpdatesUsed', run.budget);
+            const latestRun = this.registry.getRun(executionId);
+            if (latestRun) {
+                this.registry.updateRun(executionId, {
+                    usage: this.budgetManager.getUsage(executionId),
+                });
+            }
         }
     }
 

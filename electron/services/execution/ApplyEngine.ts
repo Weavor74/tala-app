@@ -102,21 +102,15 @@ export class ApplyEngine {
 
         // ── Real apply ─────────────────────────────────────────────────────────
         for (const unit of patchPlan.units.sort((a, b) => a.sequenceNumber - b.sequenceNumber)) {
-            // Budget: apply time
+            // Budget: apply wall-clock time — check directly, not via consume()
             const elapsed = Date.now() - applyStart;
-            const timeBudget = this.budgetManager.consume(
-                executionId,
-                'applyMsUsed',
-                budget,
-                elapsed,
-            );
-            if (!timeBudget.allowed) {
+            if (budget.maxApplyMs > 0 && elapsed >= budget.maxApplyMs) {
                 const failResult = this._failUnit(unit, 'Apply budget (time) exhausted');
                 unitResults.push(failResult);
                 firstFailureUnitId = unit.unitId;
                 this.auditService.appendAuditRecord(
                     executionId, proposalId, 'apply', 'unit_failed',
-                    `Unit ${unit.unitId} blocked: budget exhausted`,
+                    `Unit ${unit.unitId} blocked: apply time budget exhausted (${elapsed}ms >= ${budget.maxApplyMs}ms)`,
                     'system', { unitId: unit.unitId },
                 );
                 break;

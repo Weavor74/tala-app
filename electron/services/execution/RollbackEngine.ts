@@ -175,7 +175,8 @@ export class RollbackEngine {
             );
         }
 
-        const overallSuccess = stepResults.every(r => r.success) || filesNotRestored.length === 0;
+        // Success = no files failed to restore (empty plan is trivially successful)
+        const overallSuccess = filesNotRestored.length === 0;
         const completedAt = new Date().toISOString();
 
         this.auditService.appendAuditRecord(

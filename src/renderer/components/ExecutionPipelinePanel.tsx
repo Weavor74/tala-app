@@ -274,14 +274,16 @@ const ExecutionPipelinePanel: React.FC = () => {
     const fetchData = useCallback(async () => {
         if (!tala) return;
         try {
-            if (tala.getExecutionDashboardState) {
-                const promoted = promotedProposals.length;
-                const state = await tala.getExecutionDashboardState(promoted);
-                setDashboardState(state);
-            }
+            let promotedCount = 0;
             if (tala.listProposals) {
                 const all = await tala.listProposals();
-                setPromotedProposals((all ?? []).filter((p: any) => p.status === 'promoted'));
+                const promoted = (all ?? []).filter((p: any) => p.status === 'promoted');
+                setPromotedProposals(promoted);
+                promotedCount = promoted.length;
+            }
+            if (tala.getExecutionDashboardState) {
+                const state = await tala.getExecutionDashboardState(promotedCount);
+                setDashboardState(state);
             }
         } catch (e) {
             console.error('[ExecutionPipelinePanel] fetchData error:', e);
