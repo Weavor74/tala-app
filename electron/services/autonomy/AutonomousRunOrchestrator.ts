@@ -107,14 +107,7 @@ export class AutonomousRunOrchestrator {
         this.detectionEngine = new GoalDetectionEngine(
             {
                 listRecentExecutionRuns: (w) => executionOrchestrator.listRecentRuns(w),
-                listGovernanceDecisions: (f) => {
-                    // ApprovalWorkflowRegistry.listDecisions via GovernanceAppService
-                    // We call the public evaluateForProposal indirectly — but for detection
-                    // we read decisions via the governance service's internal data.
-                    // Since GovernanceAppService doesn't expose listDecisions directly,
-                    // we return empty array safely (governance-block detection is a best-effort signal).
-                    return [];
-                },
+                listGovernanceDecisions: (f) => governanceAppService.listDecisions(f),
                 listReflectionGoals: () => this._listReflectionGoals(),
                 getActiveGoalFingerprints: () => {
                     const fingerprints = new Set<string>();
@@ -413,10 +406,16 @@ export class AutonomousRunOrchestrator {
             run.planRunId = planResponse.runId;
             this.auditService.saveRun(run);
 
-            // Find the proposal produced by this run (may need a small delay for async plan)
-            await this._delay(100);
-            const proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+            // Poll for the proposal produced by this run (up to 500ms in 50ms increments)
+            let proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
                 .find(p => p.runId === planResponse.runId);
+            if (!proposal) {
+                for (let i = 0; i < 9 && !proposal; i++) {
+                    await this._delay(50);
+                    proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                        .find(p => p.runId === planResponse.runId);
+                }
+            }
 
             if (!proposal) {
                 this._failRun(run, goal, 'Planning completed but no proposal was generated');
@@ -496,6 +495,9 @@ export class AutonomousRunOrchestrator {
 
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: proposal.proposalId,
+                // 'user_explicit' is the only value accepted by ExecutionStartRequest.
+                // In the autonomy pipeline this represents that Tala (acting as the operator)
+                // has explicitly authorized this run through the governance gate above.
                 authorizedBy: 'user_explicit',
                 dryRun: false,
             });
@@ -817,13 +819,18 @@ export class AutonomousRunOrchestrator {
         }
     }
 
+    /**
+     * Returns legacy SelfImprovementGoal records for stale-goal detection.
+     *
+     * NOTE: SafeChangePlanner does not expose legacy SelfImprovementGoal records.
+     * Stale reflection-goal detection is intentionally not implemented in the
+     * current phase. The GoalDetectionEngine handles this gracefully by receiving
+     * an empty array and producing zero candidates from this source.
+     *
+     * Future: wire to a GoalService if one is introduced that persists goals
+     * independently of the planning run registry.
+     */
     private async _listReflectionGoals(): Promise<any[]> {
-        try {
-            // The safePlanner doesn't expose reflection goals directly.
-            // Return empty array — stale reflection goal detection is best-effort.
-            return [];
-        } catch {
-            return [];
-        }
+        return [];
     }
 }

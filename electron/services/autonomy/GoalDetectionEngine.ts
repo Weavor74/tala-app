@@ -163,7 +163,7 @@ export class GoalDetectionEngine {
                 if (failures.length < EXECUTION_FAILURE_THRESHOLD) continue;
 
                 const title = `Repeated execution failures in ${subsystemId}`;
-                const fp = this._fingerprint('repeated_execution_failure', subsystemId, title);
+                const fp = this.fingerprint('repeated_execution_failure', subsystemId, title);
                 const isDuplicate = activeFingerprints.has(fp);
 
                 const lastRun = failures[0];
@@ -224,7 +224,7 @@ export class GoalDetectionEngine {
                 if (blocks.length < GOVERNANCE_BLOCK_THRESHOLD) continue;
 
                 const title = `Repeated governance blocks in ${subsystemId}`;
-                const fp = this._fingerprint('repeated_governance_block', subsystemId, title);
+                const fp = this.fingerprint('repeated_governance_block', subsystemId, title);
                 const isDuplicate = activeFingerprints.has(fp);
 
                 const ctx: GoalSourceContext = {
@@ -277,7 +277,7 @@ export class GoalDetectionEngine {
                     : 'recurring_reflection_goal';
                 const subsystemId = g.category ?? 'general';
                 const title = `Stale improvement goal: ${g.title}`;
-                const fp = this._fingerprint(source, subsystemId, g.goalId);
+                const fp = this.fingerprint(source, subsystemId, g.goalId);
                 const isDuplicate = activeFingerprints.has(fp);
 
                 const ctx: GoalSourceContext = source === 'user_seeded'
@@ -314,7 +314,7 @@ export class GoalDetectionEngine {
      * Computes a stable deduplication fingerprint.
      * Deterministic: same inputs → same output.
      */
-    _fingerprint(source: GoalSource, subsystemId: string, title: string): string {
+    fingerprint(source: GoalSource, subsystemId: string, title: string): string {
         const raw = `${source}::${subsystemId}::${title}`;
         // Simple FNV-1a hash (no crypto dep needed)
         let h = 0x811c9dc5;

@@ -254,7 +254,7 @@ describe('P4B: GoalDetectionEngine', () => {
     });
 
     it('marks candidates as isDuplicate when active goal exists with same fingerprint', async () => {
-        const fp = detectionEngine._fingerprint('repeated_execution_failure', 'inference', 'Repeated execution failures in inference');
+        const fp = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'Repeated execution failures in inference');
         const engine = new GoalDetectionEngine(
             {
                 listRecentExecutionRuns: () => [
@@ -280,14 +280,14 @@ describe('P4B: GoalDetectionEngine', () => {
     });
 
     it('_fingerprint() is deterministic: same inputs → same output', () => {
-        const fp1 = detectionEngine._fingerprint('repeated_execution_failure', 'inference', 'test title');
-        const fp2 = detectionEngine._fingerprint('repeated_execution_failure', 'inference', 'test title');
+        const fp1 = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'test title');
+        const fp2 = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'test title');
         expect(fp1).toBe(fp2);
     });
 
     it('_fingerprint() produces different results for different sources', () => {
-        const fp1 = detectionEngine._fingerprint('repeated_execution_failure', 'inference', 'test title');
-        const fp2 = detectionEngine._fingerprint('stale_subsystem', 'inference', 'test title');
+        const fp1 = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'test title');
+        const fp2 = detectionEngine.fingerprint('stale_subsystem', 'inference', 'test title');
         expect(fp1).not.toBe(fp2);
     });
 });
@@ -342,44 +342,54 @@ describe('P4C: GoalPrioritizationEngine', () => {
 
     it('marks budget-exhausted candidates as suppressed', () => {
         const budget = new AutonomyBudgetManager();
-        const learning = new OutcomeLearningRegistry(makeTempDir());
-        const cooldown = new AutonomyCooldownRegistry(makeTempDir());
-        const eng = new GoalPrioritizationEngine(learning, cooldown, budget);
+        const td1 = makeTempDir();
+        const td2 = makeTempDir();
+        try {
+            const learning = new OutcomeLearningRegistry(td1);
+            const cooldown = new AutonomyCooldownRegistry(td2);
+            const eng = new GoalPrioritizationEngine(learning, cooldown, budget);
 
-        const policy = makeEnabledPolicy();
-        // Exhaust the budget
-        for (let i = 0; i < policy.budget.maxRunsPerPeriod; i++) {
-            budget.recordRunStart(`run-${i}`, 'inference');
+            const policy = makeEnabledPolicy();
+            // Exhaust the budget (start and end so slots stay in window but runs complete)
+            for (let i = 0; i < policy.budget.maxRunsPerPeriod; i++) {
+                budget.recordRunStart(`run-${i}`, `sub-${i}`);
+                budget.recordRunEnd(`run-${i}`);
+            }
+
+            const candidates = [makeCandidate()];
+            const goals = eng.score(candidates, policy);
+            expect(goals[0].status).toBe('suppressed');
+        } finally {
+            fs.rmSync(td1, { recursive: true, force: true });
+            fs.rmSync(td2, { recursive: true, force: true });
         }
-
-        const candidates = [makeCandidate()];
-        const goals = eng.score(candidates, policy);
-        expect(goals[0].status).toBe('suppressed');
     });
 
     it('routes to human review after maxAttemptsPerPattern failures', () => {
         const tmpDir2 = makeTempDir();
-        const learning = new OutcomeLearningRegistry(tmpDir2);
-        const cooldown = new AutonomyCooldownRegistry(tmpDir2);
-        const budget = new AutonomyBudgetManager();
-        const eng = new GoalPrioritizationEngine(learning, cooldown, budget);
+        try {
+            const learning = new OutcomeLearningRegistry(tmpDir2);
+            const cooldown = new AutonomyCooldownRegistry(tmpDir2);
+            const budget = new AutonomyBudgetManager();
+            const eng = new GoalPrioritizationEngine(learning, cooldown, budget);
 
-        const policy = makeEnabledPolicy({ budget: { ...DEFAULT_AUTONOMY_POLICY.budget, maxAttemptsPerPattern: 2 } });
-        const goal = makeGoal();
-        const run: AutonomousRun = {
-            runId: 'r1', goalId: goal.goalId, cycleId: 'c1',
-            startedAt: new Date().toISOString(), status: 'failed', subsystemId: 'inference', milestones: [],
-        };
+            const policy = makeEnabledPolicy({ budget: { ...DEFAULT_AUTONOMY_POLICY.budget, maxAttemptsPerPattern: 2 } });
+            const goal = makeGoal();
+            const run: AutonomousRun = {
+                runId: 'r1', goalId: goal.goalId, cycleId: 'c1',
+                startedAt: new Date().toISOString(), status: 'failed', subsystemId: 'inference', milestones: [],
+            };
 
-        // Simulate 2 failures
-        learning.record(goal, run, 'failed');
-        learning.record(goal, run, 'failed');
+            // Simulate 2 failures
+            learning.record(goal, run, 'failed');
+            learning.record(goal, run, 'failed');
 
-        const candidate = makeCandidate();
-        const goals = eng.score([candidate], policy);
-        expect(goals[0].humanReviewRequired).toBe(true);
-
-        fs.rmSync(tmpDir2, { recursive: true, force: true });
+            const candidate = makeCandidate();
+            const goals = eng.score([candidate], policy);
+            expect(goals[0].humanReviewRequired).toBe(true);
+        } finally {
+            fs.rmSync(tmpDir2, { recursive: true, force: true });
+        }
     });
 });
 

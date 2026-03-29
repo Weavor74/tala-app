@@ -414,7 +414,7 @@ const TelemetryLine: React.FC<{ event: AutonomyTelemetryEvent }> = ({ event }) =
             display: 'flex', gap: '0.75rem', padding: '0.2rem 0',
             borderBottom: '1px solid #1e293b', color,
         }}>
-            <span style={{ color: '#4b5563', flexShrink: 0 }}>
+            <span style={{ color: '#4b5563', flexShrink: 0, fontWeight: 600 }}>
                 {new Date(event.timestamp).toLocaleTimeString()}
             </span>
             <span style={{ color: '#6b7280', flexShrink: 0 }}>{event.type}</span>
