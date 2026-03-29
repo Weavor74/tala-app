@@ -298,6 +298,11 @@ export interface AutonomousRun {
     failureReason?: string;
     abortReason?: string;
     milestones: AutonomousRunMilestone[];
+    // ── Phase 4.3: Recovery Pack linkage (optional — only set when a pack was used) ──
+    /** Recovery pack ID used for this run, if any. */
+    recoveryPackId?: string;
+    /** Match strength of the recovery pack used, if any. */
+    recoveryPackMatchStrength?: 'no_match' | 'weak_match' | 'strong_match';
 }
 
 // ─── Attempt Record ───────────────────────────────────────────────────────────
@@ -414,7 +419,15 @@ export type AutonomyTelemetryEventType =
     | 'loop_suppressed'
     | 'detection_cycle_started'
     | 'detection_cycle_completed'
-    | 'detection_source_error';
+    | 'detection_source_error'
+    // ── Phase 4.3: Recovery Pack telemetry events ──────────────────────────
+    | 'recovery_pack_match_attempted'
+    | 'recovery_pack_matched'
+    | 'recovery_pack_rejected'
+    | 'recovery_pack_used'
+    | 'recovery_pack_fallback'
+    | 'recovery_pack_outcome_recorded'
+    | 'recovery_pack_confidence_adjusted';
 
 export interface AutonomyTelemetryEvent {
     eventId: string;
@@ -486,4 +499,6 @@ export interface AutonomyDashboardState {
     budgetUsedThisPeriod: number;
     globalAutonomyEnabled: boolean;
     lastUpdatedAt: string;
+    // ── Phase 4.3: Recovery Pack summaries (optional — present when pack layer is active) ──
+    recoveryPackSummaries?: import('./recoveryPackTypes').RecoveryPackOutcomeSummary[];
 }

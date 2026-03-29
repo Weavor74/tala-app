@@ -62,6 +62,11 @@ import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchest
 import { AutonomousRunOrchestrator } from './services/autonomy/AutonomousRunOrchestrator';
 import { AutonomyAppService } from './services/autonomy/AutonomyAppService';
 import { DEFAULT_AUTONOMY_POLICY } from './services/autonomy/defaults/defaultAutonomyPolicy';
+// ── Phase 4.3: Recovery Pack services ─────────────────────────────────────────
+import { RecoveryPackRegistry } from './services/autonomy/recovery/RecoveryPackRegistry';
+import { RecoveryPackMatcher } from './services/autonomy/recovery/RecoveryPackMatcher';
+import { RecoveryPackPlannerAdapter } from './services/autonomy/recovery/RecoveryPackPlannerAdapter';
+import { RecoveryPackOutcomeTracker } from './services/autonomy/recovery/RecoveryPackOutcomeTracker';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -152,6 +157,20 @@ const autonomousRunOrchestrator = new AutonomousRunOrchestrator(
     executionOrchestrator,
     DEFAULT_AUTONOMY_POLICY,
 );
+
+// ─── Phase 4.3: Recovery Pack services ────────────────────────────────────────
+// Injected as optional services — orchestrator falls back to standard planning when absent.
+const recoveryPackRegistry = new RecoveryPackRegistry(USER_DATA_DIR);
+const recoveryPackMatcher = new RecoveryPackMatcher(recoveryPackRegistry);
+const recoveryPackPlannerAdapter = new RecoveryPackPlannerAdapter();
+const recoveryPackOutcomeTracker = new RecoveryPackOutcomeTracker(USER_DATA_DIR, recoveryPackRegistry);
+autonomousRunOrchestrator.setRecoveryPackServices(
+    recoveryPackRegistry,
+    recoveryPackMatcher,
+    recoveryPackPlannerAdapter,
+    recoveryPackOutcomeTracker,
+);
+
 new AutonomyAppService(autonomousRunOrchestrator);
 // Start periodic goal detection (5 min cycle, will run if/when autonomy is enabled)
 autonomousRunOrchestrator.start();

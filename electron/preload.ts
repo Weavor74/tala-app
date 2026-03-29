@@ -592,6 +592,11 @@ contextBridge.exposeInMainWorld('tala', {
             ipcRenderer.invoke('autonomy:clearCooldown', subsystemId, patternKey),
         /** Checks for governance-resolved pending runs and resumes them. */
         checkPendingRuns: () => ipcRenderer.invoke('autonomy:checkPendingRuns'),
+        /**
+         * Phase 4.3: Gets the recovery pack dashboard state.
+         * Returns null when the recovery pack layer is not active.
+         */
+        getRecoveryPackDashboardState: () => ipcRenderer.invoke('autonomy:getRecoveryPackDashboardState'),
         /** Subscribes to autonomy dashboard updates. Returns cleanup function. */
         onDashboardUpdate: (callback: (data: any) => void) => {
             const listener = (event: any, data: any) => callback(data);
