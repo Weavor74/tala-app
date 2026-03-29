@@ -54,6 +54,7 @@ import { OutcomeLearningRegistry } from '../../electron/services/autonomy/Outcom
 import { AutonomyAuditService } from '../../electron/services/autonomy/AutonomyAuditService';
 import { AutonomyTelemetryStore } from '../../electron/services/autonomy/AutonomyTelemetryStore';
 import { AutonomyDashboardBridge } from '../../electron/services/autonomy/AutonomyDashboardBridge';
+import { AutonomousRunOrchestrator } from '../../electron/services/autonomy/AutonomousRunOrchestrator';
 import { DEFAULT_AUTONOMY_POLICY } from '../../electron/services/autonomy/defaults/defaultAutonomyPolicy';
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -289,6 +290,33 @@ describe('P4B: GoalDetectionEngine', () => {
         const fp1 = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'test title');
         const fp2 = detectionEngine.fingerprint('stale_subsystem', 'inference', 'test title');
         expect(fp1).not.toBe(fp2);
+    });
+
+    it('detects failed_verification candidate from a single failing run', async () => {
+        const engine = new GoalDetectionEngine(
+            {
+                listRecentExecutionRuns: () => [
+                    { executionId: 'ev1', subsystemId: 'mcp', status: 'failed_verification', createdAt: new Date().toISOString() } as any,
+                ],
+                listGovernanceDecisions: () => [],
+                listReflectionGoals: async () => [],
+                getActiveGoalFingerprints: () => new Set(),
+            },
+            (c) => {},
+        );
+
+        const candidates = await engine.runOnce();
+        const verifCand = candidates.find(c => c.source === 'failed_verification');
+        expect(verifCand).toBeDefined();
+        expect(verifCand!.subsystemId).toBe('mcp');
+        expect(verifCand!.dedupFingerprint).toBe(engine.fingerprint('failed_verification', 'mcp', 'Verification failure in mcp'));
+        engine.stop();
+    });
+
+    it('failed_verification candidate has a distinct fingerprint from repeated_execution_failure', () => {
+        const fpVerif = detectionEngine.fingerprint('failed_verification', 'inference', 'Verification failure in inference');
+        const fpExec  = detectionEngine.fingerprint('repeated_execution_failure', 'inference', 'Repeated execution failures in inference');
+        expect(fpVerif).not.toBe(fpExec);
     });
 });
 
@@ -833,6 +861,172 @@ describe('P4G: AutonomyDashboardBridge', () => {
         bridge.resetDedupHash();
         const reemit = bridge.maybeEmit('run_started', [], [], [], [], policy, 0);
         expect(reemit).toBe(true);
+    });
+});
+
+// ─── P4E: AutonomousRunOrchestrator ──────────────────────────────────────────
+
+describe('P4E: AutonomousRunOrchestrator', () => {
+    let tmpDir: string;
+
+    function makeMockPlanner() {
+        return {
+            plan: vi.fn(),
+            listProposals: vi.fn().mockReturnValue([]),
+            promoteProposal: vi.fn().mockReturnValue(null),
+        };
+    }
+
+    function makeMockGovernance() {
+        return {
+            evaluateForProposal: vi.fn(),
+            getDecision: vi.fn().mockReturnValue(null),
+            listDecisions: vi.fn().mockReturnValue([]),
+        };
+    }
+
+    function makeMockExecution() {
+        return {
+            start: vi.fn(),
+            getRunStatus: vi.fn().mockReturnValue(null),
+            listRecentRuns: vi.fn().mockReturnValue([]),
+        };
+    }
+
+    beforeEach(() => {
+        tmpDir = makeTempDir();
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('marks stale active runs as aborted on construction', () => {
+        const runDir = path.join(tmpDir, 'autonomy', 'runs');
+        fs.mkdirSync(runDir, { recursive: true });
+        const staleRun = {
+            runId: 'stale-run-1', goalId: 'goal-1', cycleId: 'c1',
+            startedAt: new Date(Date.now() - 10000).toISOString(),
+            status: 'running', subsystemId: 'mcp', milestones: [],
+        };
+        fs.writeFileSync(path.join(runDir, 'stale-run-1.json'), JSON.stringify(staleRun, null, 2));
+
+        const orchestrator = new AutonomousRunOrchestrator(
+            tmpDir, makeMockPlanner() as any, makeMockGovernance() as any,
+            makeMockExecution() as any, DEFAULT_AUTONOMY_POLICY,
+        );
+
+        const recovered = orchestrator.getRun('stale-run-1');
+        expect(recovered).not.toBeNull();
+        expect(recovered!.status).toBe('aborted');
+        orchestrator.stop();
+    });
+
+    it('preserves governance_pending runs across construction', () => {
+        const runDir = path.join(tmpDir, 'autonomy', 'runs');
+        fs.mkdirSync(runDir, { recursive: true });
+        const pendingRun = {
+            runId: 'pending-run-1', goalId: 'goal-1', cycleId: 'c1',
+            startedAt: new Date().toISOString(),
+            status: 'governance_pending', subsystemId: 'mcp', milestones: [],
+        };
+        fs.writeFileSync(path.join(runDir, 'pending-run-1.json'), JSON.stringify(pendingRun, null, 2));
+
+        const orchestrator = new AutonomousRunOrchestrator(
+            tmpDir, makeMockPlanner() as any, makeMockGovernance() as any,
+            makeMockExecution() as any, DEFAULT_AUTONOMY_POLICY,
+        );
+
+        const run = orchestrator.getRun('pending-run-1');
+        expect(run).not.toBeNull();
+        expect(run!.status).toBe('governance_pending');
+        orchestrator.stop();
+    });
+
+    it('suppresses goal when global autonomy is disabled (default policy)', async () => {
+        // One failed_verification run → _detectFailedVerifications produces a candidate
+        const mockExecution = makeMockExecution();
+        mockExecution.listRecentRuns.mockReturnValue([
+            { executionId: 'e1', subsystemId: 'mcp', status: 'failed_verification', startedAt: new Date().toISOString() },
+        ]);
+
+        const orchestrator = new AutonomousRunOrchestrator(
+            tmpDir, makeMockPlanner() as any, makeMockGovernance() as any,
+            mockExecution as any, DEFAULT_AUTONOMY_POLICY,
+        );
+
+        await orchestrator.runCycleOnce();
+
+        // Policy gate blocks at check 1 (global_autonomy_disabled) — synchronous,
+        // no async pipeline fires. Goal is immediately placed in 'suppressed'.
+        const goals = orchestrator.listGoals();
+        expect(goals.length).toBeGreaterThan(0);
+        const suppressed = goals.find(g => g.status === 'suppressed' || g.status === 'policy_blocked');
+        expect(suppressed).toBeDefined();
+        orchestrator.stop();
+    });
+
+    it('routes governance-blocked run through planning then records cooldown', async () => {
+        const proposal: any = {
+            proposalId: 'prop-1', runId: 'plan-run-1', status: 'classified',
+            targetSubsystem: 'mcp', title: 'Test proposal',
+            createdAt: new Date().toISOString(),
+        };
+        const mockExecution = makeMockExecution();
+        const mockPlanner = makeMockPlanner();
+        const mockGovernance = makeMockGovernance();
+
+        mockExecution.listRecentRuns.mockReturnValue([
+            { executionId: 'e1', subsystemId: 'mcp', status: 'failed_verification', startedAt: new Date().toISOString() },
+        ]);
+        mockPlanner.plan.mockResolvedValue({ runId: 'plan-run-1', status: 'running', message: 'ok' });
+        // Return proposal on the first synchronous lookup → no 50ms polling delay
+        mockPlanner.listProposals.mockReturnValue([proposal]);
+        mockPlanner.promoteProposal.mockReturnValue({ ...proposal, status: 'promoted' });
+        mockGovernance.evaluateForProposal.mockReturnValue({
+            decisionId: 'dec-1', status: 'blocked', executionAuthorized: false,
+            blockReason: 'test-block', proposalId: 'prop-1',
+        });
+
+        const policy = makeEnabledPolicy();
+        const orchestrator = new AutonomousRunOrchestrator(
+            tmpDir, mockPlanner as any, mockGovernance as any,
+            mockExecution as any, policy,
+        );
+
+        await orchestrator.runCycleOnce();
+        // Governance block has no execution-poll delays; wait one event-loop turn
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const goals = orchestrator.listGoals();
+        const blocked = goals.find(g => g.status === 'governance_blocked');
+        expect(blocked).toBeDefined();
+        expect(blocked!.humanReviewRequired).toBe(true);
+
+        // Verify planning was actually invoked (no bypass)
+        expect(mockPlanner.plan).toHaveBeenCalledOnce();
+        expect(mockGovernance.evaluateForProposal).toHaveBeenCalledOnce();
+        orchestrator.stop();
+    });
+
+    it('getDashboardState returns a valid AutonomyDashboardState shape', () => {
+        const orchestrator = new AutonomousRunOrchestrator(
+            tmpDir, makeMockPlanner() as any, makeMockGovernance() as any,
+            makeMockExecution() as any, DEFAULT_AUTONOMY_POLICY,
+        );
+
+        const state = orchestrator.getDashboardState();
+        expect(state.kpis).toBeDefined();
+        expect(typeof state.kpis.totalGoalsDetected).toBe('number');
+        expect(Array.isArray(state.activeRuns)).toBe(true);
+        expect(Array.isArray(state.pendingGoals)).toBe(true);
+        expect(Array.isArray(state.blockedGoals)).toBe(true);
+        expect(Array.isArray(state.recentTelemetry)).toBe(true);
+        expect(Array.isArray(state.learningRecords)).toBe(true);
+        expect(state.budget).toBeDefined();
+        expect(typeof state.globalAutonomyEnabled).toBe('boolean');
+        expect(state.globalAutonomyEnabled).toBe(false); // Default policy
+        orchestrator.stop();
     });
 });
 

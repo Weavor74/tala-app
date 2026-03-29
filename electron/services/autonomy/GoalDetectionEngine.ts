@@ -10,10 +10,11 @@
  * - Polling-based (not event-driven) to prevent runaway triggers.
  *
  * Signal sources:
- *   1. Repeated execution failures — queries ExecutionRunRegistry-compatible data
- *   2. Repeated governance blocks — queries GovernanceAppService
- *   3. Stale reflection goals    — queries existing GoalService
- *   4. User-seeded goals         — promotes user goals from GoalService
+ *   1. Repeated execution failures  — queries ExecutionRunRegistry-compatible data
+ *   2. Repeated governance blocks   — queries GovernanceAppService
+ *   3. Stale reflection goals       — queries existing GoalService
+ *   4. User-seeded goals            — promotes user goals from GoalService
+ *   5. Failed verifications         — any failed_verification run in window → candidate
  *
  * Detection fingerprint: stable hash of (source + subsystemId + normalizedTitle)
  * Two candidates with the same fingerprint are the same logical problem.
@@ -42,8 +43,9 @@ export interface GoalDetectionDependencies {
 }
 
 // Detection thresholds
-const EXECUTION_FAILURE_THRESHOLD = 3;    // ≥3 failures in window → candidate
-const GOVERNANCE_BLOCK_THRESHOLD = 2;     // ≥2 blocks in window → candidate
+const EXECUTION_FAILURE_THRESHOLD = 3;       // ≥3 failures in window → candidate
+const GOVERNANCE_BLOCK_THRESHOLD = 2;        // ≥2 blocks in window → candidate
+const FAILED_VERIFICATION_THRESHOLD = 1;     // ≥1 verification failure in window → candidate
 const EXECUTION_FAILURE_WINDOW_MS = 4 * 60 * 60 * 1000;  // 4 hour window
 const GOVERNANCE_BLOCK_WINDOW_MS = 8 * 60 * 60 * 1000;   // 8 hour window
 const STALE_GOAL_AGE_MS = 7 * 24 * 60 * 60 * 1000;       // 7 days
@@ -103,13 +105,14 @@ export class GoalDetectionEngine {
         const activeFingerprints = this.deps.getActiveGoalFingerprints();
         const candidates: GoalCandidate[] = [];
 
-        const [execCandidates, govCandidates, reflectionCandidates] = await Promise.all([
+        const [execCandidates, govCandidates, reflectionCandidates, verificationCandidates] = await Promise.all([
             this._detectExecutionFailures(activeFingerprints),
             this._detectGovernanceBlocks(activeFingerprints),
             this._detectStaleReflectionGoals(activeFingerprints),
+            this._detectFailedVerifications(activeFingerprints),
         ]);
 
-        candidates.push(...execCandidates, ...govCandidates, ...reflectionCandidates);
+        candidates.push(...execCandidates, ...govCandidates, ...reflectionCandidates, ...verificationCandidates);
 
         // Deduplicate across sources (same fingerprint → keep first)
         const seen = new Set<string>();
@@ -252,6 +255,70 @@ export class GoalDetectionEngine {
                 'warn',
                 'GoalDetectionEngine',
                 `Governance block detection error: ${err.message}`,
+            );
+        }
+        return candidates;
+    }
+
+    // ── Failed verification detection ───────────────────────────────────────────
+
+    /**
+     * Detects subsystems that have had at least one failed_verification execution
+     * run within the detection window.
+     *
+     * Distinct from _detectExecutionFailures: this source fires on any single
+     * verification failure and produces a goal with source='failed_verification',
+     * which maps to its own category policy and priority scoring.
+     */
+    private _detectFailedVerifications(
+        activeFingerprints: Set<string>,
+    ): GoalCandidate[] {
+        const candidates: GoalCandidate[] = [];
+        try {
+            const runs = this.deps.listRecentExecutionRuns(EXECUTION_FAILURE_WINDOW_MS);
+            const verificationFailsBySubsystem = new Map<string, ExecutionRun[]>();
+
+            for (const run of runs) {
+                if (run.status === 'failed_verification') {
+                    const sub = run.subsystemId;
+                    if (!verificationFailsBySubsystem.has(sub)) {
+                        verificationFailsBySubsystem.set(sub, []);
+                    }
+                    verificationFailsBySubsystem.get(sub)!.push(run);
+                }
+            }
+
+            for (const [subsystemId, failures] of verificationFailsBySubsystem) {
+                if (failures.length < FAILED_VERIFICATION_THRESHOLD) continue;
+
+                const title = `Verification failure in ${subsystemId}`;
+                const fp = this.fingerprint('failed_verification', subsystemId, title);
+                const isDuplicate = activeFingerprints.has(fp);
+
+                const ctx: GoalSourceContext = {
+                    kind: 'generic',
+                    detail: `${failures.length} verification failure(s) in subsystem '${subsystemId}'. Last failing run: ${failures[0].executionId}.`,
+                };
+
+                candidates.push({
+                    candidateId: uuidv4(),
+                    detectedAt: new Date().toISOString(),
+                    source: 'failed_verification',
+                    subsystemId,
+                    title,
+                    description: `${failures.length} verification failure(s) detected in subsystem '${subsystemId}' within the last ${EXECUTION_FAILURE_WINDOW_MS / 60000} minutes.`,
+                    sourceContext: ctx,
+                    dedupFingerprint: fp,
+                    isDuplicate,
+                });
+            }
+        } catch (err: any) {
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'warn',
+                'GoalDetectionEngine',
+                `Verification failure detection error: ${err.message}`,
             );
         }
         return candidates;
