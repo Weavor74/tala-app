@@ -1,5 +1,5 @@
 /**
- * GoalPrioritizationEngine.ts — Phase 4 P4C
+ * GoalPrioritizationEngine.ts — Phase 4 P4C / Phase 5 P5B enhancement
  *
  * Scores and ranks GoalCandidate[] into AutonomousGoal[] with priority tiers.
  *
@@ -13,6 +13,14 @@
  *   rollbackConfidenceWeight(0–10) — baseline rollback confidence
  *   executionCostPenalty(0–10)     — estimated effort (higher = lower priority)
  *   protectedPenalty(0..−20)       — penalty if subsystem is hard-blocked
+ *
+ * Phase 5 enhancement:
+ *   When a SubsystemProfileRegistry is provided via setProfileRegistry(),
+ *   the confidence weight is blended:
+ *     60% from OutcomeLearningRegistry per-pattern confidence
+ *     40% from SubsystemProfile.successRate (empirical subsystem success rate)
+ *   This improves prioritization accuracy for subsystems with known history.
+ *   The change is backward-compatible: scoring is unchanged when no registry is set.
  *
  * Priority tiers (by total score):
  *   critical  ≥ 80
@@ -35,6 +43,8 @@ import type { OutcomeLearningRegistry } from './OutcomeLearningRegistry';
 import type { AutonomyCooldownRegistry } from './AutonomyCooldownRegistry';
 import type { AutonomyBudgetManager } from './AutonomyBudgetManager';
 import type { AutonomyBudget, AutonomyPolicy } from '../../../shared/autonomyTypes';
+// Phase 5: optional profile registry for blended confidence weight
+import type { SubsystemProfileRegistry } from './adaptive/SubsystemProfileRegistry';
 
 // ─── Severity weights by source ───────────────────────────────────────────────
 
@@ -62,11 +72,24 @@ const MEDIUM_IMPORTANCE_SUBSYSTEMS = new Set([
 // ─── GoalPrioritizationEngine ─────────────────────────────────────────────────
 
 export class GoalPrioritizationEngine {
+    // ── Phase 5: optional subsystem profile registry for blended confidence ──
+    private _profileRegistry: SubsystemProfileRegistry | null = null;
+
     constructor(
         private readonly learningRegistry: OutcomeLearningRegistry,
         private readonly cooldownRegistry: AutonomyCooldownRegistry,
         private readonly budgetManager: AutonomyBudgetManager,
     ) {}
+
+    /**
+     * Injects the Phase 5 SubsystemProfileRegistry.
+     * When set, confidence weight is blended with subsystem success rate.
+     * When absent, scoring is identical to Phase 4 behavior.
+     * Must be called before score() to take effect.
+     */
+    setProfileRegistry(registry: SubsystemProfileRegistry): void {
+        this._profileRegistry = registry;
+    }
 
     /**
      * Scores and ranks candidates, producing AutonomousGoal[] with priorities set.
@@ -144,8 +167,20 @@ export class GoalPrioritizationEngine {
         }
 
         // Confidence weight — from learning registry modifier
+        // Phase 5 enhancement: when profile registry is available, blend with subsystem success rate
         const confidence = this.learningRegistry.getConfidenceModifier(patternKey);
-        const confidenceWeight = Math.round(confidence * 15);
+        let blendedConfidence: number;
+        if (this._profileRegistry) {
+            const profile = this._profileRegistry.get(candidate.subsystemId);
+            // 60% per-pattern confidence + 40% empirical subsystem success rate
+            // When no history exists (totalAttempts=0), successRate=0 but confidence=0.7
+            // so the blend remains reasonable (0.7*0.6 + 0*0.4 = 0.42 → same baseline)
+            const subsystemRate = profile.totalAttempts > 0 ? profile.successRate : confidence;
+            blendedConfidence = confidence * 0.6 + subsystemRate * 0.4;
+        } else {
+            blendedConfidence = confidence;
+        }
+        const confidenceWeight = Math.round(blendedConfidence * 15);
 
         // Governance likelihood — lower if in hard-blocked list
         const governanceLikelihoodWeight = policy.hardBlockedSubsystems.includes(candidate.subsystemId)

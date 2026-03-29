@@ -501,4 +501,6 @@ export interface AutonomyDashboardState {
     lastUpdatedAt: string;
     // ── Phase 4.3: Recovery Pack summaries (optional — present when pack layer is active) ──
     recoveryPackSummaries?: import('./recoveryPackTypes').RecoveryPackOutcomeSummary[];
+    // ── Phase 5: Adaptive Intelligence Layer state (optional — present when adaptive layer is active) ──
+    adaptiveState?: import('./adaptiveTypes').AdaptiveDashboardState;
 }
