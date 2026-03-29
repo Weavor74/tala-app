@@ -33,6 +33,7 @@ import type {
     GovernanceDecisionStatus,
     ApprovalActor,
     GovernancePolicy,
+    GovernanceDecision,
 } from '../../../shared/governanceTypes';
 import type { SafeChangeProposal } from '../../../shared/reflectionPlanTypes';
 import { ApprovalWorkflowRegistry } from './ApprovalWorkflowRegistry';
@@ -84,13 +85,30 @@ export class GovernanceAppService {
         this._startExpirySweep();
     }
 
-    // ── Public API (used by ExecutionOrchestrator) ──────────────────────────────
+    // ── Public API (used by ExecutionOrchestrator and ReflectionAppService) ───────
 
     /**
      * Returns the ExecutionAuthorizationGate for use by ExecutionEligibilityGate check 10.
      */
     getAuthorizationGate(): ExecutionAuthorizationGate {
         return this.authGate;
+    }
+
+    /**
+     * Evaluates governance policy for a proposal and creates/refreshes a GovernanceDecision.
+     *
+     * Called automatically when a proposal transitions to 'promoted' status via
+     * planning:promoteProposal — ensures a governance decision exists before the
+     * ExecutionEligibilityGate (check 10) is reached.
+     *
+     * Idempotent: if a decision already exists for this proposalId, the existing
+     * decision is returned unchanged.
+     *
+     * Does NOT authorize execution — that remains the exclusive responsibility of
+     * the policy engine + approval workflow + ExecutionAuthorizationGate.
+     */
+    evaluateForProposal(proposal: SafeChangeProposal): GovernanceDecision {
+        return this.authGate.evaluateProposal(proposal);
     }
 
     // ── IPC logging helper (mirrors ExecutionAppService) ───────────────────────

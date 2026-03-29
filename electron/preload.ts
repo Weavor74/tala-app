@@ -468,6 +468,10 @@ contextBridge.exposeInMainWorld('tala', {
     cancelQueueItem: (id: string) => ipcRenderer.invoke('reflection:cancelQueueItem', id),
     retryQueueItem: (id: string) => ipcRenderer.invoke('reflection:retryQueueItem', id),
 
+    // ─── Phase 3.5 integration: promote a Phase 2 planned proposal + trigger governance ──
+    /** Promotes a classified SafeChangeProposal and triggers automatic governance evaluation. */
+    promotePlannedProposal: (proposalId: string) => ipcRenderer.invoke('planning:promoteProposal', proposalId),
+
     /** Gets reflection system metrics (legacy). */
     getReflectionMetrics: () => ipcRenderer.invoke('reflection:get-metrics'),
     /** Lists pending proposals awaiting approval (legacy). */

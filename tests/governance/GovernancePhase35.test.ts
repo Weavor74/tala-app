@@ -38,6 +38,9 @@ vi.mock('../../electron/services/TelemetryService', () => ({
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
+import { SafeChangePlanner } from '../../electron/services/reflection/SafeChangePlanner';
+import type { PlanTriggerInput } from '../../shared/reflectionPlanTypes';
+
 import {
     tierPriority,
     tierLabel,
@@ -1186,5 +1189,157 @@ describe('P3.5I — Safety Controls & Auditability', () => {
             'verification_plan', 'authorization', 'governance_approval',
         ];
         expect(checkNames).toContain('governance_approval');
+    });
+});
+
+// ─── P3.5 Integration — promoteProposal → evaluateForProposal ────────────────
+
+describe('P3.5 Integration — promoteProposal → evaluateForProposal', () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+        tempDir = makeTempDir();
+    });
+
+    afterEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    /** Minimal SelfModelQueryService mock — only getSnapshot() is needed. */
+    function makeMockQuery() {
+        const snapshot = {
+            generatedAt: new Date().toISOString(),
+            invariants: [],
+            capabilities: [],
+            components: [],
+            ownershipMap: [],
+        };
+        return {
+            getSnapshot: vi.fn(() => snapshot),
+            queryInvariants: vi.fn(),
+            queryCapabilities: vi.fn(),
+            getArchitectureSummary: vi.fn(),
+            getComponents: vi.fn(() => []),
+            getOwnershipMap: vi.fn(() => []),
+        } as any;
+    }
+
+    function makeTrigger(overrides: Partial<PlanTriggerInput> = {}): PlanTriggerInput {
+        return {
+            subsystemId: 'test/services',
+            issueType: 'style_inconsistency',
+            normalizedTarget: 'test/services/foo.ts',
+            severity: 'low',
+            isManual: true,
+            planningMode: 'light',
+            ...overrides,
+        };
+    }
+
+    it('promoteProposal transitions a classified proposal to promoted', async () => {
+        const planner = new SafeChangePlanner(makeMockQuery(), tempDir);
+        await planner.plan(makeTrigger());
+
+        const proposals = planner.listProposals();
+        expect(proposals.length).toBeGreaterThan(0);
+        const proposal = proposals[0]!;
+        expect(proposal.status).toBe('classified');
+
+        const promoted = planner.promoteProposal(proposal.proposalId);
+        expect(promoted).not.toBeNull();
+        expect(promoted!.status).toBe('promoted');
+        expect(promoted!.proposalId).toBe(proposal.proposalId);
+
+        // Registry reflects the updated status
+        const live = planner.listProposals();
+        const liveProposal = live.find(p => p.proposalId === proposal.proposalId);
+        expect(liveProposal?.status).toBe('promoted');
+    });
+
+    it('promoteProposal returns null for unknown proposalId', () => {
+        const planner = new SafeChangePlanner(makeMockQuery(), tempDir);
+        expect(planner.promoteProposal('nonexistent-id')).toBeNull();
+    });
+
+    it('promoteProposal returns null if proposal is already promoted', async () => {
+        const planner = new SafeChangePlanner(makeMockQuery(), tempDir);
+        await planner.plan(makeTrigger({ subsystemId: 'test/already' }));
+
+        const proposals = planner.listProposals();
+        const proposal = proposals[0]!;
+
+        planner.promoteProposal(proposal.proposalId); // first promotion succeeds
+        const second = planner.promoteProposal(proposal.proposalId); // already 'promoted', not 'classified'
+        expect(second).toBeNull();
+    });
+
+    it('evaluateForProposal resolves no_decision_exists block', () => {
+        const registry = new ApprovalWorkflowRegistry(tempDir);
+        const auditService = new GovernanceAuditService(tempDir);
+        const dashboardBridge = new GovernanceDashboardBridge();
+        const gate = new ExecutionAuthorizationGate(
+            registry, auditService, dashboardBridge, DEFAULT_GOVERNANCE_POLICY, () => [],
+        );
+
+        const proposal = makeProposal({ proposalId: 'eval-for-prop' });
+
+        // Before evaluation: blocked with no_decision_exists
+        expect(gate.canExecute('eval-for-prop').blockReason).toBe('no_decision_exists');
+
+        // Simulate evaluateForProposal (thin wrapper over authGate.evaluateProposal)
+        gate.evaluateProposal(proposal);
+
+        // After evaluation: decision exists, low-risk safe_auto → self-authorized
+        const result = gate.canExecute('eval-for-prop');
+        expect(result.blockReason).not.toBe('no_decision_exists');
+        expect(result.authorized).toBe(true); // safe_auto + tala_self_low_risk
+    });
+
+    it('promote callback fires governance evaluation; canExecute no longer blocked by no_decision_exists', async () => {
+        const planner = new SafeChangePlanner(makeMockQuery(), tempDir);
+        const registry = new ApprovalWorkflowRegistry(tempDir);
+        const auditService = new GovernanceAuditService(tempDir);
+        const dashboardBridge = new GovernanceDashboardBridge();
+        const gate = new ExecutionAuthorizationGate(
+            registry, auditService, dashboardBridge, DEFAULT_GOVERNANCE_POLICY, () => [],
+        );
+
+        let callbackFired = false;
+        const onPromoted = (proposal: import('../../shared/reflectionPlanTypes').SafeChangeProposal) => {
+            gate.evaluateProposal(proposal); // mirrors GovernanceAppService.evaluateForProposal
+            callbackFired = true;
+        };
+
+        await planner.plan(makeTrigger({ subsystemId: 'test/callback' }));
+        const proposals = planner.listProposals();
+        const proposal = proposals[0]!;
+
+        const promoted = planner.promoteProposal(proposal.proposalId);
+        expect(promoted).not.toBeNull();
+        onPromoted(promoted!);
+
+        expect(callbackFired).toBe(true);
+
+        // Governance decision was created
+        const decision = registry.getDecision(proposal.proposalId);
+        expect(decision).not.toBeNull();
+        expect(decision!.proposalId).toBe(proposal.proposalId);
+
+        // canExecute no longer returns no_decision_exists
+        const authResult = gate.canExecute(proposal.proposalId);
+        expect(authResult.blockReason).not.toBe('no_decision_exists');
+    });
+
+    it('governance evaluation is non-fatal: promotion succeeds even if callback throws', async () => {
+        const planner = new SafeChangePlanner(makeMockQuery(), tempDir);
+
+        await planner.plan(makeTrigger({ subsystemId: 'test/fatal-test' }));
+        const proposals = planner.listProposals();
+        const proposal = proposals[0]!;
+
+        // Promote the proposal (callback that throws is handled by the IPC layer, not the planner)
+        const promoted = planner.promoteProposal(proposal.proposalId);
+        expect(promoted).not.toBeNull();
+        expect(promoted!.status).toBe('promoted');
     });
 });

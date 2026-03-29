@@ -114,12 +114,19 @@ const selfModelAppService = new SelfModelAppService(selfModelRefreshService, sel
 
 // SafeChangePlanner requires selfModelQueryService — must come after it
 const safePlanner = new SafeChangePlanner(selfModelQueryService, USER_DATA_DIR);
-const reflectionAppService = new ReflectionAppService(reflectionService, safePlanner);
 
-// ─── Governance Layer (Phase 3.5) — must come before ExecutionOrchestrator ────
+// ─── Governance Layer (Phase 3.5) — must come before ReflectionAppService and ExecutionOrchestrator ────
+// Instantiated here so the evaluateForProposal callback can be passed to ReflectionAppService.
 const governanceAppService = new GovernanceAppService(
     USER_DATA_DIR,
     (proposalId: string) => safePlanner.listProposals().find(p => p.proposalId === proposalId) ?? null,
+);
+
+// Pass the governance evaluation callback so planning:promoteProposal auto-creates a GovernanceDecision.
+const reflectionAppService = new ReflectionAppService(
+    reflectionService,
+    safePlanner,
+    (proposal) => governanceAppService.evaluateForProposal(proposal),
 );
 
 // ─── Controlled Execution Layer (Phase 3) ─────────────────────────────────────
