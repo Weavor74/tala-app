@@ -1076,3 +1076,665 @@ describe('Integration: Autonomy Pipeline Safety', () => {
         engine.stop();
     });
 });
+
+// ─── P4.2: Detection Coverage Expansion ─────────────────────────────────────
+
+describe('P4.2: Detection Coverage Expansion', () => {
+
+    // ── P4.2B: Telemetry-Based Detection ───────────────────────────────────────
+
+    describe('P4.2B: telemetry_anomaly detection', () => {
+        it('produces no candidate when getDegradedMetrics is not provided', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    // getDegradedMetrics intentionally omitted
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'telemetry_anomaly')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('produces no candidate when sampleCount is below threshold (< 3)', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedMetrics: () => [
+                        { metricName: 'latency', subsystemId: 'inference', observedValue: 5000, threshold: 1000, sampleCount: 2, windowMs: 30 * 60 * 1000 },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'telemetry_anomaly')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('emits a telemetry_anomaly candidate when sampleCount meets threshold (≥ 3)', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedMetrics: () => [
+                        { metricName: 'error_rate', subsystemId: 'mcp', observedValue: 0.9, threshold: 0.1, sampleCount: 5, windowMs: 30 * 60 * 1000 },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'telemetry_anomaly');
+            expect(c).toBeDefined();
+            expect(c!.subsystemId).toBe('mcp');
+            expect(c!.sourceContext.kind).toBe('telemetry_anomaly');
+            const ctx = c!.sourceContext as any;
+            expect(ctx.metricName).toBe('error_rate');
+            expect(ctx.observedValue).toBe(0.9);
+            engine.stop();
+        });
+
+        it('emits one candidate per unique (subsystemId, metricName) pair', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedMetrics: () => [
+                        { metricName: 'latency', subsystemId: 'inference', observedValue: 9000, threshold: 1000, sampleCount: 4, windowMs: 30 * 60 * 1000 },
+                        { metricName: 'error_rate', subsystemId: 'inference', observedValue: 0.8, threshold: 0.1, sampleCount: 3, windowMs: 30 * 60 * 1000 },
+                        { metricName: 'latency', subsystemId: 'mcp', observedValue: 5000, threshold: 1000, sampleCount: 3, windowMs: 30 * 60 * 1000 },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const anomalies = candidates.filter(c => c.source === 'telemetry_anomaly');
+            expect(anomalies).toHaveLength(3);
+            engine.stop();
+        });
+
+        it('fingerprint is stable for same (subsystemId, metricName) across calls', () => {
+            const engine = new GoalDetectionEngine(
+                { listRecentExecutionRuns: () => [], listGovernanceDecisions: () => [], listReflectionGoals: async () => [], getActiveGoalFingerprints: () => new Set() },
+                () => {},
+            );
+            const fp1 = engine.fingerprint('telemetry_anomaly', 'inference', 'error_rate');
+            const fp2 = engine.fingerprint('telemetry_anomaly', 'inference', 'error_rate');
+            expect(fp1).toBe(fp2);
+            engine.stop();
+        });
+
+        it('marks candidate as isDuplicate when fingerprint matches active goal', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getDegradedMetrics: () => [
+                        { metricName: 'error_rate', subsystemId: 'mcp', observedValue: 0.9, threshold: 0.1, sampleCount: 5, windowMs: 30 * 60 * 1000 },
+                    ],
+                    getActiveGoalFingerprints: () => {
+                        const e = new GoalDetectionEngine(
+                            { listRecentExecutionRuns: () => [], listGovernanceDecisions: () => [], listReflectionGoals: async () => [], getActiveGoalFingerprints: () => new Set() },
+                            () => {},
+                        );
+                        return new Set([e.fingerprint('telemetry_anomaly', 'mcp', 'error_rate')]);
+                    },
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'telemetry_anomaly');
+            expect(c).toBeDefined();
+            expect(c!.isDuplicate).toBe(true);
+            engine.stop();
+        });
+    });
+
+    // ── P4.2C: Stale Subsystem Detection ───────────────────────────────────────
+
+    describe('P4.2C: stale_subsystem detection', () => {
+        it('produces no candidate when listSubsystemActivity is not provided', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    // listSubsystemActivity intentionally omitted
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'stale_subsystem')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('produces no candidate when subsystem has recent activity (< 3 days)', async () => {
+            const recentActivity = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listSubsystemActivity: () => [
+                        { subsystemId: 'inference', lastActivityAt: recentActivity },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'stale_subsystem')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('emits stale_subsystem candidate when lastActivityAt is > 3 days ago', async () => {
+            const staleTime = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listSubsystemActivity: () => [
+                        { subsystemId: 'mcp', lastActivityAt: staleTime },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'stale_subsystem');
+            expect(c).toBeDefined();
+            expect(c!.subsystemId).toBe('mcp');
+            expect(c!.sourceContext.kind).toBe('stale_subsystem');
+            const ctx = c!.sourceContext as any;
+            expect(ctx.staleDays).toBeGreaterThanOrEqual(5);
+            engine.stop();
+        });
+
+        it('emits stale_subsystem candidate when lastActivityAt is undefined (never active)', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listSubsystemActivity: () => [
+                        { subsystemId: 'experimental', lastActivityAt: undefined },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'stale_subsystem');
+            expect(c).toBeDefined();
+            expect(c!.subsystemId).toBe('experimental');
+            engine.stop();
+        });
+
+        it('fingerprint is stable across detection cycles for same subsystem', () => {
+            const engine = new GoalDetectionEngine(
+                { listRecentExecutionRuns: () => [], listGovernanceDecisions: () => [], listReflectionGoals: async () => [], getActiveGoalFingerprints: () => new Set() },
+                () => {},
+            );
+            const fp1 = engine.fingerprint('stale_subsystem', 'mcp', 'stale');
+            const fp2 = engine.fingerprint('stale_subsystem', 'mcp', 'stale');
+            expect(fp1).toBe(fp2);
+            engine.stop();
+        });
+    });
+
+    // ── P4.2D: Weak Coverage Signal Detection ──────────────────────────────────
+
+    describe('P4.2D: weak_coverage_signal detection', () => {
+        it('produces no candidate when getDegradedCapabilities is not provided', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    // getDegradedCapabilities intentionally omitted
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'weak_coverage_signal')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('produces no candidate when no capabilities are degraded', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedCapabilities: () => [],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'weak_coverage_signal')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('emits one candidate per subsystem with degraded capabilities', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedCapabilities: () => [
+                        { capabilityId: 'cap-inference-1', subsystemId: 'inference', status: 'degraded' },
+                        { capabilityId: 'cap-inference-2', subsystemId: 'inference', status: 'unavailable' },
+                        { capabilityId: 'cap-mcp-1', subsystemId: 'mcp', status: 'degraded' },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const weakCoverage = candidates.filter(c => c.source === 'weak_coverage_signal');
+            // One candidate per subsystem (inference + mcp = 2)
+            expect(weakCoverage).toHaveLength(2);
+            const inferenceCandidate = weakCoverage.find(c => c.subsystemId === 'inference');
+            expect(inferenceCandidate).toBeDefined();
+            const ctx = inferenceCandidate!.sourceContext as any;
+            expect(ctx.kind).toBe('weak_coverage_signal');
+            expect(ctx.missingCoverageIndicators).toContain('cap-inference-1');
+            expect(ctx.missingCoverageIndicators).toContain('cap-inference-2');
+            expect(ctx.testCount).toBe(2);
+            engine.stop();
+        });
+
+        it('context.missingCoverageIndicators is sorted for fingerprint stability', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedCapabilities: () => [
+                        { capabilityId: 'cap-z', subsystemId: 'inference', status: 'degraded' },
+                        { capabilityId: 'cap-a', subsystemId: 'inference', status: 'degraded' },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'weak_coverage_signal');
+            expect(c).toBeDefined();
+            const ctx = c!.sourceContext as any;
+            expect(ctx.missingCoverageIndicators[0]).toBe('cap-a');
+            expect(ctx.missingCoverageIndicators[1]).toBe('cap-z');
+            engine.stop();
+        });
+    });
+
+    // ── P4.2E: Backlog Goal Detection ──────────────────────────────────────────
+
+    describe('P4.2E: unresolved_backlog_item detection', () => {
+        it('produces no candidate when listBacklogGoals is not provided', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    // listBacklogGoals intentionally omitted
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'unresolved_backlog_item')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('produces no candidate for goals newer than 14 days', async () => {
+            const recentGoal = {
+                goalId: 'g1', title: 'recent goal', category: 'mcp', status: 'queued',
+                source: 'system', createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+            };
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listBacklogGoals: async () => [recentGoal],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'unresolved_backlog_item')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('emits unresolved_backlog_item for non-user goals older than 14 days', async () => {
+            const oldGoal = {
+                goalId: 'g1', title: 'old refactor goal', category: 'inference', status: 'queued',
+                source: 'system', createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+                description: 'Refactor inference module', attemptCount: 2,
+            };
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listBacklogGoals: async () => [oldGoal],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'unresolved_backlog_item');
+            expect(c).toBeDefined();
+            expect(c!.subsystemId).toBe('inference');
+            const ctx = c!.sourceContext as any;
+            expect(ctx.kind).toBe('unresolved_backlog_item');
+            expect(ctx.age).toBeGreaterThanOrEqual(20);
+            expect(ctx.previousAttempts).toBe(2);
+            engine.stop();
+        });
+
+        it('does not emit unresolved_backlog_item for user-seeded goals', async () => {
+            const userGoal = {
+                goalId: 'g2', title: 'user goal', category: 'mcp', status: 'queued',
+                source: 'user', createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+            };
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listBacklogGoals: async () => [userGoal],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'unresolved_backlog_item')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('does not emit for goals with status other than queued', async () => {
+            const completedGoal = {
+                goalId: 'g3', title: 'done goal', category: 'inference', status: 'completed',
+                source: 'system', createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
+            };
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    listBacklogGoals: async () => [completedGoal],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'unresolved_backlog_item')).toBeUndefined();
+            engine.stop();
+        });
+    });
+
+    // ── P4.2E: Recurring Reflection Goal Detection ─────────────────────────────
+
+    describe('P4.2E: recurring_reflection_goal detection', () => {
+        it('does not emit when the same goal title appears fewer than 2 times', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [
+                        { goalId: 'g1', title: 'improve error handling', category: 'inference', status: 'queued', source: 'system', createdAt: new Date().toISOString() },
+                    ],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'recurring_reflection_goal')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('emits recurring_reflection_goal when ≥ 2 queued goals share the same title+category', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [
+                        { goalId: 'g1', title: 'improve error handling', category: 'inference', status: 'queued', source: 'system', createdAt: new Date(Date.now() - 10000).toISOString() },
+                        { goalId: 'g2', title: 'improve error handling', category: 'inference', status: 'queued', source: 'system', createdAt: new Date().toISOString() },
+                    ],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'recurring_reflection_goal');
+            expect(c).toBeDefined();
+            expect(c!.subsystemId).toBe('inference');
+            const ctx = c!.sourceContext as any;
+            expect(ctx.kind).toBe('recurring_reflection_goal');
+            expect(ctx.recurrenceCount).toBe(2);
+            expect(typeof ctx.lastOccurrence).toBe('string');
+            engine.stop();
+        });
+
+        it('context carries the correct recurrenceCount for 3 occurrences', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [
+                        { goalId: 'g1', title: 'reduce latency', category: 'mcp', status: 'queued', source: 'system', createdAt: new Date(Date.now() - 30000).toISOString() },
+                        { goalId: 'g2', title: 'reduce latency', category: 'mcp', status: 'queued', source: 'system', createdAt: new Date(Date.now() - 20000).toISOString() },
+                        { goalId: 'g3', title: 'reduce latency', category: 'mcp', status: 'queued', source: 'system', createdAt: new Date().toISOString() },
+                    ],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const c = candidates.find(c => c.source === 'recurring_reflection_goal');
+            expect(c).toBeDefined();
+            const ctx = c!.sourceContext as any;
+            expect(ctx.recurrenceCount).toBe(3);
+            engine.stop();
+        });
+
+        it('does not treat user-seeded goals as recurring reflection goals', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [
+                        { goalId: 'g1', title: 'user request', category: 'inference', status: 'queued', source: 'user', createdAt: new Date().toISOString() },
+                        { goalId: 'g2', title: 'user request', category: 'inference', status: 'queued', source: 'user', createdAt: new Date().toISOString() },
+                    ],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            // user goals should not produce recurring_reflection_goal
+            expect(candidates.find(c => c.source === 'recurring_reflection_goal')).toBeUndefined();
+            engine.stop();
+        });
+    });
+
+    // ── P4.2F: Deduplication & Fingerprint Stability ────────────────────────────
+
+    describe('P4.2F: deduplication and fingerprint stability', () => {
+        it('runOnce() never emits two candidates with the same dedupFingerprint in one cycle', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [
+                        { executionId: 'e1', subsystemId: 'inference', status: 'aborted', createdAt: new Date().toISOString() } as any,
+                        { executionId: 'e2', subsystemId: 'inference', status: 'aborted', createdAt: new Date().toISOString() } as any,
+                        { executionId: 'e3', subsystemId: 'inference', status: 'aborted', createdAt: new Date().toISOString() } as any,
+                    ],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedMetrics: () => [
+                        { metricName: 'error_rate', subsystemId: 'inference', observedValue: 0.9, threshold: 0.1, sampleCount: 5, windowMs: 30 * 60 * 1000 },
+                    ],
+                    getDegradedCapabilities: () => [
+                        { capabilityId: 'cap-1', subsystemId: 'mcp', status: 'degraded' },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engine.runOnce();
+            const fps = candidates.map(c => c.dedupFingerprint);
+            const unique = new Set(fps);
+            expect(unique.size).toBe(fps.length);
+            engine.stop();
+        });
+
+        it('different sources for the same subsystem produce distinct fingerprints', () => {
+            const engine = new GoalDetectionEngine(
+                { listRecentExecutionRuns: () => [], listGovernanceDecisions: () => [], listReflectionGoals: async () => [], getActiveGoalFingerprints: () => new Set() },
+                () => {},
+            );
+            const fp1 = engine.fingerprint('telemetry_anomaly', 'inference', 'error_rate');
+            const fp2 = engine.fingerprint('stale_subsystem', 'inference', 'error_rate');
+            const fp3 = engine.fingerprint('weak_coverage_signal', 'inference', 'error_rate');
+            const fp4 = engine.fingerprint('unresolved_backlog_item', 'inference', 'error_rate');
+            const fp5 = engine.fingerprint('recurring_reflection_goal', 'inference', 'error_rate');
+            const fps = [fp1, fp2, fp3, fp4, fp5];
+            expect(new Set(fps).size).toBe(5);
+            engine.stop();
+        });
+
+        it('candidates with isDuplicate=true are still returned (suppression is downstream)', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedCapabilities: () => [
+                        { capabilityId: 'cap-1', subsystemId: 'mcp', status: 'degraded' },
+                    ],
+                },
+                () => {},
+            );
+            // Pre-populate with the fingerprint of the weak_coverage_signal candidate
+            const fp = engine.fingerprint('weak_coverage_signal', 'mcp', 'cap-1');
+            const engineWithDup = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set([fp]),
+                    getDegradedCapabilities: () => [
+                        { capabilityId: 'cap-1', subsystemId: 'mcp', status: 'degraded' },
+                    ],
+                },
+                () => {},
+            );
+            const candidates = await engineWithDup.runOnce();
+            const c = candidates.find(c => c.source === 'weak_coverage_signal');
+            expect(c).toBeDefined();
+            expect(c!.isDuplicate).toBe(true);
+            engineWithDup.stop();
+        });
+
+        it('second runOnce() call with same deps returns same fingerprints (no randomness)', async () => {
+            const staleTime = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+            const deps = {
+                listRecentExecutionRuns: () => [],
+                listGovernanceDecisions: () => [],
+                listReflectionGoals: async () => [],
+                getActiveGoalFingerprints: () => new Set(),
+                listSubsystemActivity: () => [{ subsystemId: 'mcp', lastActivityAt: staleTime }],
+            };
+            const engine = new GoalDetectionEngine(deps, () => {});
+            const run1 = await engine.runOnce();
+            const run2 = await engine.runOnce();
+            const fps1 = run1.map(c => c.dedupFingerprint).sort();
+            const fps2 = run2.map(c => c.dedupFingerprint).sort();
+            expect(fps1).toEqual(fps2);
+            engine.stop();
+        });
+    });
+
+    // ── P4.2H: Safety Validation ────────────────────────────────────────────────
+
+    describe('P4.2H: safety validation', () => {
+        it('all new detectors return empty when their optional dep throws', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                    getDegradedMetrics: () => { throw new Error('metrics unavailable'); },
+                    listSubsystemActivity: () => { throw new Error('self-model unavailable'); },
+                    getDegradedCapabilities: () => { throw new Error('caps unavailable'); },
+                    listBacklogGoals: async () => { throw new Error('goals unavailable'); },
+                },
+                () => {},
+            );
+            // Should not throw; each detector catches its own errors
+            await expect(engine.runOnce()).resolves.not.toThrow();
+            const candidates = await engine.runOnce();
+            expect(candidates.find(c => c.source === 'telemetry_anomaly')).toBeUndefined();
+            expect(candidates.find(c => c.source === 'stale_subsystem')).toBeUndefined();
+            expect(candidates.find(c => c.source === 'weak_coverage_signal')).toBeUndefined();
+            expect(candidates.find(c => c.source === 'unresolved_backlog_item')).toBeUndefined();
+            engine.stop();
+        });
+
+        it('runOnce() completes without throwing when all optional deps are absent', async () => {
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => [],
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            await expect(engine.runOnce()).resolves.toEqual([]);
+            engine.stop();
+        });
+
+        it('sequential runOnce() calls both complete without interference', async () => {
+            let callCount = 0;
+            const engine = new GoalDetectionEngine(
+                {
+                    listRecentExecutionRuns: () => { callCount++; return []; },
+                    listGovernanceDecisions: () => [],
+                    listReflectionGoals: async () => [],
+                    getActiveGoalFingerprints: () => new Set(),
+                },
+                () => {},
+            );
+            // Direct calls to runOnce() are sequential and always execute;
+            // the _isRunning guard only blocks timer-triggered overlap in start().
+            const r1 = await engine.runOnce();
+            const r2 = await engine.runOnce();
+            // Both calls ran (callCount = 2 calls × 2 detectors using listRecentExecutionRuns)
+            expect(callCount).toBeGreaterThanOrEqual(2);
+            expect(Array.isArray(r1)).toBe(true);
+            expect(Array.isArray(r2)).toBe(true);
+            engine.stop();
+        });
+    });
+});
