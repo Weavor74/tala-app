@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type { ReflectionDashboardState, ChangeProposal, SoulIdentity, SoulReflection, ReflectionJournalEntry, SelfImprovementGoal, TelemetryEvent } from '../reflectionTypes';
 import ReflectionProposalCard from './ReflectionProposalCard';
 import ExecutionPipelinePanel from './ExecutionPipelinePanel';
+import GovernancePanel from './GovernancePanel';
 
 /**
  * Reflection Dashboard Component
@@ -21,7 +22,7 @@ import ExecutionPipelinePanel from './ExecutionPipelinePanel';
  */
 const ReflectionPanel: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'engineering' | 'soul'>('engineering');
-    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events' | 'goals' | 'telemetry' | 'execution'>('proposals');
+    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events' | 'goals' | 'telemetry' | 'execution' | 'governance'>('proposals');
     const [dashboardState, setDashboardState] = useState<ReflectionDashboardState | null>(null);
     const [proposals, setProposals] = useState<ChangeProposal[]>([]);
     const [reflectionEvents, setReflectionEvents] = useState<ReflectionJournalEntry[]>([]);
@@ -318,6 +319,17 @@ const ReflectionPanel: React.FC = () => {
                         >
                             ▶ Live Execution Pipeline
                         </button>
+                        <button
+                            onClick={() => setEngineeringSubTab('governance')}
+                            style={{
+                                padding: '0.4rem 0.8rem', borderRadius: '20px', fontSize: '0.75rem', border: '1px solid #374151',
+                                background: engineeringSubTab === 'governance' ? '#7c3aed' : 'transparent',
+                                color: engineeringSubTab === 'governance' ? '#fff' : '#9ca3af',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            🛡️ Governance
+                        </button>
                     </div>
 
                     {engineeringSubTab === 'proposals' ? (
@@ -425,6 +437,9 @@ const ReflectionPanel: React.FC = () => {
                     )}
                     {engineeringSubTab === 'execution' && (
                         <ExecutionPipelinePanel />
+                    )}
+                    {engineeringSubTab === 'governance' && (
+                        <GovernancePanel />
                     )}
                 </>
             ) : (

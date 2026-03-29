@@ -206,6 +206,43 @@ export class SafeChangePlanner {
         return this.telemetryStore.getRunEvents(runId, limit);
     }
 
+    /**
+     * Promotes a classified proposal to 'promoted' status.
+     *
+     * Validates that the proposal exists and is currently in 'classified' status.
+     * Returns the updated proposal on success, or null if the proposal was not found
+     * or was not in a promotable state.
+     *
+     * This is the authoritative transition point for proposal promotion — it is safe
+     * to call governance evaluation immediately after this returns a non-null result.
+     */
+    promoteProposal(proposalId: string): SafeChangeProposal | null {
+        // Search over a 4-hour window — consistent with pruneOldRuns retention
+        const runs = this.registry.listRecent(4 * 60 * 60 * 1000);
+        for (const run of runs) {
+            const idx = run.proposals.findIndex(p => p.proposalId === proposalId);
+            if (idx === -1) continue;
+
+            const proposal = run.proposals[idx]!;
+            if (proposal.status !== 'classified') return null;
+
+            const promoted: SafeChangeProposal = { ...proposal, status: 'promoted' };
+            const updatedProposals = [...run.proposals];
+            updatedProposals[idx] = promoted;
+            this.registry.updateRun(run.runId, { proposals: updatedProposals });
+
+            this.telemetryStore.record(
+                run.runId,
+                'done',
+                'proposal',
+                `Proposal ${proposalId} transitioned to 'promoted'`,
+            );
+
+            return promoted;
+        }
+        return null;
+    }
+
     /** Cleans up old run records from the in-memory registry. */
     pruneOldRuns(): void {
         this.registry.pruneOldRuns();

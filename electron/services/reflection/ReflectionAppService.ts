@@ -1,15 +1,23 @@
 import { ipcMain } from 'electron';
 import { ReflectionService } from './ReflectionService';
 import { SafeChangePlanner } from './SafeChangePlanner';
-import type { PlanTriggerInput } from '../../../shared/reflectionPlanTypes';
+import type { PlanTriggerInput, SafeChangeProposal } from '../../../shared/reflectionPlanTypes';
+import { telemetry } from '../TelemetryService';
 
 export class ReflectionAppService {
     private reflectionService: ReflectionService;
     private safePlanner?: SafeChangePlanner;
+    /** Optional callback — called synchronously after a proposal is promoted (P3.5 integration). */
+    private readonly onProposalPromoted?: (proposal: SafeChangeProposal) => void;
 
-    constructor(reflectionService: ReflectionService, safePlanner?: SafeChangePlanner) {
+    constructor(
+        reflectionService: ReflectionService,
+        safePlanner?: SafeChangePlanner,
+        onProposalPromoted?: (proposal: SafeChangeProposal) => void,
+    ) {
         this.reflectionService = reflectionService;
         this.safePlanner = safePlanner;
+        this.onProposalPromoted = onProposalPromoted;
         this.registerIpcHandlers();
     }
 
@@ -240,6 +248,37 @@ export class ReflectionAppService {
             this.executeWithTelemetry('planning:getRunTelemetry', async () => {
                 if (!this.safePlanner) return [];
                 return this.safePlanner.getRunTelemetry(runId, limit);
+            })
+        );
+
+        // ── Phase 3.5 integration: promote a classified proposal and trigger governance evaluation ──
+        ipcMain.handle('planning:promoteProposal', (_, proposalId: string) =>
+            this.executeWithTelemetry('planning:promoteProposal', async () => {
+                if (!this.safePlanner) throw new Error('SafeChangePlanner not initialised');
+
+                const promoted = this.safePlanner.promoteProposal(proposalId);
+                if (!promoted) {
+                    return { success: false, proposal: null, error: 'not_found_or_not_classified' };
+                }
+
+                // Trigger governance evaluation synchronously so a GovernanceDecision
+                // exists before execution eligibility check 10 is reached.
+                // Non-fatal: governance evaluation failure must not roll back promotion.
+                if (this.onProposalPromoted) {
+                    try {
+                        this.onProposalPromoted(promoted);
+                    } catch (err: any) {
+                        telemetry.operational(
+                            'governance',
+                            'governance.promote.evaluation_failed',
+                            'warn',
+                            'ReflectionAppService',
+                            `Governance evaluation after promote failed (non-fatal): ${err?.message ?? String(err)}`,
+                        );
+                    }
+                }
+
+                return { success: true, proposal: promoted };
             })
         );
     }

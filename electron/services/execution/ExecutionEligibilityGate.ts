@@ -28,6 +28,17 @@ import type { SafeChangeProposal } from '../../../shared/reflectionPlanTypes';
 import type { ExecutionRunRegistry } from './ExecutionRunRegistry';
 import { telemetry } from '../TelemetryService';
 
+// ─── Governance Authorization Provider interface ───────────────────────────────
+
+/**
+ * Thin interface for the governance authorization gate injected into the eligibility gate.
+ * Keeping this as a minimal interface maintains testability without importing
+ * the full ExecutionAuthorizationGate.
+ */
+export interface GovernanceAuthorizationProvider {
+    canExecute(proposalId: string): { authorized: boolean; reason: string; decisionId?: string };
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Proposals older than this are considered stale. Default: 7 days. */
@@ -39,6 +50,8 @@ export class ExecutionEligibilityGate {
     constructor(
         private readonly registry: ExecutionRunRegistry,
         private readonly maxProposalAgeMs = MAX_PROPOSAL_AGE_MS,
+        /** Optional governance provider. When absent, check 10 is skipped (backward-compat). */
+        private readonly governanceProvider?: GovernanceAuthorizationProvider,
     ) {}
 
     /**
@@ -189,6 +202,20 @@ export class ExecutionEligibilityGate {
             );
         }
         pass('authorization');
+
+        // ── Check 10: governance_approval (P3.5G) ───────────────────────────────
+        // Only evaluated when a governance provider is configured.
+        // When absent (e.g., in tests without governance), this check is skipped.
+        if (this.governanceProvider) {
+            const govResult = this.governanceProvider.canExecute(proposal.proposalId);
+            if (!govResult.authorized) {
+                return fail(
+                    'governance_approval',
+                    `Governance gate blocked execution: ${govResult.reason}`,
+                );
+            }
+            pass('governance_approval');
+        }
 
         telemetry.operational(
             'execution',

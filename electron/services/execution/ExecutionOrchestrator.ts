@@ -43,6 +43,7 @@ import { ExecutionDashboardBridge } from './ExecutionDashboardBridge';
 import { ProtectedFileRegistry } from '../reflection/ProtectedFileRegistry';
 import { SafeCommandService } from '../reflection/SafeCommandService';
 import { telemetry } from '../TelemetryService';
+import type { GovernanceAuthorizationProvider } from './ExecutionEligibilityGate';
 
 // ─── ExecutionOrchestrator ────────────────────────────────────────────────────
 
@@ -64,10 +65,16 @@ export class ExecutionOrchestrator {
         private readonly workspaceRoot: string,
         private readonly knownInvariantIds: () => string[],
         private readonly getProposal: (proposalId: string) => SafeChangeProposal | null,
+        /** Optional governance gate injected from GovernanceAppService (P3.5G). */
+        governanceProvider?: GovernanceAuthorizationProvider,
     ) {
         this.registry = new ExecutionRunRegistry();
         this.budgetManager = new ExecutionBudgetManager();
-        this.eligibilityGate = new ExecutionEligibilityGate(this.registry);
+        this.eligibilityGate = new ExecutionEligibilityGate(
+            this.registry,
+            undefined, // use default maxProposalAgeMs
+            governanceProvider,
+        );
         this.snapshotService = new ExecutionSnapshotService();
         const protectedRegistry = new ProtectedFileRegistry();
         this.patchPlanBuilder = new PatchPlanBuilder(protectedRegistry, workspaceRoot);
@@ -111,7 +118,7 @@ export class ExecutionOrchestrator {
             authorizationToken: uuidv4(),
         };
 
-        // Eligibility gate (synchronous, deterministic)
+        // Eligibility gate (synchronous, deterministic — includes governance check 10 if configured)
         const eligibilityResult = this.eligibilityGate.evaluate(
             proposal,
             authorization,
