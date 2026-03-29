@@ -37,6 +37,7 @@ import { ReflectionAppService } from './services/reflection/ReflectionAppService
 import { SafeChangePlanner } from './services/reflection/SafeChangePlanner';
 import { ExecutionOrchestrator } from './services/execution/ExecutionOrchestrator';
 import { ExecutionAppService } from './services/execution/ExecutionAppService';
+import { GovernanceAppService } from './services/governance/GovernanceAppService';
 import { InvariantRegistry } from './services/selfModel/InvariantRegistry';
 import { CapabilityRegistry } from './services/selfModel/CapabilityRegistry';
 import { OwnershipMapper } from './services/selfModel/OwnershipMapper';
@@ -115,12 +116,19 @@ const selfModelAppService = new SelfModelAppService(selfModelRefreshService, sel
 const safePlanner = new SafeChangePlanner(selfModelQueryService, USER_DATA_DIR);
 const reflectionAppService = new ReflectionAppService(reflectionService, safePlanner);
 
+// ─── Governance Layer (Phase 3.5) — must come before ExecutionOrchestrator ────
+const governanceAppService = new GovernanceAppService(
+    USER_DATA_DIR,
+    (proposalId: string) => safePlanner.listProposals().find(p => p.proposalId === proposalId) ?? null,
+);
+
 // ─── Controlled Execution Layer (Phase 3) ─────────────────────────────────────
 const executionOrchestrator = new ExecutionOrchestrator(
     USER_DATA_DIR,
     EFFECTIVE_WORKSPACE_ROOT,
     () => invariantRegistry.getAll().map(i => i.id),
     (proposalId: string) => safePlanner.listProposals().find(p => p.proposalId === proposalId) ?? null,
+    governanceAppService.getAuthorizationGate(),
 );
 new ExecutionAppService(executionOrchestrator);
 const soulService = new SoulService(USER_DATA_DIR);

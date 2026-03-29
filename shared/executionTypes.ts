@@ -63,6 +63,12 @@ export interface ExecutionAuthorization {
     proposalStatus: string;
     /** One-time token issued at authorization time. */
     authorizationToken: string;
+    /**
+     * Governance decision ID that authorized this execution.
+     * Set when a GovernanceDecision with executionAuthorized=true exists for the proposal.
+     * Provides a traceable link: ExecutionRun → GovernanceDecision.
+     */
+    governanceDecisionId?: string;
 }
 
 // ─── Eligibility Checks ───────────────────────────────────────────────────────
@@ -76,7 +82,8 @@ export type ExecutionEligibilityCheckName =
     | 'invariant_refs'         // blastRadius invariant references still resolve
     | 'rollback_plan_present'  // rollbackClassification.rollbackSteps non-empty (or no_rollback_needed)
     | 'verification_plan'      // at least one verification requirement present
-    | 'authorization';         // valid ExecutionAuthorization exists
+    | 'authorization'          // valid ExecutionAuthorization exists
+    | 'governance_approval';   // governance decision permits execution (P3.5G)
 
 export interface ExecutionEligibilityCheck {
     name: ExecutionEligibilityCheckName;

@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -527,6 +527,36 @@ contextBridge.exposeInMainWorld('tala', {
         const listener = (event: any, data: any) => callback(data);
         ipcRenderer.on('execution:telemetry', listener);
         return () => ipcRenderer.removeListener('execution:telemetry', listener);
+    },
+
+    // ─── Phase 3.5: Human-in-the-Loop Governance ─────────────────
+    /** Gets the governance decision for a proposal. */
+    getGovernanceDecision: (proposalId: string) => ipcRenderer.invoke('governance:getDecision', proposalId),
+    /** Lists governance decisions, optionally filtered by status. */
+    listGovernanceDecisions: (filter?: { status?: string }) => ipcRenderer.invoke('governance:listDecisions', filter),
+    /** Gets the governance dashboard state (KPIs + approval queue). */
+    getGovernanceDashboardState: () => ipcRenderer.invoke('governance:getDashboardState'),
+    /** Evaluates governance policy for a proposal (creates/returns decision). */
+    evaluateGovernance: (proposalId: string) => ipcRenderer.invoke('governance:evaluateProposal', proposalId),
+    /** Records a human approval for a proposal. */
+    approveProposal: (request: { proposalId: string; reason?: string }) => ipcRenderer.invoke('governance:approve', request),
+    /** Records a human rejection for a proposal. */
+    rejectProposal: (request: { proposalId: string; reason: string }) => ipcRenderer.invoke('governance:reject', request),
+    /** Records a deferral for a proposal. */
+    deferProposal: (request: { proposalId: string; reason?: string }) => ipcRenderer.invoke('governance:defer', request),
+    /** Marks a confirmation requirement as satisfied. */
+    satisfyGovernanceConfirmation: (request: { proposalId: string; confirmationId: string }) => ipcRenderer.invoke('governance:satisfyConfirmation', request),
+    /** Reads the governance audit log for a proposal. */
+    getGovernanceAuditLog: (proposalId: string) => ipcRenderer.invoke('governance:getAuditLog', proposalId),
+    /** Checks whether a proposal's governance decision authorizes execution. */
+    getGovernanceAuthorizationDecision: (proposalId: string) => ipcRenderer.invoke('governance:getAuthorizationDecision', proposalId),
+    /** Gets the active governance policy. */
+    getActiveGovernancePolicy: () => ipcRenderer.invoke('governance:getActivePolicy'),
+    /** Subscribes to governance dashboard updates. Returns cleanup function. */
+    onGovernanceUpdate: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('governance:dashboardUpdate', listener);
+        return () => ipcRenderer.removeListener('governance:dashboardUpdate', listener);
     },
 
     // ─── Session Export ───────────────────────────────────────────
