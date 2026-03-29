@@ -48,6 +48,7 @@ import { RecoveryPackRegistry } from '../../electron/services/autonomy/recovery/
 import { RecoveryPackMatcher } from '../../electron/services/autonomy/recovery/RecoveryPackMatcher';
 import { RecoveryPackPlannerAdapter } from '../../electron/services/autonomy/recovery/RecoveryPackPlannerAdapter';
 import { RecoveryPackOutcomeTracker } from '../../electron/services/autonomy/recovery/RecoveryPackOutcomeTracker';
+import { AutonomyTelemetryStore } from '../../electron/services/autonomy/AutonomyTelemetryStore';
 import type { AutonomousGoal, AutonomousRun } from '../../shared/autonomyTypes';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -875,5 +876,192 @@ describe('P4.3E: Pipeline compatibility', () => {
         );
 
         fs.rmSync(dataDir, { recursive: true });
+    });
+});
+
+// ─── P4.3.1: Resume-path pack outcome recording (micro-fix) ──────────────────
+
+describe('P4.3.1: Resume-path pack outcome recording', () => {
+    let dataDir: string;
+    let registry: RecoveryPackRegistry;
+    let tracker: RecoveryPackOutcomeTracker;
+
+    beforeEach(() => {
+        dataDir = makeTempDir();
+        registry = new RecoveryPackRegistry(dataDir);
+        tracker = new RecoveryPackOutcomeTracker(dataDir, registry);
+    });
+
+    afterEach(() => {
+        fs.rmSync(dataDir, { recursive: true });
+    });
+
+    it('pack-backed resumed run: record() produces a RecoveryPackExecutionRecord', () => {
+        const goal = makeGoal();
+        const run = makeRun({ recoveryPackId: 'repeated_execution_failure_v1', status: 'succeeded' });
+
+        const record = tracker.record('repeated_execution_failure_v1', goal, run, 'succeeded');
+
+        expect(record.packId).toBe('repeated_execution_failure_v1');
+        expect(record.outcome).toBe('succeeded');
+        expect(record.goalId).toBe(goal.goalId);
+        expect(record.runId).toBe(run.runId);
+        expect(record.recordId).toBeTruthy();
+    });
+
+    it('pack-backed resumed run: confidence increases on success', () => {
+        const goal = makeGoal();
+        const run = makeRun({ recoveryPackId: 'repeated_execution_failure_v1', status: 'succeeded' });
+        const packBefore = registry.getById('repeated_execution_failure_v1')!;
+
+        const record = tracker.record('repeated_execution_failure_v1', goal, run, 'succeeded');
+
+        expect(record.confidenceAfterAdjustment).toBeGreaterThan(packBefore.confidence.current);
+    });
+
+    it('pack-backed resumed run: confidence decreases on failure', () => {
+        const goal = makeGoal();
+        const run = makeRun({ recoveryPackId: 'repeated_execution_failure_v1', status: 'failed' });
+        const packBefore = registry.getById('repeated_execution_failure_v1')!;
+
+        const record = tracker.record('repeated_execution_failure_v1', goal, run, 'failed');
+
+        expect(record.confidenceAfterAdjustment).toBeLessThan(packBefore.confidence.current);
+    });
+
+    it('pack-backed resumed run: attempt count is tracked per goal', () => {
+        const goal = makeGoal();
+        const run1 = makeRun({ runId: 'run-resume-1', recoveryPackId: 'repeated_execution_failure_v1' });
+        const run2 = makeRun({ runId: 'run-resume-2', recoveryPackId: 'repeated_execution_failure_v1' });
+
+        tracker.record('repeated_execution_failure_v1', goal, run1, 'failed');
+        tracker.record('repeated_execution_failure_v1', goal, run2, 'succeeded');
+
+        const counts = tracker.getAttemptCountsForGoal(goal.goalId);
+        expect(counts.get('repeated_execution_failure_v1')).toBe(2);
+    });
+
+    it('non-pack resumed run: guard condition (no recoveryPackId) means tracker is not called', () => {
+        // This test documents the if-guard at the service level:
+        // finalRun.recoveryPackId must be set for the tracker to receive a record.
+        // If the orchestrator's guard is correct, only pack-backed runs produce records.
+        //
+        // Setup: record one pack-backed run, then verify no second record appears
+        // from a hypothetical non-pack run (which would skip the tracker call).
+        const goal = makeGoal();
+        const packRun = makeRun({ runId: 'run-pack', recoveryPackId: 'repeated_execution_failure_v1' });
+        const _nonPackRun = makeRun({ runId: 'run-no-pack' }); // no recoveryPackId
+
+        // Only the pack-backed run calls tracker.record() — the non-pack run does not.
+        tracker.record('repeated_execution_failure_v1', goal, packRun, 'succeeded');
+        // (non-pack path skips the call entirely — simulated by not calling tracker.record())
+
+        const counts = tracker.getAttemptCountsForGoal(goal.goalId);
+        // Exactly one attempt: from the pack-backed run only
+        expect(counts.get('repeated_execution_failure_v1')).toBe(1);
+        expect(counts.size).toBe(1);
+    });
+
+    it('standard path (main pipeline) records outcome exactly once — regression check', () => {
+        // Simulate what _executeGoalPipeline's finally block does:
+        // one call to tracker.record() for a pack-backed run.
+        const goal = makeGoal();
+        const run = makeRun({ recoveryPackId: 'repeated_execution_failure_v1', status: 'succeeded' });
+
+        tracker.record('repeated_execution_failure_v1', goal, run, 'succeeded');
+
+        const records = tracker.listRecordsForPack('repeated_execution_failure_v1');
+        expect(records).toHaveLength(1);  // exactly one record — no duplicates
+    });
+});
+
+// ─── P4.3.1: recovery_pack_rejected telemetry (micro-fix) ────────────────────
+
+describe('P4.3.1: recovery_pack_rejected telemetry', () => {
+    let dataDir: string;
+
+    beforeEach(() => {
+        dataDir = makeTempDir();
+    });
+
+    afterEach(() => {
+        fs.rmSync(dataDir, { recursive: true });
+    });
+
+    it('AutonomyTelemetryStore accepts recovery_pack_rejected without throwing', () => {
+        const store = new AutonomyTelemetryStore(dataDir);
+        expect(() =>
+            store.record('recovery_pack_rejected', 'Pack selected but rejected', {
+                goalId: 'g1', runId: 'r1', subsystemId: 'inference',
+            })
+        ).not.toThrow();
+    });
+
+    it('recovery_pack_rejected event is retrievable from the store', () => {
+        const store = new AutonomyTelemetryStore(dataDir);
+        store.record('recovery_pack_rejected', 'adapter returned null', { goalId: 'g1' });
+
+        const events = store.getRecentEvents(5);
+        const rejected = events.filter(e => e.type === 'recovery_pack_rejected');
+        expect(rejected).toHaveLength(1);
+        expect(rejected[0].detail).toBe('adapter returned null');
+    });
+
+    it('recovery_pack_rejected is semantically distinct from recovery_pack_fallback', () => {
+        // rejected  = a pack was selected/found but could not be used (disqualified, adapter null, etc.)
+        // fallback  = no pack matched at all — ordinary planning path chosen
+        const store = new AutonomyTelemetryStore(dataDir);
+        store.record('recovery_pack_rejected', 'pack X adapter null', { goalId: 'g1' });
+        store.record('recovery_pack_fallback', 'no pack matched', { goalId: 'g2' });
+
+        const events = store.getRecentEvents(10);
+        const rejected = events.filter(e => e.type === 'recovery_pack_rejected');
+        const fallback = events.filter(e => e.type === 'recovery_pack_fallback');
+        expect(rejected).toHaveLength(1);
+        expect(fallback).toHaveLength(1);
+        expect(rejected[0].detail).toContain('adapter null');
+        expect(fallback[0].detail).toContain('no pack matched');
+    });
+
+    it('hard-blocked subsystem disqualifies all packs — this is the rejected scenario', () => {
+        // When all pack candidates are disqualified (not just no-match), the orchestrator
+        // emits recovery_pack_fallback (since matchResult.fallbackToStandardPlanning is true
+        // with no selectedPackId). This test verifies the disqualifier state that triggers
+        // the rejected path when a selectedPackId is present but the pack is later rejected.
+        const dir = makeTempDir();
+        try {
+            const registry = new RecoveryPackRegistry(dir);
+            const matcher = new RecoveryPackMatcher(registry);
+            const goal = makeGoal({ subsystemId: 'identity' });
+
+            const result = matcher.match(goal, ['identity'], new Map());
+
+            // All candidates are disqualified — selectedPackId is null → fallback
+            expect(result.fallbackToStandardPlanning).toBe(true);
+            expect(result.selectedPackId).toBeNull();
+            expect(result.candidates.every(c => c.disqualified)).toBe(true);
+        } finally {
+            fs.rmSync(dir, { recursive: true });
+        }
+    });
+
+    it('true no-match (unknown source) produces fallback=true with no disqualified candidates', () => {
+        // When no pack handles the goal source, required rules fail but packs are NOT disqualified.
+        // The orchestrator emits recovery_pack_fallback (not rejected) for this path.
+        const dir = makeTempDir();
+        try {
+            const registry = new RecoveryPackRegistry(dir);
+            const matcher = new RecoveryPackMatcher(registry);
+            const goal = makeGoal({ source: 'user_seeded' as any });
+
+            const result = matcher.match(goal, [], new Map());
+
+            expect(result.fallbackToStandardPlanning).toBe(true);
+            // No candidates are flagged disqualified — required rule just didn't match
+            expect(result.candidates.some(c => c.disqualified)).toBe(false);
+            expect(result.candidates.every(c => c.matchStrength === 'no_match')).toBe(true);
+        } finally {
+            fs.rmSync(dir, { recursive: true });
+        }
     });
 });

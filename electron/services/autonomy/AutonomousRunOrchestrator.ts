@@ -680,6 +680,20 @@ export class AutonomousRunOrchestrator {
             const outcome = this._outcomeFromRunStatus(finalRun.status);
             this.learningRegistry.record(goal, finalRun, outcome);
             this.budgetManager.recordRunEnd(run.runId);
+            // ── Phase 4.3.1: Record recovery pack outcome on resume path ──────
+            if (this._packOutcomeTracker && finalRun.recoveryPackId) {
+                const packOutcome = this._packOutcomeFromRunOutcome(outcome);
+                this._packOutcomeTracker.record(
+                    finalRun.recoveryPackId,
+                    goal,
+                    finalRun,
+                    packOutcome,
+                );
+                this.telemetryStore.record('recovery_pack_outcome_recorded',
+                    `Recovery pack ${finalRun.recoveryPackId} outcome '${packOutcome}' recorded (resume path)`,
+                    { goalId: goal.goalId, runId: run.runId },
+                );
+            }
         }
     }
 
@@ -945,18 +959,18 @@ export class AutonomousRunOrchestrator {
 
             const pack = this._packRegistry.getById(matchResult.selectedPackId);
             if (!pack) {
-                this.telemetryStore.record('recovery_pack_fallback',
-                    `Pack ${matchResult.selectedPackId} not found in registry — falling back.`,
-                    { goalId: goal.goalId, runId: run.runId },
+                this.telemetryStore.record('recovery_pack_rejected',
+                    `Pack ${matchResult.selectedPackId} was selected but not found in registry — rejected.`,
+                    { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
                 );
                 return standardInput;
             }
 
             const adaptedInput = this._packPlannerAdapter.buildPlanInput(goal, pack, matchResult);
             if (!adaptedInput) {
-                this.telemetryStore.record('recovery_pack_fallback',
-                    `Pack ${pack.packId} adapter returned null — falling back to standard planning.`,
-                    { goalId: goal.goalId, runId: run.runId },
+                this.telemetryStore.record('recovery_pack_rejected',
+                    `Pack ${pack.packId} adapter returned null — pack rejected, falling back to standard planning.`,
+                    { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
                 );
                 return standardInput;
             }
