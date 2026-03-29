@@ -477,7 +477,7 @@ describe('P4.3D: RecoveryPackPlannerAdapter', () => {
         const goal = makeGoal({ source: 'repeated_execution_failure' });
         const matchResult = matcher.match(goal, [], new Map());
         const pack = registry.getById(matchResult.selectedPackId!)!;
-        // Create an empy action templates version
+        // Create an empty action templates version
         const emptyPack: RecoveryPack = { ...pack, actionTemplates: [] };
         const planInput = adapter.buildPlanInput(goal, emptyPack, matchResult);
         expect(planInput).toBeNull();
