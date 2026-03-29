@@ -26,6 +26,14 @@ This matrix provides a comprehensive mapping of all data and command flows betwe
 | **SettingsManager** | **app_settings.json** | Atomic File I/O | Persistence of system configuration. | Critical (Security) |
 | **GuardrailService** | **AgentService** | Internal API | Post-inference verification and redaction. | High |
 
+| **AutonomousRunOrchestrator** | **ModelCapabilityEvaluator (P5.1B)** | Internal API | `evaluate(goal, recentFailures, policy, modelContextLimit?, recoveryPacksExhausted?)` → `TaskCapabilityAssessment`. Deterministic insufficiency assessment. | Low |
+| **AutonomousRunOrchestrator** | **EscalationPolicyEngine (P5.1C)** | Internal API | `evaluate(assessment, policy, recentEscalationCount, cooldownActive)` → `{ decision: EscalationDecision, request: EscalationRequest | null }`. Policy-gated escalation decision. | Low |
+| **AutonomousRunOrchestrator** | **DecompositionEngine (P5.1D)** | Internal API | `decompose(goal, assessment, policy, depth)` → `DecompositionPlan | null`. Returns null when depth ≥ maxDecompositionDepth or no decomposition possible. | Low |
+| **AutonomousRunOrchestrator** | **ExecutionStrategySelector (P5.1E)** | Internal API | `select(assessment, escalationDecision, decompositionPlan, policy)` → `ExecutionStrategyDecision`. Deterministic strategy selection. | Low |
+| **AutonomousRunOrchestrator** | **EscalationAuditTracker (P5.1F)** | Internal API | `record(goalId, eventKind, detail, runId?, data?)` — immutable audit append. `getRecentEscalationCount(windowMs)` — spam guard query. | Low |
+| **AutonomousRunOrchestrator** | **DecompositionOutcomeTracker (P5.1F)** | Internal API | `startPlan/recordStep/finalizePlan` lifecycle. `isCooldownActive(subsystemId)` — cooldown guard. | Low |
+| **Renderer UI** | **AutonomousRunOrchestrator** | Electron IPC | `autonomy:getDashboardState` now returns `AutonomyDashboardState` with optional `escalationState: EscalationDashboardState` when escalation services are injected. | Medium |
+
 ## 3. Boundary Definitions
 
 ### 3.1. Trusted Boundary

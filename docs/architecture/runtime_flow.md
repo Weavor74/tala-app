@@ -402,3 +402,56 @@ All Phase 3A events are emitted in the `cognitive` subsystem:
 | `live_compaction_applied` | CompactPromptPacket produced on real turn |
 | `post_turn_memory_write` | Mem0 post-turn write confirmed |
 | `post_turn_reflection_signal` | ReflectionEngine.recordTurn() called |
+
+---
+
+## 9. Autonomous Self-Improvement Pipeline (Phases 4–5.1)
+
+The autonomous improvement pipeline runs in `AutonomousRunOrchestrator` as a background cycle. It is separate from the user turn loop.
+
+```
+AutonomousRunOrchestrator.runCycleOnce()
+  → GoalDetectionEngine.runOnce()         (Phase 4.1/4.2 — detect candidates)
+  → GoalPrioritizationEngine.score()      (Phase 4C — score and tier goals)
+  → AutonomyPolicyGate.evaluate()         (Phase 4D — required gate)
+    → [blocked → policy_blocked goal]
+    → [permitted → continue]
+  → [Phase 5 Adaptive Layer — optional]
+    → GoalValueScoringEngine.score()      (P5B)
+    → StrategySelectionEngine.select()    (P5C)
+    → AdaptivePolicyGate.evaluate()       (P5D)
+      → defer/suppress/escalate → update goal status, return
+      → proceed → continue
+  → [Phase 5.1 Escalation Layer — optional]
+    → ModelCapabilityEvaluator.evaluate() (P5.1B — can model handle this?)
+      → canHandle=true → continue
+      → canHandle=false:
+          EscalationPolicyEngine.evaluate()  (P5.1C — is escalation allowed?)
+          DecompositionEngine.decompose()    (P5.1D — bounded decomposition plan)
+          ExecutionStrategySelector.select() (P5.1E — which strategy?)
+          → proceed_local   → continue
+          → escalate_human  → policy_blocked + humanReviewRequired=true
+          → escalate_remote → policy_blocked + humanReviewRequired=true (default)
+          → decompose_local → _executeGoalPipeline with scopeHint from first step
+          → defer           → goal reset to scored (next cycle)
+  → _executeGoalPipeline()
+      → SafeChangePlanner.plan()           (Phase 2)
+      → GovernanceAppService.evaluate()    (Phase 3.5)
+      → ExecutionOrchestrator.start()      (Phase 3)
+      finally:
+        → OutcomeLearningRegistry.record()           (Phase 4)
+        → RecoveryPackOutcomeTracker.record()        (Phase 4.3 — when pack used)
+        → SubsystemProfileRegistry.update()          (Phase 5 feedback)
+        → DecompositionOutcomeTracker.finalizePlan() (Phase 5.1 — when decomposing)
+        → EscalationAuditTracker.record()            (Phase 5.1 audit trail)
+```
+
+### Phase 5.1 Integration Notes
+
+- **Placement**: After Phase 5 adaptive gate `proceed`, before `_executeGoalPipeline`. Never runs when Phase 5 defers/suppresses/escalates.
+- **Error isolation**: Exceptions in the Phase 5.1 layer are caught and logged. Pipeline falls back to standard execution.
+- **Scope narrowing**: When `decompose_local` is selected, `_buildPlanInput()` receives a `decompositionScopeHint` (first step's `scopeHint`) that narrows the planning description.
+- **Feedback loop**: `DecompositionOutcomeTracker.finalizePlan()` runs in the finally block, applying per-subsystem cooldown after full decomposition failure.
+- **Audit trail**: `EscalationAuditTracker` records every assessment, escalation request/decision, strategy selection, and decomposition event.
+
+See `docs/architecture/phase5_1_escalation_decomposition.md` for the full Phase 5.1 architecture reference.
