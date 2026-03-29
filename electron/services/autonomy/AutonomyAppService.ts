@@ -173,5 +173,14 @@ export class AutonomyAppService {
                 return { checked: true };
             }),
         );
+
+        // ── autonomy:getRecoveryPackDashboardState ─────────────────────────────
+        // Phase 4.3 P4.3G: Returns the full recovery pack dashboard state.
+        // Returns null when the recovery pack layer is not active.
+        ipcMain.handle('autonomy:getRecoveryPackDashboardState', () =>
+            this.executeWithTelemetry('getRecoveryPackDashboardState', async () =>
+                this.orchestrator.getRecoveryPackDashboardState(),
+            ),
+        );
     }
 }

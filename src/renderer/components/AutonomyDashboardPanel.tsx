@@ -6,6 +6,10 @@ import type {
     LearningRecord,
     AutonomyTelemetryEvent,
 } from '../../shared/autonomyTypes';
+import type {
+    RecoveryPackDashboardState,
+    RecoveryPackOutcomeSummary,
+} from '../../shared/recoveryPackTypes';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G
@@ -24,6 +28,7 @@ import type {
  */
 const AutonomyDashboardPanel: React.FC = () => {
     const [dashState, setDashState] = useState<AutonomyDashboardState | null>(null);
+    const [packState, setPackState] = useState<RecoveryPackDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -35,6 +40,15 @@ const AutonomyDashboardPanel: React.FC = () => {
             if (!tala?.autonomy?.getDashboardState) return;
             const state = await tala.autonomy.getDashboardState();
             setDashState(state);
+            // Fetch recovery pack state if available
+            if (tala.autonomy.getRecoveryPackDashboardState) {
+                try {
+                    const ps = await tala.autonomy.getRecoveryPackDashboardState();
+                    setPackState(ps ?? null);
+                } catch {
+                    // Non-fatal — pack layer may not be active
+                }
+            }
         } catch (e: any) {
             console.error('[AutonomyDashboard] fetch error:', e);
         } finally {
@@ -245,6 +259,54 @@ const AutonomyDashboardPanel: React.FC = () => {
                 </Section>
             )}
 
+            {/* Recovery Pack layer (Phase 4.3) */}
+            {packState && packState.registeredPacks.length > 0 && (
+                <Section title={`🔧 Recovery Packs (${packState.registeredPacks.length})`} accent="#7c3aed">
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.5rem' }}>
+                        Bounded repair strategies matched to known issue patterns.
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.5rem' }}>
+                        {packState.registeredPacks.map(({ pack, summary }) => (
+                            <RecoveryPackCard key={pack.packId} summary={summary} packLabel={pack.label} />
+                        ))}
+                    </div>
+                    {packState.recentExecutionRecords.length > 0 && (
+                        <div style={{ marginTop: '0.75rem' }}>
+                            <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                                Recent pack executions
+                            </div>
+                            {packState.recentExecutionRecords.slice(0, 5).map(rec => (
+                                <div key={rec.recordId} style={{
+                                    display: 'flex', justifyContent: 'space-between',
+                                    padding: '0.3rem 0.5rem', background: '#0f172a',
+                                    borderRadius: '4px', fontSize: '0.7rem',
+                                    color: '#9ca3af', marginBottom: '0.25rem',
+                                }}>
+                                    <span>{rec.packId.replace(/_v\d+$/, '')}</span>
+                                    <span style={{
+                                        color: rec.outcome === 'succeeded' ? '#10b981'
+                                            : rec.outcome === 'rolled_back' ? '#f59e0b'
+                                            : '#ef4444',
+                                        fontWeight: 600,
+                                    }}>
+                                        {rec.outcome}
+                                    </span>
+                                    <span style={{ color: '#4b5563' }}>
+                                        {rec.confidenceAtUse.toFixed(2)}→{rec.confidenceAfterAdjustment.toFixed(2)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {/* Fallback indicator from recentRuns pack fields */}
+                    {state && state.recentRuns.some(r => !r.recoveryPackId) && (
+                        <div style={{ marginTop: '0.4rem', fontSize: '0.7rem', color: '#6b7280' }}>
+                            ℹ️ Some recent runs used standard planning (no matching pack).
+                        </div>
+                    )}
+                </Section>
+            )}
+
             {/* Empty state */}
             {state && state.kpis.totalGoalsDetected === 0 && (
                 <div style={{
@@ -421,6 +483,47 @@ const TelemetryLine: React.FC<{ event: AutonomyTelemetryEvent }> = ({ event }) =
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {event.detail}
             </span>
+        </div>
+    );
+};
+
+/** Phase 4.3: Recovery pack summary card. */
+const RecoveryPackCard: React.FC<{ summary: RecoveryPackOutcomeSummary; packLabel: string }> = ({
+    summary, packLabel,
+}) => {
+    const confidence = Math.round(summary.currentConfidence * 100);
+    const confColor = confidence >= 65 ? '#10b981' : confidence >= 40 ? '#f59e0b' : '#ef4444';
+    return (
+        <div style={{
+            padding: '0.6rem 0.75rem', background: '#0f172a',
+            borderRadius: '6px', fontSize: '0.75rem',
+            borderLeft: `3px solid ${summary.enabled ? confColor : '#374151'}`,
+        }}>
+            <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                marginBottom: '0.25rem',
+            }}>
+                <span style={{ color: '#e5e7eb', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {packLabel}
+                </span>
+                {!summary.enabled && (
+                    <span style={{ color: '#6b7280', fontSize: '0.65rem', flexShrink: 0, marginLeft: '0.4rem' }}>
+                        disabled
+                    </span>
+                )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', color: '#6b7280' }}>
+                <span style={{ color: '#10b981' }}>✓{summary.successCount}</span>
+                <span style={{ color: '#ef4444' }}>✗{summary.failureCount}</span>
+                <span style={{ color: '#f59e0b' }}>↩{summary.rollbackCount}</span>
+                <span style={{ color: confColor }}>conf: {confidence}%</span>
+            </div>
+            {summary.lastOutcome && (
+                <div style={{ color: '#4b5563', fontSize: '0.7rem', marginTop: '0.15rem' }}>
+                    last: {summary.lastOutcome}
+                    {summary.lastAttemptAt ? ` · ${new Date(summary.lastAttemptAt).toLocaleDateString()}` : ''}
+                </div>
+            )}
         </div>
     );
 };

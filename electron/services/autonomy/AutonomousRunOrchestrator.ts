@@ -49,6 +49,12 @@ import { AutonomyAuditService } from './AutonomyAuditService';
 import { AutonomyTelemetryStore } from './AutonomyTelemetryStore';
 import { AutonomyDashboardBridge } from './AutonomyDashboardBridge';
 import { telemetry } from '../TelemetryService';
+// ── Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) ──
+import type { RecoveryPackRegistry } from './recovery/RecoveryPackRegistry';
+import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
+import type { RecoveryPackPlannerAdapter } from './recovery/RecoveryPackPlannerAdapter';
+import type { RecoveryPackOutcomeTracker } from './recovery/RecoveryPackOutcomeTracker';
+import type { RecoveryPackDashboardState, RecoveryPackExecutionOutcome } from '../../../shared/recoveryPackTypes';
 
 // ─── Poll timeouts ────────────────────────────────────────────────────────────
 
@@ -79,6 +85,12 @@ export class AutonomousRunOrchestrator {
     private readonly auditService: AutonomyAuditService;
     private readonly telemetryStore: AutonomyTelemetryStore;
     readonly dashboardBridge: AutonomyDashboardBridge;
+
+    // ── Phase 4.3: Recovery Pack services (optional) ──────────────────────────
+    private _packRegistry: RecoveryPackRegistry | undefined;
+    private _packMatcher: RecoveryPackMatcher | undefined;
+    private _packPlannerAdapter: RecoveryPackPlannerAdapter | undefined;
+    private _packOutcomeTracker: RecoveryPackOutcomeTracker | undefined;
 
     constructor(
         private readonly dataDir: string,
@@ -141,6 +153,32 @@ export class AutonomousRunOrchestrator {
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
 
+    /**
+     * Injects optional Phase 4.3 recovery pack services.
+     *
+     * Must be called after construction but before start().
+     * When not called, the orchestrator behaves identically to Phase 4.2.
+     */
+    setRecoveryPackServices(
+        registry: RecoveryPackRegistry,
+        matcher: RecoveryPackMatcher,
+        adapter: RecoveryPackPlannerAdapter,
+        tracker: RecoveryPackOutcomeTracker,
+    ): void {
+        this._packRegistry = registry;
+        this._packMatcher = matcher;
+        this._packPlannerAdapter = adapter;
+        this._packOutcomeTracker = tracker;
+    }
+
+    /**
+     * Returns the recovery pack dashboard state, or null if pack services are not active.
+     */
+    getRecoveryPackDashboardState(): RecoveryPackDashboardState | null {
+        if (!this._packOutcomeTracker) return null;
+        return this._packOutcomeTracker.getDashboardState();
+    }
+
     start(cycleIntervalMs = 5 * 60 * 1000): void {
         this.detectionEngine.start(cycleIntervalMs);
     }
@@ -197,10 +235,20 @@ export class AutonomousRunOrchestrator {
         const recentTelemetry = this.telemetryStore.getRecentEvents(50);
         const budgetUsed = this.budgetManager.getUsedThisPeriod(this.activePolicy.budget);
 
-        return this.dashboardBridge.emitFull(
+        const state = this.dashboardBridge.emitFull(
             allRuns, allGoals, learningRecords, recentTelemetry,
             this.activePolicy, budgetUsed,
         );
+
+        // ── Phase 4.3: Augment with recovery pack summaries ──────────────────
+        if (this._packOutcomeTracker) {
+            const allPacks = this._packRegistry?.getAll() ?? [];
+            state.recoveryPackSummaries = allPacks.map(pack =>
+                this._packOutcomeTracker!.getOutcomeSummary(pack.packId),
+            );
+        }
+
+        return state;
     }
 
     listGoals(): AutonomousGoal[] {
@@ -385,16 +433,7 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
             );
 
-            const planInput: PlanTriggerInput = {
-                subsystemId: goal.subsystemId,
-                issueType: goal.source,
-                normalizedTarget: goal.subsystemId,
-                severity: this._severityForTier(goal.priorityTier),
-                description: goal.description,
-                planningMode: 'standard',
-                sourceGoalId: goal.goalId,
-                isManual: false,
-            };
+            const planInput: PlanTriggerInput = await this._buildPlanInput(goal, run);
 
             const planResponse = await this.safePlanner.plan(planInput);
 
@@ -561,6 +600,21 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId },
             );
 
+            // ── Phase 4.3: Record recovery pack outcome if a pack was used ─────
+            if (this._packOutcomeTracker && finalRun.recoveryPackId) {
+                const packOutcome = this._packOutcomeFromRunOutcome(outcome);
+                this._packOutcomeTracker.record(
+                    finalRun.recoveryPackId,
+                    finalGoal,
+                    finalRun,
+                    packOutcome,
+                );
+                this.telemetryStore.record('recovery_pack_outcome_recorded',
+                    `Recovery pack ${finalRun.recoveryPackId} outcome '${packOutcome}' recorded`,
+                    { goalId: goal.goalId, runId: run.runId },
+                );
+            }
+
             this.budgetManager.recordRunEnd(run.runId);
         }
     }
@@ -626,6 +680,20 @@ export class AutonomousRunOrchestrator {
             const outcome = this._outcomeFromRunStatus(finalRun.status);
             this.learningRegistry.record(goal, finalRun, outcome);
             this.budgetManager.recordRunEnd(run.runId);
+            // ── Phase 4.3.1: Record recovery pack outcome on resume path ──────
+            if (this._packOutcomeTracker && finalRun.recoveryPackId) {
+                const packOutcome = this._packOutcomeFromRunOutcome(outcome);
+                this._packOutcomeTracker.record(
+                    finalRun.recoveryPackId,
+                    goal,
+                    finalRun,
+                    packOutcome,
+                );
+                this.telemetryStore.record('recovery_pack_outcome_recorded',
+                    `Recovery pack ${finalRun.recoveryPackId} outcome '${packOutcome}' recorded (resume path)`,
+                    { goalId: goal.goalId, runId: run.runId },
+                );
+            }
         }
     }
 
@@ -832,5 +900,125 @@ export class AutonomousRunOrchestrator {
      */
     private async _listReflectionGoals(): Promise<any[]> {
         return [];
+    }
+
+    // ── Phase 4.3: Recovery Pack helpers ─────────────────────────────────────────
+
+    /**
+     * Builds the PlanTriggerInput for a goal.
+     *
+     * Attempts recovery pack matching first (if pack services are available).
+     * On a successful match, the pack adapter produces a bounded, scoped input.
+     * On no match, adapter error, or missing pack services, falls back to the
+     * standard PlanTriggerInput construction.
+     *
+     * SAFETY: If any exception occurs during pack matching or adaptation,
+     * the exception is caught and logged, and standard planning proceeds.
+     * Recovery packs must never block or crash the planning pipeline.
+     */
+    private async _buildPlanInput(goal: AutonomousGoal, run: AutonomousRun): Promise<PlanTriggerInput> {
+        const standardInput: PlanTriggerInput = {
+            subsystemId: goal.subsystemId,
+            issueType: goal.source,
+            normalizedTarget: goal.subsystemId,
+            severity: this._severityForTier(goal.priorityTier),
+            description: goal.description,
+            planningMode: 'standard',
+            sourceGoalId: goal.goalId,
+            isManual: false,
+        };
+
+        if (!this._packMatcher || !this._packPlannerAdapter || !this._packRegistry) {
+            return standardInput;
+        }
+
+        try {
+            // Get per-pack attempt counts for this goal to enforce maxAttemptsPerGoal
+            const attemptCounts = this._packOutcomeTracker
+                ? this._packOutcomeTracker.getAttemptCountsForGoal(goal.goalId)
+                : new Map<string, number>();
+
+            const matchResult = this._packMatcher.match(
+                goal,
+                this.activePolicy.hardBlockedSubsystems,
+                attemptCounts,
+            );
+
+            this.telemetryStore.record('recovery_pack_match_attempted',
+                `Pack match for goal ${goal.goalId}: ${matchResult.selectedPackId ?? 'no_match'}`,
+                { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
+            );
+
+            if (matchResult.fallbackToStandardPlanning || !matchResult.selectedPackId) {
+                this.telemetryStore.record('recovery_pack_fallback',
+                    `No pack matched for goal ${goal.goalId} — using standard planning. ${matchResult.rationale}`,
+                    { goalId: goal.goalId, runId: run.runId },
+                );
+                return standardInput;
+            }
+
+            const pack = this._packRegistry.getById(matchResult.selectedPackId);
+            if (!pack) {
+                this.telemetryStore.record('recovery_pack_rejected',
+                    `Pack ${matchResult.selectedPackId} was selected but not found in registry — rejected.`,
+                    { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
+                );
+                return standardInput;
+            }
+
+            const adaptedInput = this._packPlannerAdapter.buildPlanInput(goal, pack, matchResult);
+            if (!adaptedInput) {
+                this.telemetryStore.record('recovery_pack_rejected',
+                    `Pack ${pack.packId} adapter returned null — pack rejected, falling back to standard planning.`,
+                    { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
+                );
+                return standardInput;
+            }
+
+            // Pack match succeeded — record on run for audit and dashboard
+            run.recoveryPackId = pack.packId;
+            run.recoveryPackMatchStrength = matchResult.selectedMatchStrength;
+            this.auditService.saveRun(run);
+
+            this.telemetryStore.record('recovery_pack_matched',
+                `Pack ${pack.packId} (${matchResult.selectedMatchStrength}) used for goal ${goal.goalId}`,
+                { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
+            );
+            this.auditService.appendAuditRecord('run_started',
+                `Recovery pack ${pack.packId} v${pack.version} matched (${matchResult.selectedMatchStrength})`,
+                { goalId: goal.goalId, runId: run.runId },
+            );
+
+            return adaptedInput;
+
+        } catch (err: any) {
+            // Exception in pack layer → log and fall back to standard planning
+            this.telemetryStore.record('recovery_pack_fallback',
+                `Exception in recovery pack matching: ${err.message} — falling back to standard planning.`,
+                { goalId: goal.goalId, runId: run.runId },
+            );
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'warn',
+                'AutonomousRunOrchestrator',
+                `Recovery pack matching threw an error for goal ${goal.goalId}: ${err.message}`,
+            );
+            return standardInput;
+        }
+    }
+
+    /**
+     * Maps an AttemptOutcome to a RecoveryPackExecutionOutcome.
+     * Only outcomes that can occur when a pack is used are returned.
+     */
+    private _packOutcomeFromRunOutcome(outcome: AttemptOutcome): RecoveryPackExecutionOutcome {
+        switch (outcome) {
+            case 'succeeded':         return 'succeeded';
+            case 'rolled_back':       return 'rolled_back';
+            case 'governance_blocked': return 'governance_blocked';
+            case 'aborted':           return 'aborted';
+            default:                  return 'failed';
+        }
     }
 }
