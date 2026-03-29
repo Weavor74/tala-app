@@ -111,6 +111,14 @@ export class GovernanceAppService {
         return this.authGate.evaluateProposal(proposal);
     }
 
+    /**
+     * Returns the current governance decision for a proposal, or null if none exists.
+     * Used by AutonomousRunOrchestrator (Phase 4) to check governance status without IPC.
+     */
+    getDecision(proposalId: string): GovernanceDecision | null {
+        return this.registry.getDecision(proposalId);
+    }
+
     // ── IPC logging helper (mirrors ExecutionAppService) ───────────────────────
 
     private logIpc(method: string, args?: unknown): void {

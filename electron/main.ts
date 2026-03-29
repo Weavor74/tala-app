@@ -59,6 +59,9 @@ import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository, getEmbeddingsRepository } from './services/db/initMemoryStore';
 import { initRetrievalOrchestrator } from './services/retrieval/RetrievalOrchestratorRegistry';
+import { AutonomousRunOrchestrator } from './services/autonomy/AutonomousRunOrchestrator';
+import { AutonomyAppService } from './services/autonomy/AutonomyAppService';
+import { DEFAULT_AUTONOMY_POLICY } from './services/autonomy/defaults/defaultAutonomyPolicy';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -138,6 +141,21 @@ const executionOrchestrator = new ExecutionOrchestrator(
     governanceAppService.getAuthorizationGate(),
 );
 new ExecutionAppService(executionOrchestrator);
+
+// ─── Phase 4: Autonomous Self-Improvement ─────────────────────────────────────
+// Instantiated after governance + execution to provide correct service references.
+// globalAutonomyEnabled defaults to false in DEFAULT_AUTONOMY_POLICY (operator must enable).
+const autonomousRunOrchestrator = new AutonomousRunOrchestrator(
+    USER_DATA_DIR,
+    safePlanner,
+    governanceAppService,
+    executionOrchestrator,
+    DEFAULT_AUTONOMY_POLICY,
+);
+new AutonomyAppService(autonomousRunOrchestrator);
+// Start periodic goal detection (5 min cycle, will run if/when autonomy is enabled)
+autonomousRunOrchestrator.start();
+
 const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent);

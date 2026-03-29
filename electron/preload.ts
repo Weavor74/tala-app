@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -561,6 +561,49 @@ contextBridge.exposeInMainWorld('tala', {
         const listener = (event: any, data: any) => callback(data);
         ipcRenderer.on('governance:dashboardUpdate', listener);
         return () => ipcRenderer.removeListener('governance:dashboardUpdate', listener);
+    },
+
+    // ─── Phase 4: Autonomous Self-Improvement ────────────────────
+    autonomy: {
+        /** Gets the full autonomy dashboard state. */
+        getDashboardState: () => ipcRenderer.invoke('autonomy:getDashboardState'),
+        /** Lists all autonomous goals (scored, active, completed). */
+        listGoals: () => ipcRenderer.invoke('autonomy:listGoals'),
+        /** Gets a specific autonomous goal by ID. */
+        getGoal: (goalId: string) => ipcRenderer.invoke('autonomy:getGoal', goalId),
+        /** Lists autonomous runs within the given window. */
+        listRuns: (windowMs?: number) => ipcRenderer.invoke('autonomy:listRuns', windowMs),
+        /** Gets a specific autonomous run by ID. */
+        getRun: (runId: string) => ipcRenderer.invoke('autonomy:getRun', runId),
+        /** Manually triggers one detection + scoring + execution cycle. */
+        runCycleOnce: () => ipcRenderer.invoke('autonomy:runCycleOnce'),
+        /** Enables or disables global autonomy. */
+        setGlobalEnabled: (enabled: boolean) => ipcRenderer.invoke('autonomy:setGlobalEnabled', enabled),
+        /** Gets the active autonomy policy. */
+        getPolicy: () => ipcRenderer.invoke('autonomy:getPolicy'),
+        /** Updates the autonomy policy. */
+        updatePolicy: (policy: any) => ipcRenderer.invoke('autonomy:updatePolicy', policy),
+        /** Gets the audit log for a goal. */
+        getAuditLog: (goalId: string) => ipcRenderer.invoke('autonomy:getAuditLog', goalId),
+        /** Gets all learning records. */
+        getLearningRecords: () => ipcRenderer.invoke('autonomy:getLearningRecords'),
+        /** Operator override: clears a cooldown for a subsystem+patternKey. */
+        clearCooldown: (subsystemId: string, patternKey: string) =>
+            ipcRenderer.invoke('autonomy:clearCooldown', subsystemId, patternKey),
+        /** Checks for governance-resolved pending runs and resumes them. */
+        checkPendingRuns: () => ipcRenderer.invoke('autonomy:checkPendingRuns'),
+        /** Subscribes to autonomy dashboard updates. Returns cleanup function. */
+        onDashboardUpdate: (callback: (data: any) => void) => {
+            const listener = (event: any, data: any) => callback(data);
+            ipcRenderer.on('autonomy:dashboardUpdate', listener);
+            return () => ipcRenderer.removeListener('autonomy:dashboardUpdate', listener);
+        },
+        /** Subscribes to autonomy telemetry events. Returns cleanup function. */
+        onTelemetry: (callback: (data: any) => void) => {
+            const listener = (event: any, data: any) => callback(data);
+            ipcRenderer.on('autonomy:telemetry', listener);
+            return () => ipcRenderer.removeListener('autonomy:telemetry', listener);
+        },
     },
 
     // ─── Session Export ───────────────────────────────────────────

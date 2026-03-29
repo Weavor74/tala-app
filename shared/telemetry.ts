@@ -40,6 +40,7 @@ export type TelemetrySubsystem =
     | 'system'
     | 'world_model'
     | 'maintenance'
+    | 'autonomy'
     | 'unknown';
 
 // ─── Event type categories ────────────────────────────────────────────────────
@@ -205,6 +206,20 @@ export type TelemetryEventType =
     | 'external_search_failed'
     | 'external_search_timeout'
     | 'external_search_fallback'
+    // Phase 4 — Autonomous Self-Improvement
+    | 'autonomy_goal_detected'
+    | 'autonomy_goal_deduped'
+    | 'autonomy_goal_ranked'
+    | 'autonomy_goal_blocked'
+    | 'autonomy_goal_selected'
+    | 'autonomy_run_started'
+    | 'autonomy_run_planning_started'
+    | 'autonomy_run_governance_blocked'
+    | 'autonomy_run_execution_started'
+    | 'autonomy_run_completed'
+    | 'autonomy_run_failed'
+    | 'autonomy_run_cooled_down'
+    | 'autonomy_learning_recorded'
     // Generic
     | 'operational'
     | 'developer_debug';

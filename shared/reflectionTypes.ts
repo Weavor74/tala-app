@@ -82,8 +82,9 @@ export type ProposalRiskLevel = 'safe' | 'low' | 'medium' | 'high' | 'critical';
  * scheduled  — triggered by the scheduler (periodic scan / audit).
  * manual     — explicitly requested by a user or operator.
  * goal       — derived from a SelfImprovementGoal in the queue.
+ * autonomous — triggered by the Phase 4 AutonomousRunOrchestrator.
  */
-export type ProposalOrigin = 'auto' | 'scheduled' | 'manual' | 'goal';
+export type ProposalOrigin = 'auto' | 'scheduled' | 'manual' | 'goal' | 'autonomous';
 
 // ─── ChangeProposal ───────────────────────────────────────────────────────────
 
