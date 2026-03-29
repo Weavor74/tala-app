@@ -1,16 +1,18 @@
 /**
- * AutonomousRunOrchestrator.ts — Phase 4 P4E
+ * AutonomousRunOrchestrator.ts — Phase 4 P4E / Phase 5 P5 integration
  *
  * Main autonomous improvement loop coordinator.
  *
  * Architecture:
  *   GoalDetection → Prioritization → Selection → PolicyGate
+ *     → [Phase 5: AdaptiveValueScoring → StrategySelection → AdaptivePolicyGate]
  *     → SafeChangePlanner.plan()          (Phase 2)
  *     → SafeChangePlanner.promoteProposal()
  *     → GovernanceAppService.evaluateForProposal()   (Phase 3.5)
  *     → [immediate if self-authorized | governance_pending if human needed]
  *     → ExecutionOrchestrator.start()    (Phase 3)
  *     → OutcomeLearningRegistry.record()
+ *     → [Phase 5: SubsystemProfileRegistry.update()]
  *     → AutonomyDashboardBridge.maybeEmit()
  *
  * Safety invariants enforced here:
@@ -23,6 +25,8 @@
  *  7. OutcomeLearningRegistry always called (finally block)
  *  8. Governance is mandatory — no execution without authorized decision
  *  9. No direct code mutation — all changes go through planning pipeline
+ * 10. Phase 5 adaptive services are optional; Phase 4 behavior is the fallback
+ * 11. Phase 4D (AutonomyPolicyGate) block is never overridden by Phase 5 gate
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -55,6 +59,19 @@ import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
 import type { RecoveryPackPlannerAdapter } from './recovery/RecoveryPackPlannerAdapter';
 import type { RecoveryPackOutcomeTracker } from './recovery/RecoveryPackOutcomeTracker';
 import type { RecoveryPackDashboardState, RecoveryPackExecutionOutcome } from '../../../shared/recoveryPackTypes';
+// ── Phase 5: Adaptive Intelligence Layer services (optional, injected via setAdaptiveServices) ──
+import type { SubsystemProfileRegistry } from './adaptive/SubsystemProfileRegistry';
+import type { GoalValueScoringEngine } from './adaptive/GoalValueScoringEngine';
+import type { StrategySelectionEngine } from './adaptive/StrategySelectionEngine';
+import type { AdaptivePolicyGate } from './adaptive/AdaptivePolicyGate';
+import type {
+    AdaptiveDashboardState,
+    AdaptiveKpis,
+    AdaptivePolicyDecision,
+    StrategySelectionResult,
+    GoalValueScore,
+} from '../../../shared/adaptiveTypes';
+import { DEFAULT_ADAPTIVE_THRESHOLDS } from '../../../shared/adaptiveTypes';
 
 // ─── Poll timeouts ────────────────────────────────────────────────────────────
 
@@ -91,6 +108,16 @@ export class AutonomousRunOrchestrator {
     private _packMatcher: RecoveryPackMatcher | undefined;
     private _packPlannerAdapter: RecoveryPackPlannerAdapter | undefined;
     private _packOutcomeTracker: RecoveryPackOutcomeTracker | undefined;
+
+    // ── Phase 5: Adaptive Intelligence Layer services (optional) ─────────────
+    private _adaptiveProfileRegistry: SubsystemProfileRegistry | undefined;
+    private _adaptiveValueScorer: GoalValueScoringEngine | undefined;
+    private _adaptiveStrategyEngine: StrategySelectionEngine | undefined;
+    private _adaptiveGate: AdaptivePolicyGate | undefined;
+    // In-memory logs for dashboard (capped at 20 entries, most-recent first)
+    private _recentValueScores: GoalValueScore[] = [];
+    private _recentStrategySelections: StrategySelectionResult[] = [];
+    private _recentAdaptiveDecisions: AdaptivePolicyDecision[] = [];
 
     constructor(
         private readonly dataDir: string,
@@ -179,6 +206,85 @@ export class AutonomousRunOrchestrator {
         return this._packOutcomeTracker.getDashboardState();
     }
 
+    /**
+     * Injects optional Phase 5 adaptive intelligence services.
+     *
+     * Must be called after construction and after setRecoveryPackServices() (if used).
+     * When not called, the orchestrator uses Phase 4 prioritization and pack selection only.
+     * All services must be provided together; partial injection is not supported.
+     */
+    setAdaptiveServices(
+        profileRegistry: SubsystemProfileRegistry,
+        valueScorer: GoalValueScoringEngine,
+        strategyEngine: StrategySelectionEngine,
+        adaptiveGate: AdaptivePolicyGate,
+    ): void {
+        this._adaptiveProfileRegistry = profileRegistry;
+        this._adaptiveValueScorer = valueScorer;
+        this._adaptiveStrategyEngine = strategyEngine;
+        this._adaptiveGate = adaptiveGate;
+        // Wire up profile registry to the prioritization engine for blended confidence
+        this.prioritizationEngine.setProfileRegistry(profileRegistry);
+    }
+
+    /**
+     * Returns the Phase 5 adaptive dashboard state, or null if adaptive services are not active.
+     */
+    getAdaptiveDashboardState(): AdaptiveDashboardState | null {
+        if (!this._adaptiveProfileRegistry) return null;
+
+        const profiles = this._adaptiveProfileRegistry.listAll();
+        const recentValueScores = [...this._recentValueScores];
+        const recentPolicyDecisions = [...this._recentAdaptiveDecisions];
+        const recentStrategySelections = [...this._recentStrategySelections];
+
+        // Compute KPIs from in-memory logs
+        const avgValueScore = recentValueScores.length > 0
+            ? Math.round(recentValueScores.reduce((s, v) => s + v.valueScore, 0) / recentValueScores.length)
+            : 0;
+        const avgSuccessProbability = recentValueScores.length > 0
+            ? Math.round(recentValueScores.reduce((s, v) => s + v.successProbability, 0) / recentValueScores.length * 100) / 100
+            : 0;
+        const packSelections = recentStrategySelections.filter(s => s.strategy === 'recovery_pack').length;
+        const packSelectionRate = recentStrategySelections.length > 0
+            ? Math.round(packSelections / recentStrategySelections.length * 100) / 100
+            : 0;
+        const deferCount = recentPolicyDecisions.filter(d => d.action === 'defer').length;
+        const suppressCount = recentPolicyDecisions.filter(d => d.action === 'suppress').length;
+        const escalateCount = recentPolicyDecisions.filter(d => d.action === 'escalate').length;
+        const totalDecisions = recentPolicyDecisions.length;
+        const deferRate = totalDecisions > 0 ? Math.round(deferCount / totalDecisions * 100) / 100 : 0;
+        const suppressRate = totalDecisions > 0 ? Math.round(suppressCount / totalDecisions * 100) / 100 : 0;
+        const escalateRate = totalDecisions > 0 ? Math.round(escalateCount / totalDecisions * 100) / 100 : 0;
+        const oscillatingSubsystemCount = profiles.filter(p => p.oscillationDetected).length;
+
+        const kpis: AdaptiveKpis = {
+            avgValueScore,
+            avgSuccessProbability,
+            packSelectionRate,
+            deferRate,
+            suppressRate,
+            escalateRate,
+            oscillatingSubsystemCount,
+        };
+
+        return {
+            computedAt: new Date().toISOString(),
+            recentValueScores,
+            recentPolicyDecisions,
+            recentStrategySelections,
+            subsystemProfiles: profiles,
+            kpis,
+        };
+    }
+
+    /**
+     * Returns subsystem adaptive profiles, or empty array if adaptive layer not active.
+     */
+    getAdaptiveSubsystemProfiles(): import('../../../shared/adaptiveTypes').SubsystemProfile[] {
+        return this._adaptiveProfileRegistry?.listAll() ?? [];
+    }
+
     start(cycleIntervalMs = 5 * 60 * 1000): void {
         this.detectionEngine.start(cycleIntervalMs);
     }
@@ -246,6 +352,12 @@ export class AutonomousRunOrchestrator {
             state.recoveryPackSummaries = allPacks.map(pack =>
                 this._packOutcomeTracker!.getOutcomeSummary(pack.packId),
             );
+        }
+
+        // ── Phase 5: Augment with adaptive state ─────────────────────────────
+        const adaptiveState = this.getAdaptiveDashboardState();
+        if (adaptiveState) {
+            state.adaptiveState = adaptiveState;
         }
 
         return state;
@@ -377,15 +489,108 @@ export class AutonomousRunOrchestrator {
         // Mark goal as policy-approved
         this._updateGoal(goal.goalId, { status: 'policy_approved', autonomyEligible: true });
 
-        // Execute asynchronously (fire-and-forget with error capture)
-        this._executeGoalPipeline(this.activeGoals.get(goal.goalId)!, policyDecision.decisionId)
-            .catch(err => {
+        // ── Phase 5: Adaptive Intelligence Layer (optional) ───────────────────
+        // Applied AFTER P4D permit. Never overrides a P4D block.
+        let adaptiveStrategyResult: StrategySelectionResult | undefined;
+
+        if (this._adaptiveValueScorer && this._adaptiveStrategyEngine && this._adaptiveGate
+            && this._adaptiveProfileRegistry) {
+            try {
+                const profile = this._adaptiveProfileRegistry.get(goal.subsystemId);
+
+                // Get pack match for strategy selection (reuse existing pack matching logic)
+                const attemptCounts = this._packOutcomeTracker
+                    ? this._packOutcomeTracker.getAttemptCountsForGoal(goal.goalId)
+                    : new Map<string, number>();
+                const packMatchResult = this._packMatcher
+                    ? this._packMatcher.match(
+                        goal,
+                        this.activePolicy.hardBlockedSubsystems,
+                        attemptCounts,
+                    )
+                    : undefined;
+
+                const valueScore = this._adaptiveValueScorer.score(
+                    goal, profile, packMatchResult,
+                );
+                const strategyResult = this._adaptiveStrategyEngine.select(
+                    goal, valueScore, profile, packMatchResult, DEFAULT_ADAPTIVE_THRESHOLDS,
+                );
+                const adaptiveDecision = this._adaptiveGate.evaluate(
+                    goal, policyDecision, valueScore, strategyResult, profile,
+                    DEFAULT_ADAPTIVE_THRESHOLDS,
+                );
+
+                // Track in in-memory log (capped at 20, newest first)
+                this._recentValueScores = [valueScore, ...this._recentValueScores].slice(0, 20);
+                this._recentStrategySelections = [strategyResult, ...this._recentStrategySelections].slice(0, 20);
+                this._recentAdaptiveDecisions = [adaptiveDecision, ...this._recentAdaptiveDecisions].slice(0, 20);
+
+                this.telemetryStore.record('goal_scored',
+                    `[Adaptive] ${goal.title}: valueScore=${valueScore.valueScore}, ` +
+                    `strategy=${strategyResult.strategy}, decision=${adaptiveDecision.action}`,
+                    { goalId: goal.goalId, subsystemId: goal.subsystemId, data: {
+                        valueScore: valueScore.valueScore,
+                        strategy: strategyResult.strategy,
+                        action: adaptiveDecision.action,
+                        reasonCodes: adaptiveDecision.reasonCodes,
+                    } },
+                );
+                this.auditService.appendAuditRecord(
+                    'policy_approved',
+                    `[P5 Adaptive] decision=${adaptiveDecision.action}: ${adaptiveDecision.reason}`,
+                    { goalId: goal.goalId, subsystemId: goal.subsystemId },
+                );
+
+                if (adaptiveDecision.action !== 'proceed') {
+                    // defer → keep goal as 'scored' for next cycle
+                    // suppress → mark suppressed
+                    // escalate → mark as policy_blocked, route to human review
+                    let newStatus: import('../../../shared/autonomyTypes').GoalStatus;
+                    let humanReviewRequired = false;
+
+                    if (adaptiveDecision.action === 'escalate') {
+                        newStatus = 'policy_blocked';
+                        humanReviewRequired = true;
+                    } else if (adaptiveDecision.action === 'suppress') {
+                        newStatus = 'suppressed';
+                    } else {
+                        // defer: reset to scored so the goal is eligible next cycle
+                        newStatus = 'scored';
+                    }
+
+                    this._updateGoal(goal.goalId, { status: newStatus, humanReviewRequired });
+                    return;
+                }
+
+                // Proceed — pass strategy result to the pipeline for informed pack selection
+                adaptiveStrategyResult = strategyResult;
+
+            } catch (err: any) {
+                // Adaptive layer errors must never block the pipeline
                 telemetry.operational(
                     'autonomy',
-                    'autonomy_run_failed',
-                    'error',
+                    'operational',
+                    'warn',
                     'AutonomousRunOrchestrator',
-                    `Unhandled error in pipeline for goal ${goal.goalId}: ${err.message}`,
+                    `[P5 Adaptive] Error in adaptive layer for goal ${goal.goalId}: ${err.message}. ` +
+                    `Falling back to Phase 4 behavior.`,
+                );
+                // adaptiveStrategyResult stays undefined → Phase 4 pack selection used
+            }
+        }
+        // ── End Phase 5 ────────────────────────────────────────────────────────
+
+        // Execute asynchronously (fire-and-forget with error capture)
+        this._executeGoalPipeline(
+            this.activeGoals.get(goal.goalId)!, policyDecision.decisionId, adaptiveStrategyResult,
+        ).catch(err => {
+            telemetry.operational(
+                'autonomy',
+                'autonomy_run_failed',
+                'error',
+                'AutonomousRunOrchestrator',
+                `Unhandled error in pipeline for goal ${goal.goalId}: ${err.message}`,
                 );
             });
     }
@@ -395,6 +600,7 @@ export class AutonomousRunOrchestrator {
     private async _executeGoalPipeline(
         goal: AutonomousGoal,
         policyDecisionId: string,
+        adaptiveStrategyResult?: StrategySelectionResult,
     ): Promise<void> {
         const cycleId = uuidv4();
         const run: AutonomousRun = {
@@ -433,7 +639,7 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
             );
 
-            const planInput: PlanTriggerInput = await this._buildPlanInput(goal, run);
+            const planInput: PlanTriggerInput = await this._buildPlanInput(goal, run, adaptiveStrategyResult);
 
             const planResponse = await this.safePlanner.plan(planInput);
 
@@ -612,6 +818,19 @@ export class AutonomousRunOrchestrator {
                 this.telemetryStore.record('recovery_pack_outcome_recorded',
                     `Recovery pack ${finalRun.recoveryPackId} outcome '${packOutcome}' recorded`,
                     { goalId: goal.goalId, runId: run.runId },
+                );
+            }
+
+            // ── Phase 5: Update subsystem adaptive profile (feedback loop) ────
+            if (this._adaptiveProfileRegistry) {
+                // Determine strategy actually used (pack if recoveryPackId set, else standard)
+                const strategyUsed = adaptiveStrategyResult?.strategy
+                    ?? (finalRun.recoveryPackId ? 'recovery_pack' : 'standard_planning');
+                this._adaptiveProfileRegistry.update(
+                    goal.subsystemId,
+                    outcome,
+                    strategyUsed,
+                    finalRun.recoveryPackId,
                 );
             }
 
@@ -912,11 +1131,20 @@ export class AutonomousRunOrchestrator {
      * On no match, adapter error, or missing pack services, falls back to the
      * standard PlanTriggerInput construction.
      *
+     * Phase 5 enhancement:
+     *   If adaptiveStrategyResult is provided and strategy === 'standard_planning',
+     *   pack matching is skipped and standard planning is used directly.
+     *   If strategy === 'recovery_pack' with a selectedPackId, that pack is preferred.
+     *
      * SAFETY: If any exception occurs during pack matching or adaptation,
      * the exception is caught and logged, and standard planning proceeds.
      * Recovery packs must never block or crash the planning pipeline.
      */
-    private async _buildPlanInput(goal: AutonomousGoal, run: AutonomousRun): Promise<PlanTriggerInput> {
+    private async _buildPlanInput(
+        goal: AutonomousGoal,
+        run: AutonomousRun,
+        adaptiveStrategyResult?: StrategySelectionResult,
+    ): Promise<PlanTriggerInput> {
         const standardInput: PlanTriggerInput = {
             subsystemId: goal.subsystemId,
             issueType: goal.source,
@@ -927,6 +1155,16 @@ export class AutonomousRunOrchestrator {
             sourceGoalId: goal.goalId,
             isManual: false,
         };
+
+        // ── Phase 5: Adaptive strategy hint ──────────────────────────────────
+        // If adaptive layer decided 'standard_planning', skip pack matching.
+        if (adaptiveStrategyResult?.strategy === 'standard_planning') {
+            this.telemetryStore.record('recovery_pack_fallback',
+                `[P5 Adaptive] Standard planning selected — skipping pack matching for goal ${goal.goalId}`,
+                { goalId: goal.goalId, runId: run.runId },
+            );
+            return standardInput;
+        }
 
         if (!this._packMatcher || !this._packPlannerAdapter || !this._packRegistry) {
             return standardInput;

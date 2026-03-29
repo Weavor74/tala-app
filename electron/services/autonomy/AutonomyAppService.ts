@@ -182,5 +182,23 @@ export class AutonomyAppService {
                 this.orchestrator.getRecoveryPackDashboardState(),
             ),
         );
+
+        // ── autonomy:getAdaptiveDashboardState ─────────────────────────────────
+        // Phase 5 P5G: Returns the adaptive intelligence dashboard state.
+        // Returns null when the adaptive layer is not active.
+        ipcMain.handle('autonomy:getAdaptiveDashboardState', () =>
+            this.executeWithTelemetry('getAdaptiveDashboardState', async () =>
+                this.orchestrator.getAdaptiveDashboardState(),
+            ),
+        );
+
+        // ── autonomy:listSubsystemProfiles ─────────────────────────────────────
+        // Phase 5 P5F: Returns all subsystem adaptive profiles.
+        // Returns [] when the adaptive layer is not active.
+        ipcMain.handle('autonomy:listSubsystemProfiles', () =>
+            this.executeWithTelemetry('listSubsystemProfiles', async () =>
+                this.orchestrator.getAdaptiveSubsystemProfiles(),
+            ),
+        );
     }
 }

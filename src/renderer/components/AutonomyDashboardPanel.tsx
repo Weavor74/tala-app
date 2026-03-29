@@ -10,9 +10,15 @@ import type {
     RecoveryPackDashboardState,
     RecoveryPackOutcomeSummary,
 } from '../../shared/recoveryPackTypes';
+import type {
+    AdaptiveDashboardState,
+    SubsystemProfile,
+    AdaptivePolicyDecision,
+    StrategySelectionResult,
+} from '../../shared/adaptiveTypes';
 
 /**
- * AutonomyDashboardPanel — Phase 4 P4G
+ * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G
  *
  * The Reflection Dashboard integration for autonomous self-improvement.
  *
@@ -29,6 +35,7 @@ import type {
 const AutonomyDashboardPanel: React.FC = () => {
     const [dashState, setDashState] = useState<AutonomyDashboardState | null>(null);
     const [packState, setPackState] = useState<RecoveryPackDashboardState | null>(null);
+    const [adaptiveState, setAdaptiveState] = useState<AdaptiveDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -47,6 +54,15 @@ const AutonomyDashboardPanel: React.FC = () => {
                     setPackState(ps ?? null);
                 } catch {
                     // Non-fatal — pack layer may not be active
+                }
+            }
+            // Phase 5: fetch adaptive dashboard state
+            if (tala.autonomy.getAdaptiveDashboardState) {
+                try {
+                    const as = await tala.autonomy.getAdaptiveDashboardState();
+                    setAdaptiveState(as ?? null);
+                } catch {
+                    // Non-fatal — adaptive layer may not be active
                 }
             }
         } catch (e: any) {
@@ -307,6 +323,62 @@ const AutonomyDashboardPanel: React.FC = () => {
                 </Section>
             )}
 
+            {/* Adaptive Intelligence Layer (Phase 5) */}
+            {adaptiveState && (
+                <Section title="🧠 Adaptive Intelligence" accent="#06b6d4">
+                    {/* KPIs */}
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                        <div style={{ background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#9ca3af' }}>
+                            Avg value score: <span style={{ color: '#e5e7eb', fontWeight: 700 }}>{adaptiveState.kpis.avgValueScore}</span>
+                        </div>
+                        <div style={{ background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#9ca3af' }}>
+                            Pack rate: <span style={{ color: '#8b5cf6', fontWeight: 700 }}>{(adaptiveState.kpis.packSelectionRate * 100).toFixed(0)}%</span>
+                        </div>
+                        <div style={{ background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#9ca3af' }}>
+                            Defer: <span style={{ color: '#f59e0b', fontWeight: 700 }}>{(adaptiveState.kpis.deferRate * 100).toFixed(0)}%</span>
+                        </div>
+                        <div style={{ background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#9ca3af' }}>
+                            Suppress: <span style={{ color: '#6b7280', fontWeight: 700 }}>{(adaptiveState.kpis.suppressRate * 100).toFixed(0)}%</span>
+                        </div>
+                        {adaptiveState.kpis.oscillatingSubsystemCount > 0 && (
+                            <div style={{ background: '#0f172a', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#ef4444', fontWeight: 700 }}>
+                                ⚠️ {adaptiveState.kpis.oscillatingSubsystemCount} oscillating
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Subsystem profiles */}
+                    {adaptiveState.subsystemProfiles.length > 0 && (
+                        <div style={{ marginBottom: '0.75rem' }}>
+                            <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                                Subsystem profiles
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.4rem' }}>
+                                {adaptiveState.subsystemProfiles.map(p => (
+                                    <SubsystemProfileCard key={p.subsystemId} profile={p} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Recent adaptive decisions */}
+                    {adaptiveState.recentPolicyDecisions.length > 0 && (
+                        <div>
+                            <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                                Recent adaptive decisions
+                            </div>
+                            {adaptiveState.recentPolicyDecisions.slice(0, 10).map((d, i) => (
+                                <AdaptiveDecisionCard
+                                    key={d.goalId + d.decidedAt}
+                                    decision={d}
+                                    strategyResult={adaptiveState.recentStrategySelections[i]}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </Section>
+            )}
+
             {/* Empty state */}
             {state && state.kpis.totalGoalsDetected === 0 && (
                 <div style={{
@@ -524,6 +596,83 @@ const RecoveryPackCard: React.FC<{ summary: RecoveryPackOutcomeSummary; packLabe
                     {summary.lastAttemptAt ? ` · ${new Date(summary.lastAttemptAt).toLocaleDateString()}` : ''}
                 </div>
             )}
+        </div>
+    );
+};
+
+/** Phase 5 P5G: Subsystem adaptive profile card. */
+const SubsystemProfileCard: React.FC<{ profile: SubsystemProfile }> = ({ profile }) => {
+    const successColor = profile.successRate >= 0.7 ? '#10b981'
+        : profile.successRate >= 0.4 ? '#f59e0b' : '#ef4444';
+    const multColor = profile.cooldownMultiplier >= 3 ? '#ef4444'
+        : profile.cooldownMultiplier >= 2 ? '#f59e0b' : '#9ca3af';
+    return (
+        <div style={{
+            padding: '0.6rem 0.75rem', background: '#0f172a',
+            borderRadius: '6px', fontSize: '0.75rem',
+            borderLeft: `3px solid ${profile.oscillationDetected ? '#ef4444' : '#374151'}`,
+        }}>
+            <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                marginBottom: '0.2rem',
+            }}>
+                <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{profile.subsystemId}</span>
+                <span style={{ color: '#6b7280', fontSize: '0.65rem' }}>
+                    {profile.sensitivityLevel}
+                    {profile.oscillationDetected && ' ⚠️ oscillating'}
+                </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', color: '#6b7280' }}>
+                <span style={{ color: '#10b981' }}>✓{profile.successCount}</span>
+                <span style={{ color: '#ef4444' }}>✗{profile.failureCount}</span>
+                <span style={{ color: '#f59e0b' }}>↩{profile.rollbackCount}</span>
+                <span style={{ color: successColor }}>
+                    {(profile.successRate * 100).toFixed(0)}%
+                </span>
+                <span style={{ color: multColor }}>×{profile.cooldownMultiplier.toFixed(1)}</span>
+                {profile.preferredStrategy && (
+                    <span style={{ color: '#8b5cf6' }}>{profile.preferredStrategy}</span>
+                )}
+            </div>
+        </div>
+    );
+};
+
+/** Phase 5 P5G: Adaptive policy decision card. */
+const AdaptiveDecisionCard: React.FC<{
+    decision: AdaptivePolicyDecision;
+    strategyResult?: StrategySelectionResult;
+}> = ({ decision, strategyResult }) => {
+    const actionColor: Record<string, string> = {
+        proceed: '#10b981', defer: '#f59e0b', suppress: '#6b7280', escalate: '#ef4444',
+    };
+    const color = actionColor[decision.action] ?? '#9ca3af';
+    return (
+        <div style={{
+            padding: '0.6rem 0.75rem', background: '#0f172a',
+            borderRadius: '6px', fontSize: '0.75rem',
+            borderLeft: `3px solid ${color}`,
+        }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                <span style={{ color: '#e5e7eb', fontWeight: 600 }}>
+                    {decision.goalId.slice(0, 12)}…
+                </span>
+                <span style={{
+                    padding: '0.15rem 0.4rem', borderRadius: '8px',
+                    background: `${color}22`, color,
+                    fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase',
+                }}>
+                    {decision.action}
+                </span>
+            </div>
+            <div style={{ color: '#6b7280', fontSize: '0.7rem' }}>
+                {strategyResult && (
+                    <span style={{ color: '#8b5cf6', marginRight: '0.5rem' }}>
+                        {strategyResult.strategy}
+                    </span>
+                )}
+                {decision.reasonCodes.join(', ')}
+            </div>
         </div>
     );
 };
