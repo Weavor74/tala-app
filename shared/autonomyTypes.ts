@@ -113,6 +113,24 @@ export interface UserSeededContext {
     userNote?: string;
 }
 
+export interface WeakCoverageContext {
+    kind: 'weak_coverage_signal';
+    testCount: number;
+    missingCoverageIndicators: string[];
+}
+
+export interface BacklogGoalContext {
+    kind: 'unresolved_backlog_item';
+    age: number;             // days since creation
+    previousAttempts: number;
+}
+
+export interface RecurringReflectionGoalContext {
+    kind: 'recurring_reflection_goal';
+    recurrenceCount: number;
+    lastOccurrence: string;  // ISO string of most recent queued instance
+}
+
 export interface GenericGoalSourceContext {
     kind: 'generic';
     detail?: string;
@@ -123,6 +141,9 @@ export type GoalSourceContext =
     | RepeatedExecutionFailureContext
     | GovernanceBlockContext
     | StaleSubsystemContext
+    | WeakCoverageContext
+    | BacklogGoalContext
+    | RecurringReflectionGoalContext
     | UserSeededContext
     | GenericGoalSourceContext;
 
@@ -390,7 +411,10 @@ export type AutonomyTelemetryEventType =
     | 'outcome_learned'
     | 'cooldown_applied'
     | 'budget_exhausted'
-    | 'loop_suppressed';
+    | 'loop_suppressed'
+    | 'detection_cycle_started'
+    | 'detection_cycle_completed'
+    | 'detection_source_error';
 
 export interface AutonomyTelemetryEvent {
     eventId: string;
