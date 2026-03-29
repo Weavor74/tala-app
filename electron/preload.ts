@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -497,6 +497,36 @@ contextBridge.exposeInMainWorld('tala', {
         const listener = (event: any, data: any) => callback(data);
         ipcRenderer.on('reflection:activityUpdated', listener);
         return () => ipcRenderer.removeListener('reflection:activityUpdated', listener);
+    },
+
+    // ─── Phase 3: Controlled Execution ────────────────────────────
+    /** Starts a controlled execution run for a promoted proposal. */
+    startExecution: (request: any) => ipcRenderer.invoke('execution:startRun', request),
+    /** Starts a dry-run (no filesystem mutations). */
+    startDryRun: (request: any) => ipcRenderer.invoke('execution:startDryRun', request),
+    /** Gets the current state of an execution run. */
+    getExecutionStatus: (executionId: string) => ipcRenderer.invoke('execution:getRunStatus', executionId),
+    /** Lists recent execution runs. */
+    listExecutions: (windowMs?: number) => ipcRenderer.invoke('execution:listRuns', windowMs),
+    /** Aborts an active execution run. */
+    abortExecution: (request: any) => ipcRenderer.invoke('execution:abortRun', request),
+    /** Reads the audit log for an execution run. */
+    getExecutionAuditLog: (executionId: string) => ipcRenderer.invoke('execution:getAuditLog', executionId),
+    /** Gets the execution dashboard state (KPIs + active run). */
+    getExecutionDashboardState: (promotedProposalsReady?: number) => ipcRenderer.invoke('execution:getDashboardState', promotedProposalsReady),
+    /** Records a manual verification check result. */
+    recordManualCheck: (executionId: string, passed: boolean, notes?: string) => ipcRenderer.invoke('execution:recordManualCheck', executionId, passed, notes),
+    /** Subscribes to execution dashboard updates. Returns cleanup function. */
+    onExecutionUpdate: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('execution:dashboardUpdate', listener);
+        return () => ipcRenderer.removeListener('execution:dashboardUpdate', listener);
+    },
+    /** Subscribes to execution telemetry events. Returns cleanup function. */
+    onExecutionTelemetry: (callback: (data: any) => void) => {
+        const listener = (event: any, data: any) => callback(data);
+        ipcRenderer.on('execution:telemetry', listener);
+        return () => ipcRenderer.removeListener('execution:telemetry', listener);
     },
 
     // ─── Session Export ───────────────────────────────────────────

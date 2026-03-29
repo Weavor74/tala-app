@@ -34,6 +34,9 @@ import { loadSettings, saveSettings } from './services/SettingsManager';
 import { IpcRouter } from './services/IpcRouter';
 import { ReflectionService } from './services/reflection/ReflectionService';
 import { ReflectionAppService } from './services/reflection/ReflectionAppService';
+import { SafeChangePlanner } from './services/reflection/SafeChangePlanner';
+import { ExecutionOrchestrator } from './services/execution/ExecutionOrchestrator';
+import { ExecutionAppService } from './services/execution/ExecutionAppService';
 import { InvariantRegistry } from './services/selfModel/InvariantRegistry';
 import { CapabilityRegistry } from './services/selfModel/CapabilityRegistry';
 import { OwnershipMapper } from './services/selfModel/OwnershipMapper';
@@ -98,7 +101,6 @@ const inferenceService = new InferenceService();
 const workflowService = new WorkflowService(fileService.getRoot());
 const agent = new AgentService(terminalService, functionService, mcpService, inferenceService, userProfileService);
 const reflectionService = new ReflectionService(USER_DATA_DIR, SYSTEM_SETTINGS_PATH);
-const reflectionAppService = new ReflectionAppService(reflectionService);
 
 const invariantRegistry = new InvariantRegistry();
 const capabilityRegistry = new CapabilityRegistry();
@@ -108,6 +110,19 @@ const selfModelBuilder = new SelfModelBuilder();
 const selfModelQueryService = new SelfModelQueryService(invariantRegistry, capabilityRegistry, ownershipMapper, selfModelScanner, selfModelBuilder);
 const selfModelRefreshService = new SelfModelRefreshService(invariantRegistry, capabilityRegistry, selfModelQueryService, USER_DATA_DIR);
 const selfModelAppService = new SelfModelAppService(selfModelRefreshService, selfModelQueryService);
+
+// SafeChangePlanner requires selfModelQueryService — must come after it
+const safePlanner = new SafeChangePlanner(selfModelQueryService, USER_DATA_DIR);
+const reflectionAppService = new ReflectionAppService(reflectionService, safePlanner);
+
+// ─── Controlled Execution Layer (Phase 3) ─────────────────────────────────────
+const executionOrchestrator = new ExecutionOrchestrator(
+    USER_DATA_DIR,
+    EFFECTIVE_WORKSPACE_ROOT,
+    () => invariantRegistry.getAll().map(i => i.id),
+    (proposalId: string) => safePlanner.listProposals().find(p => p.proposalId === proposalId) ?? null,
+);
+new ExecutionAppService(executionOrchestrator);
 const soulService = new SoulService(USER_DATA_DIR);
 const voiceService = new VoiceService();
 const workflowEngine = new WorkflowEngine(functionService, agent);
