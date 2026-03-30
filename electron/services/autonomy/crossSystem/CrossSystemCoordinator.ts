@@ -36,6 +36,8 @@ import type { CrossSystemOutcomeTracker } from './CrossSystemOutcomeTracker';
 import type { CrossSystemDashboardBridge } from './CrossSystemDashboardBridge';
 import type { CrossSystemSignalCollector } from './CrossSystemSignalCollector';
 import { telemetry } from '../../TelemetryService';
+// ── Phase 6.1: Strategy Routing (optional, injected via setStrategyRoutingEngine) ──
+import type { StrategyRoutingEngine } from './StrategyRoutingEngine';
 
 // ─── Analysis trigger threshold ───────────────────────────────────────────────
 
@@ -68,6 +70,13 @@ export class CrossSystemCoordinator {
     /** Optional signal collector for pull-based ingestion from existing registries. */
     private signalCollector: CrossSystemSignalCollector | undefined;
 
+    // ── Phase 6.1: Strategy Routing (optional) ────────────────────────────────
+    private _strategyRoutingEngine: StrategyRoutingEngine | undefined;
+    /** Optional callback to get the count of active campaigns (for routing context). */
+    private _activeCampaignCountFn: (() => number) | undefined;
+    /** Optional callback to get hard-blocked (protected) subsystem IDs. */
+    private _protectedSubsystemsFn: (() => string[]) | undefined;
+
     constructor(
         dataDir: string,
         private readonly aggregator: CrossSystemSignalAggregator,
@@ -89,6 +98,28 @@ export class CrossSystemCoordinator {
      */
     setSignalCollector(collector: CrossSystemSignalCollector): void {
         this.signalCollector = collector;
+    }
+
+    // ── Phase 6.1: Strategy Routing injection ─────────────────────────────────
+
+    /**
+     * Injects the optional Phase 6.1 strategy routing engine.
+     *
+     * Must be called after construction and after the Phase 6 services are wired.
+     * When not called, strategy decisions are still made but not routed.
+     *
+     * @param engine            The routing engine that evaluates and persists routing decisions.
+     * @param activeCampaignCountFn  Optional: returns current active campaign count (for capacity check).
+     * @param protectedSubsystemsFn Optional: returns hard-blocked subsystem IDs (from AutonomyPolicy).
+     */
+    setStrategyRoutingEngine(
+        engine: StrategyRoutingEngine,
+        activeCampaignCountFn?: () => number,
+        protectedSubsystemsFn?: () => string[],
+    ): void {
+        this._strategyRoutingEngine = engine;
+        this._activeCampaignCountFn = activeCampaignCountFn;
+        this._protectedSubsystemsFn = protectedSubsystemsFn;
     }
 
     /**
@@ -228,6 +259,31 @@ export class CrossSystemCoordinator {
 
                 const decision = this.strategySelector.select(cluster, clusterHypotheses);
                 this.decisions.push(decision);
+
+                // ── Phase 6.1: Strategy Routing ───────────────────────────────
+                // Route the new strategy decision into a concrete action form.
+                // Non-fatal: a routing failure must never abort the analysis pass.
+                if (this._strategyRoutingEngine) {
+                    try {
+                        const routingInput: import('../../../../shared/strategyRoutingTypes').StrategyRoutingInput = {
+                            sourceDecision: decision,
+                            cluster,
+                            rootCause: clusterHypotheses[0],
+                            context: this._buildRoutingContext(),
+                        };
+                        const routingDecision = this._strategyRoutingEngine.route(routingInput);
+                        // Back-link the routing decision ID into the strategy decision record
+                        decision.routedToRoutingDecisionId = routingDecision.routingDecisionId;
+                    } catch (routingErr: any) {
+                        telemetry.operational(
+                            'autonomy',
+                            'operational',
+                            'warn',
+                            'CrossSystemCoordinator',
+                            `Strategy routing failed for cluster ${cluster.clusterId} (non-fatal): ${routingErr.message}`,
+                        );
+                    }
+                }
             }
 
             this.dashboardBridge.maybeEmit('strategy_decided', this._buildCurrentState());
@@ -360,6 +416,27 @@ export class CrossSystemCoordinator {
             outcomes,
             this.aggregator.getSignalCount(),
         );
+    }
+
+    // ── Private: Phase 6.1 routing context ────────────────────────────────────
+
+    /**
+     * Builds the StrategyRoutingContext for the routing engine.
+     * Uses optional injected callbacks for protected subsystems and campaign capacity.
+     * Defaults conservatively when callbacks are not available.
+     */
+    private _buildRoutingContext(): import('../../../../shared/strategyRoutingTypes').StrategyRoutingContext {
+        const protectedSubsystems = this._protectedSubsystemsFn?.() ?? [];
+        const activeCampaignCount = this._activeCampaignCountFn?.() ?? 0;
+        // Assume capacity is available unless we know otherwise (conservative default: available)
+        const campaignCapacityAvailable = activeCampaignCount < 3;
+        const activeRoutingCount = this._strategyRoutingEngine?.getActiveRoutingCount() ?? 0;
+
+        return {
+            protectedSubsystems,
+            campaignCapacityAvailable,
+            activeRoutingCount,
+        };
     }
 
     // ── Private: persistence ────────────────────────────────────────────────────

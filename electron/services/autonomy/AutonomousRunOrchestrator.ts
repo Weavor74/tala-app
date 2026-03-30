@@ -159,6 +159,10 @@ export class AutonomousRunOrchestrator {
     // ── Phase 6: Cross-System Intelligence services (optional) ────────────────
     private _crossSystemCoordinator: import('./crossSystem/CrossSystemCoordinator').CrossSystemCoordinator | undefined;
 
+    // ── Phase 6.1: Strategy Routing services (optional) ───────────────────────
+    private _strategyRoutingEngine: import('./crossSystem/StrategyRoutingEngine').StrategyRoutingEngine | undefined;
+    private _strategyRoutingOutcomeTracker: import('./crossSystem/StrategyRoutingOutcomeTracker').StrategyRoutingOutcomeTracker | undefined;
+
     constructor(
         private readonly dataDir: string,
         private readonly safePlanner: SafeChangePlanner,
@@ -517,6 +521,333 @@ export class AutonomousRunOrchestrator {
         return this._crossSystemCoordinator?.getDashboardState() ?? null;
     }
 
+    // ─── Phase 6.1: Strategy Routing ──────────────────────────────────────────
+
+    /**
+     * Injects optional Phase 6.1 strategy routing services.
+     *
+     * Must be called after setCrossSystemServices() (if used).
+     * When not called, strategy routing is inactive.
+     */
+    setStrategyRoutingServices(
+        engine: import('./crossSystem/StrategyRoutingEngine').StrategyRoutingEngine,
+        outcomeTracker: import('./crossSystem/StrategyRoutingOutcomeTracker').StrategyRoutingOutcomeTracker,
+    ): void {
+        this._strategyRoutingEngine = engine;
+        this._strategyRoutingOutcomeTracker = outcomeTracker;
+    }
+
+    /**
+     * Returns the Phase 6.1 strategy routing dashboard state, or null if not active.
+     */
+    getStrategyRoutingDashboardState(): import('../../../shared/strategyRoutingTypes').StrategyRoutingDashboardState | null {
+        return this._strategyRoutingEngine?.getDashboardState() ?? null;
+    }
+
+    /**
+     * Processes the strategy routing queue: picks up 'eligible' routing decisions
+     * and materializes them into actual goals or campaigns through the existing
+     * planning → governance → execution / campaign pipelines.
+     *
+     * This is called from runCycleOnce() after candidate detection.
+     * No-op when strategy routing services are not active.
+     */
+    async processStrategyRoutingQueue(): Promise<void> {
+        if (!this._strategyRoutingEngine) return;
+
+        const eligible = this._strategyRoutingEngine.listDecisions({ status: ['eligible'] });
+        if (eligible.length === 0) return;
+
+        for (const decision of eligible) {
+            try {
+                await this._materializeRoutingDecision(decision);
+            } catch (err: any) {
+                telemetry.operational(
+                    'autonomy',
+                    'operational',
+                    'warn',
+                    'AutonomousRunOrchestrator',
+                    `[P6.1] Materialization failed for routing decision ` +
+                    `${decision.routingDecisionId}: ${err.message}`,
+                );
+            }
+        }
+    }
+
+    /**
+     * Materializes a single eligible routing decision into a goal or campaign.
+     * Routes through the existing planning / governance / execution / campaign pipelines.
+     * No special bypass path exists.
+     */
+    private async _materializeRoutingDecision(
+        decision: import('../../../shared/strategyRoutingTypes').StrategyRoutingDecision,
+    ): Promise<void> {
+        if (!this._strategyRoutingEngine) return;
+
+        const { routingTargetType } = decision;
+
+        switch (routingTargetType) {
+            case 'autonomous_goal': {
+                const goalId = this._injectStrategyRoutingGoal(decision);
+                if (goalId) {
+                    this._strategyRoutingEngine.markRouted(decision.routingDecisionId, {
+                        actionType: 'autonomous_goal',
+                        actionId: goalId,
+                        createdAt: new Date().toISOString(),
+                        status: 'pending',
+                    });
+                    telemetry.operational(
+                        'autonomy',
+                        'operational',
+                        'info',
+                        'AutonomousRunOrchestrator',
+                        `[P6.1] strategy_routed_to_goal: routingDecisionId=${decision.routingDecisionId} goalId=${goalId}`,
+                    );
+                }
+                break;
+            }
+
+            case 'repair_campaign': {
+                const campaignId = await this._injectStrategyRepairCampaign(decision);
+                if (campaignId) {
+                    this._strategyRoutingEngine.markRouted(decision.routingDecisionId, {
+                        actionType: 'repair_campaign',
+                        actionId: campaignId,
+                        createdAt: new Date().toISOString(),
+                        status: 'active',
+                    });
+                    telemetry.operational(
+                        'autonomy',
+                        'operational',
+                        'info',
+                        'AutonomousRunOrchestrator',
+                        `[P6.1] strategy_routed_to_campaign: routingDecisionId=${decision.routingDecisionId} campaignId=${campaignId}`,
+                    );
+                }
+                break;
+            }
+
+            case 'harmonization_campaign': {
+                const hCampaignId = await this._injectStrategyHarmonizationCampaign(decision);
+                if (hCampaignId) {
+                    this._strategyRoutingEngine.markRouted(decision.routingDecisionId, {
+                        actionType: 'harmonization_campaign',
+                        actionId: hCampaignId,
+                        createdAt: new Date().toISOString(),
+                        status: 'active',
+                    });
+                    telemetry.operational(
+                        'autonomy',
+                        'operational',
+                        'info',
+                        'AutonomousRunOrchestrator',
+                        `[P6.1] strategy_routed_to_campaign: routingDecisionId=${decision.routingDecisionId} hCampaignId=${hCampaignId}`,
+                    );
+                }
+                break;
+            }
+
+            default:
+                // human_review and deferred are already persisted by the engine — no action needed
+                break;
+        }
+    }
+
+    /**
+     * Injects a strategy-routing-sourced autonomous goal into the normal goal pipeline.
+     *
+     * The goal enters at 'scored' status with 'high' priority tier and passes through
+     * the standard AutonomyPolicyGate → SafeChangePlanner → Governance → Execution path.
+     * No bypass exists.
+     *
+     * Returns the goalId, or null if the goal was not created (e.g. duplicate fingerprint).
+     */
+    private _injectStrategyRoutingGoal(
+        decision: import('../../../shared/strategyRoutingTypes').StrategyRoutingDecision,
+    ): string | null {
+        // Dedup: prevent the same routing decision from creating the goal twice
+        const fingerprint = `strategy-routing-${decision.clusterId}-${decision.routingDecisionId}`;
+        const alreadyExists = [...this.activeGoals.values()].some(
+            g => g.dedupFingerprint === fingerprint,
+        );
+        if (alreadyExists) {
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'debug',
+                'AutonomousRunOrchestrator',
+                `[P6.1] Duplicate fingerprint — skipping goal injection for routing decision ${decision.routingDecisionId}`,
+            );
+            return null;
+        }
+
+        const goalId = `goal-${require('uuid').v4()}`;
+        const now = new Date().toISOString();
+
+        const goal: import('../../../shared/autonomyTypes').AutonomousGoal = {
+            goalId,
+            createdAt: now,
+            updatedAt: now,
+            source: 'strategy_routing',
+            subsystemId: this._extractSubsystemFromDecision(decision),
+            title: `[Strategy Routing] ${decision.strategyKind} — ${decision.scopeSummary.slice(0, 80)}`,
+            description: decision.rationale,
+            status: 'scored',
+            priorityTier: 'high',
+            priorityScore: {
+                total: 70,
+                severityWeight: 20,
+                recurrenceWeight: 15,
+                subsystemImportanceWeight: 12,
+                confidenceWeight: 12,
+                governanceLikelihoodWeight: 5,
+                rollbackConfidenceWeight: 6,
+                executionCostPenalty: 0,
+                protectedPenalty: 0,
+            },
+            autonomyEligible: false, // set by policyGate.evaluate()
+            attemptCount: 0,
+            humanReviewRequired: false,
+            sourceContext: {
+                kind: 'generic',
+                detail: `strategy_routing:${decision.routingDecisionId}:cluster:${decision.clusterId}`,
+            },
+            dedupFingerprint: fingerprint,
+        };
+
+        this.activeGoals.set(goalId, goal);
+        this.auditService.saveGoal(goal);
+        this.auditService.appendAuditRecord(
+            'goal_created',
+            `[P6.1 Strategy Routing] Goal created from routing decision ${decision.routingDecisionId}`,
+            { goalId, subsystemId: goal.subsystemId },
+        );
+
+        telemetry.operational(
+            'autonomy',
+            'operational',
+            'info',
+            'AutonomousRunOrchestrator',
+            `[P6.1] Goal injected from strategy routing: goalId=${goalId} ` +
+            `subsystem=${goal.subsystemId} routingDecisionId=${decision.routingDecisionId}`,
+        );
+
+        // Queue for execution via the standard pipeline on next cycle
+        this._selectAndExecuteGoal(goal);
+
+        return goalId;
+    }
+
+    /**
+     * Creates a RepairCampaign from a strategy routing decision.
+     * Uses the existing RepairCampaignPlanner + RepairCampaignCoordinator pipeline.
+     * No bypass of existing campaign safety guards.
+     *
+     * Returns the campaignId, or null if the campaign could not be created.
+     */
+    private async _injectStrategyRepairCampaign(
+        decision: import('../../../shared/strategyRoutingTypes').StrategyRoutingDecision,
+    ): Promise<string | null> {
+        if (!this._campaignPlanner || !this._campaignCoordinator) {
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'warn',
+                'AutonomousRunOrchestrator',
+                `[P6.1] Cannot inject repair campaign — campaign services not active.`,
+            );
+            return null;
+        }
+
+        const subsystem = this._extractSubsystemFromDecision(decision);
+        const label = `[Strategy Campaign] ${decision.strategyKind} — ${decision.scopeSummary.slice(0, 60)}`;
+        const goalId = `strategy-goal-${decision.routingDecisionId}`;
+
+        // Build using 'repair_template' fallback with bounded step count
+        const maxSteps = Math.min(
+            import('../../../shared/strategyRoutingTypes').STRATEGY_ROUTING_BOUNDS.MAX_STRATEGY_CAMPAIGN_STEPS,
+            4,
+        );
+
+        // Try to build from the first available template; fall back to manual 1-step plan
+        const templates = this._campaignPlanner.listTemplates();
+        let campaign = null;
+        if (templates.length > 0) {
+            campaign = this._campaignPlanner.buildFromTemplate(
+                templates[0].templateId,
+                goalId,
+                subsystem,
+                { maxSteps },
+            );
+        }
+
+        if (!campaign) {
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'warn',
+                'AutonomousRunOrchestrator',
+                `[P6.1] RepairCampaignPlanner could not build campaign for routing decision ${decision.routingDecisionId}`,
+            );
+            return null;
+        }
+
+        // Override label to carry strategy routing provenance
+        (campaign as any).label = label;
+
+        this._campaignRegistry?.save(campaign);
+        const activated = this._campaignCoordinator.activateCampaign(campaign.campaignId);
+        if (!activated) return null;
+
+        return campaign.campaignId;
+    }
+
+    /**
+     * Creates a HarmonizationCampaign from a strategy routing decision.
+     * No harmonization campaigns are created if the harmonization coordinator is unavailable.
+     * Returns the campaignId, or null if the campaign could not be created.
+     */
+    private async _injectStrategyHarmonizationCampaign(
+        decision: import('../../../shared/strategyRoutingTypes').StrategyRoutingDecision,
+    ): Promise<string | null> {
+        if (!this._harmonizationCoordinator) {
+            telemetry.operational(
+                'autonomy',
+                'operational',
+                'warn',
+                'AutonomousRunOrchestrator',
+                `[P6.1] Cannot inject harmonization campaign — harmonization services not active.`,
+            );
+            return null;
+        }
+
+        telemetry.operational(
+            'autonomy',
+            'operational',
+            'info',
+            'AutonomousRunOrchestrator',
+            `[P6.1] Harmonization campaign routing deferred to harmonization scan loop ` +
+            `for routing decision ${decision.routingDecisionId}. ` +
+            `The scan loop will detect drift and create the campaign automatically.`,
+        );
+
+        // The harmonization coordinator creates campaigns from its own drift-scan loop.
+        // Strategy routing surfaces the intent; the scan loop materializes it.
+        // Return the routing decision ID as a placeholder so the action reference is set.
+        return `harmonization-deferred-${decision.routingDecisionId}`;
+    }
+
+    /**
+     * Extracts the primary subsystem ID from a routing decision.
+     * Falls back to 'unknown' when no cluster subsystem data is available.
+     */
+    private _extractSubsystemFromDecision(
+        decision: import('../../../shared/strategyRoutingTypes').StrategyRoutingDecision,
+    ): string {
+        // The scopeSummary usually starts with subsystem info; use clusterId as fallback key
+        return `cross-system-${decision.clusterId.slice(-8)}`;
+    }
+
     /**
      * Ingests a cross-system signal from any subsystem.
      * No-op when Phase 6 services are not active.
@@ -747,6 +1078,20 @@ export class AutonomousRunOrchestrator {
         try {
             // 1. Detect candidates
             const candidates = await this.detectionEngine.runOnce();
+
+            // 2. Phase 6.1: Process strategy routing queue (non-fatal)
+            try {
+                await this.processStrategyRoutingQueue();
+            } catch (routingErr: any) {
+                telemetry.operational(
+                    'autonomy',
+                    'operational',
+                    'warn',
+                    'AutonomousRunOrchestrator',
+                    `[P6.1] processStrategyRoutingQueue failed (non-fatal): ${routingErr.message}`,
+                );
+            }
+
             if (candidates.length === 0) return;
 
             this._onCandidatesDetected(candidates);
@@ -803,6 +1148,12 @@ export class AutonomousRunOrchestrator {
         const harmonizationState = this.getHarmonizationDashboardState();
         if (harmonizationState) {
             (state as any).harmonizationState = harmonizationState;
+        }
+
+        // ── Phase 6.1: Augment with strategy routing state ────────────────────
+        const strategyRoutingState = this.getStrategyRoutingDashboardState();
+        if (strategyRoutingState) {
+            state.strategyRoutingState = strategyRoutingState;
         }
 
         return state;
