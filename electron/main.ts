@@ -96,6 +96,7 @@ import { HarmonizationOutcomeTracker } from './services/autonomy/harmonization/H
 import { HarmonizationDashboardBridge } from './services/autonomy/harmonization/HarmonizationDashboardBridge';
 import { HarmonizationCoordinator } from './services/autonomy/harmonization/HarmonizationCoordinator';
 import { HarmonizationAppService } from './services/autonomy/HarmonizationAppService';
+import type { HarmonizationCampaignInput } from '../shared/harmonizationTypes';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -328,6 +329,162 @@ try {
     autonomousRunOrchestrator.setHarmonizationServices(harmonizationCoordinator);
 
     new HarmonizationAppService(harmonizationCoordinator, harmonizationCanonRegistry, harmonizationOutcomeTracker);
+
+    // ── Phase 5.6.1: Harmonization Activation ─────────────────────────────────
+    // Wire the bounded drift-scan loop and the campaign-advancement loop so that
+    // the already-complete harmonization backend runs in the real runtime.
+    //
+    // Safety constraints:
+    //   - Low-frequency intervals (scan: 8 min, advance: 3 min).
+    //   - Re-entrancy guards prevent overlapping ticks.
+    //   - File gathering is capped to MAX_HARMONIZATION_SCAN_FILES files.
+    //   - Skips node_modules, dist, .git, and other non-source directories.
+    //   - All errors are caught and logged; neither loop crashes the app.
+    try {
+        const HARMONIZATION_SCAN_INTERVAL_MS = 8 * 60 * 1000;   // 8 minutes
+        const HARMONIZATION_ADVANCE_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+        const MAX_HARMONIZATION_SCAN_FILES = 200;
+        const HARMONIZATION_SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.json']);
+        const HARMONIZATION_SKIP_DIRS = new Set([
+            'node_modules', 'dist', 'out', 'build', '.git', '.vite',
+            'coverage', 'tmp', 'data', 'cache', '.cache',
+        ]);
+
+        // Re-entrancy guards
+        let harmonizationScanInProgress = false;
+        let harmonizationAdvanceInProgress = false;
+
+        /**
+         * Gathers relevant source-file contents from the workspace root into a
+         * Map<filePath, content> for the DriftDetector.  Bounded to at most
+         * MAX_HARMONIZATION_SCAN_FILES entries; unreadable files are skipped.
+         */
+        function gatherHarmonizationFiles(): Map<string, string> {
+            const contentMap = new Map<string, string>();
+
+            function walk(dir: string): void {
+                if (contentMap.size >= MAX_HARMONIZATION_SCAN_FILES) return;
+                let entries: fs.Dirent[];
+                try {
+                    entries = fs.readdirSync(dir, { withFileTypes: true });
+                } catch {
+                    return;
+                }
+                for (const entry of entries) {
+                    if (contentMap.size >= MAX_HARMONIZATION_SCAN_FILES) return;
+                    if (entry.isDirectory()) {
+                        if (HARMONIZATION_SKIP_DIRS.has(entry.name)) continue;
+                        walk(path.join(dir, entry.name));
+                    } else if (entry.isFile()) {
+                        if (!HARMONIZATION_SCAN_EXTENSIONS.has(path.extname(entry.name))) continue;
+                        const fullPath = path.join(dir, entry.name);
+                        try {
+                            contentMap.set(fullPath, fs.readFileSync(fullPath, 'utf-8'));
+                        } catch {
+                            // skip unreadable files gracefully
+                        }
+                    }
+                }
+            }
+
+            walk(EFFECTIVE_WORKSPACE_ROOT);
+            return contentMap;
+        }
+
+        // ── Scan loop ──────────────────────────────────────────────────────────
+        // Every HARMONIZATION_SCAN_INTERVAL_MS:
+        //   1. Gather file contents
+        //   2. Run DriftDetector
+        //   3. Store drift records for the dashboard
+        //   4. For each strong_match: build campaign input, plan campaign, register it
+        setInterval(async () => {
+            if (harmonizationScanInProgress) return;
+            harmonizationScanInProgress = true;
+            try {
+                const rules = harmonizationCanonRegistry.getAll();
+                if (rules.length === 0) return;
+
+                const contentMap = gatherHarmonizationFiles();
+                console.log(`[Harmonization] Scan started: ${contentMap.size} file(s) gathered`);
+
+                const driftRecords = harmonizationDriftDetector.scan(rules, contentMap);
+                harmonizationCoordinator.storeDriftRecords(driftRecords);
+                console.log(`[Harmonization] Scan complete: ${driftRecords.length} drift record(s) produced`);
+
+                if (driftRecords.length === 0) return;
+
+                // Match new drift records to canon rules and create campaigns
+                const activeSubsystems = harmonizationCoordinator.getActiveSubsystems();
+                for (const drift of driftRecords) {
+                    try {
+                        const match = harmonizationMatcher.match(drift, rules, activeSubsystems);
+                        if (!match || match.strength !== 'strong_match' || !match.safetyApproved) continue;
+
+                        const rule = rules.find(r => r.ruleId === drift.ruleId);
+                        if (!rule) continue;
+
+                        const verificationRequirements =
+                            rule.riskLevel === 'high'   ? ['no_regression', 'governance_approved', 'human_review'] :
+                            rule.riskLevel === 'medium' ? ['no_regression', 'governance_approved'] :
+                                                          ['no_regression'];
+
+                        const input: HarmonizationCampaignInput = {
+                            matchId: match.matchId,
+                            driftId: match.driftId,
+                            ruleId: match.ruleId,
+                            scope: match.proposedScope,
+                            riskLevel: rule.riskLevel,
+                            verificationRequirements,
+                            rollbackExpected: rule.riskLevel !== 'low',
+                            skipIfLowConfidence: true,
+                        };
+
+                        const campaign = harmonizationPlanner.plan(input, rule);
+                        if (campaign) {
+                            harmonizationCoordinator.registerCampaign(campaign);
+                        }
+                    } catch (matchErr: any) {
+                        console.warn(`[Harmonization] Match/plan error for drift ${drift.driftId}:`, matchErr?.message ?? matchErr);
+                    }
+                }
+            } catch (err: any) {
+                console.error('[Harmonization] Scan loop error:', err?.message ?? err);
+            } finally {
+                harmonizationScanInProgress = false;
+            }
+        }, HARMONIZATION_SCAN_INTERVAL_MS);
+
+        // ── Advancement loop ───────────────────────────────────────────────────
+        // Every HARMONIZATION_ADVANCE_INTERVAL_MS:
+        //   1. Fetch active (non-terminal, non-deferred) campaigns
+        //   2. Call advanceCampaign() once per campaign — no inner looping
+        //   3. Rely on the coordinator's own state machine for stop/continue/defer
+        setInterval(async () => {
+            if (harmonizationAdvanceInProgress) return;
+            harmonizationAdvanceInProgress = true;
+            try {
+                const active = harmonizationCoordinator.getActiveCampaigns();
+                if (active.length > 0) {
+                    console.log(`[Harmonization] Advance tick: ${active.length} campaign(s) considered`);
+                }
+                for (const campaign of active) {
+                    try {
+                        await harmonizationCoordinator.advanceCampaign(campaign.campaignId);
+                    } catch (advErr: any) {
+                        console.warn(`[Harmonization] Campaign ${campaign.campaignId} advance error:`, advErr?.message ?? advErr);
+                    }
+                }
+            } catch (err: any) {
+                console.error('[Harmonization] Advance loop error:', err?.message ?? err);
+            } finally {
+                harmonizationAdvanceInProgress = false;
+            }
+        }, HARMONIZATION_ADVANCE_INTERVAL_MS);
+
+        console.log('[Main] Phase 5.6.1: Harmonization activation loops started (scan=8min, advance=3min)');
+    } catch (activationErr) {
+        console.warn('[Main] Phase 5.6.1 harmonization activation failed — harmonization remains in latent mode:', activationErr);
+    }
 } catch (err) {
     console.warn('[Main] Phase 5.6 harmonization services failed to initialize — harmonization is inactive:', err);
 }

@@ -296,8 +296,45 @@ Failure in the Phase 5.6 block leaves the system fully operational on Phase 5.5 
 
 ---
 
-## Deferred / Planned
+## Phase 5.6.1 — Harmonization Activation (implemented)
 
-- **Automated drift scan trigger**: Currently HarmonizationDriftDetector is instantiated but not wired to a periodic scan loop. The operator or a future autonomous goal can initiate scans by calling `coordinator.storeDriftRecords()`. A future micro-phase can add a periodic detection cycle.
-- **File content loading**: The detector accepts a `Map<string, string>` of file contents. The coordinator does not auto-load file contents from disk today. This will be added in a follow-up when the self-model snapshot is used to supply file content.
-- **Automated campaign advancement**: The coordinator has `advanceCampaign()` but no automatic trigger. Campaigns advance when triggered explicitly. A future phase can wire periodic advancement into the autonomous run cycle.
+Added in `electron/main.ts` inside the Phase 5.6 try/catch block, as a nested
+try/catch that degrades safely if activation itself fails.
+
+### Drift scan loop (8-minute interval)
+
+Every 8 minutes:
+1. `gatherHarmonizationFiles()` walks `EFFECTIVE_WORKSPACE_ROOT`, collecting at most
+   200 `.ts`, `.tsx`, `.js`, `.json` files into a `Map<filePath, content>`.
+   `node_modules`, `dist`, `.git`, `out`, `build`, and similar directories are
+   skipped.  Unreadable files are silently skipped.
+2. `harmonizationDriftDetector.scan(rules, contentMap)` runs the deterministic
+   detector and returns `HarmonizationDriftRecord[]`.
+3. `harmonizationCoordinator.storeDriftRecords(records)` merges the results into
+   the dashboard-visible pending drift store.
+4. For each record that yields a `strong_match` from `HarmonizationMatcher`:
+   - `verificationRequirements` are derived from `rule.riskLevel`
+     (`low` → `['no_regression']`, `medium` → adds `governance_approved`,
+      `high` → adds `human_review`).
+   - `HarmonizationCampaignPlanner.plan(input, rule)` builds a bounded campaign.
+   - `harmonizationCoordinator.registerCampaign(campaign)` persists it.
+
+### Campaign advancement loop (3-minute interval)
+
+Every 3 minutes:
+1. `harmonizationCoordinator.getActiveCampaigns()` returns all non-terminal,
+   non-deferred campaigns.
+2. For each, `harmonizationCoordinator.advanceCampaign(campaignId)` is called
+   exactly once — no inner looping.  The coordinator's own state machine decides
+   whether to continue, defer, or complete.
+
+### Safety invariants preserved
+
+- **Re-entrancy guards**: `harmonizationScanInProgress` and
+  `harmonizationAdvanceInProgress` boolean flags prevent overlapping ticks.
+- **No file mutation in scan**: `gatherHarmonizationFiles()` is read-only.
+- **All safety gates intact**: every campaign step still flows through
+  `SafeChangePlanner` → `GovernanceAppService` → `ExecutionOrchestrator`.
+- **Startup safe**: both loops are wrapped in a nested try/catch; failure
+  leaves harmonization in latent/manual mode without crashing the app.
+- **Local-first**: no network or model calls; all inputs are local filesystem reads.
