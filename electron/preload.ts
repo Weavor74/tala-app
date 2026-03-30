@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -608,6 +608,30 @@ contextBridge.exposeInMainWorld('tala', {
             const listener = (event: any, data: any) => callback(data);
             ipcRenderer.on('autonomy:telemetry', listener);
             return () => ipcRenderer.removeListener('autonomy:telemetry', listener);
+        },
+    },
+
+    // ─── Phase 5.5: Multi-Step Repair Campaigns ──────────────────
+    campaign: {
+        /** Gets the full campaign dashboard state. */
+        getDashboardState: () => ipcRenderer.invoke('campaign:getDashboardState'),
+        /** Lists all repair campaigns. */
+        listCampaigns: () => ipcRenderer.invoke('campaign:listCampaigns'),
+        /** Gets a specific campaign by ID. */
+        getCampaign: (campaignId: string) => ipcRenderer.invoke('campaign:getCampaign', campaignId),
+        /** Lists campaign outcome summaries within the given window. */
+        listOutcomes: (windowMs?: number) => ipcRenderer.invoke('campaign:listOutcomes', windowMs),
+        /** Defers an active campaign (operator action). */
+        deferCampaign: (campaignId: string) => ipcRenderer.invoke('campaign:deferCampaign', campaignId),
+        /** Aborts an active campaign (operator action). */
+        abortCampaign: (campaignId: string) => ipcRenderer.invoke('campaign:abortCampaign', campaignId),
+        /** Resumes a deferred campaign. */
+        resumeCampaign: (campaignId: string) => ipcRenderer.invoke('campaign:resumeCampaign', campaignId),
+        /** Subscribes to campaign dashboard push updates. Returns cleanup function. */
+        onDashboardUpdate: (callback: (data: any) => void) => {
+            const listener = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('campaign:dashboardUpdate', listener);
+            return () => ipcRenderer.removeListener('campaign:dashboardUpdate', listener);
         },
     },
 

@@ -123,9 +123,14 @@ const AutonomyDashboardPanel: React.FC = () => {
             if (data?.campaignState) setCampaignState(data.campaignState);
         });
 
+        const unsubCampaign = tala?.campaign?.onDashboardUpdate?.((data: CampaignDashboardState) => {
+            setCampaignState(data);
+        });
+
         return () => {
             clearInterval(interval);
             unsub?.();
+            unsubCampaign?.();
         };
     }, [fetchData]);
 
