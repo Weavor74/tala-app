@@ -215,20 +215,37 @@ Decomposition execution passes the first step's `scopeHint` as a scope modifier 
 
 ---
 
-## Injection
+## Runtime Activation
 
-Escalation services are injected after construction and after `setAdaptiveServices()` (if used):
+Phase 5.1 escalation services are wired into the live Electron runtime in `electron/main.ts` after the Phase 5 adaptive services. The wiring is wrapped in a `try/catch` block: if any service fails to initialize, a warning is logged and the orchestrator skips capability evaluation, proceeding with standard Phase 5 / Phase 4 behavior — app startup is never blocked.
+
+All six services are stateless or in-memory with no constructor arguments:
+
+1. `ModelCapabilityEvaluator()` — stateless; deterministic assessment
+2. `EscalationPolicyEngine()` — stateless; applies escalation policy rules
+3. `DecompositionEngine()` — stateless; creates bounded decomposition plans
+4. `ExecutionStrategySelector()` — stateless; selects final execution strategy
+5. `EscalationAuditTracker()` — in-memory; records escalation audit events
+6. `DecompositionOutcomeTracker()` — in-memory; tracks decomposition outcomes with per-subsystem cooldowns
+
+All six are injected via `autonomousRunOrchestrator.setEscalationServices()` without overriding the default policy, preserving `DEFAULT_ESCALATION_POLICY` (`local_preferred_with_request`, `requireHumanApprovalForRemote=true`).
+
+`AutonomyAppService` is constructed after both `setAdaptiveServices()` and `setEscalationServices()` complete so that all IPC handlers return live data immediately.
+
+## Injection Reference
+
+`AutonomousRunOrchestrator.setEscalationServices()` signature:
 
 ```typescript
 orchestrator.setEscalationServices(
-    new ModelCapabilityEvaluator(),
-    new EscalationPolicyEngine(),
-    new DecompositionEngine(),
-    new ExecutionStrategySelector(),
-    new EscalationAuditTracker(),
-    new DecompositionOutcomeTracker(),
-    policy?, // optional override of DEFAULT_ESCALATION_POLICY
-);
+    evaluator: ModelCapabilityEvaluator,
+    policyEngine: EscalationPolicyEngine,
+    decompositionEngine: DecompositionEngine,
+    strategySelector: ExecutionStrategySelector,
+    auditTracker: EscalationAuditTracker,
+    outcomeTracker: DecompositionOutcomeTracker,
+    policy?: EscalationPolicy, // optional override of DEFAULT_ESCALATION_POLICY
+): void
 ```
 
 When not called, the orchestrator behaves identically to Phase 5.

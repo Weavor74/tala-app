@@ -233,17 +233,31 @@ Thresholds are conservative by design. They are snapshotted into every `Adaptive
 
 ---
 
-## Injection
+## Runtime Activation
 
-Adaptive services are injected after construction via `AutonomousRunOrchestrator.setAdaptiveServices()`:
+Phase 5 adaptive services are wired into the live Electron runtime in `electron/main.ts` after the Phase 4.3 recovery pack services. The wiring is wrapped in a `try/catch` block: if any service fails to initialize, a warning is logged and the orchestrator falls back to Phase 4 behavior — app startup is never blocked.
+
+Instantiation order in `electron/main.ts`:
+1. `SubsystemProfileRegistry(USER_DATA_DIR)` — persists profiles under `<dataDir>/autonomy/adaptive/profiles/`
+2. `GoalValueScoringEngine(orchestrator.learningRegistry, recoveryPackRegistry)` — uses the orchestrator's internal `OutcomeLearningRegistry` (public property) and the already-wired `RecoveryPackRegistry` for pack confidence scoring
+3. `StrategySelectionEngine()` — stateless; no constructor arguments
+4. `AdaptivePolicyGate()` — stateless; no constructor arguments
+
+All four services are then injected via `autonomousRunOrchestrator.setAdaptiveServices()`, which also wires `SubsystemProfileRegistry` into `GoalPrioritizationEngine` for blended confidence scoring (P5G).
+
+`AutonomyAppService` is constructed **after** `setAdaptiveServices()` completes so that the IPC handlers `autonomy:getAdaptiveDashboardState` and `autonomy:listSubsystemProfiles` return live data immediately.
+
+## Injection Reference
+
+`AutonomousRunOrchestrator.setAdaptiveServices()` signature:
 
 ```typescript
 orchestrator.setAdaptiveServices(
-    new SubsystemProfileRegistry(dataDir),
-    new GoalValueScoringEngine(learningRegistry, packRegistry),
-    new StrategySelectionEngine(),
-    new AdaptivePolicyGate(),
-);
+    profileRegistry: SubsystemProfileRegistry,
+    valueScorer: GoalValueScoringEngine,
+    strategyEngine: StrategySelectionEngine,
+    adaptiveGate: AdaptivePolicyGate,
+): void
 ```
 
 When not called, the orchestrator behaves identically to Phase 4.2.

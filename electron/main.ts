@@ -67,6 +67,18 @@ import { RecoveryPackRegistry } from './services/autonomy/recovery/RecoveryPackR
 import { RecoveryPackMatcher } from './services/autonomy/recovery/RecoveryPackMatcher';
 import { RecoveryPackPlannerAdapter } from './services/autonomy/recovery/RecoveryPackPlannerAdapter';
 import { RecoveryPackOutcomeTracker } from './services/autonomy/recovery/RecoveryPackOutcomeTracker';
+// ── Phase 5: Adaptive Intelligence Layer ──────────────────────────────────────
+import { SubsystemProfileRegistry } from './services/autonomy/adaptive/SubsystemProfileRegistry';
+import { GoalValueScoringEngine } from './services/autonomy/adaptive/GoalValueScoringEngine';
+import { StrategySelectionEngine } from './services/autonomy/adaptive/StrategySelectionEngine';
+import { AdaptivePolicyGate } from './services/autonomy/adaptive/AdaptivePolicyGate';
+// ── Phase 5.1: Model Escalation & Bounded Decomposition ───────────────────────
+import { ModelCapabilityEvaluator } from './services/autonomy/escalation/ModelCapabilityEvaluator';
+import { EscalationPolicyEngine } from './services/autonomy/escalation/EscalationPolicyEngine';
+import { DecompositionEngine } from './services/autonomy/escalation/DecompositionEngine';
+import { ExecutionStrategySelector } from './services/autonomy/escalation/ExecutionStrategySelector';
+import { EscalationAuditTracker } from './services/autonomy/escalation/EscalationAuditTracker';
+import { DecompositionOutcomeTracker } from './services/autonomy/escalation/DecompositionOutcomeTracker';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -170,6 +182,52 @@ autonomousRunOrchestrator.setRecoveryPackServices(
     recoveryPackPlannerAdapter,
     recoveryPackOutcomeTracker,
 );
+
+// ─── Phase 5: Adaptive Intelligence Layer ─────────────────────────────────────
+// Injected as optional services — orchestrator falls back to Phase 4 behavior when absent.
+// Must be wired after setRecoveryPackServices() so GoalValueScoringEngine can reference
+// the already-instantiated recoveryPackRegistry for pack confidence scoring.
+try {
+    const subsystemProfileRegistry = new SubsystemProfileRegistry(USER_DATA_DIR);
+    const goalValueScoringEngine = new GoalValueScoringEngine(
+        autonomousRunOrchestrator.learningRegistry,
+        recoveryPackRegistry,
+    );
+    const strategySelectionEngine = new StrategySelectionEngine();
+    const adaptivePolicyGate = new AdaptivePolicyGate();
+    autonomousRunOrchestrator.setAdaptiveServices(
+        subsystemProfileRegistry,
+        goalValueScoringEngine,
+        strategySelectionEngine,
+        adaptivePolicyGate,
+    );
+} catch (err) {
+    console.warn('[Main] Phase 5 adaptive services failed to initialize — autonomy falls back to Phase 4 behavior:', err);
+}
+
+// ─── Phase 5.1: Model Escalation & Bounded Decomposition ──────────────────────
+// Injected as optional services — orchestrator skips capability evaluation when absent.
+// Must be wired after setAdaptiveServices() (Phase 5) per initialization order.
+// Conservative defaults (local_preferred_with_request, requireHumanApprovalForRemote=true)
+// are preserved via DEFAULT_ESCALATION_POLICY already set in AutonomousRunOrchestrator.
+try {
+    const modelCapabilityEvaluator = new ModelCapabilityEvaluator();
+    const escalationPolicyEngine = new EscalationPolicyEngine();
+    const decompositionEngine = new DecompositionEngine();
+    const executionStrategySelector = new ExecutionStrategySelector();
+    const escalationAuditTracker = new EscalationAuditTracker();
+    const decompositionOutcomeTracker = new DecompositionOutcomeTracker();
+    autonomousRunOrchestrator.setEscalationServices(
+        modelCapabilityEvaluator,
+        escalationPolicyEngine,
+        decompositionEngine,
+        executionStrategySelector,
+        escalationAuditTracker,
+        decompositionOutcomeTracker,
+    );
+} catch (err) {
+    console.warn('[Main] Phase 5.1 escalation services failed to initialize — autonomy skips capability evaluation:', err);
+}
 
 new AutonomyAppService(autonomousRunOrchestrator);
 // Start periodic goal detection (5 min cycle, will run if/when autonomy is enabled)
