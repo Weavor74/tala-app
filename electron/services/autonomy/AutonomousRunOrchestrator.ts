@@ -153,6 +153,9 @@ export class AutonomousRunOrchestrator {
     private _campaignRegistry: import('./campaigns/RepairCampaignRegistry').RepairCampaignRegistry | undefined;
     private _campaignCoordinator: import('./campaigns/RepairCampaignCoordinator').RepairCampaignCoordinator | undefined;
 
+    // ── Phase 5.6: Harmonization services (optional) ──────────────────────────
+    private _harmonizationCoordinator: import('./harmonization/HarmonizationCoordinator').HarmonizationCoordinator | undefined;
+
     constructor(
         private readonly dataDir: string,
         private readonly safePlanner: SafeChangePlanner,
@@ -379,6 +382,97 @@ export class AutonomousRunOrchestrator {
         return this._campaignCoordinator?.getDashboardState() ?? null;
     }
 
+    // ── Phase 5.6: Harmonization services ────────────────────────────────────────
+
+    /**
+     * Injects optional Phase 5.6 harmonization services.
+     *
+     * Must be called after setCampaignServices() (if used).
+     * When not called, harmonization detection is inactive.
+     */
+    setHarmonizationServices(
+        coordinator: import('./harmonization/HarmonizationCoordinator').HarmonizationCoordinator,
+    ): void {
+        this._harmonizationCoordinator = coordinator;
+    }
+
+    /**
+     * Returns the Phase 5.6 harmonization dashboard state, or null if not active.
+     */
+    getHarmonizationDashboardState(): import('../../../shared/harmonizationTypes').HarmonizationDashboardState | null {
+        return this._harmonizationCoordinator?.getDashboardState() ?? null;
+    }
+
+    /**
+     * Executes one harmonization step through the planning → governance → execution pipeline.
+     * Called by HarmonizationCoordinator via the step executor callback.
+     * Preserves all Phase 2 / 3.5 / 3 safety gates.
+     */
+    async executeHarmonizationStep(
+        filePath: string,
+        campaign: import('../../../shared/harmonizationTypes').HarmonizationCampaign,
+        metadata: import('../../../shared/harmonizationTypes').HarmonizationProposalMetadata,
+    ): Promise<import('./harmonization/HarmonizationCoordinator').HarmonizationStepExecutionResult> {
+        try {
+            const planInput = this._buildHarmonizationStepPlanInput(filePath, campaign, metadata);
+
+            const proposal = await this.safePlanner.plan(planInput);
+            if (!proposal) {
+                return {
+                    executionRunId: `no-proposal-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: 'SafeChangePlanner did not produce a proposal for harmonization step',
+                };
+            }
+
+            await this.safePlanner.promoteProposal(proposal.proposalId);
+
+            const govDecision = await this.governanceAppService.evaluateForProposal(proposal);
+            if (!govDecision || govDecision.decision !== 'approved') {
+                return {
+                    executionRunId: `gov-blocked-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: `Governance blocked harmonization step: ${govDecision?.rationale ?? 'no decision'}`,
+                };
+            }
+
+            const execResponse = await this.executionOrchestrator.start({
+                proposalId: proposal.proposalId,
+                authorizedBy: 'user_explicit',
+                dryRun: false,
+            });
+
+            if (execResponse.blocked) {
+                return {
+                    executionRunId: `exec-blocked-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: `Execution blocked: ${execResponse.message}`,
+                };
+            }
+
+            const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            const succeeded = terminalStatus === 'succeeded';
+            const rolledBack = terminalStatus === 'rolled_back';
+
+            return {
+                executionRunId: execResponse.executionId,
+                executionSucceeded: succeeded,
+                rollbackTriggered: rolledBack,
+                failureReason: succeeded ? undefined : `Execution ended with status: ${terminalStatus}`,
+            };
+        } catch (err: any) {
+            return {
+                executionRunId: `error-${Date.now()}`,
+                executionSucceeded: false,
+                rollbackTriggered: false,
+                failureReason: err.message ?? 'Harmonization step execution threw unexpectedly',
+            };
+        }
+    }
+
     /**
      * Executes a single campaign step through the existing planning → governance → execution pipeline.
      *
@@ -479,6 +573,30 @@ export class AutonomousRunOrchestrator {
                 `(campaign: ${campaign.label}, step ${step.order + 1}/${campaign.steps.length})`,
             planningMode: 'standard',
             sourceGoalId: campaign.goalId,
+            isManual: false,
+        };
+    }
+
+    /**
+     * Builds a PlanTriggerInput from a harmonization step.
+     * Used by executeHarmonizationStep().
+     */
+    private _buildHarmonizationStepPlanInput(
+        filePath: string,
+        campaign: import('../../../shared/harmonizationTypes').HarmonizationCampaign,
+        metadata: import('../../../shared/harmonizationTypes').HarmonizationProposalMetadata,
+    ): PlanTriggerInput {
+        return {
+            subsystemId: campaign?.scope?.targetSubsystem ?? 'harmonization',
+            issueType: 'harmonization_step',
+            normalizedTarget: filePath,
+            severity: 'low',
+            description:
+                `[Harmonization step] Converge ${filePath} to canon rule: ` +
+                `${metadata.intendedConvergence.slice(0, 120)} ` +
+                `(rule: ${metadata.ruleId}, campaign: ${metadata.campaignId})`,
+            planningMode: 'standard',
+            sourceGoalId: metadata.campaignId,
             isManual: false,
         };
     }
@@ -604,6 +722,12 @@ export class AutonomousRunOrchestrator {
         const campaignState = this.getCampaignDashboardState();
         if (campaignState) {
             state.campaignState = campaignState;
+        }
+
+        // ── Phase 5.6: Augment with harmonization state ───────────────────────
+        const harmonizationState = this.getHarmonizationDashboardState();
+        if (harmonizationState) {
+            (state as any).harmonizationState = harmonizationState;
         }
 
         return state;

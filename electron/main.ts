@@ -87,6 +87,15 @@ import { CampaignSafetyGuard } from './services/autonomy/campaigns/CampaignSafet
 import { CampaignDashboardBridge } from './services/autonomy/campaigns/CampaignDashboardBridge';
 import { RepairCampaignCoordinator } from './services/autonomy/campaigns/RepairCampaignCoordinator';
 import { CampaignAppService } from './services/autonomy/CampaignAppService';
+// ── Phase 5.6: Code Harmonization Campaigns ───────────────────────────────────
+import { HarmonizationCanonRegistry } from './services/autonomy/harmonization/HarmonizationCanonRegistry';
+import { HarmonizationDriftDetector } from './services/autonomy/harmonization/HarmonizationDriftDetector';
+import { HarmonizationMatcher } from './services/autonomy/harmonization/HarmonizationMatcher';
+import { HarmonizationCampaignPlanner } from './services/autonomy/harmonization/HarmonizationCampaignPlanner';
+import { HarmonizationOutcomeTracker } from './services/autonomy/harmonization/HarmonizationOutcomeTracker';
+import { HarmonizationDashboardBridge } from './services/autonomy/harmonization/HarmonizationDashboardBridge';
+import { HarmonizationCoordinator } from './services/autonomy/harmonization/HarmonizationCoordinator';
+import { HarmonizationAppService } from './services/autonomy/HarmonizationAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -278,6 +287,49 @@ try {
     new CampaignAppService(campaignCoordinator, campaignRegistry, campaignOutcomeTracker);
 } catch (err) {
     console.warn('[Main] Phase 5.5 campaign services failed to initialize — autonomy falls back to single-step execution:', err);
+}
+
+// ─── Phase 5.6: Code Harmonization Campaigns ──────────────────────────────────
+// Injected as optional services — all harmonization steps still flow through Phase 2/3.5/3 gates.
+// Must be wired after Phase 5.5 per initialization order.
+// Falls back gracefully if any service fails to initialize.
+try {
+    const harmonizationCanonRegistry = new HarmonizationCanonRegistry(USER_DATA_DIR);
+    const harmonizationDriftDetector = new HarmonizationDriftDetector();
+    const harmonizationMatcher = new HarmonizationMatcher();
+    const harmonizationPlanner = new HarmonizationCampaignPlanner();
+    const harmonizationDashboardBridge = new HarmonizationDashboardBridge();
+    const harmonizationOutcomeTracker = new HarmonizationOutcomeTracker(
+        USER_DATA_DIR,
+        harmonizationCanonRegistry,
+    );
+
+    // The step executor: delegates to the existing autonomous run pipeline.
+    // This preserves ALL Phase 2 / 3.5 / 3 safety gates.
+    const harmonizationStepExecutor = async (filePath: any, campaign: any, metadata: any) => {
+        return autonomousRunOrchestrator.executeHarmonizationStep(filePath, campaign, metadata);
+    };
+
+    const harmonizationCoordinator = new HarmonizationCoordinator(
+        USER_DATA_DIR,
+        harmonizationOutcomeTracker,
+        harmonizationDashboardBridge,
+        harmonizationPlanner,
+        harmonizationCanonRegistry,
+        harmonizationStepExecutor,
+    );
+
+    // Recover any stale campaigns from previous sessions before starting
+    const staleHarmonization = harmonizationCoordinator.recoverStaleCampaigns();
+    if (staleHarmonization.length > 0) {
+        console.log(`[Main] Phase 5.6: Expired ${staleHarmonization.length} stale harmonization campaign(s) at startup`);
+    }
+
+    autonomousRunOrchestrator.setHarmonizationServices(harmonizationCoordinator);
+
+    new HarmonizationAppService(harmonizationCoordinator, harmonizationCanonRegistry, harmonizationOutcomeTracker);
+} catch (err) {
+    console.warn('[Main] Phase 5.6 harmonization services failed to initialize — harmonization is inactive:', err);
 }
 
 new AutonomyAppService(autonomousRunOrchestrator);
