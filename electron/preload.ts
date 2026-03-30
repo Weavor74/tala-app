@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate", "harmonization:dashboardUpdate"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -632,6 +632,34 @@ contextBridge.exposeInMainWorld('tala', {
             const listener = (_event: any, data: any) => callback(data);
             ipcRenderer.on('campaign:dashboardUpdate', listener);
             return () => ipcRenderer.removeListener('campaign:dashboardUpdate', listener);
+        },
+    },
+
+    // ─── Phase 5.6: Code Harmonization Campaigns ─────────────────
+    harmonization: {
+        /** Gets the full harmonization dashboard state. */
+        getDashboardState: () => ipcRenderer.invoke('harmonization:getDashboardState'),
+        /** Lists all harmonization campaigns. */
+        listCampaigns: () => ipcRenderer.invoke('harmonization:listCampaigns'),
+        /** Gets a specific harmonization campaign by ID. */
+        getCampaign: (campaignId: string) => ipcRenderer.invoke('harmonization:getCampaign', campaignId),
+        /** Lists all canon rules with runtime confidence fields. */
+        listCanonRules: () => ipcRenderer.invoke('harmonization:listCanonRules'),
+        /** Gets a specific canon rule by ID. */
+        getCanonRule: (ruleId: string) => ipcRenderer.invoke('harmonization:getCanonRule', ruleId),
+        /** Lists harmonization outcome records. */
+        listOutcomes: (windowMs?: number) => ipcRenderer.invoke('harmonization:listOutcomes', windowMs),
+        /** Defers an active harmonization campaign. */
+        deferCampaign: (campaignId: string) => ipcRenderer.invoke('harmonization:deferCampaign', campaignId),
+        /** Aborts an active harmonization campaign. */
+        abortCampaign: (campaignId: string) => ipcRenderer.invoke('harmonization:abortCampaign', campaignId),
+        /** Resumes a deferred harmonization campaign. */
+        resumeCampaign: (campaignId: string) => ipcRenderer.invoke('harmonization:resumeCampaign', campaignId),
+        /** Subscribes to harmonization dashboard push updates. Returns cleanup function. */
+        onDashboardUpdate: (callback: (data: any) => void) => {
+            const listener = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('harmonization:dashboardUpdate', listener);
+            return () => ipcRenderer.removeListener('harmonization:dashboardUpdate', listener);
         },
     },
 

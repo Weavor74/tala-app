@@ -18,6 +18,8 @@ import type {
 } from '../../shared/adaptiveTypes';
 import type { CampaignDashboardState } from '../../shared/repairCampaignTypes';
 import CampaignDashboardPanel from './CampaignDashboardPanel';
+import HarmonizationDashboardPanel from './HarmonizationDashboardPanel';
+import type { HarmonizationDashboardState } from '../../shared/harmonizationTypes';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G
@@ -39,6 +41,7 @@ const AutonomyDashboardPanel: React.FC = () => {
     const [packState, setPackState] = useState<RecoveryPackDashboardState | null>(null);
     const [adaptiveState, setAdaptiveState] = useState<AdaptiveDashboardState | null>(null);
     const [campaignState, setCampaignState] = useState<CampaignDashboardState | null>(null);
+    const [harmonizationState, setHarmonizationState] = useState<HarmonizationDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -60,6 +63,17 @@ const AutonomyDashboardPanel: React.FC = () => {
                     setCampaignState(cs ?? null);
                 } catch {
                     // Non-fatal — campaign layer may not be active
+                }
+            }
+            // Phase 5.6: fetch harmonization state if available
+            if ((state as any)?.harmonizationState) {
+                setHarmonizationState((state as any).harmonizationState);
+            } else if (tala.harmonization?.getDashboardState) {
+                try {
+                    const hs = await tala.harmonization.getDashboardState();
+                    setHarmonizationState(hs ?? null);
+                } catch {
+                    // Non-fatal — harmonization layer may not be active
                 }
             }
             // Fetch recovery pack state if available
@@ -114,6 +128,33 @@ const AutonomyDashboardPanel: React.FC = () => {
         }
     }, [fetchData]);
 
+    const handleHarmonizationDefer = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.harmonization?.deferCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] harmonization defer error:', e);
+        }
+    }, [fetchData]);
+
+    const handleHarmonizationAbort = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.harmonization?.abortCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] harmonization abort error:', e);
+        }
+    }, [fetchData]);
+
+    const handleHarmonizationResume = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.harmonization?.resumeCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] harmonization resume error:', e);
+        }
+    }, [fetchData]);
+
     useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 30_000);
@@ -121,16 +162,22 @@ const AutonomyDashboardPanel: React.FC = () => {
         const unsub = tala?.autonomy?.onDashboardUpdate?.((data: AutonomyDashboardState) => {
             setDashState(data);
             if (data?.campaignState) setCampaignState(data.campaignState);
+            if ((data as any)?.harmonizationState) setHarmonizationState((data as any).harmonizationState);
         });
 
         const unsubCampaign = tala?.campaign?.onDashboardUpdate?.((data: CampaignDashboardState) => {
             setCampaignState(data);
         });
 
+        const unsubHarmonization = tala?.harmonization?.onDashboardUpdate?.((data: HarmonizationDashboardState) => {
+            setHarmonizationState(data);
+        });
+
         return () => {
             clearInterval(interval);
             unsub?.();
             unsubCampaign?.();
+            unsubHarmonization?.();
         };
     }, [fetchData]);
 
@@ -435,6 +482,18 @@ const AutonomyDashboardPanel: React.FC = () => {
                         onDefer={handleCampaignDefer}
                         onAbort={handleCampaignAbort}
                         onResume={handleCampaignResume}
+                    />
+                </Section>
+            )}
+
+            {/* Phase 5.6: Code Harmonization (shown when harmonization layer is active) */}
+            {harmonizationState && (
+                <Section title="🔧 Code Harmonization (Phase 5.6)" accent="#6366f1">
+                    <HarmonizationDashboardPanel
+                        state={harmonizationState}
+                        onDefer={handleHarmonizationDefer}
+                        onAbort={handleHarmonizationAbort}
+                        onResume={handleHarmonizationResume}
                     />
                 </Section>
             )}
