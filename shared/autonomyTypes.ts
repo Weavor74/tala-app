@@ -434,7 +434,24 @@ export type AutonomyTelemetryEventType =
     | 'recovery_pack_used'
     | 'recovery_pack_fallback'
     | 'recovery_pack_outcome_recorded'
-    | 'recovery_pack_confidence_adjusted';
+    | 'recovery_pack_confidence_adjusted'
+    // ── Phase 5.5: Repair Campaign telemetry events ─────────────────────────
+    | 'campaign_created'
+    | 'campaign_step_started'
+    | 'campaign_step_completed'
+    | 'campaign_step_skipped'
+    | 'campaign_step_failed'
+    | 'campaign_step_rolled_back'
+    | 'campaign_checkpoint_completed'
+    | 'campaign_reassessment_decided'
+    | 'campaign_halted'
+    | 'campaign_deferred'
+    | 'campaign_aborted'
+    | 'campaign_rolled_back'
+    | 'campaign_completed'
+    | 'campaign_resumed'
+    | 'campaign_expired'
+    | 'campaign_safety_bound_triggered';
 
 export interface AutonomyTelemetryEvent {
     eventId: string;
@@ -512,4 +529,6 @@ export interface AutonomyDashboardState {
     adaptiveState?: import('./adaptiveTypes').AdaptiveDashboardState;
     // ── Phase 5.1: Escalation & Decomposition state (optional — present when escalation layer is active) ──
     escalationState?: import('./escalationTypes').EscalationDashboardState;
+    // ── Phase 5.5: Repair Campaign state (optional — present when campaign layer is active) ──
+    campaignState?: import('./repairCampaignTypes').CampaignDashboardState;
 }

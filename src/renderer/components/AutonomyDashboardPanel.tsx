@@ -16,6 +16,8 @@ import type {
     AdaptivePolicyDecision,
     StrategySelectionResult,
 } from '../../shared/adaptiveTypes';
+import type { CampaignDashboardState } from '../../shared/repairCampaignTypes';
+import CampaignDashboardPanel from './CampaignDashboardPanel';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G
@@ -36,6 +38,7 @@ const AutonomyDashboardPanel: React.FC = () => {
     const [dashState, setDashState] = useState<AutonomyDashboardState | null>(null);
     const [packState, setPackState] = useState<RecoveryPackDashboardState | null>(null);
     const [adaptiveState, setAdaptiveState] = useState<AdaptiveDashboardState | null>(null);
+    const [campaignState, setCampaignState] = useState<CampaignDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -47,6 +50,18 @@ const AutonomyDashboardPanel: React.FC = () => {
             if (!tala?.autonomy?.getDashboardState) return;
             const state = await tala.autonomy.getDashboardState();
             setDashState(state);
+            // Use embedded campaign state from autonomy dashboard if present
+            if (state?.campaignState) {
+                setCampaignState(state.campaignState);
+            } else if (tala.campaign?.getDashboardState) {
+                // Fallback: fetch from dedicated campaign IPC handler
+                try {
+                    const cs = await tala.campaign.getDashboardState();
+                    setCampaignState(cs ?? null);
+                } catch {
+                    // Non-fatal — campaign layer may not be active
+                }
+            }
             // Fetch recovery pack state if available
             if (tala.autonomy.getRecoveryPackDashboardState) {
                 try {
@@ -72,12 +87,40 @@ const AutonomyDashboardPanel: React.FC = () => {
         }
     }, []);
 
+    const handleCampaignDefer = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.campaign?.deferCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] campaign defer error:', e);
+        }
+    }, [fetchData]);
+
+    const handleCampaignAbort = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.campaign?.abortCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] campaign abort error:', e);
+        }
+    }, [fetchData]);
+
+    const handleCampaignResume = useCallback(async (campaignId: string) => {
+        try {
+            await tala?.campaign?.resumeCampaign?.(campaignId);
+            await fetchData();
+        } catch (e: any) {
+            console.error('[AutonomyDashboard] campaign resume error:', e);
+        }
+    }, [fetchData]);
+
     useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 30_000);
 
         const unsub = tala?.autonomy?.onDashboardUpdate?.((data: AutonomyDashboardState) => {
             setDashState(data);
+            if (data?.campaignState) setCampaignState(data.campaignState);
         });
 
         return () => {
@@ -376,6 +419,18 @@ const AutonomyDashboardPanel: React.FC = () => {
                             ))}
                         </div>
                     )}
+                </Section>
+            )}
+
+            {/* Phase 5.5: Repair Campaigns (shown when campaign layer is active) */}
+            {campaignState && (
+                <Section title="🛠️ Repair Campaigns (Phase 5.5)" accent="#f59e0b">
+                    <CampaignDashboardPanel
+                        state={campaignState}
+                        onDefer={handleCampaignDefer}
+                        onAbort={handleCampaignAbort}
+                        onResume={handleCampaignResume}
+                    />
                 </Section>
             )}
 

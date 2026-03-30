@@ -79,6 +79,14 @@ import { DecompositionEngine } from './services/autonomy/escalation/Decompositio
 import { ExecutionStrategySelector } from './services/autonomy/escalation/ExecutionStrategySelector';
 import { EscalationAuditTracker } from './services/autonomy/escalation/EscalationAuditTracker';
 import { DecompositionOutcomeTracker } from './services/autonomy/escalation/DecompositionOutcomeTracker';
+// ── Phase 5.5: Multi-Step Repair Campaigns ────────────────────────────────────
+import { RepairCampaignRegistry } from './services/autonomy/campaigns/RepairCampaignRegistry';
+import { RepairCampaignPlanner } from './services/autonomy/campaigns/RepairCampaignPlanner';
+import { CampaignOutcomeTracker } from './services/autonomy/campaigns/CampaignOutcomeTracker';
+import { CampaignSafetyGuard } from './services/autonomy/campaigns/CampaignSafetyGuard';
+import { CampaignDashboardBridge } from './services/autonomy/campaigns/CampaignDashboardBridge';
+import { RepairCampaignCoordinator } from './services/autonomy/campaigns/RepairCampaignCoordinator';
+import { CampaignAppService } from './services/autonomy/CampaignAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -227,6 +235,49 @@ try {
     );
 } catch (err) {
     console.warn('[Main] Phase 5.1 escalation services failed to initialize — autonomy skips capability evaluation:', err);
+}
+
+// ─── Phase 5.5: Multi-Step Repair Campaigns ───────────────────────────────────
+// Injected as optional services — all campaign steps still flow through Phase 2/3.5/3 gates.
+// Must be wired after Phase 5.1 per initialization order.
+// Falls back gracefully if any service fails to initialize.
+try {
+    const campaignRegistry = new RepairCampaignRegistry(USER_DATA_DIR);
+    const campaignOutcomeTracker = new CampaignOutcomeTracker(USER_DATA_DIR);
+    const campaignSafetyGuard = new CampaignSafetyGuard(campaignRegistry);
+    const campaignDashboardBridge = new CampaignDashboardBridge();
+    const campaignPlanner = new RepairCampaignPlanner();
+
+    // Recover any stale campaigns from previous sessions before starting
+    const staleExpired = campaignSafetyGuard.recoverStaleCampaigns();
+    if (staleExpired.length > 0) {
+        console.log(`[Main] Phase 5.5: Expired ${staleExpired.length} stale campaign(s) at startup`);
+    }
+
+    // The step executor: delegates to the existing autonomous run pipeline.
+    // This preserves ALL Phase 2 / 3.5 / 3 safety gates — the coordinator
+    // never calls SafeChangePlanner or ExecutionOrchestrator directly.
+    const campaignStepExecutor = async (step: any, campaign: any) => {
+        return autonomousRunOrchestrator.executeCampaignStep(step, campaign);
+    };
+
+    const campaignCoordinator = new RepairCampaignCoordinator(
+        campaignRegistry,
+        campaignOutcomeTracker,
+        campaignSafetyGuard,
+        campaignDashboardBridge,
+        campaignStepExecutor,
+    );
+
+    autonomousRunOrchestrator.setCampaignServices(
+        campaignPlanner,
+        campaignRegistry,
+        campaignCoordinator,
+    );
+
+    new CampaignAppService(campaignCoordinator, campaignRegistry, campaignOutcomeTracker);
+} catch (err) {
+    console.warn('[Main] Phase 5.5 campaign services failed to initialize — autonomy falls back to single-step execution:', err);
 }
 
 new AutonomyAppService(autonomousRunOrchestrator);
