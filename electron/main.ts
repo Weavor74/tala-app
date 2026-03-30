@@ -97,6 +97,15 @@ import { HarmonizationDashboardBridge } from './services/autonomy/harmonization/
 import { HarmonizationCoordinator } from './services/autonomy/harmonization/HarmonizationCoordinator';
 import { HarmonizationAppService } from './services/autonomy/HarmonizationAppService';
 import type { HarmonizationCampaignInput } from '../shared/harmonizationTypes';
+// ── Phase 6: Cross-System Intelligence ───────────────────────────────────────
+import { CrossSystemSignalAggregator } from './services/autonomy/crossSystem/CrossSystemSignalAggregator';
+import { IncidentClusteringEngine } from './services/autonomy/crossSystem/IncidentClusteringEngine';
+import { RootCauseAnalyzer } from './services/autonomy/crossSystem/RootCauseAnalyzer';
+import { CrossSystemStrategySelector } from './services/autonomy/crossSystem/CrossSystemStrategySelector';
+import { CrossSystemOutcomeTracker } from './services/autonomy/crossSystem/CrossSystemOutcomeTracker';
+import { CrossSystemDashboardBridge } from './services/autonomy/crossSystem/CrossSystemDashboardBridge';
+import { CrossSystemCoordinator } from './services/autonomy/crossSystem/CrossSystemCoordinator';
+import { CrossSystemAppService } from './services/autonomy/CrossSystemAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -487,6 +496,52 @@ try {
     }
 } catch (err) {
     console.warn('[Main] Phase 5.6 harmonization services failed to initialize — harmonization is inactive:', err);
+}
+
+// ─── Phase 6: Cross-System Intelligence ───────────────────────────────────────
+// Injected as optional services — all strategy decisions still route through Phase 2/3.5/3 gates.
+// Must be wired after Phase 5.6 per initialization order.
+// Falls back gracefully if any service fails to initialize.
+try {
+    const crossSystemAggregator = new CrossSystemSignalAggregator();
+    const crossSystemClusteringEngine = new IncidentClusteringEngine();
+    const crossSystemRootCauseAnalyzer = new RootCauseAnalyzer();
+    const crossSystemStrategySelector = new CrossSystemStrategySelector();
+    const crossSystemOutcomeTracker = new CrossSystemOutcomeTracker(USER_DATA_DIR);
+    const crossSystemDashboardBridge = new CrossSystemDashboardBridge();
+
+    const crossSystemCoordinator = new CrossSystemCoordinator(
+        USER_DATA_DIR,
+        crossSystemAggregator,
+        crossSystemClusteringEngine,
+        crossSystemRootCauseAnalyzer,
+        crossSystemStrategySelector,
+        crossSystemOutcomeTracker,
+        crossSystemDashboardBridge,
+    );
+
+    autonomousRunOrchestrator.setCrossSystemServices(crossSystemCoordinator);
+
+    new CrossSystemAppService(crossSystemCoordinator);
+
+    // ── Phase 6 analysis loop (10 min) ────────────────────────────────────────
+    // Low-frequency bounded loop: runs the full clustering → root-cause → strategy pipeline.
+    // Re-entrancy is guarded inside CrossSystemCoordinator.runAnalysis().
+    try {
+        const CROSS_SYSTEM_ANALYSIS_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+        setInterval(() => {
+            try {
+                crossSystemCoordinator.runAnalysis();
+            } catch (tickErr) {
+                console.warn('[Main] Phase 6 analysis tick error (non-fatal):', tickErr);
+            }
+        }, CROSS_SYSTEM_ANALYSIS_INTERVAL_MS);
+        console.log('[Main] Phase 6: Cross-system intelligence loop started (interval=10min)');
+    } catch (activationErr) {
+        console.warn('[Main] Phase 6 analysis loop failed to start — intelligence remains in latent mode:', activationErr);
+    }
+} catch (err) {
+    console.warn('[Main] Phase 6 cross-system intelligence services failed to initialize — intelligence is inactive:', err);
 }
 
 new AutonomyAppService(autonomousRunOrchestrator);

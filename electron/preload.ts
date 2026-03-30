@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate", "harmonization:dashboardUpdate"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate", "harmonization:dashboardUpdate", "crossSystem:dashboardUpdate"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -660,6 +660,28 @@ contextBridge.exposeInMainWorld('tala', {
             const listener = (_event: any, data: any) => callback(data);
             ipcRenderer.on('harmonization:dashboardUpdate', listener);
             return () => ipcRenderer.removeListener('harmonization:dashboardUpdate', listener);
+        },
+    },
+
+    crossSystem: {
+        /** Gets the full cross-system intelligence dashboard state. */
+        getDashboardState: () => ipcRenderer.invoke('crossSystem:getDashboardState'),
+        /** Gets all open incident clusters. */
+        getClusters: () => ipcRenderer.invoke('crossSystem:getClusters'),
+        /** Gets a specific incident cluster by ID. */
+        getCluster: (clusterId: string) => ipcRenderer.invoke('crossSystem:getCluster', clusterId),
+        /** Gets root cause hypotheses for a cluster. */
+        getRootCauses: (clusterId: string) => ipcRenderer.invoke('crossSystem:getRootCauses', clusterId),
+        /** Gets recent strategy decision records. */
+        getRecentDecisions: () => ipcRenderer.invoke('crossSystem:getRecentDecisions'),
+        /** Records the outcome of a strategy decision. */
+        recordOutcome: (outcomeId: string, clusterId: string, succeeded: boolean, notes: string) =>
+            ipcRenderer.invoke('crossSystem:recordOutcome', outcomeId, clusterId, succeeded, notes),
+        /** Subscribes to cross-system dashboard push updates. Returns cleanup function. */
+        onDashboardUpdate: (callback: (data: any) => void) => {
+            const listener = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('crossSystem:dashboardUpdate', listener);
+            return () => ipcRenderer.removeListener('crossSystem:dashboardUpdate', listener);
         },
     },
 
