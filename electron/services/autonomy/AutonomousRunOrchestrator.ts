@@ -148,6 +148,11 @@ export class AutonomousRunOrchestrator {
     private _recentStrategyDecisions: ExecutionStrategyDecision[] = [];
     private _recentDecompositionPlans: DecompositionPlan[] = [];
 
+    // ── Phase 5.5: Repair Campaign services (optional) ────────────────────────
+    private _campaignPlanner: import('./campaigns/RepairCampaignPlanner').RepairCampaignPlanner | undefined;
+    private _campaignRegistry: import('./campaigns/RepairCampaignRegistry').RepairCampaignRegistry | undefined;
+    private _campaignCoordinator: import('./campaigns/RepairCampaignCoordinator').RepairCampaignCoordinator | undefined;
+
     constructor(
         private readonly dataDir: string,
         private readonly safePlanner: SafeChangePlanner,
@@ -348,6 +353,136 @@ export class AutonomousRunOrchestrator {
         if (policy) this._escalationPolicy = policy;
     }
 
+    // ── Phase 5.5: Campaign services ────────────────────────────────────────────
+
+    /**
+     * Injects optional Phase 5.5 repair campaign services.
+     *
+     * Must be called after construction and after setEscalationServices() (if used).
+     * When not called, single-step autonomous runs proceed as in Phase 5.1.
+     * All three services must be provided together; partial injection is not supported.
+     */
+    setCampaignServices(
+        planner: import('./campaigns/RepairCampaignPlanner').RepairCampaignPlanner,
+        registry: import('./campaigns/RepairCampaignRegistry').RepairCampaignRegistry,
+        coordinator: import('./campaigns/RepairCampaignCoordinator').RepairCampaignCoordinator,
+    ): void {
+        this._campaignPlanner = planner;
+        this._campaignRegistry = registry;
+        this._campaignCoordinator = coordinator;
+    }
+
+    /**
+     * Returns the Phase 5.5 campaign dashboard state, or null if campaign services are not active.
+     */
+    getCampaignDashboardState(): import('../../../shared/repairCampaignTypes').CampaignDashboardState | null {
+        return this._campaignCoordinator?.getDashboardState() ?? null;
+    }
+
+    /**
+     * Executes a single campaign step through the existing planning → governance → execution pipeline.
+     *
+     * This is the bridge between the campaign layer and the existing execution gates.
+     * It is called by the RepairCampaignCoordinator via the step executor callback.
+     *
+     * All Phase 2 / 3.5 / 3 safety gates are preserved — this method is a thin
+     * wrapper that constructs a PlanTriggerInput from the step and delegates to
+     * the existing planning, governance, and execution path.
+     *
+     * Returns a CampaignStepExecutionResult describing what happened.
+     */
+    async executeCampaignStep(
+        step: import('../../../../shared/repairCampaignTypes').CampaignStep,
+        campaign: import('../../../../shared/repairCampaignTypes').RepairCampaign,
+    ): Promise<import('./campaigns/CampaignCheckpointEngine').CampaignStepExecutionResult> {
+        try {
+            // Build a PlanTriggerInput from the campaign step
+            const planInput = this._buildCampaignStepPlanInput(step, campaign);
+
+            // Phase 2: Plan
+            const proposal = await this.safePlanner.plan(planInput);
+            if (!proposal) {
+                return {
+                    executionRunId: `no-proposal-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: 'SafeChangePlanner did not produce a proposal for this campaign step',
+                };
+            }
+
+            // Phase 2: Promote proposal
+            await this.safePlanner.promoteProposal(proposal.proposalId);
+
+            // Phase 3.5: Governance evaluation
+            const govDecision = await this.governanceAppService.evaluateForProposal(proposal);
+            if (!govDecision || govDecision.decision !== 'approved') {
+                return {
+                    executionRunId: `gov-blocked-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: `Governance blocked campaign step: ${govDecision?.rationale ?? 'no decision'}`,
+                };
+            }
+
+            // Phase 3: Execute
+            const execResponse = await this.executionOrchestrator.start({
+                proposalId: proposal.proposalId,
+                authorizedBy: 'user_explicit',
+                dryRun: false,
+            });
+
+            if (execResponse.blocked) {
+                return {
+                    executionRunId: `exec-blocked-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: `Execution blocked: ${execResponse.message}`,
+                };
+            }
+
+            const executionRunId = execResponse.executionId;
+
+            // Poll for terminal state (reuse existing _waitForExecution)
+            const terminalStatus = await this._waitForExecution(executionRunId);
+            const succeeded = terminalStatus === 'succeeded';
+            const rolledBack = terminalStatus === 'rolled_back';
+
+            return {
+                executionRunId,
+                executionSucceeded: succeeded,
+                rollbackTriggered: rolledBack,
+                failureReason: succeeded ? undefined : `Execution ended with status: ${terminalStatus}`,
+            };
+        } catch (err: any) {
+            return {
+                executionRunId: `error-${Date.now()}`,
+                executionSucceeded: false,
+                rollbackTriggered: false,
+                failureReason: err.message ?? 'Campaign step execution threw unexpectedly',
+            };
+        }
+    }
+
+    /**
+     * Builds a PlanTriggerInput from a campaign step.
+     */
+    private _buildCampaignStepPlanInput(
+        step: import('../../../../shared/repairCampaignTypes').CampaignStep,
+        campaign: import('../../../../shared/repairCampaignTypes').RepairCampaign,
+    ): PlanTriggerInput {
+        return {
+            subsystemId: step.targetSubsystem,
+            issueType: 'campaign_step_repair',
+            normalizedTarget: step.scopeHint || step.targetSubsystem,
+            severity: 'medium',
+            description: `[Campaign step] ${step.label} ` +
+                `(campaign: ${campaign.label}, step ${step.order + 1}/${campaign.steps.length})`,
+            planningMode: 'standard',
+            sourceGoalId: campaign.goalId,
+            isManual: false,
+        };
+    }
+
     /**
      * Returns the Phase 5.1 escalation dashboard state, or null if escalation services are not active.
      */
@@ -463,6 +598,12 @@ export class AutonomousRunOrchestrator {
         const escalationState = this.getEscalationDashboardState();
         if (escalationState) {
             state.escalationState = escalationState;
+        }
+
+        // ── Phase 5.5: Augment with campaign state ────────────────────────────
+        const campaignState = this.getCampaignDashboardState();
+        if (campaignState) {
+            state.campaignState = campaignState;
         }
 
         return state;
