@@ -97,6 +97,16 @@ import { HarmonizationDashboardBridge } from './services/autonomy/harmonization/
 import { HarmonizationCoordinator } from './services/autonomy/harmonization/HarmonizationCoordinator';
 import { HarmonizationAppService } from './services/autonomy/HarmonizationAppService';
 import type { HarmonizationCampaignInput } from '../shared/harmonizationTypes';
+// ── Phase 6: Cross-System Intelligence ───────────────────────────────────────
+import { CrossSystemSignalAggregator } from './services/autonomy/crossSystem/CrossSystemSignalAggregator';
+import { IncidentClusteringEngine } from './services/autonomy/crossSystem/IncidentClusteringEngine';
+import { RootCauseAnalyzer } from './services/autonomy/crossSystem/RootCauseAnalyzer';
+import { CrossSystemStrategySelector } from './services/autonomy/crossSystem/CrossSystemStrategySelector';
+import { CrossSystemOutcomeTracker } from './services/autonomy/crossSystem/CrossSystemOutcomeTracker';
+import { CrossSystemDashboardBridge } from './services/autonomy/crossSystem/CrossSystemDashboardBridge';
+import { CrossSystemCoordinator } from './services/autonomy/crossSystem/CrossSystemCoordinator';
+import { CrossSystemSignalCollector } from './services/autonomy/crossSystem/CrossSystemSignalCollector';
+import { CrossSystemAppService } from './services/autonomy/CrossSystemAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -201,6 +211,15 @@ autonomousRunOrchestrator.setRecoveryPackServices(
     recoveryPackOutcomeTracker,
 );
 
+// ─── Phase 6: Signal Collector — created early, sources registered lazily ─────
+// CrossSystemSignalCollector is created here so each phase can register its
+// source tracker as it becomes available. The collector is passed to the
+// CrossSystemCoordinator in the Phase 6 block below.
+const crossSystemSignalCollector = new CrossSystemSignalCollector();
+// Register execution run source immediately — AutonomousRunOrchestrator.listRuns(windowMs?) is always available
+// (defined at electron/services/autonomy/AutonomousRunOrchestrator.ts:821, delegating to AutonomyAuditService.listRuns)
+crossSystemSignalCollector.setExecutionSource(autonomousRunOrchestrator);
+
 // ─── Phase 5: Adaptive Intelligence Layer ─────────────────────────────────────
 // Injected as optional services — orchestrator falls back to Phase 4 behavior when absent.
 // Must be wired after setRecoveryPackServices() so GoalValueScoringEngine can reference
@@ -243,6 +262,7 @@ try {
         escalationAuditTracker,
         decompositionOutcomeTracker,
     );
+    crossSystemSignalCollector.setEscalationSource(escalationAuditTracker);
 } catch (err) {
     console.warn('[Main] Phase 5.1 escalation services failed to initialize — autonomy skips capability evaluation:', err);
 }
@@ -286,6 +306,7 @@ try {
     );
 
     new CampaignAppService(campaignCoordinator, campaignRegistry, campaignOutcomeTracker);
+    crossSystemSignalCollector.setCampaignSource(campaignOutcomeTracker);
 } catch (err) {
     console.warn('[Main] Phase 5.5 campaign services failed to initialize — autonomy falls back to single-step execution:', err);
 }
@@ -329,6 +350,7 @@ try {
     autonomousRunOrchestrator.setHarmonizationServices(harmonizationCoordinator);
 
     new HarmonizationAppService(harmonizationCoordinator, harmonizationCanonRegistry, harmonizationOutcomeTracker);
+    crossSystemSignalCollector.setHarmonizationSource(harmonizationOutcomeTracker);
 
     // ── Phase 5.6.1: Harmonization Activation ─────────────────────────────────
     // Wire the bounded drift-scan loop and the campaign-advancement loop so that
@@ -487,6 +509,55 @@ try {
     }
 } catch (err) {
     console.warn('[Main] Phase 5.6 harmonization services failed to initialize — harmonization is inactive:', err);
+}
+
+// ─── Phase 6: Cross-System Intelligence ───────────────────────────────────────
+// Injected as optional services — all strategy decisions still route through Phase 2/3.5/3 gates.
+// Must be wired after Phase 5.6 per initialization order.
+// Falls back gracefully if any service fails to initialize.
+try {
+    const crossSystemAggregator = new CrossSystemSignalAggregator();
+    const crossSystemClusteringEngine = new IncidentClusteringEngine();
+    const crossSystemRootCauseAnalyzer = new RootCauseAnalyzer();
+    const crossSystemStrategySelector = new CrossSystemStrategySelector();
+    const crossSystemOutcomeTracker = new CrossSystemOutcomeTracker(USER_DATA_DIR);
+    const crossSystemDashboardBridge = new CrossSystemDashboardBridge();
+
+    const crossSystemCoordinator = new CrossSystemCoordinator(
+        USER_DATA_DIR,
+        crossSystemAggregator,
+        crossSystemClusteringEngine,
+        crossSystemRootCauseAnalyzer,
+        crossSystemStrategySelector,
+        crossSystemOutcomeTracker,
+        crossSystemDashboardBridge,
+    );
+
+    autonomousRunOrchestrator.setCrossSystemServices(crossSystemCoordinator);
+
+    // Register signal collector for pull-based ingestion from all source registries
+    crossSystemCoordinator.setSignalCollector(crossSystemSignalCollector);
+
+    new CrossSystemAppService(crossSystemCoordinator);
+
+    // ── Phase 6 analysis loop (10 min) ────────────────────────────────────────
+    // Low-frequency bounded loop: runs the full clustering → root-cause → strategy pipeline.
+    // Re-entrancy is guarded inside CrossSystemCoordinator.runAnalysis().
+    try {
+        const CROSS_SYSTEM_ANALYSIS_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+        setInterval(() => {
+            try {
+                crossSystemCoordinator.runAnalysis();
+            } catch (tickErr) {
+                console.warn('[Main] Phase 6 analysis tick error (non-fatal):', tickErr);
+            }
+        }, CROSS_SYSTEM_ANALYSIS_INTERVAL_MS);
+        console.log('[Main] Phase 6: Cross-system intelligence loop started (interval=10min)');
+    } catch (activationErr) {
+        console.warn('[Main] Phase 6 analysis loop failed to start — intelligence remains in latent mode:', activationErr);
+    }
+} catch (err) {
+    console.warn('[Main] Phase 6 cross-system intelligence services failed to initialize — intelligence is inactive:', err);
 }
 
 new AutonomyAppService(autonomousRunOrchestrator);

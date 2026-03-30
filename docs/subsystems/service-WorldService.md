@@ -15,6 +15,11 @@ WorldService
 **Arguments**: `pythonPath: string, scriptPath: string, env: Record<string, string> = {}`
 
 ---
+#### `getReadyStatus`
+**Arguments**: ``
+**Returns**: `boolean`
+
+---
 #### `shutdown`
 **Arguments**: ``
 

@@ -258,17 +258,23 @@ type TelemetrySubsystem =
     | 'agent'
     | 'router'
     | 'memory'
+    | 'retrieval'
     | 'inference'
     | 'local_inference'
     | 'mcp'
     | 'artifact'
     | 'docs_intel'
     | 'reflection'
+    | 'planning'
+    | 'execution'
+    | 'governance'
     | 'cognitive'
     | 'audit'
     | 'system'
     | 'world_model'
     | 'maintenance'
+    | 'autonomy'
+    | 'self_model'
     | 'unknown';
 ```
 
@@ -428,6 +434,63 @@ type TelemetryEventType =
     | 'browser_task_step'
     | 'browser_task_finalized'
     | 'browser_task_continuation'
+    // External search
+    | 'external_search_started'
+    | 'external_search_succeeded'
+    | 'external_search_empty'
+    | 'external_search_failed'
+    | 'external_search_timeout'
+    | 'external_search_fallback'
+    // Phase 4 — Autonomous Self-Improvement
+    | 'autonomy_goal_detected'
+    | 'autonomy_goal_deduped'
+    | 'autonomy_goal_ranked'
+    | 'autonomy_goal_blocked'
+    | 'autonomy_goal_selected'
+    | 'autonomy_run_started'
+    | 'autonomy_run_planning_started'
+    | 'autonomy_run_governance_blocked'
+    | 'autonomy_run_execution_started'
+    | 'autonomy_run_completed'
+    | 'autonomy_run_failed'
+    | 'autonomy_run_cooled_down'
+    | 'autonomy_learning_recorded'
+    | 'autonomy_detection_cycle_started'
+    // Phase 4.3 — Recovery Packs
+    | 'recovery_pack_match_attempted'
+    | 'recovery_pack_used'
+    | 'recovery_pack_fallback'
+    | 'recovery_pack_confidence_adjusted'
+    | 'recovery_pack_outcome_recorded'
+    // Phase 5.5 — Repair Campaigns
+    | 'campaign_deferred'
+    | 'campaign_aborted'
+    | 'campaign_resumed'
+    | 'campaign_halted'
+    | 'campaign_completed'
+    | 'campaign_rolled_back'
+    | 'campaign_expired'
+    | 'campaign_safety_bound_triggered'
+    | 'campaign_checkpoint_completed'
+    | 'campaign_reassessment_decided'
+    // Phase 5.6 — Harmonization
+    | 'harmonization_drift_detected'
+    | 'harmonization_rule_matched'
+    | 'harmonization_rule_weak_match'
+    | 'harmonization_rule_rejected'
+    | 'harmonization_rule_confidence_adjusted'
+    | 'harmonization_campaign_created'
+    | 'harmonization_campaign_fallback'
+    | 'harmonization_campaign_succeeded'
+    | 'harmonization_campaign_failed'
+    | 'harmonization_campaign_rolled_back'
+    | 'harmonization_outcome_recorded'
+    | 'harmonization.dashboard.emitted'
+    // Subsystem-namespaced events (Phase 3 execution, governance, planning, self-model)
+    | `execution.${string}`
+    | `governance.${string}`
+    | `planning.${string}`
+    | `selfModel.${string}`
     // Generic
     | 'operational'
     | 'developer_debug';

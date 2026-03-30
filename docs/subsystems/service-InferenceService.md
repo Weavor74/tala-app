@@ -5,7 +5,51 @@
 ## Class: `InferenceService`
 
 ## Overview
-Represents a local AI inference provider detected during a port scan.
+⚠️ TALA INVARIANT — INFERENCE STREAMING
+
+ - Stream MUST produce tokens
+ - Do NOT alter request body format without validation
+ - Do NOT introduce blocking or timeouts that kill valid responses
+ - Ollama/local inference must always remain functional
+/
+import http from 'http';
+import https from 'https';
+import net from 'net';
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
+import { app } from 'electron';
+import { WebContents } from 'electron';
+import { LocalEngineService } from './LocalEngineService';
+import { LocalInferenceManager } from './LocalInferenceManager';
+import { auditLogger } from './AuditLogger';
+import { telemetry } from './TelemetryService';
+import { InferenceProviderRegistry, type ProviderRegistryConfig } from './inference/InferenceProviderRegistry';
+import { ProviderSelectionService } from './inference/ProviderSelectionService';
+import {
+    LARGE_PROMPT_CHAR_THRESHOLD,
+    STREAM_OPEN_TIMEOUT_LOCAL_MS,
+    STREAM_OPEN_TIMEOUT_LOCAL_LARGE_PROMPT_MS,
+    STREAM_OPEN_TIMEOUT_EMBEDDED_MS,
+    STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS,
+    STREAM_OPEN_TIMEOUT_CLOUD_MS,
+} from './inference/inferenceTimeouts';
+import type {
+    InferenceSelectionRequest,
+    InferenceSelectionResult,
+    InferenceProviderInventory,
+    StreamInferenceRequest,
+    StreamInferenceResult,
+    CanonicalToolCall,
+} from '../../shared/inferenceProviderTypes';
+import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
+import { inferenceDiagnostics } from './InferenceDiagnosticsService';
+import type { IBrain, BrainResponse } from '../brains/IBrain';
+
+type SignalCategory = TelemetrySignal['category'];
+
+/**
+ Represents a local AI inference provider detected during a port scan.
  @deprecated Use InferenceProviderDescriptor from shared/inferenceProviderTypes.ts.
    The registry-based InferenceService.refreshProviders() path supersedes scanLocal().
 /

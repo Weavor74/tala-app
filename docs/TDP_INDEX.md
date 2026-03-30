@@ -19,6 +19,7 @@
 - [Component Model](architecture/component_model.md)
 - [Content Ingestion Pipeline](architecture/content_ingestion.md)
 - [Context Assembly — Architecture](architecture/context_assembly.md)
+- [Copilot Rules — Tala](architecture/COPILOT_RULES.md)
 - [Data Flow](architecture/data_flow.md)
 - [Deployment Topology](architecture/deployment_topology.md)
 - [Memory Bootstrap — Native-First Local PostgreSQL Runtime](architecture/memory_bootstrap.md)
@@ -36,6 +37,11 @@
 - [Phase 4A: World Model Foundation — Architecture Notes](architecture/phase4a_world_model.md)
 - [Phase 4B: Self-Maintenance Foundation](architecture/phase4b_self_maintenance_foundation.md)
 - [Phase 4C — A2UI Workspace Surfaces](architecture/phase4c_a2ui_workspace_surfaces.md)
+- [Phase 5: Adaptive Intelligence Layer](architecture/phase5_adaptive_intelligence.md)
+- [Phase 5.1: Model Escalation & Bounded Decomposition](architecture/phase5_1_escalation_decomposition.md)
+- [Phase 5.6 — Code Harmonization Campaigns](architecture/phase5_6_harmonization.md)
+- [Phase 6 — Cross-System Intelligence](architecture/phase6_cross_system_intelligence.md)
+- [Repository Overview: Tala](architecture/repository_overview.md)
 - [Retrieval Orchestration Architecture](architecture/retrieval_orchestration.md)
 - [Runtime Flow](architecture/runtime_flow.md)
 - [Semantic Retrieval Architecture](architecture/semantic_retrieval.md)
@@ -78,9 +84,12 @@
 
 - [Contract: a2uiTypes.ts](contracts/a2uiTypes.md)
 - [Contract: cognitiveTurnTypes.ts](contracts/cognitiveTurnTypes.md)
+- [Contract: dbBootstrapConfig.ts](contracts/dbBootstrapConfig.md)
+- [Contract: dbConfig.ts](contracts/dbConfig.md)
 - [Contract: inferenceProviderTypes.ts](contracts/inferenceProviderTypes.md)
 - [Contract: logs.ts](contracts/logs.md)
 - [Contract: modelCapabilityTypes.ts](contracts/modelCapabilityTypes.md)
+- [Contract: researchTypes.ts](contracts/researchTypes.md)
 - [Contract: runtimeDiagnosticsTypes.ts](contracts/runtimeDiagnosticsTypes.md)
 - [Contract: settings.ts](contracts/settings.md)
 - [Contract: telemetry.ts](contracts/telemetry.md)
@@ -91,6 +100,10 @@
 ## contributing
 
 - [File Placement Rules](contributing/file_placement_rules.md)
+
+## copilot
+
+- [Tala Safe Copilot Prompt Template](copilot/TALA_SAFE_PROMPT.md)
 
 ## development
 

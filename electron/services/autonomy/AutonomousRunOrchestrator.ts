@@ -156,6 +156,9 @@ export class AutonomousRunOrchestrator {
     // ── Phase 5.6: Harmonization services (optional) ──────────────────────────
     private _harmonizationCoordinator: import('./harmonization/HarmonizationCoordinator').HarmonizationCoordinator | undefined;
 
+    // ── Phase 6: Cross-System Intelligence services (optional) ────────────────
+    private _crossSystemCoordinator: import('./crossSystem/CrossSystemCoordinator').CrossSystemCoordinator | undefined;
+
     constructor(
         private readonly dataDir: string,
         private readonly safePlanner: SafeChangePlanner,
@@ -491,6 +494,38 @@ export class AutonomousRunOrchestrator {
                 failureReason: err.message ?? 'Harmonization step execution threw unexpectedly',
             };
         }
+    }
+
+    // ─── Phase 6: Cross-System Intelligence ──────────────────────────────────
+
+    /**
+     * Injects optional Phase 6 cross-system intelligence services.
+     *
+     * Must be called after setHarmonizationServices() (if used).
+     * When not called, cross-system intelligence is inactive.
+     */
+    setCrossSystemServices(
+        coordinator: import('./crossSystem/CrossSystemCoordinator').CrossSystemCoordinator,
+    ): void {
+        this._crossSystemCoordinator = coordinator;
+    }
+
+    /**
+     * Returns the Phase 6 cross-system dashboard state, or null if not active.
+     */
+    getCrossSystemDashboardState(): import('../../../shared/crossSystemTypes').CrossSystemDashboardState | null {
+        return this._crossSystemCoordinator?.getDashboardState() ?? null;
+    }
+
+    /**
+     * Ingests a cross-system signal from any subsystem.
+     * No-op when Phase 6 services are not active.
+     * Called from the run pipeline's finally block and from harmonization/campaign hooks.
+     */
+    ingestCrossSystemSignal(
+        signal: import('../../../shared/crossSystemTypes').CrossSystemSignal,
+    ): void {
+        this._crossSystemCoordinator?.ingestSignal(signal);
     }
 
     /**

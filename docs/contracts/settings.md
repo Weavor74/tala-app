@@ -119,6 +119,17 @@ interface SearchProvider {
 ```typescript
 interface SearchConfig {
     activeProviderId: string;
+    /**
+     * Global preference for search provider.
+     * Values: 'auto', 'local', 'duckduckgo', or any 'external:*' ID.
+     */
+    preferredProviderId?: string;
+    /**
+     * The provider ID selected by the user for curated (external web) search.
+     * Values: 'duckduckgo', 'brave', 'google', 'serper', 'tavily', or a custom ID.
+     * Empty string or absent means "use first configured external provider".
+     */
+    curatedSearchProviderId?: string;
     providers: SearchProvider[];
 }
 ```
