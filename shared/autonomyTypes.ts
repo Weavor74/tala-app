@@ -303,6 +303,13 @@ export interface AutonomousRun {
     recoveryPackId?: string;
     /** Match strength of the recovery pack used, if any. */
     recoveryPackMatchStrength?: 'no_match' | 'weak_match' | 'strong_match';
+    // ── Phase 5.1: Escalation & Decomposition linkage (optional) ──
+    /** Escalation request ID if escalation was triggered for this run. */
+    escalationRequestId?: string;
+    /** Decomposition plan ID if the run executed under a decomposition plan. */
+    decompositionPlanId?: string;
+    /** Step index executed (0-based) when running under a decomposition plan. */
+    decompositionStepIndex?: number;
 }
 
 // ─── Attempt Record ───────────────────────────────────────────────────────────
@@ -503,4 +510,6 @@ export interface AutonomyDashboardState {
     recoveryPackSummaries?: import('./recoveryPackTypes').RecoveryPackOutcomeSummary[];
     // ── Phase 5: Adaptive Intelligence Layer state (optional — present when adaptive layer is active) ──
     adaptiveState?: import('./adaptiveTypes').AdaptiveDashboardState;
+    // ── Phase 5.1: Escalation & Decomposition state (optional — present when escalation layer is active) ──
+    escalationState?: import('./escalationTypes').EscalationDashboardState;
 }

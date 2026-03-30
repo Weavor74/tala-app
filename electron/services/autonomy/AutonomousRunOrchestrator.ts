@@ -72,6 +72,22 @@ import type {
     GoalValueScore,
 } from '../../../shared/adaptiveTypes';
 import { DEFAULT_ADAPTIVE_THRESHOLDS } from '../../../shared/adaptiveTypes';
+// ── Phase 5.1: Escalation & Decomposition services (optional, injected via setEscalationServices) ──
+import type { ModelCapabilityEvaluator } from './escalation/ModelCapabilityEvaluator';
+import type { EscalationPolicyEngine } from './escalation/EscalationPolicyEngine';
+import type { DecompositionEngine } from './escalation/DecompositionEngine';
+import type { ExecutionStrategySelector } from './escalation/ExecutionStrategySelector';
+import type { EscalationAuditTracker } from './escalation/EscalationAuditTracker';
+import type { DecompositionOutcomeTracker } from './escalation/DecompositionOutcomeTracker';
+import type {
+    EscalationPolicy,
+    EscalationDashboardState,
+    EscalationKpis,
+    ExecutionStrategyDecision,
+    TaskCapabilityAssessment,
+    DecompositionPlan,
+} from '../../../shared/escalationTypes';
+import { DEFAULT_ESCALATION_POLICY } from '../../../shared/escalationTypes';
 
 // ─── Poll timeouts ────────────────────────────────────────────────────────────
 
@@ -118,6 +134,19 @@ export class AutonomousRunOrchestrator {
     private _recentValueScores: GoalValueScore[] = [];
     private _recentStrategySelections: StrategySelectionResult[] = [];
     private _recentAdaptiveDecisions: AdaptivePolicyDecision[] = [];
+
+    // ── Phase 5.1: Escalation & Decomposition services (optional) ────────────
+    private _capabilityEvaluator: ModelCapabilityEvaluator | undefined;
+    private _escalationPolicyEngine: EscalationPolicyEngine | undefined;
+    private _decompositionEngine: DecompositionEngine | undefined;
+    private _strategySelector: ExecutionStrategySelector | undefined;
+    private _escalationAuditTracker: EscalationAuditTracker | undefined;
+    private _decompositionOutcomeTracker: DecompositionOutcomeTracker | undefined;
+    private _escalationPolicy: EscalationPolicy = DEFAULT_ESCALATION_POLICY;
+    // In-memory dashboard logs (capped at 20 entries, most-recent first)
+    private _recentAssessments: TaskCapabilityAssessment[] = [];
+    private _recentStrategyDecisions: ExecutionStrategyDecision[] = [];
+    private _recentDecompositionPlans: DecompositionPlan[] = [];
 
     constructor(
         private readonly dataDir: string,
@@ -285,6 +314,76 @@ export class AutonomousRunOrchestrator {
         return this._adaptiveProfileRegistry?.listAll() ?? [];
     }
 
+    /**
+     * Injects optional Phase 5.1 escalation and decomposition services.
+     *
+     * Must be called after construction and after setAdaptiveServices() (if used).
+     * When not called, the orchestrator skips capability evaluation and proceeds with
+     * the standard execution pipeline (Phase 4 / Phase 5 behavior unchanged).
+     * All six services must be provided together; partial injection is not supported.
+     *
+     * @param evaluator          Evaluates whether the active model can handle a goal.
+     * @param policyEngine       Applies escalation policy to assessment results.
+     * @param decompositionEngine Creates bounded decomposition plans.
+     * @param strategySelector   Selects the final execution strategy.
+     * @param auditTracker       Records escalation audit events.
+     * @param outcomeTracker     Tracks decomposition plan outcomes.
+     * @param policy             Escalation policy override (uses DEFAULT_ESCALATION_POLICY if omitted).
+     */
+    setEscalationServices(
+        evaluator: ModelCapabilityEvaluator,
+        policyEngine: EscalationPolicyEngine,
+        decompositionEngine: DecompositionEngine,
+        strategySelector: ExecutionStrategySelector,
+        auditTracker: EscalationAuditTracker,
+        outcomeTracker: DecompositionOutcomeTracker,
+        policy?: EscalationPolicy,
+    ): void {
+        this._capabilityEvaluator = evaluator;
+        this._escalationPolicyEngine = policyEngine;
+        this._decompositionEngine = decompositionEngine;
+        this._strategySelector = strategySelector;
+        this._escalationAuditTracker = auditTracker;
+        this._decompositionOutcomeTracker = outcomeTracker;
+        if (policy) this._escalationPolicy = policy;
+    }
+
+    /**
+     * Returns the Phase 5.1 escalation dashboard state, or null if escalation services are not active.
+     */
+    getEscalationDashboardState(): EscalationDashboardState | null {
+        if (!this._escalationAuditTracker || !this._decompositionOutcomeTracker) return null;
+
+        const auditCounts = this._escalationAuditTracker.getCountByKind();
+        const decompKpis = this._decompositionOutcomeTracker.getKpis();
+
+        const kpis: EscalationKpis = {
+            totalAssessments: this._recentAssessments.length,
+            totalCapableAssessments: this._recentAssessments.filter(a => a.canHandle).length,
+            totalIncapableAssessments: this._recentAssessments.filter(a => !a.canHandle).length,
+            totalEscalationRequests: auditCounts.get('escalation_requested') ?? 0,
+            totalEscalationsAllowed: auditCounts.get('escalation_allowed') ?? 0,
+            totalEscalationsDenied: auditCounts.get('escalation_denied') ?? 0,
+            totalDecompositions: decompKpis.total,
+            totalDecompositionsSucceeded: decompKpis.succeeded + decompKpis.partial,
+            totalDecompositionsFailed: decompKpis.failed,
+            totalDeferredByEscalation: this._recentStrategyDecisions.filter(d => d.strategy === 'defer').length,
+            totalHumanEscalations: this._recentStrategyDecisions.filter(d => d.strategy === 'escalate_human').length,
+        };
+
+        return {
+            computedAt: new Date().toISOString(),
+            kpis,
+            recentAssessments: [...this._recentAssessments],
+            recentStrategyDecisions: [...this._recentStrategyDecisions],
+            recentDecompositionPlans: [...this._recentDecompositionPlans],
+            recentDecompositionResults: this._decompositionOutcomeTracker.getRecent(20),
+            recentAuditRecords: this._escalationAuditTracker.getRecent(50),
+            activeDecompositions: this._decompositionOutcomeTracker.getActiveCount(),
+            policy: { ...this._escalationPolicy },
+        };
+    }
+
     start(cycleIntervalMs = 5 * 60 * 1000): void {
         this.detectionEngine.start(cycleIntervalMs);
     }
@@ -358,6 +457,12 @@ export class AutonomousRunOrchestrator {
         const adaptiveState = this.getAdaptiveDashboardState();
         if (adaptiveState) {
             state.adaptiveState = adaptiveState;
+        }
+
+        // ── Phase 5.1: Augment with escalation state ──────────────────────────
+        const escalationState = this.getEscalationDashboardState();
+        if (escalationState) {
+            state.escalationState = escalationState;
         }
 
         return state;
@@ -581,6 +686,184 @@ export class AutonomousRunOrchestrator {
         }
         // ── End Phase 5 ────────────────────────────────────────────────────────
 
+        // ── Phase 5.1: Model Escalation & Bounded Decomposition (optional) ────
+        // Applied AFTER Phase 5 adaptive gate (proceed). Never overrides a Phase 5 block.
+        // Errors in this layer must never block the pipeline — fallback to proceed_local.
+        if (this._capabilityEvaluator && this._escalationPolicyEngine
+            && this._decompositionEngine && this._strategySelector
+            && this._escalationAuditTracker && this._decompositionOutcomeTracker) {
+            try {
+                // Count recent local failures for this goal from the learning registry
+                const recentFailures = this._getRecentFailuresForSubsystem(goal.subsystemId);
+
+                // Assess whether the active model can handle this goal
+                const assessment = this._capabilityEvaluator.evaluate(
+                    goal,
+                    recentFailures,
+                    this._escalationPolicy,
+                );
+
+                // Track assessment in dashboard log (capped at 20, newest first)
+                this._recentAssessments = [assessment, ...this._recentAssessments].slice(0, 20);
+
+                this._escalationAuditTracker.record(
+                    goal.goalId, 'capability_assessed',
+                    assessment.rationale,
+                    undefined,
+                    { canHandle: assessment.canHandle, reasons: assessment.insufficiencyReasons },
+                );
+
+                if (!assessment.canHandle) {
+                    // Evaluate escalation policy
+                    const recentEscalationCount = this._escalationAuditTracker.getRecentEscalationCount(
+                        60 * 60 * 1000, // 1-hour window
+                    );
+                    const cooldownActive = this._decompositionOutcomeTracker.isCooldownActive(
+                        goal.subsystemId,
+                    );
+
+                    const { decision: escalationDecision, request } =
+                        this._escalationPolicyEngine.evaluate(
+                            assessment,
+                            this._escalationPolicy,
+                            recentEscalationCount,
+                            cooldownActive,
+                        );
+
+                    if (request) {
+                        this._escalationAuditTracker.record(
+                            goal.goalId, 'escalation_requested',
+                            request.rationale,
+                            undefined,
+                            { requestId: request.requestId },
+                        );
+                    }
+
+                    this._escalationAuditTracker.record(
+                        goal.goalId,
+                        escalationDecision.escalationAllowed ? 'escalation_allowed' : 'escalation_denied',
+                        escalationDecision.rationale,
+                    );
+
+                    // Build decomposition plan (only if policy allows; cooldown respected inside engine)
+                    const decompositionPlan = !cooldownActive
+                        ? this._decompositionEngine.decompose(
+                            goal, assessment, this._escalationPolicy, 0,
+                        )
+                        : null;
+
+                    if (decompositionPlan) {
+                        this._escalationAuditTracker.record(
+                            goal.goalId, 'decomposition_planned',
+                            decompositionPlan.rationale,
+                            undefined,
+                            { planId: decompositionPlan.planId, steps: decompositionPlan.totalSteps },
+                        );
+                        this._recentDecompositionPlans = [decompositionPlan, ...this._recentDecompositionPlans].slice(0, 20);
+                    }
+
+                    // Select execution strategy
+                    const strategyDecision = this._strategySelector.select(
+                        assessment, escalationDecision, decompositionPlan, this._escalationPolicy,
+                    );
+
+                    // Track strategy decision
+                    this._recentStrategyDecisions = [strategyDecision, ...this._recentStrategyDecisions].slice(0, 20);
+                    this._escalationAuditTracker.record(
+                        goal.goalId, 'strategy_selected',
+                        strategyDecision.reason,
+                        undefined,
+                        { strategy: strategyDecision.strategy, reasonCodes: strategyDecision.reasonCodes },
+                    );
+
+                    this.telemetryStore.record(
+                        'goal_scored',
+                        `[P5.1 Escalation] ${goal.title}: strategy=${strategyDecision.strategy}. ` +
+                        strategyDecision.reason,
+                        { goalId: goal.goalId, subsystemId: goal.subsystemId, data: {
+                            strategy: strategyDecision.strategy,
+                            reasonCodes: strategyDecision.reasonCodes,
+                            canHandle: assessment.canHandle,
+                        } },
+                    );
+                    this.auditService.appendAuditRecord(
+                        'policy_approved',
+                        `[P5.1 Escalation] strategy=${strategyDecision.strategy}: ${strategyDecision.reason}`,
+                        { goalId: goal.goalId, subsystemId: goal.subsystemId },
+                    );
+
+                    if (strategyDecision.strategy !== 'proceed_local') {
+                        if (strategyDecision.strategy === 'escalate_human'
+                            || strategyDecision.strategy === 'escalate_remote') {
+                            // Route to human review (escalate_remote also goes through human approval
+                            // unless requireHumanApprovalForRemote=false, which is off by default)
+                            this._updateGoal(goal.goalId, {
+                                status: 'policy_blocked',
+                                humanReviewRequired: true,
+                            });
+                            this._escalationAuditTracker.record(
+                                goal.goalId, 'fallback_applied',
+                                `Goal routed to human review via strategy '${strategyDecision.strategy}'.`,
+                            );
+                        } else if (strategyDecision.strategy === 'defer') {
+                            // Re-queue for next cycle
+                            this._updateGoal(goal.goalId, { status: 'scored' });
+                            this._escalationAuditTracker.record(
+                                goal.goalId, 'fallback_applied',
+                                `Goal deferred to next cycle by escalation layer.`,
+                            );
+                        } else if (strategyDecision.strategy === 'decompose_local'
+                            && decompositionPlan) {
+                            // Execute decomposition — use first step scope as plan hint
+                            this._decompositionOutcomeTracker.startPlan(
+                                decompositionPlan, goal.subsystemId,
+                            );
+                            this._escalationAuditTracker.record(
+                                goal.goalId, 'decomposition_started',
+                                `Decomposition plan ${decompositionPlan.planId} started ` +
+                                `(${decompositionPlan.totalSteps} steps).`,
+                                undefined,
+                                { planId: decompositionPlan.planId },
+                            );
+                            // Execute first step's scope as the primary pipeline run
+                            const firstStepHint = decompositionPlan.steps[0]?.scopeHint;
+                            const currentGoal = this.activeGoals.get(goal.goalId)!;
+                            this._executeGoalPipeline(
+                                currentGoal,
+                                policyDecision.decisionId,
+                                adaptiveStrategyResult,
+                                decompositionPlan,
+                                firstStepHint,
+                            ).catch(err => {
+                                telemetry.operational(
+                                    'autonomy',
+                                    'autonomy_run_failed',
+                                    'error',
+                                    'AutonomousRunOrchestrator',
+                                    `[P5.1] Unhandled error in decomposition pipeline for goal ` +
+                                    `${goal.goalId}: ${err.message}`,
+                                );
+                            });
+                            return;
+                        }
+                        return;
+                    }
+                    // strategy === 'proceed_local': continue to standard pipeline despite insufficiency
+                }
+            } catch (err: any) {
+                // Escalation layer errors must NEVER block the main pipeline
+                telemetry.operational(
+                    'autonomy',
+                    'operational',
+                    'warn',
+                    'AutonomousRunOrchestrator',
+                    `[P5.1 Escalation] Error in escalation layer for goal ${goal.goalId}: ${err.message}. ` +
+                    `Falling back to standard execution.`,
+                );
+            }
+        }
+        // ── End Phase 5.1 ─────────────────────────────────────────────────────
+
         // Execute asynchronously (fire-and-forget with error capture)
         this._executeGoalPipeline(
             this.activeGoals.get(goal.goalId)!, policyDecision.decisionId, adaptiveStrategyResult,
@@ -601,6 +884,8 @@ export class AutonomousRunOrchestrator {
         goal: AutonomousGoal,
         policyDecisionId: string,
         adaptiveStrategyResult?: StrategySelectionResult,
+        decompositionPlan?: DecompositionPlan,
+        decompositionScopeHint?: string,
     ): Promise<void> {
         const cycleId = uuidv4();
         const run: AutonomousRun = {
@@ -612,6 +897,9 @@ export class AutonomousRunOrchestrator {
             subsystemId: goal.subsystemId,
             policyDecisionId,
             milestones: [],
+            // ── Phase 5.1: Link to decomposition plan when executing under decomposition ──
+            decompositionPlanId: decompositionPlan?.planId,
+            decompositionStepIndex: decompositionPlan ? 0 : undefined,
         };
 
         this.activeRuns.set(run.runId, run);
@@ -639,7 +927,7 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
             );
 
-            const planInput: PlanTriggerInput = await this._buildPlanInput(goal, run, adaptiveStrategyResult);
+            const planInput: PlanTriggerInput = await this._buildPlanInput(goal, run, adaptiveStrategyResult, decompositionScopeHint);
 
             const planResponse = await this.safePlanner.plan(planInput);
 
@@ -832,6 +1120,44 @@ export class AutonomousRunOrchestrator {
                     strategyUsed,
                     finalRun.recoveryPackId,
                 );
+            }
+
+            // ── Phase 5.1: Record decomposition step outcome (feedback loop) ──
+            if (this._decompositionOutcomeTracker && decompositionPlan) {
+                const step = decompositionPlan.steps[0];
+                if (step) {
+                    const stepOutcome: import('../../../shared/escalationTypes').DecompositionStepOutcome =
+                        outcome === 'succeeded' ? 'succeeded'
+                        : outcome === 'rolled_back' ? 'rolled_back'
+                        : 'failed';
+                    this._decompositionOutcomeTracker.recordStep(
+                        decompositionPlan.planId,
+                        step,
+                        stepOutcome,
+                        finalRun.executionRunId,
+                        finalRun.failureReason,
+                    );
+                    const result = this._decompositionOutcomeTracker.finalizePlan(
+                        decompositionPlan.planId,
+                        this._escalationPolicy.decompositionCooldownMs,
+                    );
+                    if (result && this._escalationAuditTracker) {
+                        this._escalationAuditTracker.record(
+                            goal.goalId,
+                            result.overallOutcome === 'failed'
+                                ? 'decomposition_failed'
+                                : 'decomposition_completed',
+                            result.rationale,
+                            run.runId,
+                            { planId: decompositionPlan.planId, outcome: result.overallOutcome },
+                        );
+                    }
+                    this.telemetryStore.record(
+                        'outcome_learned',
+                        `[P5.1] Decomposition ${decompositionPlan.planId} outcome: ${result?.overallOutcome ?? 'unknown'}`,
+                        { goalId: goal.goalId, runId: run.runId },
+                    );
+                }
             }
 
             this.budgetManager.recordRunEnd(run.runId);
@@ -1144,13 +1470,17 @@ export class AutonomousRunOrchestrator {
         goal: AutonomousGoal,
         run: AutonomousRun,
         adaptiveStrategyResult?: StrategySelectionResult,
+        decompositionScopeHint?: string,
     ): Promise<PlanTriggerInput> {
         const standardInput: PlanTriggerInput = {
             subsystemId: goal.subsystemId,
             issueType: goal.source,
             normalizedTarget: goal.subsystemId,
             severity: this._severityForTier(goal.priorityTier),
-            description: goal.description,
+            // ── Phase 5.1: Narrow description to decomposition scope when executing under a plan ──
+            description: decompositionScopeHint
+                ? `[Decomposed scope: ${decompositionScopeHint}] ${goal.description}`
+                : goal.description,
             planningMode: 'standard',
             sourceGoalId: goal.goalId,
             isManual: false,
@@ -1258,5 +1588,20 @@ export class AutonomousRunOrchestrator {
             case 'aborted':           return 'aborted';
             default:                  return 'failed';
         }
+    }
+
+    /**
+     * Returns the count of recent failed runs for the given subsystem.
+     * Used by Phase 5.1 ModelCapabilityEvaluator to assess repeated local failures.
+     * Looks at completed runs in the last 4 hours.
+     */
+    private _getRecentFailuresForSubsystem(subsystemId: string): number {
+        const windowMs = 4 * 60 * 60 * 1000; // 4 hours
+        const cutoff = Date.now() - windowMs;
+        return [...this.activeRuns.values()].filter(r =>
+            r.subsystemId === subsystemId
+            && (r.status === 'failed' || r.status === 'rolled_back' || r.status === 'aborted')
+            && new Date(r.startedAt).getTime() >= cutoff,
+        ).length;
     }
 }
