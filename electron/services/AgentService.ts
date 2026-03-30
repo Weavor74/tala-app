@@ -1460,8 +1460,6 @@ Exported standalone package from Tala.
             const worldScript = path.join(app.getAppPath(), 'mcp-servers', 'world-engine', 'server.py');
             const graphScript = path.join(app.getAppPath(), 'mcp-servers', 'tala-memory-graph', 'main.py');
 
-            const pythonRoot = path.dirname(pythonPath); // e.g. D:\src\client1\tala-app\bin\python-win
-            const sitePackages = path.join(pythonRoot, 'Lib', 'site-packages');
             const mcpServersDir = path.join(app.getAppPath(), 'mcp-servers');
 
             const userIdentity = this.userProfile?.getIdentityContext();

@@ -196,11 +196,14 @@ export class GitService {
         }
 
         // 2. Check common paths
+        const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+        const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+        const localAppData = process.env.LOCALAPPDATA || (userProfile ? path.join(userProfile, 'AppData', 'Local') : '');
         const commonPaths = [
-            'C:\\Program Files\\Git\\cmd\\git.exe',
-            'C:\\Program Files\\Git\\bin\\git.exe',
-            'C:\\Users\\' + (process.env.USERNAME || 'User') + '\\AppData\\Local\\Programs\\Git\\cmd\\git.exe',
-            process.env.LOCALAPPDATA + '\\Programs\\Git\\cmd\\git.exe'
+            path.join(programFiles, 'Git', 'cmd', 'git.exe'),
+            path.join(programFiles, 'Git', 'bin', 'git.exe'),
+            path.join(userProfile, 'AppData', 'Local', 'Programs', 'Git', 'cmd', 'git.exe'),
+            ...(localAppData ? [path.join(localAppData, 'Programs', 'Git', 'cmd', 'git.exe')] : []),
         ];
 
         const fs = require('fs');
