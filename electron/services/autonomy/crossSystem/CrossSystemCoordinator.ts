@@ -34,6 +34,7 @@ import type { RootCauseAnalyzer } from './RootCauseAnalyzer';
 import type { CrossSystemStrategySelector } from './CrossSystemStrategySelector';
 import type { CrossSystemOutcomeTracker } from './CrossSystemOutcomeTracker';
 import type { CrossSystemDashboardBridge } from './CrossSystemDashboardBridge';
+import type { CrossSystemSignalCollector } from './CrossSystemSignalCollector';
 import { telemetry } from '../../TelemetryService';
 
 // ─── Analysis trigger threshold ───────────────────────────────────────────────
@@ -64,6 +65,9 @@ export class CrossSystemCoordinator {
 
     private stateLoaded = false;
 
+    /** Optional signal collector for pull-based ingestion from existing registries. */
+    private signalCollector: CrossSystemSignalCollector | undefined;
+
     constructor(
         dataDir: string,
         private readonly aggregator: CrossSystemSignalAggregator,
@@ -78,6 +82,14 @@ export class CrossSystemCoordinator {
     }
 
     // ── Signal ingestion ────────────────────────────────────────────────────────
+
+    /**
+     * Registers an optional CrossSystemSignalCollector for pull-based ingestion.
+     * When set, collectAndIngest() pulls signals from all registered sources.
+     */
+    setSignalCollector(collector: CrossSystemSignalCollector): void {
+        this.signalCollector = collector;
+    }
 
     /**
      * Ingests a signal into the aggregator.
@@ -95,6 +107,37 @@ export class CrossSystemCoordinator {
 
         // Push a lightweight signal-ingested update to the dashboard
         this.dashboardBridge.maybeEmit('signals_ingested', this._buildCurrentState());
+    }
+
+    /**
+     * Pulls signals from all registered source registries (execution, harmonization,
+     * escalation, campaigns) via the optional CrossSystemSignalCollector, then
+     * ingests each signal into the aggregator.
+     *
+     * Deduplication is handled by CrossSystemSignalAggregator.ingest().
+     * This method is called at the start of each analysis loop tick.
+     * No-op when no collector is registered.
+     */
+    collectAndIngest(): void {
+        if (!this.signalCollector) return;
+
+        try {
+            const signals = this.signalCollector.collect();
+            let accepted = 0;
+            for (const signal of signals) {
+                if (this.aggregator.ingest(signal)) {
+                    accepted++;
+                }
+            }
+            if (accepted > 0) {
+                telemetry.operational('autonomy', 'operational', 'debug', 'CrossSystemCoordinator',
+                    `collectAndIngest() pulled ${signals.length} signal(s), accepted ${accepted} new`);
+                this.dashboardBridge.maybeEmit('signals_ingested', this._buildCurrentState());
+            }
+        } catch (err: any) {
+            telemetry.operational('autonomy', 'operational', 'warn', 'CrossSystemCoordinator',
+                `collectAndIngest() failed: ${err.message}`);
+        }
     }
 
     // ── Analysis pipeline ───────────────────────────────────────────────────────
@@ -125,6 +168,11 @@ export class CrossSystemCoordinator {
 
         try {
             if (!this.stateLoaded) this._loadState();
+
+            // ── Step 0: Pull signals from registered source registries ─────────
+            // collectAndIngest() can be called repeatedly — repeated records produce new signal IDs
+            // but the aggregator deduplicates by sourceType+subsystem+failureType within DEDUP_WINDOW_MS
+            this.collectAndIngest();
 
             const signals = this.aggregator.getWindowedSignals();
             if (signals.length < CROSS_SYSTEM_BOUNDS.MIN_SIGNALS_TO_CLUSTER) {

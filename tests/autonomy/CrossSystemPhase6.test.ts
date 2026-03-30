@@ -1007,3 +1007,371 @@ describe('AutonomousRunOrchestrator — Phase 6 wiring', () => {
         expect(mockCoordinator.ingestSignal).toHaveBeenCalledWith(signal);
     });
 });
+
+// ─── P6B (collect): CrossSystemSignalCollector ───────────────────────────────
+
+import { CrossSystemSignalCollector } from '../../electron/services/autonomy/crossSystem/CrossSystemSignalCollector';
+import type { ExecutionRunSource, HarmonizationOutcomeSource, EscalationAuditSource, CampaignOutcomeSource } from '../../electron/services/autonomy/crossSystem/CrossSystemSignalCollector';
+
+describe('P6B — CrossSystemSignalCollector (collect())', () => {
+    it('collect() returns empty array when no sources registered', () => {
+        const collector = new CrossSystemSignalCollector();
+        expect(collector.collect()).toEqual([]);
+    });
+
+    it('collect() converts failed execution runs to execution_failure signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        const mockListRuns = vi.fn(() => [
+            {
+                runId: 'run-001', goalId: 'goal-001', cycleId: 'c1',
+                startedAt: now, completedAt: now,
+                status: 'failed', subsystemId: 'inference',
+                failureReason: 'model_timeout', milestones: [],
+            },
+            {
+                runId: 'run-002', goalId: 'goal-002', cycleId: 'c2',
+                startedAt: now, completedAt: now,
+                status: 'succeeded', subsystemId: 'inference',
+                milestones: [],
+            },
+        ] as any);
+        const mockExecSource: ExecutionRunSource = { listRuns: mockListRuns };
+        collector.setExecutionSource(mockExecSource);
+        const signals = collector.collect();
+        // listRuns must be called with SIGNAL_WINDOW_MS so only in-window records are considered
+        expect(mockListRuns).toHaveBeenCalledWith(CROSS_SYSTEM_BOUNDS.SIGNAL_WINDOW_MS);
+        // Only the failed run should produce a signal
+        expect(signals.length).toBe(1);
+        expect(signals[0].sourceType).toBe('execution_failure');
+        expect(signals[0].subsystem).toBe('inference');
+        expect(signals[0].failureType).toBe('model_timeout');
+    });
+
+    it('collect() converts rolled_back runs to verification_failure signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => [{
+                runId: 'run-rb', goalId: 'g1', cycleId: 'c1',
+                startedAt: now, completedAt: now,
+                status: 'rolled_back', subsystemId: 'inference',
+                failureReason: 'verification_failed', milestones: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        expect(signals[0].sourceType).toBe('verification_failure');
+        expect(signals[0].severity).toBe('high');
+    });
+
+    it('collect() converts governance_blocked runs to governance_block signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => [{
+                runId: 'run-gov', goalId: 'g1', cycleId: 'c1',
+                startedAt: now, completedAt: now,
+                status: 'governance_blocked', subsystemId: 'governance',
+                failureReason: 'tier_exceeded', milestones: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        expect(signals[0].sourceType).toBe('governance_block');
+        expect(signals[0].subsystem).toBe('governance');
+    });
+
+    it('collect() converts failed harmonization outcomes to harmonization_drift signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        const mockHarmonizationSource: HarmonizationOutcomeSource = {
+            listOutcomes: vi.fn(() => [
+                {
+                    outcomeId: 'hout-001',
+                    campaignId: 'hcamp-001',
+                    ruleId: 'rule-001',
+                    driftId: 'drift-001',
+                    subsystem: 'autonomy',
+                    patternClass: 'import_style',
+                    startedAt: now,
+                    endedAt: now,
+                    finalStatus: 'failed',
+                    succeeded: false,
+                    driftReducedConfirmed: false,
+                    regressionDetected: false,
+                    rollbackTriggered: false,
+                    filesModified: 0,
+                    confidenceDeltaApplied: 0,
+                    learningNotes: [],
+                },
+            ] as any),
+        };
+        collector.setHarmonizationSource(mockHarmonizationSource);
+        const signals = collector.collect();
+        expect(signals.length).toBe(1);
+        expect(signals[0].sourceType).toBe('harmonization_drift');
+        expect(signals[0].subsystem).toBe('autonomy');
+    });
+
+    it('collect() marks regression_detected harmonization outcomes as high severity', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setHarmonizationSource({
+            listOutcomes: vi.fn(() => [{
+                outcomeId: 'hout-reg',
+                campaignId: 'hcamp-002',
+                ruleId: 'rule-002',
+                driftId: 'drift-002',
+                subsystem: 'autonomy',
+                patternClass: 'import_style',
+                startedAt: now,
+                endedAt: now,
+                finalStatus: 'rolled_back',
+                succeeded: false,
+                driftReducedConfirmed: false,
+                regressionDetected: true,
+                rollbackTriggered: true,
+                filesModified: 2,
+                confidenceDeltaApplied: -0.1,
+                learningNotes: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        expect(signals[0].severity).toBe('high');
+        expect(signals[0].failureType).toBe('regression_detected');
+    });
+
+    it('collect() converts escalation_requested records to escalation_attempt signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        const mockEscalationSource: EscalationAuditSource = {
+            getRecent: vi.fn(() => [
+                { recordId: 'esc-001', goalId: 'goal-001', eventKind: 'escalation_requested', recordedAt: now, detail: 'Exceeded capability' },
+                { recordId: 'esc-002', goalId: 'goal-002', eventKind: 'escalation_denied', recordedAt: now, detail: 'Denied' },
+            ] as any),
+        };
+        collector.setEscalationSource(mockEscalationSource);
+        const signals = collector.collect();
+        // Only escalation_requested should produce a signal
+        expect(signals.length).toBe(1);
+        expect(signals[0].sourceType).toBe('escalation_attempt');
+        expect(signals[0].goalId).toBe('goal-001');
+    });
+
+    it('collect() converts failed campaign outcomes to campaign_failure signals', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        const mockCampaignSource: CampaignOutcomeSource = {
+            listOutcomes: vi.fn(() => [
+                {
+                    campaignId: 'camp-001',
+                    goalId: 'goal-001',
+                    label: 'Test campaign',
+                    subsystem: 'inference',
+                    originType: 'repeated_execution_failure',
+                    finalStatus: 'failed',
+                    succeeded: false,
+                    rolledBack: false,
+                    deferred: false,
+                    stepCount: 3,
+                    rollbackFrequency: 0,
+                    completedAt: now,
+                    durationMs: 5000,
+                    learningNotes: [],
+                },
+                {
+                    campaignId: 'camp-002',
+                    goalId: 'goal-002',
+                    label: 'Success campaign',
+                    subsystem: 'inference',
+                    originType: 'repeated_execution_failure',
+                    finalStatus: 'succeeded',
+                    succeeded: true,
+                    rolledBack: false,
+                    deferred: false,
+                    stepCount: 2,
+                    rollbackFrequency: 0,
+                    completedAt: now,
+                    durationMs: 3000,
+                    learningNotes: [],
+                },
+            ] as any),
+        };
+        collector.setCampaignSource(mockCampaignSource);
+        const signals = collector.collect();
+        // Only the failed campaign
+        expect(signals.length).toBe(1);
+        expect(signals[0].sourceType).toBe('campaign_failure');
+        expect(signals[0].subsystem).toBe('inference');
+    });
+
+    it('collect() marks rolled_back campaign as high severity', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setCampaignSource({
+            listOutcomes: vi.fn(() => [{
+                campaignId: 'camp-rb', goalId: 'g1', label: 'rb',
+                subsystem: 'inference', originType: 'repeated_execution_failure',
+                finalStatus: 'rolled_back', succeeded: false, rolledBack: true,
+                deferred: false, stepCount: 1, rollbackFrequency: 1,
+                completedAt: now, durationMs: 1000, learningNotes: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        expect(signals[0].severity).toBe('high');
+    });
+
+    it('collect() returns signals from all registered sources combined', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => [{
+                runId: 'r1', goalId: 'g1', cycleId: 'c1',
+                startedAt: now, completedAt: now,
+                status: 'failed', subsystemId: 'inference', failureReason: 'timeout', milestones: [],
+            }] as any),
+        });
+        collector.setHarmonizationSource({
+            listOutcomes: vi.fn(() => [{
+                outcomeId: 'ho1', campaignId: 'hc1', ruleId: 'r1', driftId: 'd1',
+                subsystem: 'autonomy', patternClass: 'import_style',
+                startedAt: now, endedAt: now, finalStatus: 'failed',
+                succeeded: false, driftReducedConfirmed: false, regressionDetected: false,
+                rollbackTriggered: false, filesModified: 0, confidenceDeltaApplied: 0, learningNotes: [],
+            }] as any),
+        });
+        collector.setEscalationSource({
+            getRecent: vi.fn(() => [{
+                recordId: 'e1', goalId: 'g2', eventKind: 'escalation_requested', recordedAt: now, detail: 'x',
+            }] as any),
+        });
+        collector.setCampaignSource({
+            listOutcomes: vi.fn(() => [{
+                campaignId: 'c1', goalId: 'g3', label: 'c1',
+                subsystem: 'planning', originType: 'repeated_execution_failure',
+                finalStatus: 'failed', succeeded: false, rolledBack: false, deferred: false,
+                stepCount: 1, rollbackFrequency: 0, completedAt: now, durationMs: 1000, learningNotes: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        expect(signals.length).toBe(4);
+        const sourceTypes = signals.map(s => s.sourceType).sort();
+        expect(sourceTypes).toContain('execution_failure');
+        expect(sourceTypes).toContain('harmonization_drift');
+        expect(sourceTypes).toContain('escalation_attempt');
+        expect(sourceTypes).toContain('campaign_failure');
+    });
+
+    it('collect() does not throw when a source returns an empty array', () => {
+        const collector = new CrossSystemSignalCollector();
+        collector.setExecutionSource({ listRuns: vi.fn(() => []) });
+        collector.setHarmonizationSource({ listOutcomes: vi.fn(() => []) });
+        collector.setEscalationSource({ getRecent: vi.fn(() => []) });
+        collector.setCampaignSource({ listOutcomes: vi.fn(() => []) });
+        expect(() => collector.collect()).not.toThrow();
+        expect(collector.collect().length).toBe(0);
+    });
+
+    it('collect() every signal has required fields', () => {
+        const collector = new CrossSystemSignalCollector();
+        const now = new Date().toISOString();
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => [{
+                runId: 'r1', goalId: 'g1', cycleId: 'c1',
+                startedAt: now, completedAt: now,
+                status: 'failed', subsystemId: 'inference', failureReason: 'timeout', milestones: [],
+            }] as any),
+        });
+        const signals = collector.collect();
+        for (const s of signals) {
+            expect(s.signalId).toMatch(/^signal-/);
+            expect(s.sourceType).toBeTruthy();
+            expect(s.subsystem).toBeTruthy();
+            expect(s.failureType).toBeTruthy();
+            expect(['low', 'medium', 'high']).toContain(s.severity);
+            expect(s.timestamp).toBeTruthy();
+            expect(Array.isArray(s.affectedFiles)).toBe(true);
+        }
+    });
+});
+
+// ─── P6B + P6F: collectAndIngest() integration ───────────────────────────────
+
+describe('P6B + P6F — CrossSystemCoordinator.collectAndIngest()', () => {
+    let testDir: string;
+
+    function makeCoordinator(dir: string): CrossSystemCoordinator {
+        return new CrossSystemCoordinator(
+            dir,
+            new CrossSystemSignalAggregator(),
+            new IncidentClusteringEngine(),
+            new RootCauseAnalyzer(),
+            new CrossSystemStrategySelector(),
+            new CrossSystemOutcomeTracker(dir),
+            new CrossSystemDashboardBridge(),
+        );
+    }
+
+    beforeEach(() => {
+        testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tala-cs-collect-'));
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(testDir, { recursive: true, force: true }); } catch { /* non-fatal */ }
+    });
+
+    it('collectAndIngest() is a no-op when no collector is set', () => {
+        const coordinator = makeCoordinator(testDir);
+        expect(() => coordinator.collectAndIngest()).not.toThrow();
+    });
+
+    it('collectAndIngest() ingests signals from the registered collector', () => {
+        const coordinator = makeCoordinator(testDir);
+        const now = new Date().toISOString();
+        const collector = new CrossSystemSignalCollector();
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => Array.from({ length: 5 }, (_, i) => ({
+                runId: `run-${i}`, goalId: `g-${i}`, cycleId: `c-${i}`,
+                startedAt: now, completedAt: now,
+                status: 'failed', subsystemId: 'inference',
+                failureReason: `reason-${i}`, milestones: [],
+            })) as any),
+        });
+        coordinator.setSignalCollector(collector);
+        coordinator.collectAndIngest();
+        // The aggregator should now have signals
+        const aggregator = (coordinator as any).aggregator as CrossSystemSignalAggregator;
+        expect(aggregator.getSignalCount()).toBe(5);
+    });
+
+    it('runAnalysis() calls collectAndIngest() before clustering', () => {
+        const coordinator = makeCoordinator(testDir);
+        const now = new Date().toISOString();
+        const collector = new CrossSystemSignalCollector();
+        let collected = false;
+        collector.setExecutionSource({
+            listRuns: vi.fn(() => {
+                collected = true;
+                // Return enough signals to trigger clustering
+                return Array.from({ length: CROSS_SYSTEM_BOUNDS.MIN_SIGNALS_TO_CLUSTER * 2 }, (_, i) => ({
+                    runId: `run-${i}`, goalId: `g-${i}`, cycleId: `c-${i}`,
+                    startedAt: now, completedAt: now,
+                    status: 'failed', subsystemId: 'inference',
+                    failureReason: `reason-variant-${i}`, milestones: [],
+                }));
+            }) as any,
+        });
+        coordinator.setSignalCollector(collector);
+        coordinator.runAnalysis();
+        expect(collected).toBe(true);
+    });
+
+    it('setSignalCollector() exists on CrossSystemCoordinator', () => {
+        const coordinator = makeCoordinator(testDir);
+        expect(typeof coordinator.setSignalCollector).toBe('function');
+    });
+
+    it('collectAndIngest() exists on CrossSystemCoordinator', () => {
+        const coordinator = makeCoordinator(testDir);
+        expect(typeof coordinator.collectAndIngest).toBe('function');
+    });
+});

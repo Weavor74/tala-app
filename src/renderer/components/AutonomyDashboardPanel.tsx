@@ -19,7 +19,9 @@ import type {
 import type { CampaignDashboardState } from '../../../shared/repairCampaignTypes';
 import CampaignDashboardPanel from './CampaignDashboardPanel';
 import HarmonizationDashboardPanel from './HarmonizationDashboardPanel';
+import CrossSystemDashboardPanel from './CrossSystemDashboardPanel';
 import type { HarmonizationDashboardState } from '../../../shared/harmonizationTypes';
+import type { CrossSystemDashboardState } from '../../../shared/crossSystemTypes';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G
@@ -42,6 +44,7 @@ const AutonomyDashboardPanel: React.FC = () => {
     const [adaptiveState, setAdaptiveState] = useState<AdaptiveDashboardState | null>(null);
     const [campaignState, setCampaignState] = useState<CampaignDashboardState | null>(null);
     const [harmonizationState, setHarmonizationState] = useState<HarmonizationDashboardState | null>(null);
+    const [crossSystemState, setCrossSystemState] = useState<CrossSystemDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -74,6 +77,15 @@ const AutonomyDashboardPanel: React.FC = () => {
                     setHarmonizationState(hs ?? null);
                 } catch {
                     // Non-fatal — harmonization layer may not be active
+                }
+            }
+            // Phase 6: fetch cross-system intelligence state if available
+            if (tala.crossSystem?.getDashboardState) {
+                try {
+                    const cs = await tala.crossSystem.getDashboardState();
+                    setCrossSystemState(cs ?? null);
+                } catch {
+                    // Non-fatal — cross-system intelligence layer may not be active
                 }
             }
             // Fetch recovery pack state if available
@@ -173,11 +185,16 @@ const AutonomyDashboardPanel: React.FC = () => {
             setHarmonizationState(data);
         });
 
+        const unsubCrossSystem = tala?.crossSystem?.onDashboardUpdate?.((data: CrossSystemDashboardState) => {
+            setCrossSystemState(data);
+        });
+
         return () => {
             clearInterval(interval);
             unsub?.();
             unsubCampaign?.();
             unsubHarmonization?.();
+            unsubCrossSystem?.();
         };
     }, [fetchData]);
 
@@ -495,6 +512,13 @@ const AutonomyDashboardPanel: React.FC = () => {
                         onAbort={handleHarmonizationAbort}
                         onResume={handleHarmonizationResume}
                     />
+                </Section>
+            )}
+
+            {/* Phase 6: Cross-System Intelligence (shown when cross-system layer is active) */}
+            {crossSystemState && (
+                <Section title="🧠 Cross-System Intelligence (Phase 6)" accent="#8b5cf6">
+                    <CrossSystemDashboardPanel state={crossSystemState} />
                 </Section>
             )}
 
