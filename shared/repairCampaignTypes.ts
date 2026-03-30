@@ -101,6 +101,12 @@ export type CampaignReassessmentDecision =
     | 'rollback'
     | 'human_review';
 
+// ─── Named time constants ─────────────────────────────────────────────────────
+
+const DEFAULT_MAX_AGE_HOURS = 8;
+const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
+const DEFAULT_COOLDOWN_MINUTES = 30;
+
 // ─── Bounds ───────────────────────────────────────────────────────────────────
 
 /**
@@ -126,9 +132,9 @@ export interface CampaignBounds {
 export const DEFAULT_CAMPAIGN_BOUNDS: CampaignBounds = {
     maxSteps: 8,
     maxReassessments: 4,
-    maxAgeMs: 8 * 60 * 60 * 1000,         // 8 hours
-    stepTimeoutMs: 20 * 60 * 1000,         // 20 minutes
-    cooldownAfterFailureMs: 30 * 60 * 1000, // 30 minutes
+    maxAgeMs: DEFAULT_MAX_AGE_HOURS * 60 * 60 * 1000,
+    stepTimeoutMs: DEFAULT_STEP_TIMEOUT_MINUTES * 60 * 1000,
+    cooldownAfterFailureMs: DEFAULT_COOLDOWN_MINUTES * 60 * 1000,
 };
 
 // ─── Campaign Step ────────────────────────────────────────────────────────────

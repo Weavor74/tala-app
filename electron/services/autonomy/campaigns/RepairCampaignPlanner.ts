@@ -33,6 +33,11 @@ import type { RecoveryPack } from '../../../../shared/recoveryPackTypes';
 import { BUILTIN_CAMPAIGN_TEMPLATES, getTemplateById } from './defaults/campaignTemplates';
 import { telemetry } from '../../TelemetryService';
 
+// ─── Hard safety caps (never configurable via API) ────────────────────────────
+
+const HARD_CAP_MAX_STEPS = 10;
+const HARD_CAP_MAX_REASSESSMENTS = 8;
+
 // ─── RepairCampaignPlanner ────────────────────────────────────────────────────
 
 export class RepairCampaignPlanner {
@@ -218,8 +223,8 @@ export class RepairCampaignPlanner {
     private _resolveBounds(override?: Partial<CampaignBounds>): CampaignBounds {
         if (!override) return { ...DEFAULT_CAMPAIGN_BOUNDS };
         return {
-            maxSteps: Math.min(override.maxSteps ?? DEFAULT_CAMPAIGN_BOUNDS.maxSteps, 10),
-            maxReassessments: Math.min(override.maxReassessments ?? DEFAULT_CAMPAIGN_BOUNDS.maxReassessments, 8),
+            maxSteps: Math.min(override.maxSteps ?? DEFAULT_CAMPAIGN_BOUNDS.maxSteps, HARD_CAP_MAX_STEPS),
+            maxReassessments: Math.min(override.maxReassessments ?? DEFAULT_CAMPAIGN_BOUNDS.maxReassessments, HARD_CAP_MAX_REASSESSMENTS),
             maxAgeMs: override.maxAgeMs ?? DEFAULT_CAMPAIGN_BOUNDS.maxAgeMs,
             stepTimeoutMs: override.stepTimeoutMs ?? DEFAULT_CAMPAIGN_BOUNDS.stepTimeoutMs,
             cooldownAfterFailureMs: override.cooldownAfterFailureMs ?? DEFAULT_CAMPAIGN_BOUNDS.cooldownAfterFailureMs,

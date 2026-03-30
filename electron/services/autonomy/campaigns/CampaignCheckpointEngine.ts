@@ -60,6 +60,11 @@ export interface CampaignStepExecutionResult {
     invariantViolations?: string[];
 }
 
+// ─── Display limits ───────────────────────────────────────────────────────────
+
+/** Maximum number of out-of-scope file paths shown in scope drift details. */
+const MAX_DRIFT_FILES_DISPLAYED = 5;
+
 // ─── CampaignCheckpointEngine ─────────────────────────────────────────────────
 
 export class CampaignCheckpointEngine {
@@ -210,7 +215,7 @@ export class CampaignCheckpointEngine {
         return {
             scopeDriftDetected: true,
             scopeDriftDetails: `${outOfScope.length} file(s) mutated outside declared scope ` +
-                `'${step.scopeHint}': ${outOfScope.slice(0, 5).join(', ')}`,
+                `'${step.scopeHint}': ${outOfScope.slice(0, MAX_DRIFT_FILES_DISPLAYED).join(', ')}`,
         };
     }
 

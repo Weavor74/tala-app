@@ -29,7 +29,8 @@ import { telemetry } from '../../TelemetryService';
 
 // ─── Retention ────────────────────────────────────────────────────────────────
 
-const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const DEFAULT_RETENTION_DAYS = 30;
+const DEFAULT_RETENTION_MS = DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 // ─── CampaignOutcomeTracker ───────────────────────────────────────────────────
 

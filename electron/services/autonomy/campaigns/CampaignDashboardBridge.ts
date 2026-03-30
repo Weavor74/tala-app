@@ -25,6 +25,10 @@ import { telemetry } from '../../TelemetryService';
 
 export const CAMPAIGN_DASHBOARD_CHANNEL = 'campaign:dashboardUpdate';
 
+// ─── Display limits ───────────────────────────────────────────────────────────
+
+const MAX_RECENT_OUTCOMES = 20;
+
 // ─── CampaignDashboardBridge ──────────────────────────────────────────────────
 
 export class CampaignDashboardBridge {
@@ -73,7 +77,7 @@ export class CampaignDashboardBridge {
         deferredCampaigns: RepairCampaign[],
         recentOutcomes: CampaignOutcomeSummary[],
     ): CampaignDashboardState {
-        const allOutcomes = recentOutcomes.slice(0, 20);
+        const allOutcomes = recentOutcomes.slice(0, MAX_RECENT_OUTCOMES);
 
         return {
             computedAt: new Date().toISOString(),
