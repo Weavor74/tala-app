@@ -252,3 +252,95 @@ The `tala.crossSystem.*` namespace is exposed to the renderer with `crossSystem:
 - Signal emission from individual subsystems (Phase 4/4.3/5.1/5.5/5.6) is not yet wired at the call site — `ingestCrossSystemSignal()` is available but the upstream hooks need to be added per-subsystem in a follow-up task.
 - Strategy decisions do not yet automatically create `AutonomousGoal` instances; this routing is deferred to a follow-up integration task.
 - The `repeated_pattern` clustering criterion (same sourceType+subsystem appearing ≥3 times) is based on simple frequency counting and does not yet account for inter-signal time gaps within the cluster.
+
+---
+
+## Phase 6.1 — Strategy Routing
+
+### Overview
+
+Phase 6.1 builds on Phase 6 by converting `StrategyDecisionRecord` outputs into bounded,
+governed action forms that can be executed through Tala's existing planning, governance,
+campaign, and execution pipelines.
+
+This phase turns cross-system reasoning into safe, actionable work without bypassing any
+existing safety layer.
+
+### Routing Targets
+
+Each strategy decision is routed to the smallest effective action form:
+
+| Strategy Kind | Default Target | Fallback |
+|---------------|---------------|---------|
+| `targeted_repair` | `autonomous_goal` (if confidence ≥ 0.65 + 1 subsystem) | `human_review` |
+| `multi_step_campaign` | `repair_campaign` | `human_review` if no capacity |
+| `harmonization_campaign` | `harmonization_campaign` | `human_review` if no capacity |
+| `escalate_human` | `human_review` | — (always) |
+| `defer` | `deferred` | — (always) |
+
+### Runtime Services (Phase 6.1)
+
+| File | Role |
+|------|------|
+| `shared/strategyRoutingTypes.ts` | P6.1A canonical contracts and `STRATEGY_ROUTING_BOUNDS` |
+| `electron/services/autonomy/crossSystem/StrategyRoutingEligibility.ts` | P6.1B: 9-check deterministic eligibility gate |
+| `electron/services/autonomy/crossSystem/StrategyRoutingEngine.ts` | P6.1C/D: routing orchestrator, registry, disk persistence |
+| `electron/services/autonomy/crossSystem/StrategyRoutingOutcomeTracker.ts` | P6.1F: outcome recording, trust score computation |
+| `electron/services/autonomy/crossSystem/StrategyRoutingDashboardBridge.ts` | P6.1G: milestone-gated IPC push on `strategyRouting:dashboardUpdate` |
+| `electron/services/autonomy/StrategyRoutingAppService.ts` | IPC handlers for `strategyRouting:*` namespace |
+| `src/renderer/components/StrategyRoutingDashboardPanel.tsx` | P6.1G: React dashboard panel |
+
+### Runtime Activation (electron/main.ts)
+
+Phase 6.1 services are initialized in a try/catch block after the Phase 6 cross-system block:
+
+1. `StrategyRoutingOutcomeTracker` (persistence at `{dataDir}/autonomy/strategy_routing/`)
+2. `StrategyRoutingDashboardBridge`
+3. `StrategyRoutingEngine` (takes tracker + bridge; stores `routing_decisions.json`)
+4. Injected into `AutonomousRunOrchestrator` via `setStrategyRoutingServices()`
+5. Injected into `CrossSystemCoordinator` via `setStrategyRoutingEngine()` — called automatically in `runAnalysis()` after each new strategy decision
+6. `StrategyRoutingAppService` registers all IPC handlers
+
+If any step fails, the app logs a warning and continues with routing inactive.
+
+### IPC / Dashboard Surface
+
+- IPC namespace: `strategyRouting:*`
+- Push channel: `strategyRouting:dashboardUpdate`
+- Methods: `getDashboardState`, `listDecisions`, `getDecision`, `listOutcomes`
+- UI: `StrategyRoutingDashboardPanel` rendered in `AutonomyDashboardPanel` when state is available
+
+### Safety and Fallback Rules (P6.1H)
+
+1. **Duplicate prevention**: one routing decision per cluster. Re-routing requires cooldown expiry.
+2. **Confidence threshold**: root cause confidence < 0.40 or score < 50 → blocked.
+3. **Protected subsystems**: hard-blocked subsystems → human_review (not blocked).
+4. **Scope cap**: cluster spans > 3 subsystems → human_review (not auto-routed).
+5. **Cooldown**: 1h cooldown after a failed routing before the same cluster can be re-routed.
+6. **Concurrent cap**: max 3 active routing decisions at once.
+7. **Ambiguity**: cluster based solely on `temporal_proximity` → blocked.
+8. **No direct file mutation**: routing engine has no reference to SafeChangePlanner, GovernanceAppService, or ExecutionOrchestrator.
+9. **No bypass**: routed AutonomousGoals pass through the standard policy gate → planning → governance → execution path.
+10. **Campaign safety**: routed campaigns pass through RepairCampaignCoordinator / HarmonizationCoordinator with all existing guards intact.
+
+### Data Flow
+
+```
+CrossSystemCoordinator.runAnalysis()
+  → StrategySelector.select()     [Phase 6]
+  → StrategyRoutingEngine.route() [Phase 6.1]
+      → StrategyRoutingEligibility.evaluate()
+      → persist routing_decisions.json
+      → emit strategyRouting:dashboardUpdate
+  → AutonomousRunOrchestrator.processStrategyRoutingQueue() [on next cycle]
+      → _materializeRoutingDecision()
+          → for autonomous_goal: _injectStrategyRoutingGoal() → policyGate → planning → governance → execution
+          → for repair_campaign: RepairCampaignCoordinator.activateCampaign()
+          → for human_review / deferred: persisted only, no execution
+```
+
+### Current Limitations
+
+- `_injectStrategyRepairCampaign()` builds from the first available builtin template; a future pass should select the most appropriate template based on root cause category.
+- `_injectStrategyHarmonizationCampaign()` defers to the harmonization scan loop rather than directly creating a campaign; the scan loop will naturally detect and address the cluster's drift.
+- The trust score for routing classes (per `StrategyRoutingOutcomeTracker`) is currently global; per-strategy-kind trust tracking is a planned enhancement.

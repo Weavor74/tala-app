@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld('tala', {
      * @param {Function} func - Callback receiving the message data.
      */
     on: (channel: string, func: (...args: any[]) => void) => {
-        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate", "harmonization:dashboardUpdate", "crossSystem:dashboardUpdate"];
+        let validChannels = ["fromMain", "chat-token", "chat-done", "chat-error", "profile-data", "terminal-data", "agent-event", "file-changed", "sessions-update", "debug-update", "startup-status", "astro-update", "reflection:proposal-created", "system:notification", "reflection:telemetry", "reflection:activityUpdated", "execution:dashboardUpdate", "execution:telemetry", "governance:dashboardUpdate", "autonomy:dashboardUpdate", "autonomy:telemetry", "campaign:dashboardUpdate", "harmonization:dashboardUpdate", "crossSystem:dashboardUpdate", "strategyRouting:dashboardUpdate"];
         if (validChannels.includes(channel)) {
             ipcRenderer.on(channel, (event, ...args) => func(...args));
         }
@@ -682,6 +682,24 @@ contextBridge.exposeInMainWorld('tala', {
             const listener = (_event: any, data: any) => callback(data);
             ipcRenderer.on('crossSystem:dashboardUpdate', listener);
             return () => ipcRenderer.removeListener('crossSystem:dashboardUpdate', listener);
+        },
+    },
+
+    // ─── Phase 6.1: Strategy Routing ─────────────────────────────
+    strategyRouting: {
+        /** Gets the full strategy routing dashboard state. */
+        getDashboardState: () => ipcRenderer.invoke('strategyRouting:getDashboardState'),
+        /** Lists all routing decisions. */
+        listDecisions: () => ipcRenderer.invoke('strategyRouting:listDecisions'),
+        /** Gets a specific routing decision by ID. */
+        getDecision: (decisionId: string) => ipcRenderer.invoke('strategyRouting:getDecision', decisionId),
+        /** Lists routing outcome records. */
+        listOutcomes: (windowMs?: number) => ipcRenderer.invoke('strategyRouting:listOutcomes', windowMs),
+        /** Subscribes to strategy routing dashboard push updates. Returns cleanup function. */
+        onDashboardUpdate: (callback: (data: any) => void) => {
+            const listener = (_event: any, data: any) => callback(data);
+            ipcRenderer.on('strategyRouting:dashboardUpdate', listener);
+            return () => ipcRenderer.removeListener('strategyRouting:dashboardUpdate', listener);
         },
     },
 

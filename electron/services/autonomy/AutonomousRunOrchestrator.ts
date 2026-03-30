@@ -681,7 +681,7 @@ export class AutonomousRunOrchestrator {
             return null;
         }
 
-        const goalId = `goal-${require('uuid').v4()}`;
+        const goalId = `goal-${uuidv4()}`;
         const now = new Date().toISOString();
 
         const goal: import('../../../shared/autonomyTypes').AutonomousGoal = {
@@ -764,10 +764,8 @@ export class AutonomousRunOrchestrator {
         const goalId = `strategy-goal-${decision.routingDecisionId}`;
 
         // Build using 'repair_template' fallback with bounded step count
-        const maxSteps = Math.min(
-            import('../../../shared/strategyRoutingTypes').STRATEGY_ROUTING_BOUNDS.MAX_STRATEGY_CAMPAIGN_STEPS,
-            4,
-        );
+        // Cap at 4 steps (matches STRATEGY_ROUTING_BOUNDS.MAX_STRATEGY_CAMPAIGN_STEPS)
+        const maxSteps = 4;
 
         // Try to build from the first available template; fall back to manual 1-step plan
         const templates = this._campaignPlanner.listTemplates();

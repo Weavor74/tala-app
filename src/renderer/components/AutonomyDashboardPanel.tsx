@@ -20,8 +20,10 @@ import type { CampaignDashboardState } from '../../../shared/repairCampaignTypes
 import CampaignDashboardPanel from './CampaignDashboardPanel';
 import HarmonizationDashboardPanel from './HarmonizationDashboardPanel';
 import CrossSystemDashboardPanel from './CrossSystemDashboardPanel';
+import StrategyRoutingDashboardPanel from './StrategyRoutingDashboardPanel';
 import type { HarmonizationDashboardState } from '../../../shared/harmonizationTypes';
 import type { CrossSystemDashboardState } from '../../../shared/crossSystemTypes';
+import type { StrategyRoutingDashboardState } from '../../../shared/strategyRoutingTypes';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G
@@ -45,6 +47,7 @@ const AutonomyDashboardPanel: React.FC = () => {
     const [campaignState, setCampaignState] = useState<CampaignDashboardState | null>(null);
     const [harmonizationState, setHarmonizationState] = useState<HarmonizationDashboardState | null>(null);
     const [crossSystemState, setCrossSystemState] = useState<CrossSystemDashboardState | null>(null);
+    const [strategyRoutingState, setStrategyRoutingState] = useState<StrategyRoutingDashboardState | null>(null);
     const [loading, setLoading] = useState(true);
     const [notification, setNotification] = useState<string | null>(null);
     const [cycleRunning, setCycleRunning] = useState(false);
@@ -86,6 +89,15 @@ const AutonomyDashboardPanel: React.FC = () => {
                     setCrossSystemState(cs ?? null);
                 } catch {
                     // Non-fatal — cross-system intelligence layer may not be active
+                }
+            }
+            // Phase 6.1: fetch strategy routing state if available
+            if (tala.strategyRouting?.getDashboardState) {
+                try {
+                    const srs = await tala.strategyRouting.getDashboardState();
+                    setStrategyRoutingState(srs ?? null);
+                } catch {
+                    // Non-fatal — strategy routing layer may not be active
                 }
             }
             // Fetch recovery pack state if available
@@ -189,12 +201,17 @@ const AutonomyDashboardPanel: React.FC = () => {
             setCrossSystemState(data);
         });
 
+        const unsubStrategyRouting = tala?.strategyRouting?.onDashboardUpdate?.((data: StrategyRoutingDashboardState) => {
+            setStrategyRoutingState(data);
+        });
+
         return () => {
             clearInterval(interval);
             unsub?.();
             unsubCampaign?.();
             unsubHarmonization?.();
             unsubCrossSystem?.();
+            unsubStrategyRouting?.();
         };
     }, [fetchData]);
 
@@ -519,6 +536,13 @@ const AutonomyDashboardPanel: React.FC = () => {
             {crossSystemState && (
                 <Section title="🧠 Cross-System Intelligence (Phase 6)" accent="#8b5cf6">
                     <CrossSystemDashboardPanel state={crossSystemState} />
+                </Section>
+            )}
+
+            {/* Phase 6.1: Strategy Routing (shown when strategy routing layer is active) */}
+            {strategyRoutingState && (
+                <Section title="🔀 Strategy Routing (Phase 6.1)" accent="#6366f1">
+                    <StrategyRoutingDashboardPanel state={strategyRoutingState} />
                 </Section>
             )}
 
