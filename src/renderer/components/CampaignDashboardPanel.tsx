@@ -5,7 +5,7 @@ import type {
     CampaignOutcomeSummary,
     CampaignStep,
     CampaignCheckpoint,
-} from '../../shared/repairCampaignTypes';
+} from '../../../shared/repairCampaignTypes';
 
 /**
  * CampaignDashboardPanel — Phase 5.5 P5.5H

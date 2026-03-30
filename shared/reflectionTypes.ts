@@ -454,7 +454,7 @@ export function toChangeProposal(
     internal: import('./reflectionPlanTypes').SafeChangeProposal,
     origin: ProposalOrigin = 'auto',
 ): ChangeProposal {
-    const { rollbackClassification, ...rest } = internal;
+    const { rollbackClassification } = internal;
     return {
         proposalId: internal.proposalId,
         runId: internal.runId,

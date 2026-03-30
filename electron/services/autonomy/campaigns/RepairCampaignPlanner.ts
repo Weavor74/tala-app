@@ -130,14 +130,14 @@ export class RepairCampaignPlanner {
                 verificationRequired: !action.optional,
                 rollbackExpected: pack.rollbackTemplate.strategy === 'revert_patched_files',
                 isOptional: action.optional,
-                prerequisites: i > 0 ? [this._stepIdAtOrder(campaignId, i - 1)] : [],
+                prerequisites: [],
                 status: 'pending',
             };
         });
 
         // Fix up prerequisites using actual step IDs (they're sequential)
         for (let i = 1; i < steps.length; i++) {
-            steps[i].prerequisites = [steps[i - 1].stepId];
+            steps[i] = { ...steps[i]!, prerequisites: [steps[i - 1]!.stepId] };
         }
 
         return this._makeCampaign(

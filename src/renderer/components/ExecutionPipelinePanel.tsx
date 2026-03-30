@@ -140,7 +140,6 @@ function ActiveRunPanel({ run, onAbort, onManualCheck }: {
     onAbort: (id: string) => void;
     onManualCheck: (id: string, passed: boolean) => void;
 }) {
-    const milestoneNames = run.milestones.map(m => m.name);
     const stages: ExecutionStatus[] = [
         'validating', 'ready_to_apply', 'applying', 'verifying', 'succeeded',
     ];
@@ -246,7 +245,7 @@ function AuditLogPanel({ records }: { records: ExecutionAuditRecord[] }) {
                         padding: '2px 4px',
                         borderBottom: '1px solid #1f2937',
                         color: r.event.includes('fail') || r.event === 'aborted' ? '#f87171'
-                            : r.event.includes('passed') || r.event === 'succeeded' ? '#34d399'
+                            : r.event.includes('passed') || r.event === 'outcome_recorded' ? '#34d399'
                             : '#9ca3af',
                     }}>
                         <span style={{ color: '#4b5563' }}>{r.timestamp.slice(11, 19)}</span>

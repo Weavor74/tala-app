@@ -416,25 +416,45 @@ export class AutonomousRunOrchestrator {
         try {
             const planInput = this._buildHarmonizationStepPlanInput(filePath, campaign, metadata);
 
-            const proposal = await this.safePlanner.plan(planInput);
+            const planResponse = await this.safePlanner.plan(planInput);
+            if (!planResponse) {
+                return {
+                    executionRunId: `no-proposal-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: 'SafeChangePlanner did not produce a response for harmonization step',
+                };
+            }
+
+            // Poll for the actual SafeChangeProposal produced by this plan run
+            let proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                .find(p => p.runId === planResponse.runId);
+            if (!proposal) {
+                for (let i = 0; i < 9 && !proposal; i++) {
+                    await this._delay(50);
+                    proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                        .find(p => p.runId === planResponse.runId);
+                }
+            }
+
             if (!proposal) {
                 return {
                     executionRunId: `no-proposal-${Date.now()}`,
                     executionSucceeded: false,
                     rollbackTriggered: false,
-                    failureReason: 'SafeChangePlanner did not produce a proposal for harmonization step',
+                    failureReason: 'Planning completed but no proposal was generated for harmonization step',
                 };
             }
 
-            await this.safePlanner.promoteProposal(proposal.proposalId);
+            this.safePlanner.promoteProposal(proposal.proposalId);
 
-            const govDecision = await this.governanceAppService.evaluateForProposal(proposal);
-            if (!govDecision || govDecision.decision !== 'approved') {
+            const govDecision = this.governanceAppService.evaluateForProposal(proposal);
+            if (!govDecision.executionAuthorized) {
                 return {
                     executionRunId: `gov-blocked-${Date.now()}`,
                     executionSucceeded: false,
                     rollbackTriggered: false,
-                    failureReason: `Governance blocked harmonization step: ${govDecision?.rationale ?? 'no decision'}`,
+                    failureReason: `Governance blocked harmonization step: ${govDecision.blockReason ?? 'not authorized'}`,
                 };
             }
 
@@ -486,35 +506,55 @@ export class AutonomousRunOrchestrator {
      * Returns a CampaignStepExecutionResult describing what happened.
      */
     async executeCampaignStep(
-        step: import('../../../../shared/repairCampaignTypes').CampaignStep,
-        campaign: import('../../../../shared/repairCampaignTypes').RepairCampaign,
+        step: import('../../../shared/repairCampaignTypes').CampaignStep,
+        campaign: import('../../../shared/repairCampaignTypes').RepairCampaign,
     ): Promise<import('./campaigns/CampaignCheckpointEngine').CampaignStepExecutionResult> {
         try {
             // Build a PlanTriggerInput from the campaign step
             const planInput = this._buildCampaignStepPlanInput(step, campaign);
 
             // Phase 2: Plan
-            const proposal = await this.safePlanner.plan(planInput);
+            const planResponse = await this.safePlanner.plan(planInput);
+            if (!planResponse) {
+                return {
+                    executionRunId: `no-proposal-${Date.now()}`,
+                    executionSucceeded: false,
+                    rollbackTriggered: false,
+                    failureReason: 'SafeChangePlanner did not produce a response for this campaign step',
+                };
+            }
+
+            // Poll for the actual SafeChangeProposal produced by this plan run
+            let proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                .find(p => p.runId === planResponse.runId);
+            if (!proposal) {
+                for (let i = 0; i < 9 && !proposal; i++) {
+                    await this._delay(50);
+                    proposal = this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                        .find(p => p.runId === planResponse.runId);
+                }
+            }
+
             if (!proposal) {
                 return {
                     executionRunId: `no-proposal-${Date.now()}`,
                     executionSucceeded: false,
                     rollbackTriggered: false,
-                    failureReason: 'SafeChangePlanner did not produce a proposal for this campaign step',
+                    failureReason: 'Planning completed but no proposal was generated for this campaign step',
                 };
             }
 
             // Phase 2: Promote proposal
-            await this.safePlanner.promoteProposal(proposal.proposalId);
+            this.safePlanner.promoteProposal(proposal.proposalId);
 
             // Phase 3.5: Governance evaluation
-            const govDecision = await this.governanceAppService.evaluateForProposal(proposal);
-            if (!govDecision || govDecision.decision !== 'approved') {
+            const govDecision = this.governanceAppService.evaluateForProposal(proposal);
+            if (!govDecision.executionAuthorized) {
                 return {
                     executionRunId: `gov-blocked-${Date.now()}`,
                     executionSucceeded: false,
                     rollbackTriggered: false,
-                    failureReason: `Governance blocked campaign step: ${govDecision?.rationale ?? 'no decision'}`,
+                    failureReason: `Governance blocked campaign step: ${govDecision.blockReason ?? 'not authorized'}`,
                 };
             }
 
@@ -561,8 +601,8 @@ export class AutonomousRunOrchestrator {
      * Builds a PlanTriggerInput from a campaign step.
      */
     private _buildCampaignStepPlanInput(
-        step: import('../../../../shared/repairCampaignTypes').CampaignStep,
-        campaign: import('../../../../shared/repairCampaignTypes').RepairCampaign,
+        step: import('../../../shared/repairCampaignTypes').CampaignStep,
+        campaign: import('../../../shared/repairCampaignTypes').RepairCampaign,
     ): PlanTriggerInput {
         return {
             subsystemId: step.targetSubsystem,

@@ -54,8 +54,6 @@ export class CodeAccessPolicy {
         'npm', 'node', 'npx', 'python', 'pip', 'git', 'tsc', 'eslint', 'vitest', 'pytest',
         'ls', 'dir', 'cd', 'mkdir', 'echo', 'type', 'cat', 'grep', 'find',
         'python.exe', '.\\scripts\\',
-        // Common full paths for bundled binaries
-        'D:\\src\\client1\\tala-app\\bin\\python-win\\python.exe'
     ];
 
     constructor(options: CodeAccessPolicyOptions) {
@@ -106,8 +104,8 @@ export class CodeAccessPolicy {
         // 3. Denied Paths Check
         for (const pattern of this.deniedPaths) {
             if (minimatch(normalizedRel, pattern, { dot: true })) {
-                // Special case: bin/python-win is read-only
-                if (operation === 'read' && normalizedRel.startsWith('bin/python-win/')) {
+                // Special case: bundled Python binaries (all platforms) are read-only allowed
+                if (operation === 'read' && normalizedRel.startsWith('bin/python-')) {
                     continue;
                 }
                 return { ok: false, fullPath, error: `Path matches denied pattern: ${pattern}` };

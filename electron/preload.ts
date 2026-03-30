@@ -542,10 +542,10 @@ contextBridge.exposeInMainWorld('tala', {
     getGovernanceDashboardState: () => ipcRenderer.invoke('governance:getDashboardState'),
     /** Evaluates governance policy for a proposal (creates/returns decision). */
     evaluateGovernance: (proposalId: string) => ipcRenderer.invoke('governance:evaluateProposal', proposalId),
-    /** Records a human approval for a proposal. */
-    approveProposal: (request: { proposalId: string; reason?: string }) => ipcRenderer.invoke('governance:approve', request),
-    /** Records a human rejection for a proposal. */
-    rejectProposal: (request: { proposalId: string; reason: string }) => ipcRenderer.invoke('governance:reject', request),
+    /** Records a human approval for a governance proposal. */
+    approveGovernanceProposal: (request: { proposalId: string; reason?: string }) => ipcRenderer.invoke('governance:approve', request),
+    /** Records a human rejection for a governance proposal. */
+    rejectGovernanceProposal: (request: { proposalId: string; reason: string }) => ipcRenderer.invoke('governance:reject', request),
     /** Records a deferral for a proposal. */
     deferProposal: (request: { proposalId: string; reason?: string }) => ipcRenderer.invoke('governance:defer', request),
     /** Marks a confirmation requirement as satisfied. */

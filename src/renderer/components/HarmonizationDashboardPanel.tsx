@@ -6,7 +6,7 @@ import type {
     HarmonizationOutcomeRecord,
     HarmonizationRuleConfidenceSummary,
     HarmonizationCampaignStatus,
-} from '../../shared/harmonizationTypes';
+} from '../../../shared/harmonizationTypes';
 
 /**
  * HarmonizationDashboardPanel — Phase 5.6 P5.6H
