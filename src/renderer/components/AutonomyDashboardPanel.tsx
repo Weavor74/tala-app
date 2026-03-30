@@ -5,21 +5,21 @@ import type {
     AutonomousRun,
     LearningRecord,
     AutonomyTelemetryEvent,
-} from '../../shared/autonomyTypes';
+} from '../../../shared/autonomyTypes';
 import type {
     RecoveryPackDashboardState,
     RecoveryPackOutcomeSummary,
-} from '../../shared/recoveryPackTypes';
+} from '../../../shared/recoveryPackTypes';
 import type {
     AdaptiveDashboardState,
     SubsystemProfile,
     AdaptivePolicyDecision,
     StrategySelectionResult,
-} from '../../shared/adaptiveTypes';
-import type { CampaignDashboardState } from '../../shared/repairCampaignTypes';
+} from '../../../shared/adaptiveTypes';
+import type { CampaignDashboardState } from '../../../shared/repairCampaignTypes';
 import CampaignDashboardPanel from './CampaignDashboardPanel';
 import HarmonizationDashboardPanel from './HarmonizationDashboardPanel';
-import type { HarmonizationDashboardState } from '../../shared/harmonizationTypes';
+import type { HarmonizationDashboardState } from '../../../shared/harmonizationTypes';
 
 /**
  * AutonomyDashboardPanel — Phase 4 P4G / Phase 5 P5G

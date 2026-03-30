@@ -149,7 +149,7 @@ export class TelemetryService {
         severity: TelemetrySeverity,
         actor: string,
         summary: string,
-        status: TelemetryStatus,
+        status: TelemetryStatus = 'unknown',
         options: EmitOptions = {}
     ): CanonicalTelemetryEvent {
         return this.emit(subsystem, eventType, severity, actor, summary, status, options);

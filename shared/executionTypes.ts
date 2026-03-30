@@ -22,8 +22,6 @@
  *   aborted (terminal — any stage)
  */
 
-import type { SafetyClass } from './reflectionPlanTypes';
-
 // ─── Execution Status ─────────────────────────────────────────────────────────
 
 /**

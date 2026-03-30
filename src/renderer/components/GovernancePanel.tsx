@@ -348,10 +348,10 @@ const GovernancePanel: React.FC = () => {
     }, [refresh, tala]);
 
     const handleApprove = useCallback(async (proposalId: string) => {
-        if (!tala?.approveProposal) return;
+        if (!tala?.approveGovernanceProposal) return;
         setLoading(true);
         try {
-            await tala.approveProposal({ proposalId });
+            await tala.approveGovernanceProposal({ proposalId });
             await refresh();
         } catch (e: any) {
             setError(`Approval failed: ${e.message}`);
@@ -361,13 +361,13 @@ const GovernancePanel: React.FC = () => {
     }, [tala, refresh]);
 
     const handleReject = useCallback(async (proposalId: string) => {
-        if (!tala?.rejectProposal) return;
+        if (!tala?.rejectGovernanceProposal) return;
         const reason = rejectingFor === proposalId && rejectReason.trim()
             ? rejectReason.trim()
             : 'Rejected by operator';
         setLoading(true);
         try {
-            await tala.rejectProposal({ proposalId, reason });
+            await tala.rejectGovernanceProposal({ proposalId, reason });
             setRejectingFor(null);
             setRejectReason('');
             await refresh();
