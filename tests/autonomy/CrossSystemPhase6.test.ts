@@ -224,8 +224,8 @@ describe('P6B — CrossSystemSignalAggregator', () => {
     });
 
     it('filters by source type', () => {
-        aggregator.ingest(makeSignal({ sourceType: 'execution_failure', failureType: 't1' }));
-        aggregator.ingest(makeSignal({ sourceType: 'governance_block', failureType: 't2', subsystem: 'gov' }));
+        aggregator.ingest(makeSignal({ sourceType: 'execution_failure', failureType: 'timeout' }));
+        aggregator.ingest(makeSignal({ sourceType: 'governance_block', failureType: 'tier_exceeded', subsystem: 'governance' }));
         expect(aggregator.getSignalsBySourceType('execution_failure').length).toBe(1);
         expect(aggregator.getSignalsBySourceType('governance_block').length).toBe(1);
     });

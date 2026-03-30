@@ -67,6 +67,15 @@ export interface MemoryItem {
 
 ### Methods
 
+#### `getReadyStatus`
+Returns true when the MCP client is connected to the mem0-core server.
+ Used by AgentService.getStartupStatus() to surface real mem0 readiness.
+/
+
+**Arguments**: ``
+**Returns**: `boolean`
+
+---
 #### `loadLocal`
 Loads the local memory store from the JSON file on disk into the
  `localMemories` array.
