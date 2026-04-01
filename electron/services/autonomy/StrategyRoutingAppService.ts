@@ -19,7 +19,7 @@
 import { ipcMain } from 'electron';
 import type { StrategyRoutingEngine } from './crossSystem/StrategyRoutingEngine';
 import type { StrategyRoutingOutcomeTracker } from './crossSystem/StrategyRoutingOutcomeTracker';
-import type { StrategyRoutingDecisionId } from '../../shared/strategyRoutingTypes';
+import type { StrategyRoutingDecisionId } from '../../../shared/strategyRoutingTypes';
 import { telemetry } from '../TelemetryService';
 
 // ─── StrategyRoutingAppService ────────────────────────────────────────────────
