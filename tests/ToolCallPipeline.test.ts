@@ -381,3 +381,95 @@ describe('Pipeline invariant: finalResponse must not be assigned from plain cont
         expect(result.value).toBe('RP prose response.');
     });
 });
+
+// ─── Fix 5 – Retry tool count respects mode filter ───────────────────────────
+//
+// Root cause (observed in logs):
+//   First attempt (hybrid mode) sent 5 tools (toolsToSend filtered).
+//   On ToolRequired retry the code used `filteredTools` (57 tools) instead of
+//   `toolsToSend`, blowing up the payload to 52 KB and reliably timing out the
+//   8B Ollama model a second time.
+//
+// Fix: retry uses `toolsToSend` (the mode-filtered palette), not `filteredTools`.
+
+/**
+ * Mirrors the retry tool selection logic from AgentService (after fix).
+ *
+ * @param isBrowserTask      Whether the turn is a browser task.
+ * @param toolsToSend        Mode-filtered tools sent on the original attempt.
+ * @param filteredTools      Full capability-resolved tool set (before mode filter).
+ * @param browserTaskNames   Set of browser-only tool names (for browser-task palette).
+ */
+function selectRetryTools(
+    isBrowserTask: boolean,
+    toolsToSend: { name: string }[],
+    filteredTools: { name: string }[],
+    browserTaskNames: Set<string>
+): { name: string }[] {
+    // This mirrors the FIXED branch in AgentService:
+    //   const retryTools = isBrowserTask
+    //       ? filteredTools.filter(t => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
+    //       : toolsToSend;          ← was filteredTools before the fix
+    return isBrowserTask
+        ? filteredTools.filter(t => browserTaskNames.has(t.name))
+        : toolsToSend;
+}
+
+describe('ToolCallPipeline Fix 5 — retry uses mode-filtered toolsToSend', () => {
+
+    const BROWSER_NAMES = new Set(['browse', 'browser_click', 'browser_type']);
+
+    const hybridPalette = [
+        { name: 'fs_read_text' },
+        { name: 'mem0_search' },
+        { name: 'query_graph' },
+        { name: 'manage_goals' },
+        { name: 'reflection_create_goal' },
+    ];
+
+    // Simulates the full filteredTools before hybrid mode filtering (57 in prod).
+    const fullFilteredTools = [
+        ...hybridPalette,
+        { name: 'shell_run' }, { name: 'fs_write_text' }, { name: 'browse' },
+        { name: 'browser_click' }, { name: 'browser_type' }, { name: 'search_web' },
+        { name: 'desktop_screenshot' }, { name: 'mem0_add' }, { name: 'get_user_profile' },
+        // … (57 total in production; abbreviated here for test clarity)
+    ];
+
+    it('non-browser retry uses toolsToSend (mode-filtered), not the full filteredTools', () => {
+        const retryTools = selectRetryTools(false, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        // Must equal the mode-filtered hybrid palette, not the full set.
+        expect(retryTools).toEqual(hybridPalette);
+        expect(retryTools.length).toBe(hybridPalette.length);
+        // Specifically must NOT expand to the full filteredTools count.
+        expect(retryTools.length).toBeLessThan(fullFilteredTools.length);
+    });
+
+    it('non-browser retry tool count matches original attempt (no explosion)', () => {
+        const retryTools = selectRetryTools(false, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        // Production scenario: first attempt sent 5 tools; retry must also send 5.
+        expect(retryTools.length).toBe(5);
+    });
+
+    it('browser-task retry uses browser-only subset of filteredTools', () => {
+        const retryTools = selectRetryTools(true, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        // Browser-task retry: filtered from fullFilteredTools, not hybridPalette.
+        expect(retryTools.every(t => BROWSER_NAMES.has(t.name))).toBe(true);
+        expect(retryTools.length).toBeGreaterThan(0);
+    });
+
+    it('browser-task retry does not include non-browser tools from hybridPalette', () => {
+        const retryTools = selectRetryTools(true, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        const nonBrowser = retryTools.filter(t => !BROWSER_NAMES.has(t.name));
+        expect(nonBrowser.length).toBe(0);
+    });
+
+    it('retry tool list is stable — same tools every retry iteration (no growth)', () => {
+        // Simulate three consecutive retry iterations — tool count must not grow.
+        const iter1 = selectRetryTools(false, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        const iter2 = selectRetryTools(false, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        const iter3 = selectRetryTools(false, hybridPalette, fullFilteredTools, BROWSER_NAMES);
+        expect(iter1.length).toBe(iter2.length);
+        expect(iter2.length).toBe(iter3.length);
+    });
+});

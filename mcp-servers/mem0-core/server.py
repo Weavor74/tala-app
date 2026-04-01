@@ -58,8 +58,12 @@ def get_memory():
         except ImportError:
             sys.stderr.write("[mem0-core] ERROR: 'mem0ai' library not found. Running in degraded mode.\n")
             return None
-        except Exception as e:
-            sys.stderr.write(f"[mem0-core] ERROR: Failed to initialize Memory: {e}\n")
+        except BaseException as e:
+            # Catch BaseException (including SystemExit) because some embedding providers
+            # (e.g. mem0.embeddings.ollama) call sys.exit(1) on import failure rather than
+            # raising a normal Exception.  Letting SystemExit propagate crashes the MCP
+            # stdio server process; catching it here keeps the server alive in degraded mode.
+            sys.stderr.write(f"[mem0-core] ERROR: Failed to initialize Memory (degraded): {type(e).__name__}: {e}\n")
             return None
     return _memory_instance
 

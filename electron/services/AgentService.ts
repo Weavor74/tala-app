@@ -2378,10 +2378,14 @@ Failure to provide a tool call will result in system termination.`;
                     if (turnObject.intent.class === 'coding') retryOptions.tool_choice = 'required';
                     if (isBrowserTask) retryOptions.tool_choice = 'required';
 
-                    // For browser tasks: retry with browser-only tool palette for cleaner signal
+                    // Use the same mode-filtered palette that was sent on the original attempt.
+                    // Using filteredTools (the full unfiltered set) would send all 57+ tools on
+                    // the retry, which overloads constrained local models (e.g. 8B Ollama) and
+                    // reliably causes a second 90s timeout.  toolsToSend already has the correct
+                    // mode-gated subset (e.g. 5–6 tools for hybrid mode).
                     const retryTools = isBrowserTask
                         ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
-                        : filteredTools;
+                        : toolsToSend;
                     const retryResponse = await this.streamWithBrain(this.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, retryTools, retryOptions);
 
                     calls = retryResponse.toolCalls || [];
