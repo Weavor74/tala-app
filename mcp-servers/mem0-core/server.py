@@ -2,6 +2,24 @@ import sys
 import os
 import json
 import io
+import contextlib
+
+@contextlib.contextmanager
+def _stderr_stdout():
+    """Temporarily redirect sys.stdout to sys.stderr inside a tool handler.
+
+    mem0 (and the libraries it calls) can print progress lines to stdout during
+    search/add operations.  Because MCP uses stdout as its JSON transport, any
+    stray text corrupts the stream.  Wrapping each tool body with this context
+    manager guarantees that rogue prints are silently diverted to stderr while
+    the MCP framework still owns the real stdout file descriptor.
+    """
+    _prev = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        yield
+    finally:
+        sys.stdout = _prev
 
 # === CRITICAL: Redirect stdout to stderr BEFORE importing any third-party libs. ===
 _real_stdout = sys.stdout
@@ -120,49 +138,65 @@ def mem0_add(text: str, user_id: str = "local_user", metadata: dict = None) -> s
     """
     Add a memory to the vector store.
     """
-    try:
-        mem = get_memory()
-        if mem is None:
-            return json.dumps({"error": "Memory system is in a degraded state (initialization failed)."})
-        result = mem.add(text, user_id=user_id, metadata=metadata)
-        return json.dumps({"success": True, "message": "Memory added successfully.", "result": result})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    with _stderr_stdout():
+        try:
+            mem = get_memory()
+            if mem is None:
+                return json.dumps({"error": "Memory system is in a degraded state (initialization failed)."})
+            result = mem.add(text, user_id=user_id, metadata=metadata)
+            return json.dumps({"success": True, "message": "Memory added successfully.", "result": result})
+        except BaseException as e:
+            # Catch BaseException so SystemExit raised by mem0 embedding providers
+            # (e.g. ollama embedder calling sys.exit(1) on a connection failure) does
+            # not propagate and kill the MCP stdio transport.  KeyboardInterrupt is
+            # re-raised so the server can still be interrupted cleanly.
+            if isinstance(e, KeyboardInterrupt):
+                raise
+            sys.stderr.write(f"[mem0-core] ERROR in mem0_add: {type(e).__name__}: {e}\n")
+            return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
 @mcp.tool(name="mem0_search")
 def mem0_search(query: str, user_id: str = "local_user", limit: int = 5, filters: dict = None) -> str:
     """Search for relevant memories."""
-    try:
-        mem = get_memory()
-        if mem is None:
-            return json.dumps({"error": "Memory system is in a degraded state."})
-        
-        # Search the backend
-        # Note: mem0 search usually doesn't take filters directly in the call, 
-        # so we perform post-retrieval filtering for maximum compatibility.
-        raw_results = mem.search(query, user_id=user_id, limit=limit)
-        
-        # Normalize all results
-        normalized = [_normalize_mem0_result(r) for r in raw_results]
-        
-        # Apply filters (role, source)
-        if filters:
-            filtered = []
-            for item in normalized:
-                match = True
-                for key, val in filters.items():
-                    # Check if the filter key exists in metadata
-                    item_val = item["metadata"].get(key)
-                    if item_val != val:
-                        match = False
-                        break
-                if match:
-                    filtered.append(item)
-            return json.dumps(filtered)
+    with _stderr_stdout():
+        try:
+            mem = get_memory()
+            if mem is None:
+                return json.dumps({"error": "Memory system is in a degraded state."})
             
-        return json.dumps(normalized)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+            # Search the backend
+            # Note: mem0 search usually doesn't take filters directly in the call, 
+            # so we perform post-retrieval filtering for maximum compatibility.
+            raw_results = mem.search(query, user_id=user_id, limit=limit)
+            
+            # Normalize all results
+            normalized = [_normalize_mem0_result(r) for r in raw_results]
+            
+            # Apply filters (role, source)
+            if filters:
+                filtered = []
+                for item in normalized:
+                    match = True
+                    for key, val in filters.items():
+                        # Check if the filter key exists in metadata
+                        item_val = item["metadata"].get(key)
+                        if item_val != val:
+                            match = False
+                            break
+                    if match:
+                        filtered.append(item)
+                return json.dumps(filtered)
+                
+            return json.dumps(normalized)
+        except BaseException as e:
+            # Catch BaseException so SystemExit raised by mem0 embedding providers
+            # (e.g. ollama embedder calling sys.exit(1) on a connection failure) does
+            # not propagate and kill the MCP stdio transport.  KeyboardInterrupt is
+            # re-raised so the server can still be interrupted cleanly.
+            if isinstance(e, KeyboardInterrupt):
+                raise
+            sys.stderr.write(f"[mem0-core] ERROR in mem0_search: {type(e).__name__}: {e}\n")
+            return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
 # Readiness Signaling
 # Important: Logging this to stderr so it doesn't break the JSON-RPC stream on stdout.

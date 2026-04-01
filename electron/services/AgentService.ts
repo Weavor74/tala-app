@@ -2362,7 +2362,7 @@ Exported standalone package from Tala.
                 const requiresTool = hasKeywordIndicatingToolUse || (toolsToSend.length > 0 && calls.length === 0);
 
                 if (requiresTool && calls.length === 0 && activeMode !== 'rp') {
-                    console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${filteredTools.length}`);
+                    console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${toolsToSend.length}`);
                     const envelopeSystem = `Tool call required. Critical instruction: You are in a strict execution environment. You MUST NOT narrate or explain. Output ONLY a valid JSON object matching this schema: 
 {
   "tool_calls": [
