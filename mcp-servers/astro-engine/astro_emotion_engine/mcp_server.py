@@ -16,6 +16,15 @@ Agent profiles are stored as JSON on disk via ``ProfileManager``.
 Charts are computed on-the-fly via ``ChartFactory`` + ``AstroEmotionEngine``.
 """
 
+# sys.path guard — ensures the package root (parent of astro_emotion_engine/) is on
+# sys.path regardless of whether Python is invoked with `-m` or as a direct script.
+# This must run before any astro_emotion_engine package imports.
+import sys
+import os
+_pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _pkg_parent not in sys.path:
+    sys.path.insert(0, _pkg_parent)
+
 # imports
 from datetime import datetime
 import json
@@ -25,7 +34,7 @@ from mcp.server.fastmcp import FastMCP
 from astro_emotion_engine.services.chart_factory import ChartFactory
 from astro_emotion_engine.services.profile_manager import ProfileManager
 from astro_emotion_engine.engine import AstroEmotionEngine
-from .schemas.request import EmotionRequest
+from astro_emotion_engine.schemas.request import EmotionRequest
 
 # Initialize FastMCP Server
 mcp = FastMCP("AstroEmotionEngine")
