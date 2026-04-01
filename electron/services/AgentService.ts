@@ -2214,6 +2214,33 @@ Exported standalone package from Tala.
                     toolsToSend = [];
                 }
 
+                // --- LORE / MEMORY-GROUNDED mem0_search SUPPRESSION ---
+                // When RAG/LTMF memories are already available for a lore turn, calling
+                // mem0_search is redundant and harmful: mem0 may be degraded/timing out,
+                // which causes the model to fall back to generic output instead of using
+                // the high-quality retrieved autobiographical memories.
+                //
+                // Suppression rules (applied after mode/intent filtering above):
+                //   1. intent=lore AND approved RAG/LTMF memories > 0  → drop mem0_search
+                //   2. memory_grounded_mode active (soft or strict)     → drop mem0_search
+                //      (memory_grounded_mode implies lore memories were retrieved and the
+                //       response is intentionally anchored to those memories)
+                const isMemoryGrounded =
+                    turnObject.responseMode === 'memory_grounded_soft' ||
+                    turnObject.responseMode === 'memory_grounded_strict';
+                const isLoreWithMemory =
+                    turnObject.intent.class === 'lore' && turnObject.retrieval.approvedCount > 0;
+                if ((isLoreWithMemory || isMemoryGrounded) && toolsToSend.length > 0) {
+                    const before = toolsToSend.length;
+                    toolsToSend = toolsToSend.filter((t: any) => t.function.name !== 'mem0_search');
+                    if (toolsToSend.length < before) {
+                        console.log(
+                            `[AgentService] mem0_search suppressed — lore/memory-grounded turn already has RAG/LTMF context ` +
+                            `(intent=${turnObject.intent.class} responseMode=${turnObject.responseMode ?? 'none'} approvedMemories=${turnObject.retrieval.approvedCount})`
+                        );
+                    }
+                }
+
                 console.log(`[AgentService] turn=${turn} mode=${activeMode} intent=${turnObject.intent.class} tools_sent=${toolsToSend.length} reason=${(turnObject.intent.class === 'conversation' || activeMode === 'rp') ? 'omitted_by_intent_or_mode' : 'active'}`);
 
                 // --- ROUTING INVARIANTS (Hard Guarantees) ---
