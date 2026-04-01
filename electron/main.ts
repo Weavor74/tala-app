@@ -107,6 +107,11 @@ import { CrossSystemDashboardBridge } from './services/autonomy/crossSystem/Cros
 import { CrossSystemCoordinator } from './services/autonomy/crossSystem/CrossSystemCoordinator';
 import { CrossSystemSignalCollector } from './services/autonomy/crossSystem/CrossSystemSignalCollector';
 import { CrossSystemAppService } from './services/autonomy/CrossSystemAppService';
+// ── Phase 6.1: Strategy Routing ───────────────────────────────────────────────
+import { StrategyRoutingEngine } from './services/autonomy/crossSystem/StrategyRoutingEngine';
+import { StrategyRoutingOutcomeTracker } from './services/autonomy/crossSystem/StrategyRoutingOutcomeTracker';
+import { StrategyRoutingDashboardBridge } from './services/autonomy/crossSystem/StrategyRoutingDashboardBridge';
+import { StrategyRoutingAppService } from './services/autonomy/StrategyRoutingAppService';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -558,6 +563,58 @@ try {
     }
 } catch (err) {
     console.warn('[Main] Phase 6 cross-system intelligence services failed to initialize — intelligence is inactive:', err);
+}
+
+// ─── Phase 6.1: Strategy Routing ──────────────────────────────────────────────
+// Instantiates the strategy routing layer and wires it into the cross-system
+// coordinator and autonomous run orchestrator.
+// All routing decisions still pass through planning/governance/execution pipelines.
+// Falls back gracefully if any service fails to initialize.
+try {
+    const strategyRoutingOutcomeTracker = new StrategyRoutingOutcomeTracker(USER_DATA_DIR);
+    const strategyRoutingDashboardBridge = new StrategyRoutingDashboardBridge();
+
+    const strategyRoutingEngine = new StrategyRoutingEngine(
+        USER_DATA_DIR,
+        strategyRoutingOutcomeTracker,
+        strategyRoutingDashboardBridge,
+    );
+
+    // Inject routing engine into the orchestrator
+    autonomousRunOrchestrator.setStrategyRoutingServices(
+        strategyRoutingEngine,
+        strategyRoutingOutcomeTracker,
+    );
+
+    // Inject routing engine into the cross-system coordinator so it is called
+    // automatically when runAnalysis() produces a new strategy decision.
+    // Protected subsystems and active campaign counts are resolved lazily via callbacks.
+    const crossSystemCoordinatorForRouting = (autonomousRunOrchestrator as any)._crossSystemCoordinator;
+    if (crossSystemCoordinatorForRouting && typeof crossSystemCoordinatorForRouting.setStrategyRoutingEngine === 'function') {
+        crossSystemCoordinatorForRouting.setStrategyRoutingEngine(
+            strategyRoutingEngine,
+            () => {
+                // Returns count of active (non-terminal) repair campaigns
+                try {
+                    const registry = (autonomousRunOrchestrator as any)._campaignRegistry;
+                    return registry ? registry.getAll(['active', 'paused']).length : 0;
+                } catch { return 0; }
+            },
+            () => {
+                // Returns hard-blocked subsystem IDs from the active autonomy policy
+                try {
+                    const policy = autonomousRunOrchestrator.getPolicy();
+                    return policy?.hardBlockedSubsystems ?? [];
+                } catch { return []; }
+            },
+        );
+    }
+
+    new StrategyRoutingAppService(strategyRoutingEngine, strategyRoutingOutcomeTracker);
+
+    console.log('[Main] Phase 6.1: Strategy routing services wired.');
+} catch (err) {
+    console.warn('[Main] Phase 6.1 strategy routing services failed to initialize — routing is inactive:', err);
 }
 
 new AutonomyAppService(autonomousRunOrchestrator);
