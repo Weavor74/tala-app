@@ -129,6 +129,33 @@ Tala stays tightly factual. Only details supported by retrieved memories. If a d
 [TalaRouter] Memory-grounded response mode: memory_grounded_soft
 ```
 
+## 3c. mem0_search Suppression on Lore / Memory-Grounded Turns
+
+`AgentService.ts` applies an additional tool-filtering pass **after** all mode/intent-based tool selection.
+
+### Problem
+
+During lore/autobiographical queries, RAG/LTMF already supplies high-quality canonical memories. If the model is also given `mem0_search` and mem0 is degraded or timing out, the tool call fails and the model falls back to generic output instead of using the already-retrieved autobiographical memories.
+
+### Suppression rules
+
+| Condition | Effect |
+|---|---|
+| `intent=lore` AND `retrieval.approvedCount > 0` | `mem0_search` removed from `toolsToSend` |
+| `responseMode=memory_grounded_soft` | `mem0_search` removed from `toolsToSend` |
+| `responseMode=memory_grounded_strict` | `mem0_search` removed from `toolsToSend` |
+| `intent=lore` AND `retrieval.approvedCount=0` (no memories found) | `mem0_search` kept — fallback retrieval still useful |
+| Any non-lore intent without memory-grounded mode | `mem0_search` not affected |
+
+**Scope:** Only `mem0_search` is removed. All other tools (`retrieve_context`, `query_graph`, `mem0_add`, etc.) are unaffected by this pass.
+
+### Log output
+
+When suppression fires:
+```
+[AgentService] mem0_search suppressed — lore/memory-grounded turn already has RAG/LTMF context (intent=lore responseMode=memory_grounded_soft approvedMemories=3)
+```
+
 ## 4. Memory Write Policy
 
 Each turn receives a `MemoryWriteDecision` from `TalaContextRouter.resolveMemoryWritePolicy()`.
