@@ -400,7 +400,7 @@ describe('Test 7 — No global tool loss: unrelated intents receive full candida
         const decision = gate2.evaluate(makeContext({ intentClass: 'task' }));
         const otherTools = ALL_TOOLS.filter(t => t !== 'mem0_search');
         for (const t of otherTools) {
-            if (t === 'manage_goals' || t === 'reflection_create_goal') continue; // critical — exempt
+            if (t === 'manage_goals' || t === 'reflection_create_goal') continue; // critical - exempt
             expect(decision.allowedTools).toContain(t);
         }
     });

@@ -31,7 +31,7 @@
 // ─── Public types ─────────────────────────────────────────────────────────────
 
 /**
- * Produced by ToolGatekeeper.evaluate().  Consumed by AgentService to finalise
+ * Produced by ToolGatekeeper.evaluate().  Consumed by AgentService to finalize
  * which tools are sent to the model and whether a direct answer is preferred.
  */
 export interface ToolGateDecision {
@@ -229,7 +229,7 @@ export class ToolGatekeeper {
             );
 
             // ── Rule Group C: Direct-answer preference ─────────────────────
-            // Grounded memory is already available; the model should synthesise
+            // Grounded memory is already available; the model should synthesize
             // from that context rather than launching exploratory tool calls.
             directAnswerPreferred = true;
             gatingReasons.push(
