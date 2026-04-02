@@ -4,6 +4,23 @@ This document describes the Tala system as a collection of interacting component
 
 ## 1. Core Runtime Components
 
+### AgentKernel *(top-level execution shell)*
+- **Path**: `electron/services/kernel/AgentKernel.ts`
+- **Purpose**: Stable top-level execution shell and primary entrypoint for all Tala runtime turns.
+  Coordinates the full lifecycle of each turn through a 5-stage pipeline without replacing any
+  downstream subsystem. All substantive work is delegated to `AgentService.chat()`.
+- **Pipeline stages**: `normalizeRequest → intake → classifyExecution → runDelegatedFlow → finalizeExecution`
+- **Inputs**: `KernelRequest` (`userMessage`, optional `images` and `capabilitiesOverride`).
+- **Outputs**: `KernelResult` (extends `AgentTurnOutput` with `meta: KernelExecutionMeta`).
+- **Future responsibility boundaries**:
+  - `normalizeRequest`: request ACL, payload coercion
+  - `intake`: execution budget checks, authority pre-validation
+  - `classifyExecution`: mode detection, tool-need prediction, policy gate, context assembly trigger
+  - `runDelegatedFlow`: inference orchestration boundary, tool execution coordination, memory write coordination
+  - `finalizeExecution`: telemetry emission, outcome learning hooks, audit record writes
+- **Initialized by**: `IpcRouter.registerAll()` as `this._kernel = new AgentKernel(agent)`.
+- **Invoked by**: `IpcRouter` on every `chat-message` IPC event.
+
 ### Electron Main Process
 - **Path**: `electron/main.ts`
 - **Purpose**: Acts as the host for all backend services and manages the application window.

@@ -18,28 +18,58 @@ Every user turn follows a single authoritative path through the runtime. The can
 `TurnContext` (defined in `electron/services/router/ContextAssembler.ts`), which carries all state
 from input to output delivery.
 
+**AgentKernel is the recognized top-level execution shell.** All user-initiated turns enter through
+`AgentKernel.execute()` before reaching any downstream service. The kernel runs a 5-stage pipeline
+that provides the named seams where future runtime authority boundaries will attach.
+
 ```
 user input
-  → IPC dispatch (tala:chat)
-  → AgentService.chat()
-  → TalaContextRouter.process()       [mode/context assembly]
-    → IntentClassifier.classify()     [intent detection; lore follow-up carryover if prior turn was lore]
-    → MemoryService.search()          [memory retrieval, gated by mode]
-    → RagService.searchStructured()   [lore intent only — LTMF/canon lore candidates prepended first]
-    → MemoryFilter.filter()           [mode-scope isolation; RP mode allows source=rag for LTMF]
-    → MemoryFilter.resolveContradictions()  [lore-aware source ranking: diary/graph > rag > mem0 > chat]
-    → ContextAssembler.assemble()     [prompt block construction]
-    → resolveMemoryWritePolicy()      [mode-aware write decision]
-    → auditLogger.info(turn_routed)   [structured telemetry]
-  → TurnContext                       [canonical turn carrier]
-  → capability/tool gating            [allowedCapabilities, blockedCapabilities]
-  → LLM / tool execution              [OllamaBrain / CloudBrain / ToolService]
-  → ArtifactRouter.normalizeAgentOutput()  [output channel determination]
-    → auditLogger.info(artifact_routed)
-  → TurnContext.artifactDecision      [routing decision recorded]
-  → GuardrailService                  [output safety check]
-  → UI delivery (IPC stream)
+  → IPC dispatch (chat-message via IpcRouter)
+  → AgentKernel.execute()                  [top-level execution shell — Phase 2d]
+      → normalizeRequest()                 [normalize/validate KernelRequest]
+      → intake()                           [stamp executionId, startedAt, executionClass]
+      → classifyExecution()                [classify turn; future: policy gate, context assembly trigger]
+      → runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
+          → AgentService.chat()
+          → TalaContextRouter.process()       [mode/context assembly]
+            → IntentClassifier.classify()     [intent detection; lore follow-up carryover if prior turn was lore]
+            → MemoryService.search()          [memory retrieval, gated by mode]
+            → RagService.searchStructured()   [lore intent only — LTMF/canon lore candidates prepended first]
+            → MemoryFilter.filter()           [mode-scope isolation; RP mode allows source=rag for LTMF]
+            → MemoryFilter.resolveContradictions()  [lore-aware source ranking: diary/graph > rag > mem0 > chat]
+            → ContextAssembler.assemble()     [prompt block construction]
+            → resolveMemoryWritePolicy()      [mode-aware write decision]
+            → auditLogger.info(turn_routed)   [structured telemetry]
+          → TurnContext                       [canonical turn carrier]
+          → capability/tool gating            [allowedCapabilities, blockedCapabilities]
+          → LLM / tool execution              [OllamaBrain / CloudBrain / ToolService]
+          → ArtifactRouter.normalizeAgentOutput()  [output channel determination]
+            → auditLogger.info(artifact_routed)
+          → TurnContext.artifactDecision      [routing decision recorded]
+          → GuardrailService                  [output safety check]
+          → UI delivery (IPC stream)
+      → finalizeExecution()                [record durationMs; future: telemetry emit, learning hooks, audit]
+  → chat-done event (carries executionId from KernelResult.meta)
 ```
+
+### AgentKernel — Execution Shell
+
+`AgentKernel` (`electron/services/kernel/AgentKernel.ts`) is the stable top-level execution shell.
+It does not replace any subsystem; it coordinates the entrypoint and owns the lifecycle frame around
+each turn. Future runtime authority boundaries attach here:
+
+| Stage | Current behavior | Future responsibility |
+|-------|-----------------|----------------------|
+| `normalizeRequest` | Coerce missing fields to defaults | Request ACL, payload coercion |
+| `intake` | Stamp `executionId`, `startedAt`, `executionClass='standard'` | Budget checks, authority pre-validation |
+| `classifyExecution` | No-op placeholder | Mode detection, tool-need prediction, policy gate |
+| `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
+| `finalizeExecution` | Record `durationMs`, return `KernelResult` | Telemetry emission, outcome learning, audit record |
+
+`KernelResult` extends `AgentTurnOutput` with a `meta: KernelExecutionMeta` field containing
+`executionId`, `startedAt`, `executionType`, `executionClass`, and `durationMs`. The `executionId`
+is forwarded to the renderer in the `chat-done` IPC event for turn-level log correlation.
+
 
 ### TurnContext — Canonical Turn Carrier
 

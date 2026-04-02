@@ -44,6 +44,7 @@ import { MemoryPolicyService } from './policy/MemoryPolicyService';
 import { GraphTraversalService } from './graph/GraphTraversalService';
 import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
+import { AgentKernel } from './kernel/AgentKernel';
 
 export interface IpcRouterContext {
   app: any;
@@ -103,6 +104,8 @@ export class IpcRouter {
   private _a2uiRouter: A2UIWorkspaceRouter | null = null;
   /** Phase 4C: A2UI action bridge — lazy-initialized in registerAll(). */
   private _a2uiActionBridge: A2UIActionBridge | null = null;
+  /** Phase 2d: AgentKernel — thin execution wrapper, initialized in registerAll(). */
+  private _kernel: AgentKernel | null = null;
 
   /**
    * Registers all IPC handlers with `ipcMain`.
@@ -118,6 +121,9 @@ export class IpcRouter {
     // Phase 3A: Wire the diagnostics aggregator into AgentService so cognitive
     // contexts are recorded after each turn without exposing it in the constructor.
     agent.setDiagnosticsAggregator(this.ctx.diagnosticsAggregator);
+
+    // Phase 2d: Initialize the AgentKernel as the canonical execution entry point.
+    this._kernel = new AgentKernel(agent);
 
     // Phase 4C: Initialize A2UI workspace router and action bridge.
     this._a2uiRouter = new A2UIWorkspaceRouter({
@@ -1303,13 +1309,19 @@ export class IpcRouter {
         }
 
         console.log("[DEBUG] Calling agent.chat() with text length:", text.length, "and images:", images.length);
-        const result = await (agent as any).chat(text, (token: string) => {
-          fullResponse = fullResponse + token;
-          event.sender.send('chat-token', token);
-        }, (type: string, data: any) => {
-          // Relay custom events to renderer
-          event.sender.send('agent-event', { type, data });
-        }, images, payload.capabilitiesOverride);
+        if (!this._kernel) {
+          throw new Error('[AgentKernel] Kernel not initialized -- ensure registerAll() was called.');
+        }
+        const result = await this._kernel.execute(
+          { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride },
+          (token: string) => {
+            fullResponse = fullResponse + token;
+            event.sender.send('chat-token', token);
+          }, (type: string, data: any) => {
+            // Relay custom events to renderer
+            event.sender.send('agent-event', { type, data });
+          }
+        );
 
         // Finalize turn and send done event with sanitized content and metadata
         event.sender.send('chat-done', {
@@ -1317,7 +1329,8 @@ export class IpcRouter {
           artifact: result.artifact,
           suppressChatContent: result.suppressChatContent,
           messageHash: uuidv4().slice(0, 8),
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          executionId: result.meta.executionId,
         });
 
       } catch (e: any) {
