@@ -7,7 +7,7 @@ import type {
     RuntimeExecutionMode,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
-import { createInitialExecutionState, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
+import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -58,11 +58,27 @@ export interface KernelExecutionMeta {
  * Normalized request envelope passed between kernel stages.
  * normalizeRequest() ensures this is always fully populated before
  * being forwarded to classifyExecution() or runDelegatedFlow().
+ *
+ * Callers may supply `origin` and `executionMode` to propagate the actual
+ * execution context (e.g. the active mode from settings) into the kernel's
+ * execution vocabulary. When omitted, the kernel defaults to `'ipc'` and
+ * `'assistant'` respectively.
  */
 export interface KernelRequest {
     userMessage: string;
     images?: string[];
     capabilitiesOverride?: any;
+    /**
+     * Caller-provided execution origin.
+     * Defaults to `'ipc'` inside `intake()` when not supplied.
+     */
+    origin?: RuntimeExecutionOrigin;
+    /**
+     * Caller-provided runtime mode.
+     * Defaults to `'assistant'` inside `intake()` when not supplied.
+     * Callers should pass the resolved mode from settings (e.g. 'rp', 'hybrid').
+     */
+    executionMode?: RuntimeExecutionMode;
 }
 
 /**
@@ -143,6 +159,8 @@ export class AgentKernel {
             userMessage: raw.userMessage ?? '',
             images: raw.images ?? [],
             capabilitiesOverride: raw.capabilitiesOverride,
+            origin: raw.origin,
+            executionMode: raw.executionMode,
         };
     }
 
@@ -153,9 +171,10 @@ export class AgentKernel {
     private intake(
         request: KernelRequest,
         executionType: RuntimeExecutionType,
-        origin: RuntimeExecutionOrigin,
-        mode: RuntimeExecutionMode
     ): KernelExecutionMeta {
+        // Prefer caller-supplied origin/mode; fall back to conservative defaults.
+        const origin: RuntimeExecutionOrigin = request.origin ?? 'ipc';
+        const mode: RuntimeExecutionMode = request.executionMode ?? 'assistant';
         const meta: KernelExecutionMeta = {
             executionId: uuidv4(),
             startedAt: Date.now(),
@@ -212,7 +231,7 @@ export class AgentKernel {
         // Build terminal ExecutionState using the shared helpers.
         // The initial state represents the accepted intake snapshot; we then finalize
         // to 'completed' (or 'degraded' in the future when partial output is detected).
-        const initialRequest = {
+        const execRequest = createExecutionRequest({
             executionId: meta.executionId,
             type: meta.executionType,
             origin: meta.origin,
@@ -220,9 +239,8 @@ export class AgentKernel {
             actor: 'user',
             input: { message: request.userMessage },
             metadata: {},
-            createdAt: new Date(meta.startedAt).toISOString(),
-        };
-        const initialState = createInitialExecutionState(initialRequest, 'AgentKernel');
+        });
+        const initialState = createInitialExecutionState(execRequest, 'AgentKernel');
         const executionState = finalizeExecutionState(initialState, { status: 'completed' });
 
         return { ...turnOutput, meta, executionState };
@@ -247,7 +265,7 @@ export class AgentKernel {
         const normalized = this.normalizeRequest(request);
 
         // Stage 2 -- intake
-        const meta = this.intake(normalized, 'chat_turn', 'ipc', 'assistant');
+        const meta = this.intake(normalized, 'chat_turn');
 
         // Stage 3 -- classifyExecution
         this.classifyExecution(normalized, meta);

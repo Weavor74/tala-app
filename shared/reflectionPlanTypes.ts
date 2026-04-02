@@ -21,6 +21,8 @@
  * Shared between the Electron main process and the renderer.
  */
 
+import type { RuntimeExecutionType } from './runtime/executionTypes';
+
 // ─── Planning Modes ───────────────────────────────────────────────────────────
 
 /**
@@ -383,6 +385,12 @@ export interface PlanRun {
     failureReason?: string;
     /** Ordered list of milestones reached. Used for dashboard throttling. */
     milestones: PlanRunMilestone[];
+    /**
+     * Canonical execution type from the shared runtime vocabulary.
+     * Always `'reflection_task'` for planning runs initiated by the reflection engine.
+     * Enables cross-seam correlation with AgentKernel and autonomous run records.
+     */
+    runtimeExecutionType?: RuntimeExecutionType;
 }
 
 // ─── P2H Dashboard Integration ────────────────────────────────────────────────

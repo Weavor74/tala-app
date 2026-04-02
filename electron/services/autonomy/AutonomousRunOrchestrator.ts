@@ -1589,6 +1589,9 @@ export class AutonomousRunOrchestrator {
             // ── Phase 5.1: Link to decomposition plan when executing under decomposition ──
             decompositionPlanId: decompositionPlan?.planId,
             decompositionStepIndex: decompositionPlan ? 0 : undefined,
+            // ── Runtime Execution Vocabulary ──
+            runtimeExecutionType: 'autonomy_task',
+            runtimeExecutionOrigin: 'autonomy_engine',
         };
 
         this.activeRuns.set(run.runId, run);

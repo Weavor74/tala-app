@@ -45,6 +45,10 @@ import { GraphTraversalService } from './graph/GraphTraversalService';
 import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 import { AgentKernel } from './kernel/AgentKernel';
+import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
+
+/** Agent modes that map directly to RuntimeExecutionMode values. */
+const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
 
 export interface IpcRouterContext {
   app: any;
@@ -1312,8 +1316,14 @@ export class IpcRouter {
         if (!this._kernel) {
           throw new Error('[AgentKernel] Kernel not initialized -- ensure registerAll() was called.');
         }
+        // Resolve the active mode at dispatch time so the kernel stamps the correct
+        // RuntimeExecutionMode on this turn's execution metadata.
+        const rawMode = getActiveMode(getSettingsPath(), 'IpcRouter.chat-message');
+        const executionMode: RuntimeExecutionMode = VALID_EXECUTION_MODES.has(rawMode)
+          ? (rawMode as RuntimeExecutionMode)
+          : 'assistant';
         const result = await this._kernel.execute(
-          { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride },
+          { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride, origin: 'ipc', executionMode },
           (token: string) => {
             fullResponse = fullResponse + token;
             event.sender.send('chat-token', token);

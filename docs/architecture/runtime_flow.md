@@ -25,9 +25,11 @@ that provides the named seams where future runtime authority boundaries will att
 ```
 user input
   → IPC dispatch (chat-message via IpcRouter)
+      IpcRouter reads active mode from settings → passes origin='ipc', executionMode=(activeMode) in KernelRequest
   → AgentKernel.execute()                  [top-level execution shell — Phase 2d]
-      → normalizeRequest()                 [normalize/validate KernelRequest]
-      → intake()                           [stamp executionId, startedAt, executionClass]
+      → normalizeRequest()                 [normalize/validate KernelRequest; preserve origin/executionMode]
+      → intake()                           [stamp executionId, startedAt, executionClass;
+                                            reads origin/executionMode from request with 'ipc'/'assistant' fallbacks]
       → classifyExecution()                [classify turn; future: policy gate, context assembly trigger]
       → runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
           → AgentService.chat()
@@ -48,8 +50,8 @@ user input
           → TurnContext.artifactDecision      [routing decision recorded]
           → GuardrailService                  [output safety check]
           → UI delivery (IPC stream)
-      → finalizeExecution()                [record durationMs; future: telemetry emit, learning hooks, audit]
-  → chat-done event (carries executionId from KernelResult.meta)
+      → finalizeExecution()                [record durationMs, build terminal ExecutionState; future: telemetry emit, learning hooks, audit]
+  → chat-done event (carries executionId + executionOrigin from KernelResult.meta)
 ```
 
 ### AgentKernel — Execution Shell
@@ -89,9 +91,24 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 | `executionType` | `RuntimeExecutionType` | `shared/runtime/executionTypes.ts` — currently `'chat_turn'` |
 | `executionClass` | `ExecutionClass` | kernel-local — `'standard'` \| `'direct_answer'` \| `'tool_heavy'` |
 | `durationMs` | `number` | Set at finalize |
-| `origin` | `RuntimeExecutionOrigin` | `shared/runtime/executionTypes.ts` — currently always `'ipc'` |
-| `mode` | `RuntimeExecutionMode` | `shared/runtime/executionTypes.ts` — currently always `'assistant'` |
+| `origin` | `RuntimeExecutionOrigin` | `shared/runtime/executionTypes.ts` — resolved from `KernelRequest.origin` at intake; `IpcRouter` passes `'ipc'` |
+| `mode` | `RuntimeExecutionMode` | `shared/runtime/executionTypes.ts` — resolved from `KernelRequest.executionMode` at intake; `IpcRouter` passes the active mode from settings |
 
+
+### Shared Execution Contract Adoption (Phase 3)
+
+`shared/runtime/` contains the canonical runtime execution vocabulary used across core seams.
+
+| Seam | File | Adopted vocabulary |
+|------|------|--------------------|
+| Chat turn entry | `AgentKernel.ts` | `RuntimeExecutionType ('chat_turn')`, `RuntimeExecutionOrigin`, `RuntimeExecutionMode`, `ExecutionState` |
+| IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` → passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
+| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'` |
+| Reflection planning run | `PlanRun` (reflectionPlanTypes.ts) | `runtimeExecutionType: 'reflection_task'` |
+
+All shared types are in `shared/runtime/executionTypes.ts`. Factory helpers are in `shared/runtime/executionHelpers.ts`. Both are re-exported from `shared/runtime/index.ts`.
+
+The Phase 3 controlled-execution vocabulary in `shared/executionTypes.ts` (`ExecutionStatus`, `ExecutionRun`, etc.) is a separate, narrower contract for the patch-apply/rollback pipeline and is **not** merged with the runtime contracts above. Use `shared/runtime/executionTypes.ts` (or `shared/runtime/index.ts`) when tagging cross-seam execution identity. Use `shared/executionTypes.ts` when working with the controlled-execution patch/apply pipeline in `electron/services/execution/`.
 
 ### TurnContext — Canonical Turn Carrier
 
