@@ -129,32 +129,49 @@ Tala stays tightly factual. Only details supported by retrieved memories. If a d
 [TalaRouter] Memory-grounded response mode: memory_grounded_soft
 ```
 
-## 3c. mem0_search Suppression on Lore / Memory-Grounded Turns
+## 3c. Tool Gatekeeper (ToolGatekeeper)
 
-`AgentService.ts` applies an additional tool-filtering pass **after** all mode/intent-based tool selection.
+`electron/services/router/ToolGatekeeper.ts` is the deterministic tool-decision layer that runs **before** tools are sent to the model on every turn.  It replaces the previous inline `mem0_search` suppression block in `AgentService.ts` and adds runtime tool health tracking.
 
-### Problem
+### Output
 
-During lore/autobiographical queries, RAG/LTMF already supplies high-quality canonical memories. If the model is also given `mem0_search` and mem0 is degraded or timing out, the tool call fails and the model falls back to generic output instead of using the already-retrieved autobiographical memories.
+`ToolGatekeeper.evaluate()` produces a `ToolGateDecision`:
 
-### Suppression rules
+| Field | Type | Description |
+|---|---|---|
+| `allowedTools` | `string[]` | Tools that passed all rules and may be sent to the model |
+| `blockedTools` | `string[]` | Tools suppressed for this turn |
+| `gatingReasons` | `string[]` | Audit trail for each gate action |
+| `directAnswerPreferred` | `boolean` | True when grounded context is sufficient |
+| `requiresToolUse` | `boolean` | True when the intent mandates at least one tool call |
 
-| Condition | Effect |
-|---|---|
-| `intent=lore` AND `retrieval.approvedCount > 0` | `mem0_search` removed from `toolsToSend` |
-| `responseMode=memory_grounded_soft` | `mem0_search` removed from `toolsToSend` |
-| `responseMode=memory_grounded_strict` | `mem0_search` removed from `toolsToSend` |
-| `intent=lore` AND `retrieval.approvedCount=0` (no memories found) | `mem0_search` kept — fallback retrieval still useful |
-| Any non-lore intent without memory-grounded mode | `mem0_search` not affected |
+### Rule Groups
 
-**Scope:** Only `mem0_search` is removed. All other tools (`retrieve_context`, `query_graph`, `mem0_add`, etc.) are unaffected by this pass.
+| Rule | Condition | Effect |
+|---|---|---|
+| **A** | `intent=lore` AND `approvedMemoryCount > 0` | `mem0_search` blocked |
+| **A** | `responseMode=memory_grounded_soft` OR `memory_grounded_strict` | `mem0_search` blocked |
+| **B** | Tool failure count ≥ 3 in 5-minute rolling window | Tool suppressed |
+| **B** | Tool marked degraded via `markToolDegraded()` | Tool suppressed |
+| **C** | Rules A fires | `directAnswerPreferred = true` |
+| **D** | `intent=coding` OR `isBrowserTask` | `requiresToolUse = true` |
+| **E** | `isRetry = true` | `priorBlockedTools` re-applied (no tool re-expansion) |
+
+### Integration in AgentService
+
+1. Gate is evaluated once per turn, after `filteredTools` is resolved and before the retry loop.
+2. `gateDecision.blockedTools` is applied inside the loop to filter `toolsToSend` on every iteration.
+3. Tool timeouts and degraded responses trigger `toolGatekeeper.recordToolFailure(toolName)` in the execution catch block.
+4. Critical tools (`manage_goals`, `reflection_create_goal`) are exempt from degraded suppression.
 
 ### Log output
 
-When suppression fires:
 ```
-[AgentService] mem0_search suppressed — lore/memory-grounded turn already has RAG/LTMF context (intent=lore responseMode=memory_grounded_soft approvedMemories=3)
+[ToolGatekeeper] blocked=mem0_search reasons=ruleA:mem0_search blocked — lore/memory-grounded turn (intent=lore responseMode=memory_grounded_soft approvedMemories=3) | ruleC:directAnswerPreferred=true — grounded memory context is sufficient
+[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient
+[ToolGatekeeper] applied gate: removed 1 tool(s) blocked=mem0_search turn=1
 ```
+
 
 ## 4. Memory Write Policy
 
