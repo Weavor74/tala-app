@@ -169,6 +169,7 @@ export class ReflectionRunController {
             usage: this.budgetManager.getUsage(runId),
             proposals: [],
             milestones: [],
+            runtimeExecutionType: 'reflection_task',
         };
 
         this.registry.registerRun(run);

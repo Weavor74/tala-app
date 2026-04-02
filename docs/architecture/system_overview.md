@@ -113,3 +113,31 @@ IPC surface:
 Telemetry events: `a2ui_surface_open_requested`, `a2ui_surface_opened`, `a2ui_surface_updated`, `a2ui_surface_failed`, `a2ui_action_received`, `a2ui_action_validated`, `a2ui_action_executed`, `a2ui_action_failed`.
 
 See [`docs/architecture/phase4c_a2ui_workspace_surfaces.md`](./phase4c_a2ui_workspace_surfaces.md) for full details.
+
+## 10. Shared Runtime Execution Contracts
+
+`shared/runtime/executionTypes.ts` provides the canonical vocabulary for describing, routing, and tracking runtime execution units across the system.
+
+All types are pure TypeScript — no logic, no imports, no runtime cost. They are intended as a stable cross-subsystem foundation that later phases will adopt incrementally.
+
+**Exported types:**
+
+| Type | Role |
+|---|---|
+| `RuntimeExecutionType` | Discriminated kind of execution (`chat_turn`, `workflow_run`, `tool_action`, `autonomy_task`, `reflection_task`, `system_maintenance`) |
+| `RuntimeExecutionOrigin` | Where the request originated (`chat_ui`, `ipc`, `workflow_builder`, `guardrails_builder`, `autonomy_engine`, `system`, `scheduler`) |
+| `RuntimeExecutionMode` | Tala mode at request time (`assistant`, `hybrid`, `rp`, `system`) |
+| `RuntimeExecutionStatus` | Normalized lifecycle status (`created` → `accepted` → `blocked` / `planning` → `executing` → `finalizing` → `completed` / `failed` / `cancelled` / `degraded`) |
+| `ExecutionRequest` | Normalized request envelope (id, parent, type, origin, mode, actor, input, metadata, createdAt) |
+| `ExecutionState` | Mutable tracked runtime state (status, phase, subsystem, retries, toolCalls, timestamps, degraded flag) |
+
+**Relationship to existing contracts:**
+
+- `shared/executionTypes.ts` — Phase 3 controlled-execution lifecycle (patch apply, rollback, verification). Narrower scope; not replaced.
+- `electron/services/kernel/AgentKernel.ts` — `KernelExecutionMeta` / kernel-local `ExecutionType`. Phase 2 adoption candidate.
+- `shared/autonomyTypes.ts` — autonomous goal tracking. Phase 2 adoption candidate via `ExecutionState`.
+
+**Phase 2 adoption candidates (first callers):**
+- `AgentKernel.ts` — `KernelExecutionMeta.executionType` can reference `RuntimeExecutionType`
+- `IpcRouter.ts` — `chat-done` payload can surface `executionOrigin`
+- `AutonomousRunOrchestrator.ts` — autonomous runs map to `ExecutionState`

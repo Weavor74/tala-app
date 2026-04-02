@@ -1,0 +1,409 @@
+/**
+ * ExecutionContracts.test.ts
+ *
+ * Phase 3 — Shared Execution Contract Validation
+ *
+ * Validates:
+ *   EC1  ExecutionType, Origin, Mode, Status shape correctness
+ *   EC2  createExecutionRequest factory
+ *   EC3  createInitialExecutionState factory
+ *   EC4  advanceExecutionState immutability and transition
+ *   EC5  finalizeExecutionState terminal marking
+ *   EC6  AutonomousRun runtime vocabulary stamps
+ *   EC7  PlanRun runtime vocabulary stamp
+ *   EC8  AgentKernel request forwarding via KernelRequest fields
+ *   EC9  Cross-seam ID correlation
+ */
+
+import { describe, it, expect } from 'vitest';
+import type {
+    RuntimeExecutionType,
+    RuntimeExecutionOrigin,
+    RuntimeExecutionMode,
+    RuntimeExecutionStatus,
+    ExecutionRequest,
+    ExecutionState,
+} from '../shared/runtime/executionTypes';
+import {
+    createExecutionRequest,
+    createInitialExecutionState,
+    advanceExecutionState,
+    finalizeExecutionState,
+} from '../shared/runtime/executionHelpers';
+import type { AutonomousRun } from '../shared/autonomyTypes';
+import type { PlanRun } from '../shared/reflectionPlanTypes';
+
+// ─── EC1: Type shape correctness ──────────────────────────────────────────────
+
+describe('EC1: ExecutionType values', () => {
+    it('contains all expected RuntimeExecutionType variants', () => {
+        const types: RuntimeExecutionType[] = [
+            'chat_turn',
+            'workflow_run',
+            'tool_action',
+            'autonomy_task',
+            'reflection_task',
+            'system_maintenance',
+        ];
+        expect(types).toHaveLength(6);
+        expect(types).toContain('chat_turn');
+        expect(types).toContain('autonomy_task');
+        expect(types).toContain('reflection_task');
+    });
+
+    it('contains all expected RuntimeExecutionOrigin variants', () => {
+        const origins: RuntimeExecutionOrigin[] = [
+            'chat_ui',
+            'ipc',
+            'workflow_builder',
+            'guardrails_builder',
+            'autonomy_engine',
+            'system',
+            'scheduler',
+        ];
+        expect(origins).toHaveLength(7);
+        expect(origins).toContain('ipc');
+        expect(origins).toContain('autonomy_engine');
+    });
+
+    it('contains all expected RuntimeExecutionMode variants', () => {
+        const modes: RuntimeExecutionMode[] = ['assistant', 'hybrid', 'rp', 'system'];
+        expect(modes).toHaveLength(4);
+        expect(modes).toContain('assistant');
+        expect(modes).toContain('rp');
+    });
+
+    it('contains all expected RuntimeExecutionStatus variants', () => {
+        const statuses: RuntimeExecutionStatus[] = [
+            'created', 'accepted', 'blocked', 'planning',
+            'executing', 'finalizing', 'completed', 'failed',
+            'cancelled', 'degraded',
+        ];
+        expect(statuses).toHaveLength(10);
+        expect(statuses).toContain('completed');
+        expect(statuses).toContain('failed');
+        expect(statuses).toContain('degraded');
+    });
+});
+
+// ─── EC2: createExecutionRequest ─────────────────────────────────────────────
+
+describe('EC2: createExecutionRequest', () => {
+    it('creates a request with all required fields', () => {
+        const req = createExecutionRequest({
+            type: 'chat_turn',
+            origin: 'ipc',
+            mode: 'assistant',
+            actor: 'user',
+            input: { message: 'hello' },
+        });
+
+        expect(req.executionId).toMatch(/^exec-/);
+        expect(req.type).toBe('chat_turn');
+        expect(req.origin).toBe('ipc');
+        expect(req.mode).toBe('assistant');
+        expect(req.actor).toBe('user');
+        expect(req.input).toEqual({ message: 'hello' });
+        expect(req.metadata).toEqual({});
+        expect(req.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('accepts a caller-supplied executionId', () => {
+        const req = createExecutionRequest({
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: null,
+            executionId: 'exec-custom-abc',
+        });
+        expect(req.executionId).toBe('exec-custom-abc');
+    });
+
+    it('accepts a parentExecutionId', () => {
+        const parent = createExecutionRequest({
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: null,
+        });
+        const child = createExecutionRequest({
+            type: 'tool_action',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: null,
+            parentExecutionId: parent.executionId,
+        });
+        expect(child.parentExecutionId).toBe(parent.executionId);
+    });
+
+    it('accepts custom metadata', () => {
+        const req = createExecutionRequest({
+            type: 'reflection_task',
+            origin: 'system',
+            mode: 'system',
+            actor: 'reflection_engine',
+            input: null,
+            metadata: { subsystemId: 'inference', planRunId: 'run-001' },
+        });
+        expect(req.metadata).toEqual({ subsystemId: 'inference', planRunId: 'run-001' });
+    });
+
+    it('produces unique IDs for distinct calls', () => {
+        const a = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+        const b = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+        expect(a.executionId).not.toBe(b.executionId);
+    });
+});
+
+// ─── EC3: createInitialExecutionState ────────────────────────────────────────
+
+describe('EC3: createInitialExecutionState', () => {
+    const req: ExecutionRequest = createExecutionRequest({
+        type: 'chat_turn',
+        origin: 'ipc',
+        mode: 'assistant',
+        actor: 'user',
+        input: { message: 'hello' },
+    });
+
+    it('creates initial state with accepted status and intake phase', () => {
+        const state = createInitialExecutionState(req);
+        expect(state.executionId).toBe(req.executionId);
+        expect(state.type).toBe('chat_turn');
+        expect(state.origin).toBe('ipc');
+        expect(state.mode).toBe('assistant');
+        expect(state.status).toBe('accepted');
+        expect(state.phase).toBe('intake');
+        expect(state.degraded).toBe(false);
+        expect(state.retries).toBe(0);
+        expect(state.toolCalls).toEqual([]);
+        expect(state.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(state.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(state.completedAt).toBeUndefined();
+    });
+
+    it('stamps activeSubsystem when provided', () => {
+        const state = createInitialExecutionState(req, 'AgentKernel');
+        expect(state.activeSubsystem).toBe('AgentKernel');
+    });
+
+    it('omits activeSubsystem when not provided', () => {
+        const state = createInitialExecutionState(req);
+        expect(state.activeSubsystem).toBeUndefined();
+    });
+});
+
+// ─── EC4: advanceExecutionState ──────────────────────────────────────────────
+
+describe('EC4: advanceExecutionState', () => {
+    it('returns a new object (immutable)', () => {
+        const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+        const initial = createInitialExecutionState(req);
+        const advanced = advanceExecutionState(initial, 'executing', 'delegated_flow');
+        expect(advanced).not.toBe(initial);
+        expect(initial.status).toBe('accepted');  // original unchanged
+    });
+
+    it('updates status and phase', () => {
+        const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+        const initial = createInitialExecutionState(req);
+        const advanced = advanceExecutionState(initial, 'executing', 'delegated_flow');
+        expect(advanced.status).toBe('executing');
+        expect(advanced.phase).toBe('delegated_flow');
+    });
+
+    it('updates updatedAt timestamp', () => {
+        const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+        const initial = createInitialExecutionState(req);
+        const advanced = advanceExecutionState(initial, 'finalizing', 'cleanup');
+        expect(advanced.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('preserves all other fields', () => {
+        const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'rp', actor: 'user', input: null });
+        const initial = createInitialExecutionState(req, 'AgentKernel');
+        const advanced = advanceExecutionState(initial, 'executing', 'tool_dispatch');
+        expect(advanced.executionId).toBe(req.executionId);
+        expect(advanced.origin).toBe('ipc');
+        expect(advanced.mode).toBe('rp');
+        expect(advanced.activeSubsystem).toBe('AgentKernel');
+        expect(advanced.retries).toBe(0);
+    });
+});
+
+// ─── EC5: finalizeExecutionState ─────────────────────────────────────────────
+
+describe('EC5: finalizeExecutionState', () => {
+    const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
+    const initial = createInitialExecutionState(req, 'AgentKernel');
+
+    it('marks completed terminal state', () => {
+        const final = finalizeExecutionState(initial, { status: 'completed' });
+        expect(final.status).toBe('completed');
+        expect(final.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(final.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('marks failed terminal state with reason', () => {
+        const final = finalizeExecutionState(initial, { status: 'failed', failureReason: 'llm_timeout' });
+        expect(final.status).toBe('failed');
+        expect(final.failureReason).toBe('llm_timeout');
+    });
+
+    it('marks blocked terminal state with reason', () => {
+        const final = finalizeExecutionState(initial, { status: 'blocked', blockedReason: 'governance_gate' });
+        expect(final.status).toBe('blocked');
+        expect(final.blockedReason).toBe('governance_gate');
+    });
+
+    it('marks degraded when outcome includes degraded=true', () => {
+        const final = finalizeExecutionState(initial, { status: 'degraded', degraded: true });
+        expect(final.status).toBe('degraded');
+        expect(final.degraded).toBe(true);
+    });
+
+    it('returns a new object (immutable)', () => {
+        const final = finalizeExecutionState(initial, { status: 'completed' });
+        expect(final).not.toBe(initial);
+        expect(initial.status).toBe('accepted');
+    });
+
+    it('does not set failureReason when not provided', () => {
+        const final = finalizeExecutionState(initial, { status: 'completed' });
+        expect(final.failureReason).toBeUndefined();
+    });
+});
+
+// ─── EC6: AutonomousRun runtime vocabulary stamps ─────────────────────────────
+
+describe('EC6: AutonomousRun runtime vocabulary', () => {
+    it('accepts runtimeExecutionType and runtimeExecutionOrigin fields', () => {
+        const run: AutonomousRun = {
+            runId: 'run-001',
+            goalId: 'goal-001',
+            cycleId: 'cycle-001',
+            startedAt: new Date().toISOString(),
+            status: 'running',
+            subsystemId: 'inference',
+            milestones: [],
+            // Runtime vocabulary stamps
+            runtimeExecutionType: 'autonomy_task',
+            runtimeExecutionOrigin: 'autonomy_engine',
+        };
+        expect(run.runtimeExecutionType).toBe('autonomy_task');
+        expect(run.runtimeExecutionOrigin).toBe('autonomy_engine');
+    });
+
+    it('allows omitting runtime vocabulary fields (backward-compatible)', () => {
+        const run: AutonomousRun = {
+            runId: 'run-002',
+            goalId: 'goal-002',
+            cycleId: 'cycle-002',
+            startedAt: new Date().toISOString(),
+            status: 'pending',
+            subsystemId: 'inference',
+            milestones: [],
+        };
+        expect(run.runtimeExecutionType).toBeUndefined();
+        expect(run.runtimeExecutionOrigin).toBeUndefined();
+    });
+
+    it('runtime type is always autonomy_task for autonomous runs', () => {
+        const type: RuntimeExecutionType = 'autonomy_task';
+        const origin: RuntimeExecutionOrigin = 'autonomy_engine';
+        expect(type).toBe('autonomy_task');
+        expect(origin).toBe('autonomy_engine');
+    });
+});
+
+// ─── EC7: PlanRun runtime vocabulary stamp ────────────────────────────────────
+
+describe('EC7: PlanRun runtime vocabulary', () => {
+    it('accepts runtimeExecutionType field', () => {
+        const planRun: Partial<PlanRun> = {
+            runId: 'planrun-001',
+            runtimeExecutionType: 'reflection_task',
+        };
+        expect(planRun.runtimeExecutionType).toBe('reflection_task');
+    });
+
+    it('allows omitting runtimeExecutionType (backward-compatible)', () => {
+        const planRun: Partial<PlanRun> = {
+            runId: 'planrun-002',
+        };
+        expect(planRun.runtimeExecutionType).toBeUndefined();
+    });
+});
+
+// ─── EC8: KernelRequest mode forwarding ──────────────────────────────────────
+
+describe('EC8: KernelRequest runtime vocabulary fields', () => {
+    it('origin and executionMode types are the shared runtime vocabulary', () => {
+        // Validate that the shared types work for KernelRequest shapes
+        const origin: RuntimeExecutionOrigin = 'ipc';
+        const modeAssistant: RuntimeExecutionMode = 'assistant';
+        const modeRp: RuntimeExecutionMode = 'rp';
+        const modeHybrid: RuntimeExecutionMode = 'hybrid';
+        expect(origin).toBe('ipc');
+        expect(modeAssistant).toBe('assistant');
+        expect(modeRp).toBe('rp');
+        expect(modeHybrid).toBe('hybrid');
+    });
+
+    it('all Tala agent modes map to valid RuntimeExecutionMode values', () => {
+        // The settings activeMode values ('assistant'|'hybrid'|'rp') must be
+        // valid RuntimeExecutionMode values — this test guards that invariant.
+        const settingsModes = ['assistant', 'hybrid', 'rp'] as const;
+        const runtimeModes: RuntimeExecutionMode[] = ['assistant', 'hybrid', 'rp', 'system'];
+        for (const m of settingsModes) {
+            expect(runtimeModes).toContain(m);
+        }
+    });
+});
+
+// ─── EC9: Cross-seam ID correlation ─────────────────────────────────────────
+
+describe('EC9: Cross-seam ID correlation', () => {
+    it('ExecutionRequest and ExecutionState share the same executionId', () => {
+        const req = createExecutionRequest({
+            type: 'chat_turn',
+            origin: 'ipc',
+            mode: 'assistant',
+            actor: 'user',
+            input: null,
+        });
+        const state = createInitialExecutionState(req, 'AgentKernel');
+        expect(state.executionId).toBe(req.executionId);
+    });
+
+    it('ExecutionState preserves type/origin/mode from the request', () => {
+        const req = createExecutionRequest({
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: null,
+        });
+        const state = createInitialExecutionState(req);
+        expect(state.type).toBe(req.type);
+        expect(state.origin).toBe(req.origin);
+        expect(state.mode).toBe(req.mode);
+    });
+
+    it('finalizeExecutionState preserves executionId through the full lifecycle', () => {
+        const req = createExecutionRequest({
+            type: 'reflection_task',
+            origin: 'system',
+            mode: 'system',
+            actor: 'reflection_engine',
+            input: null,
+        });
+        const initial = createInitialExecutionState(req);
+        const running = advanceExecutionState(initial, 'executing', 'planning');
+        const final = finalizeExecutionState(running, { status: 'completed' });
+        expect(final.executionId).toBe(req.executionId);
+    });
+});

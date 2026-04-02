@@ -20,6 +20,8 @@
  *   Phase 3.5 (governance) — GovernanceAppService gates every autonomous execution attempt
  */
 
+import type { RuntimeExecutionType, RuntimeExecutionOrigin } from './runtime/executionTypes';
+
 // ─── Goal Source ──────────────────────────────────────────────────────────────
 
 /**
@@ -311,6 +313,18 @@ export interface AutonomousRun {
     decompositionPlanId?: string;
     /** Step index executed (0-based) when running under a decomposition plan. */
     decompositionStepIndex?: number;
+    // ── Runtime Execution Vocabulary (shared/runtime) ──
+    /**
+     * Canonical execution type from the shared runtime vocabulary.
+     * Always `'autonomy_task'` for autonomous runs.
+     * Enables cross-seam correlation with AgentKernel and IPC execution records.
+     */
+    runtimeExecutionType?: RuntimeExecutionType;
+    /**
+     * Canonical execution origin from the shared runtime vocabulary.
+     * Always `'autonomy_engine'` for internally-initiated autonomous runs.
+     */
+    runtimeExecutionOrigin?: RuntimeExecutionOrigin;
 }
 
 // ─── Attempt Record ───────────────────────────────────────────────────────────
