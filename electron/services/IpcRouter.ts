@@ -1310,7 +1310,7 @@ export class IpcRouter {
 
         console.log("[DEBUG] Calling agent.chat() with text length:", text.length, "and images:", images.length);
         if (!this._kernel) {
-          throw new Error('[AgentKernel] Kernel not initialized — ensure registerAll() was called.');
+          throw new Error('[AgentKernel] Kernel not initialized -- ensure registerAll() was called.');
         }
         const result = await this._kernel.execute(
           { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride },
@@ -1329,7 +1329,8 @@ export class IpcRouter {
           artifact: result.artifact,
           suppressChatContent: result.suppressChatContent,
           messageHash: uuidv4().slice(0, 8),
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          executionId: result.meta.executionId,
         });
 
       } catch (e: any) {
