@@ -1,19 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { AgentService } from '../AgentService';
 import type { AgentTurnOutput } from '../../types/artifacts';
+import type {
+    RuntimeExecutionType,
+    RuntimeExecutionOrigin,
+    RuntimeExecutionMode,
+    ExecutionState,
+} from '../../../shared/runtime/executionTypes';
+import { createInitialExecutionState, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
 // Lightweight shared types that define the kernel's public contract.
 // Keep additions here minimal — these evolve with the kernel, not with callers.
 // ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Discriminated union of execution types the kernel can route.
- * - 'chat'  : standard user-initiated turn (currently the only path)
- * Future additions: 'headless', 'autonomous', 'evaluation', 'tool_only'
- */
-export type ExecutionType = 'chat';
 
 /**
  * Classification of how a turn should be handled by the kernel.
@@ -30,14 +30,17 @@ export type ExecutionClass = 'standard' | 'direct_answer' | 'tool_heavy';
 /**
  * Lightweight metadata stamped onto every kernel execution.
  * Provides a stable correlation handle and classification summary.
+ *
+ * `executionType`, `origin`, and `mode` use the canonical shared vocabulary
+ * from `shared/runtime/executionTypes.ts`.
  */
 export interface KernelExecutionMeta {
     /** Unique ID for this execution turn -- useful for log correlation. */
     executionId: string;
     /** Unix ms timestamp when the kernel received the request. */
     startedAt: number;
-    /** Logical type of execution (e.g. 'chat'). */
-    executionType: ExecutionType;
+    /** Logical type of execution. Currently always 'chat_turn'. */
+    executionType: RuntimeExecutionType;
     /**
      * Classification assigned during the classify stage.
      * Guides future routing decisions in classifyExecution().
@@ -45,6 +48,10 @@ export interface KernelExecutionMeta {
     executionClass: ExecutionClass;
     /** Wall-clock duration in ms from intake to finalize. */
     durationMs: number;
+    /** The originating source of this execution request. */
+    origin: RuntimeExecutionOrigin;
+    /** The Tala runtime mode in effect when this execution was created. */
+    mode: RuntimeExecutionMode;
 }
 
 /**
@@ -61,10 +68,16 @@ export interface KernelRequest {
 /**
  * Result envelope returned by AgentKernel.execute().
  * Extends AgentTurnOutput with kernel-level execution metadata.
- * Callers that only need turn output can ignore `meta`.
+ * Callers that only need turn output can ignore `meta` and `executionState`.
  */
 export interface KernelResult extends AgentTurnOutput {
     meta: KernelExecutionMeta;
+    /**
+     * Terminal ExecutionState for this turn, built at finalizeExecution.
+     * Provides a normalized view of the execution using the shared runtime
+     * vocabulary for downstream consumers (telemetry, audit, IPC surfacing).
+     */
+    executionState: ExecutionState;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -137,15 +150,22 @@ export class AgentKernel {
     // Stamps execution metadata after request is normalized.
     // Future: execution budget checks, authority pre-validation gate.
 
-    private intake(request: KernelRequest, executionType: ExecutionType): KernelExecutionMeta {
+    private intake(
+        request: KernelRequest,
+        executionType: RuntimeExecutionType,
+        origin: RuntimeExecutionOrigin,
+        mode: RuntimeExecutionMode
+    ): KernelExecutionMeta {
         const meta: KernelExecutionMeta = {
             executionId: uuidv4(),
             startedAt: Date.now(),
             executionType,
             executionClass: 'standard',  // default; overwritten by classifyExecution() in Phase 3
             durationMs: 0,
+            origin,
+            mode,
         };
-        console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} msgLen=${request.userMessage.length}`);
+        console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
         return meta;
     }
 
@@ -181,13 +201,31 @@ export class AgentKernel {
     }
 
     // ─── Stage 5: finalizeExecution ─────────────────────────────────────────
-    // Records wall-clock duration and assembles the KernelResult.
+    // Records wall-clock duration, builds terminal ExecutionState, and assembles
+    // the KernelResult.
     // Future: post-turn telemetry emission, outcome learning, audit records.
 
-    private finalizeExecution(meta: KernelExecutionMeta, turnOutput: AgentTurnOutput): KernelResult {
+    private finalizeExecution(meta: KernelExecutionMeta, turnOutput: AgentTurnOutput, request: KernelRequest): KernelResult {
         meta.durationMs = Date.now() - meta.startedAt;
         console.log(`[AgentKernel] ── FINALIZE         ── id=${meta.executionId} duration=${meta.durationMs}ms channel=${turnOutput.outputChannel ?? 'chat'}`);
-        return { ...turnOutput, meta };
+
+        // Build terminal ExecutionState using the shared helpers.
+        // The initial state represents the accepted intake snapshot; we then finalize
+        // to 'completed' (or 'degraded' in the future when partial output is detected).
+        const initialRequest = {
+            executionId: meta.executionId,
+            type: meta.executionType,
+            origin: meta.origin,
+            mode: meta.mode,
+            actor: 'user',
+            input: { message: request.userMessage },
+            metadata: {},
+            createdAt: new Date(meta.startedAt).toISOString(),
+        };
+        const initialState = createInitialExecutionState(initialRequest, 'AgentKernel');
+        const executionState = finalizeExecutionState(initialState, { status: 'completed' });
+
+        return { ...turnOutput, meta, executionState };
     }
 
     // ─── Public entrypoint ──────────────────────────────────────────────────
@@ -209,7 +247,7 @@ export class AgentKernel {
         const normalized = this.normalizeRequest(request);
 
         // Stage 2 -- intake
-        const meta = this.intake(normalized, 'chat');
+        const meta = this.intake(normalized, 'chat_turn', 'ipc', 'assistant');
 
         // Stage 3 -- classifyExecution
         this.classifyExecution(normalized, meta);
@@ -218,6 +256,6 @@ export class AgentKernel {
         const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
 
         // Stage 5 -- finalizeExecution
-        return this.finalizeExecution(meta, turnOutput);
+        return this.finalizeExecution(meta, turnOutput, normalized);
     }
 }

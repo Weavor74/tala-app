@@ -61,14 +61,36 @@ each turn. Future runtime authority boundaries attach here:
 | Stage | Current behavior | Future responsibility |
 |-------|-----------------|----------------------|
 | `normalizeRequest` | Coerce missing fields to defaults | Request ACL, payload coercion |
-| `intake` | Stamp `executionId`, `startedAt`, `executionClass='standard'` | Budget checks, authority pre-validation |
+| `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'` | Budget checks, authority pre-validation |
 | `classifyExecution` | No-op placeholder | Mode detection, tool-need prediction, policy gate |
 | `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
-| `finalizeExecution` | Record `durationMs`, return `KernelResult` | Telemetry emission, outcome learning, audit record |
+| `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), return `KernelResult` | Telemetry emission, outcome learning, audit record |
 
 `KernelResult` extends `AgentTurnOutput` with a `meta: KernelExecutionMeta` field containing
-`executionId`, `startedAt`, `executionType`, `executionClass`, and `durationMs`. The `executionId`
-is forwarded to the renderer in the `chat-done` IPC event for turn-level log correlation.
+`executionId`, `startedAt`, `executionType`, `executionClass`, `durationMs`, `origin`, and `mode`.
+The `executionId` and `executionOrigin` are forwarded to the renderer in the `chat-done` IPC event
+for turn-level log correlation. `KernelResult` also carries a terminal `executionState: ExecutionState`
+built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
+
+**`KernelResult` top-level fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| *(AgentTurnOutput fields)* | — | `message`, `artifact`, `suppressChatContent`, `outputChannel` |
+| `meta` | `KernelExecutionMeta` | Execution correlation and classification metadata |
+| `executionState` | `ExecutionState` | Terminal execution state using shared runtime vocabulary |
+
+**`KernelExecutionMeta` fields use the canonical shared vocabulary:**
+
+| Field | Type | Source |
+|-------|------|--------|
+| `executionId` | `string` | UUID v4, generated at intake |
+| `startedAt` | `number` | Unix ms at intake |
+| `executionType` | `RuntimeExecutionType` | `shared/runtime/executionTypes.ts` — currently `'chat_turn'` |
+| `executionClass` | `ExecutionClass` | kernel-local — `'standard'` \| `'direct_answer'` \| `'tool_heavy'` |
+| `durationMs` | `number` | Set at finalize |
+| `origin` | `RuntimeExecutionOrigin` | `shared/runtime/executionTypes.ts` — currently always `'ipc'` |
+| `mode` | `RuntimeExecutionMode` | `shared/runtime/executionTypes.ts` — currently always `'assistant'` |
 
 
 ### TurnContext — Canonical Turn Carrier

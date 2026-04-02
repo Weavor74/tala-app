@@ -1331,6 +1331,7 @@ export class IpcRouter {
           messageHash: uuidv4().slice(0, 8),
           timestamp: Date.now(),
           executionId: result.meta.executionId,
+          executionOrigin: result.meta.origin,
         });
 
       } catch (e: any) {
