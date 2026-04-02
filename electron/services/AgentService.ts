@@ -57,6 +57,7 @@ import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
+import { toolGatekeeper } from './router/ToolGatekeeper';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -2184,6 +2185,35 @@ Exported standalone package from Tala.
             turn = AgentService.MAX_AGENT_ITERATIONS; // End turn
         }
 
+        // --- TOOL GATEKEEPER ---
+        // Evaluated once per turn before the retry loop. Produces a deterministic
+        // gate decision that is preserved across all retry iterations (Rule Group E).
+        // Rules applied:
+        //   A — Block mem0_search when lore/memory-grounded context already exists.
+        //   B — Suppress tools with recent failures exceeding the degraded threshold.
+        //   C — Signal directAnswerPreferred when grounded memory is sufficient.
+        //   D — Signal requiresToolUse for coding / browser intents.
+        const gateDecision = toolGatekeeper.evaluate({
+            intentClass: turnObject.intent.class,
+            activeMode,
+            responseMode: turnObject.responseMode,
+            approvedMemoryCount: turnObject.retrieval.approvedCount,
+            candidateToolNames: filteredTools.map((t: any) => t.function.name),
+            isBrowserTask,
+            isRetry: false,
+            priorBlockedTools: [],
+        });
+
+        if (gateDecision.blockedTools.length > 0) {
+            console.log(
+                `[ToolGatekeeper] blocked=${gateDecision.blockedTools.join(',')} ` +
+                `reasons=${gateDecision.gatingReasons.join(' | ')}`
+            );
+        }
+        if (gateDecision.directAnswerPreferred) {
+            console.log('[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient');
+        }
+
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
             turn++;
@@ -2214,29 +2244,17 @@ Exported standalone package from Tala.
                     toolsToSend = [];
                 }
 
-                // --- LORE / MEMORY-GROUNDED mem0_search SUPPRESSION ---
-                // When RAG/LTMF memories are already available for a lore turn, calling
-                // mem0_search is redundant and harmful: mem0 may be degraded/timing out,
-                // which causes the model to fall back to generic output instead of using
-                // the high-quality retrieved autobiographical memories.
-                //
-                // Suppression rules (applied after mode/intent filtering above):
-                //   1. intent=lore AND approved RAG/LTMF memories > 0  → drop mem0_search
-                //   2. memory_grounded_mode active (soft or strict)     → drop mem0_search
-                //      (memory_grounded_mode implies lore memories were retrieved and the
-                //       response is intentionally anchored to those memories)
-                const isMemoryGrounded =
-                    turnObject.responseMode === 'memory_grounded_soft' ||
-                    turnObject.responseMode === 'memory_grounded_strict';
-                const isLoreWithMemory =
-                    turnObject.intent.class === 'lore' && turnObject.retrieval.approvedCount > 0;
-                if ((isLoreWithMemory || isMemoryGrounded) && toolsToSend.length > 0) {
+                // --- TOOL GATEKEEPER: apply blocked tools (Rules A, B, E) ---
+                // Replaces the previous inline lore/mem0_search suppression block.
+                // gateDecision was computed once before the retry loop; blocked tools
+                // are therefore preserved across every retry iteration (Rule Group E).
+                if (gateDecision.blockedTools.length > 0 && toolsToSend.length > 0) {
                     const before = toolsToSend.length;
-                    toolsToSend = toolsToSend.filter((t: any) => t.function.name !== 'mem0_search');
+                    toolsToSend = toolsToSend.filter((t: any) => !gateDecision.blockedTools.includes(t.function.name));
                     if (toolsToSend.length < before) {
                         console.log(
-                            `[AgentService] mem0_search suppressed — lore/memory-grounded turn already has RAG/LTMF context ` +
-                            `(intent=${turnObject.intent.class} responseMode=${turnObject.responseMode ?? 'none'} approvedMemories=${turnObject.retrieval.approvedCount})`
+                            `[ToolGatekeeper] applied gate: removed ${before - toolsToSend.length} tool(s) ` +
+                            `blocked=${gateDecision.blockedTools.join(',')} turn=${turn}`
                         );
                     }
                 }
@@ -2679,6 +2697,12 @@ Failure to provide a tool call will result in system termination.`;
                             startedAt: startTime,
                             endedAt: endTime
                         });
+
+                        // Record the failure in the ToolGatekeeper so repeated timeouts
+                        // or errors eventually degrade the tool and suppress it on future turns.
+                        if (e.message && (e.message.includes('timed out') || e.message.includes('degraded'))) {
+                            toolGatekeeper.recordToolFailure(toolName);
+                        }
 
                         transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
                     }
