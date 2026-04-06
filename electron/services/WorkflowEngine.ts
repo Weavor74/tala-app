@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { FunctionService } from './FunctionService';
 import { AgentService } from './AgentService';
+import { policyGate, PolicyDeniedError } from './policy/PolicyGate';
 const { ImapFlow } = require('imapflow');
 
 /**
@@ -364,6 +365,15 @@ export class WorkflowEngine {
 
                 const { node, input } = queue.shift()!;
 
+                // --- POLICY GATE: workflow step pre-check ---
+                // Fires before each node is executed.
+                // PolicyDeniedError propagates out of the BFS loop and is surfaced as an error.
+                policyGate.assertSideEffect({
+                    actionKind: 'workflow_action',
+                    targetSubsystem: 'workflow',
+                    mutationIntent: `node_execute:${node.type}`,
+                });
+
                 // execute node
                 log(`Executing node: ${node.type} (${node.id})`);
                 let output: any = null;
@@ -452,6 +462,9 @@ export class WorkflowEngine {
             return { success: true, logs: consoleLog, context };
 
         } catch (e: any) {
+            // PolicyDeniedError is not a workflow error — re-throw so callers
+            // know the workflow was blocked by policy rather than by a node failure.
+            if (e instanceof PolicyDeniedError) throw e;
             log(`Workflow execution failed: ${e.message}`);
             return { success: false, logs: consoleLog, error: e.message };
         }

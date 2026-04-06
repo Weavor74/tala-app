@@ -91,6 +91,7 @@ import type {
     DecompositionPlan,
 } from '../../../shared/escalationTypes';
 import { DEFAULT_ESCALATION_POLICY } from '../../../shared/escalationTypes';
+import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
 
 // ─── Poll timeouts ────────────────────────────────────────────────────────────
 
@@ -1766,6 +1767,19 @@ export class AutonomousRunOrchestrator {
             );
             this._emitDashboard('execution_started', run);
 
+            // --- POLICY GATE: autonomy action pre-check ---
+            // Fires after governance approval, before controlled execution starts.
+            // PolicyDeniedError propagates to the outer catch; the run is failed there.
+            policyGate.assertSideEffect({
+                actionKind: 'autonomy_action',
+                executionId: run.runId,
+                executionType: 'autonomy_task',
+                executionOrigin: 'autonomy_engine',
+                executionMode: 'system',
+                targetSubsystem: 'autonomy',
+                mutationIntent: 'execute',
+            });
+
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: proposal.proposalId,
                 // 'user_explicit' is the only value accepted by ExecutionStartRequest.
@@ -1815,6 +1829,9 @@ export class AutonomousRunOrchestrator {
             this._emitDashboard(outcome === 'succeeded' ? 'run_completed' : 'run_failed', run);
 
         } catch (err: any) {
+            // PolicyDeniedError is not an execution failure — re-throw so callers
+            // know the action was blocked by policy rather than by an internal error.
+            if (err instanceof PolicyDeniedError) throw err;
             this._abortRun(run, goal, `Unhandled error: ${err.message}`);
         } finally {
             // Always record learning and release budget slot

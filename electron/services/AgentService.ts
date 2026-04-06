@@ -2611,9 +2611,9 @@ Failure to provide a tool call will result in system termination.`;
                             }
 
                             // --- POLICY GATE: side-effect pre-check ---
-                            // Stub allow-all; this seam is wired for future enforcement.
-                            // A real rule added to PolicyGate will automatically block here
-                            // without any further change to this call site.
+                            // Enforces PolicyGate rules before any tool executes.
+                            // Current rule: file_write is blocked in rp mode (POLICY_FILE_WRITE_RP_BLOCK).
+                            // Additional rules added to PolicyGate.evaluate() enforce here automatically.
                             policyGate.assertSideEffect({
                                 actionKind: 'tool_invoke',
                                 executionMode: activeMode,
