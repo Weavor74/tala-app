@@ -185,7 +185,7 @@ describe('PAW1–PAW7: AutonomousRunOrchestrator._executeGoalPipeline() — Poli
         expect(ctx.executionMode).toBe('system');
     });
 
-    it('PAW3: assertSideEffect receives the run runId as executionId', async () => {
+    it('PAW3: assertSideEffect receives the runId as executionId', async () => {
         const { orch } = buildOrchestrator();
         const goal = makeGoal();
         registerGoal(orch, goal);
