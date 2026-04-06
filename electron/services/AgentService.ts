@@ -1830,13 +1830,14 @@ Exported standalone package from Tala.
                 try {
                     const parsedArgs = routedIntent.extractedArgs || {};
                     const toolStartTime = Date.now();
-                    const rawResult = await this.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
+                    const invResult = await this.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
                         executionId: turnId,
                         executionType: 'chat_turn',
                         executionOrigin: 'ipc',
                         executionMode: activeMode,
                         // enforcePolicy omitted: fast path already guards activeMode !== 'rp'
                     });
+                    const rawResult = invResult.data;
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
                     
                     return await this.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, onToken, onEvent);
@@ -2629,7 +2630,7 @@ Failure to provide a tool call will result in system termination.`;
                                 executionMode: activeMode,
                                 enforcePolicy: true,
                             };
-                            return await this.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx);
+                            return (await this.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx)).data;
                         })();
 
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
@@ -3545,11 +3546,12 @@ Failure to provide a tool call will result in system termination.`;
      * @returns The stringified result of the tool execution.
      */
     public async executeTool(name: string, args: any): Promise<any> {
-        return await this.coordinator.executeTool(name, args, undefined, {
+        const invResult = await this.coordinator.executeTool(name, args, undefined, {
             executionType: 'direct_invocation',
             executionOrigin: 'api',
             // enforcePolicy omitted: public API callers are responsible for their own guards
         });
+        return invResult.data;
     }
 
     public async performSearch(query: string): Promise<any[]> {

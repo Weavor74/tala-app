@@ -16,10 +16,13 @@
  *   execution.finalizing  — entering the finalization stage before sealing
  *   execution.completed   — execution finalized cleanly
  *   execution.failed      — execution terminated due to an unrecoverable error
+ *   tool.requested        — tool invocation about to start (after policy pass)
+ *   tool.completed        — tool invocation finished cleanly; payload includes durationMs
+ *   tool.failed           — tool invocation threw; payload includes durationMs and error
  *
  * Future phases may add:
  *   execution.cancelled / execution.degraded / execution.blocked
- *   planning.* / context.* / inference.* / tool.* / memory.*
+ *   planning.* / context.* / inference.* / memory.*
  *
  * Relationship to existing types:
  *   shared/runtime/executionTypes.ts  — RuntimeExecutionStatus, ExecutionRequest vocabulary

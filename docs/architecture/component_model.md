@@ -45,16 +45,21 @@ This document describes the Tala system as a collection of interacting component
 
 ### ToolExecutionCoordinator
 - **Path**: `electron/services/tools/ToolExecutionCoordinator.ts`
-- **Purpose**: Primary live seam for all tool execution. Delegates to `ToolService.executeTool()` and owns the PolicyGate pre-execution check when `ctx.enforcePolicy === true`. Callers pass a `ToolInvocationContext` to forward execution identity (executionId, executionType, executionOrigin, executionMode) for policy enforcement and future telemetry.
+- **Purpose**: Primary live seam for all tool execution. Delegates to `ToolService.executeTool()` and owns: (1) PolicyGate pre-execution check when `ctx.enforcePolicy === true`; (2) execution timing (`durationMs`); (3) TelemetryBus event emission; (4) normalized `ToolInvocationResult` output.
 - **Inputs**: Tool name, args, optional turn-scoped allowlist (forwarded to ToolService), optional `ToolInvocationContext`.
-- **Outputs**: Raw tool result (forwarded from ToolService).
-- **Policy gate**: When `ctx.enforcePolicy === true`, calls `policyGate.assertSideEffect({ actionKind: 'tool_invoke', ...ctx })` before delegating to ToolService. A `PolicyDeniedError` propagates to the caller unchanged. Callers that omit `enforcePolicy` (or pass `false`) retain their own guards.
+- **Outputs**: `ToolInvocationResult` — `{ success, toolName, data?, error?, durationMs?, timedOut? }`. `data` carries the raw ToolService return value. Callers that need the raw result access it via `.data`.
+- **Policy gate**: When `ctx.enforcePolicy === true`, calls `policyGate.assertSideEffect({ actionKind: 'tool_invoke', ...ctx })` before any telemetry or execution. A `PolicyDeniedError` propagates to the caller unchanged with no telemetry emitted.
+- **Execution timing**: `startTime = Date.now()` captured after the policy check; `durationMs = Date.now() - startTime` computed on both success and failure paths.
+- **Telemetry**: Emits three `TelemetryBus` events per invocation (subsystem `'tools'`):
+  - `tool.requested` — emitted after policy passes, before `ToolService` is called. Payload: `{ toolName, executionType, executionOrigin, executionMode }`.
+  - `tool.completed` — emitted on success. Payload adds `durationMs`.
+  - `tool.failed` — emitted on error. Payload adds `durationMs` and `error` message. Error is re-thrown after emission.
 - **Execution context**: `ToolInvocationContext` carries `executionId`, `executionType`, `executionOrigin`, `executionMode`. The main LLM call site in AgentService sets `executionId=turnId`, `executionType='chat_turn'`, `executionOrigin='ipc'`.
 - **Instantiated by**: `AgentService` constructor as `this.coordinator = new ToolExecutionCoordinator(this.tools)`.
 - **Live call sites in AgentService**:
-  - Fast-path deterministic bypass — passes context, `enforcePolicy` omitted (fast path already guards `activeMode !== 'rp'`)
-  - Main LLM tool-call loop — passes full context with `enforcePolicy: true`; direct `policyGate` call removed from this site
-  - Public `AgentService.executeTool()` API — passes minimal context (`executionType='direct_invocation'`, `executionOrigin='api'`); `enforcePolicy` omitted
+  - Fast-path deterministic bypass — accesses `.data` from result; `enforcePolicy` omitted (fast path already guards `activeMode !== 'rp'`)
+  - Main LLM tool-call loop — accesses `.data` from result; passes full context with `enforcePolicy: true`
+  - Public `AgentService.executeTool()` API — returns `.data` directly; passes minimal context (`executionType='direct_invocation'`, `executionOrigin='api'`); `enforcePolicy` omitted
 
 ### WorkflowRegistry
 - **Path**: `electron/services/router/WorkflowRegistry.ts`

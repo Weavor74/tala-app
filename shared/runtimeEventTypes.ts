@@ -24,6 +24,7 @@ export type RuntimeEventSubsystem =
     | 'inference'
     | 'memory'
     | 'mcp'
+    | 'tools'
     | 'system'
     | 'unknown';
 
@@ -47,7 +48,11 @@ export type RuntimeEventType =
     | 'execution.finalizing'
     | 'execution.completed'
     | 'execution.failed'
-    | `execution.${string}`;
+    | `execution.${string}`
+    | 'tool.requested'
+    | 'tool.completed'
+    | 'tool.failed'
+    | `tool.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────
 
