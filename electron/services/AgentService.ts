@@ -13,6 +13,7 @@ import { BackupService } from './BackupService';
 import type { IBrain, ChatMessage, BrainResponse, ToolCall } from '../brains/IBrain';
 import type { StreamInferenceResult, CanonicalToolCall } from '../../shared/inferenceProviderTypes';
 import { ToolService } from './ToolService';
+import { ToolExecutionCoordinator, type ToolInvocationContext } from './tools/ToolExecutionCoordinator';
 import { SystemService } from './SystemService';
 import { RagService } from './RagService';
 import { MemoryService } from './MemoryService';
@@ -58,7 +59,6 @@ import { getCanonicalMemoryRepository } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
-import { policyGate } from './policy/PolicyGate';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -165,6 +165,8 @@ export class AgentService {
     private workflows: WorkflowRegistry;
     /** Central registry for all executable tools. */
     private tools: ToolService;
+    /** Thin seam wrapping tool execution; delegates to ToolService. */
+    private coordinator: ToolExecutionCoordinator;
     /** Manages system backups and state snapshots. */
     private backup: BackupService;
     /** Higher-level inference wrapper for specialized tasks. */
@@ -235,6 +237,7 @@ export class AgentService {
         this.world = new WorldService();
         this.rag = new RagService();
         this.tools = new ToolService();
+        this.coordinator = new ToolExecutionCoordinator(this.tools);
         this.backup = new BackupService();
         this.inference = inference || new InferenceService();
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
@@ -1827,7 +1830,13 @@ Exported standalone package from Tala.
                 try {
                     const parsedArgs = routedIntent.extractedArgs || {};
                     const toolStartTime = Date.now();
-                    const rawResult = await this.tools.executeTool(toolName, parsedArgs, new Set([toolName]));
+                    const rawResult = await this.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
+                        executionId: turnId,
+                        executionType: 'chat_turn',
+                        executionOrigin: 'ipc',
+                        executionMode: activeMode,
+                        // enforcePolicy omitted: fast path already guards activeMode !== 'rp'
+                    });
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
                     
                     return await this.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, onToken, onEvent);
@@ -2610,19 +2619,17 @@ Failure to provide a tool call will result in system termination.`;
                                 throw new Error("Action Blocked: File writes in Hybrid mode require per-turn UI authorization. Please check 'Allow writes' and try again.");
                             }
 
-                            // --- POLICY GATE: side-effect pre-check ---
-                            // Enforces PolicyGate rules before any tool executes.
-                            // Current rule: file_write is blocked in rp mode (POLICY_FILE_WRITE_RP_BLOCK).
-                            // Additional rules added to PolicyGate.evaluate() enforce here automatically.
-                            policyGate.assertSideEffect({
-                                actionKind: 'tool_invoke',
+                            // --- POLICY GATE: owned by ToolExecutionCoordinator ---
+                            // enforcePolicy:true delegates the PolicyGate.assertSideEffect() call
+                            // into the coordinator so it is the single pre-execution enforcement seam.
+                            const invocationCtx: ToolInvocationContext = {
+                                executionId: turnId,
+                                executionType: 'chat_turn',
+                                executionOrigin: 'ipc',
                                 executionMode: activeMode,
-                                capability: toolName,
-                                targetSubsystem: 'ToolService',
-                                mutationIntent: `tool invocation: ${toolName}`,
-                            });
-
-                            return await this.tools.executeTool(toolName, args, allowedToolNames);
+                                enforcePolicy: true,
+                            };
+                            return await this.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx);
                         })();
 
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
@@ -3538,7 +3545,11 @@ Failure to provide a tool call will result in system termination.`;
      * @returns The stringified result of the tool execution.
      */
     public async executeTool(name: string, args: any): Promise<any> {
-        return await this.tools.executeTool(name, args);
+        return await this.coordinator.executeTool(name, args, undefined, {
+            executionType: 'direct_invocation',
+            executionOrigin: 'api',
+            // enforcePolicy omitted: public API callers are responsible for their own guards
+        });
     }
 
     public async performSearch(query: string): Promise<any[]> {
