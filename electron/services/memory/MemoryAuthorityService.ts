@@ -125,10 +125,10 @@ export class MemoryAuthorityService {
             mutationIntent: 'canonical_memory_write',
         });
 
-        const writeId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
-            executionId: writeId,
+            executionId: writeOperationId,
             subsystem: 'memory',
             event: 'memory.write_requested',
             payload: { operation: 'create', memory_type: input.memory_type, subject_type: input.subject_type },
@@ -144,7 +144,7 @@ export class MemoryAuthorityService {
                 // Record that this was seen as a duplicate
                 await this._recordDuplicate(dup.matched_memory_id, null, hash, dup.match_kind, dup.match_score);
                 bus.emit({
-                    executionId: writeId,
+                    executionId: writeOperationId,
                     subsystem: 'memory',
                     event: 'memory.write_completed',
                     payload: { operation: 'create', memory_id: dup.matched_memory_id, duplicate: true },
@@ -188,7 +188,7 @@ export class MemoryAuthorityService {
 
             console.log(`[MemoryAuthority] Canonical record created: ${memoryId} (type=${input.memory_type})`);
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_completed',
                 payload: { operation: 'create', memory_id: memoryId, memory_type: input.memory_type },
@@ -196,7 +196,7 @@ export class MemoryAuthorityService {
             return memoryId;
         } catch (err) {
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_failed',
                 payload: { operation: 'create', memory_type: input.memory_type, error: String(err) },
@@ -225,10 +225,10 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const writeId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
-            executionId: writeId,
+            executionId: writeOperationId,
             subsystem: 'memory',
             event: 'memory.write_requested',
             payload: { operation: 'update', memory_id: memoryId },
@@ -291,7 +291,7 @@ export class MemoryAuthorityService {
 
             console.log(`[MemoryAuthority] Record updated: ${memoryId} → v${newVersion}`);
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_completed',
                 payload: { operation: 'update', memory_id: memoryId, version: newVersion },
@@ -299,7 +299,7 @@ export class MemoryAuthorityService {
             return updated;
         } catch (err) {
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_failed',
                 payload: { operation: 'update', memory_id: memoryId, error: String(err) },
@@ -324,10 +324,10 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const writeId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
-            executionId: writeId,
+            executionId: writeOperationId,
             subsystem: 'memory',
             event: 'memory.write_requested',
             payload: { operation: 'delete', memory_id: memoryId },
@@ -341,7 +341,7 @@ export class MemoryAuthorityService {
             if (existing.authority_status === 'tombstoned') {
                 console.warn(`[MemoryAuthority] Memory ${memoryId} already tombstoned — skipping`);
                 bus.emit({
-                    executionId: writeId,
+                    executionId: writeOperationId,
                     subsystem: 'memory',
                     event: 'memory.write_completed',
                     payload: { operation: 'delete', memory_id: memoryId, idempotent: true },
@@ -369,14 +369,14 @@ export class MemoryAuthorityService {
 
             console.log(`[MemoryAuthority] Record tombstoned: ${memoryId}`);
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_completed',
                 payload: { operation: 'delete', memory_id: memoryId },
             });
         } catch (err) {
             bus.emit({
-                executionId: writeId,
+                executionId: writeOperationId,
                 subsystem: 'memory',
                 event: 'memory.write_failed',
                 payload: { operation: 'delete', memory_id: memoryId, error: String(err) },
