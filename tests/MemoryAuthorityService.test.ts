@@ -1887,4 +1887,155 @@ describe('MemoryAuthorityService', () => {
             expect(eventTypes).toContain('memory.write_completed');
         });
     });
+
+    // -----------------------------------------------------------------------
+    // 22. Private mutation core contract (COR1–COR8)
+    //
+    // Exercises _createCanonicalMemoryCore, _updateCanonicalMemoryCore, and
+    // _tombstoneMemoryCore directly (via `as any` since they are private).
+    //
+    // These tests confirm:
+    //   - Core methods never throw — errors are returned as {success:false}
+    //   - PolicyDeniedError is captured, not propagated
+    //   - durationMs is always present
+    //   - Telemetry events fire correctly from the core
+    //   - The _cause field carries the original Error instance for legacy adapters
+    // -----------------------------------------------------------------------
+
+    describe('22. Private mutation core contract', () => {
+        let capturedEvents: RuntimeEvent[];
+        let unsub: () => void;
+
+        beforeEach(() => {
+            TelemetryBus._resetForTesting();
+            capturedEvents = [];
+            unsub = TelemetryBus.getInstance().subscribe((evt) => capturedEvents.push(evt));
+        });
+
+        afterEach(() => {
+            unsub();
+            TelemetryBus._resetForTesting();
+        });
+
+        it('COR1: _createCanonicalMemoryCore succeeds and returns MemoryOperationResult<string>', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await (svc as never as Record<string, unknown>)['_createCanonicalMemoryCore']({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'core create',
+            }, 'core-op-id');
+            const r = result as { success: boolean; data: string; durationMs: number };
+            expect(r.success).toBe(true);
+            expect(r.data).toBe(MEMORY_ID);
+            expect(typeof r.durationMs).toBe('number');
+        });
+
+        it('COR2: _createCanonicalMemoryCore returns {success:false} on DB error — no throw', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    return Promise.reject(new Error('core db fail'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await (svc as never as Record<string, unknown>)['_createCanonicalMemoryCore']({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'test',
+            }, 'core-op-id') as { success: boolean; error: string; _cause: Error; durationMs: number };
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('core db fail');
+            expect(result._cause).toBeInstanceOf(Error);
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('COR3: _updateCanonicalMemoryCore returns {success:false} when record not found — no throw', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await (svc as never as Record<string, unknown>)['_updateCanonicalMemoryCore'](
+                MEMORY_ID, { content_text: 'x' }, undefined, 'core-op-id',
+            ) as { success: boolean; error: string; durationMs: number };
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('COR4: _tombstoneMemoryCore returns {success:false} when record not found — no throw', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await (svc as never as Record<string, unknown>)['_tombstoneMemoryCore'](
+                MEMORY_ID, undefined, 'core-op-id',
+            ) as { success: boolean; error: string; durationMs: number };
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('COR5: _createCanonicalMemoryCore captures PolicyDeniedError as {success:false} — no throw', async () => {
+            const { policyGate } = await import('../electron/services/policy/PolicyGate');
+            const spy = vi.spyOn(policyGate, 'assertSideEffect').mockImplementationOnce(() => {
+                const err = new Error('policy denied by test');
+                err.name = 'PolicyDeniedError';
+                throw err;
+            });
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await (svc as never as Record<string, unknown>)['_createCanonicalMemoryCore']({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'policy test',
+            }, 'core-policy-id') as { success: boolean; error: string; durationMs: number };
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('policy denied by test');
+            expect(typeof result.durationMs).toBe('number');
+            spy.mockRestore();
+        });
+
+        it('COR6: _cause carries original error instance for legacy adapter re-throw', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            // updateCore: record not found → Error thrown internally
+            const result = await (svc as never as Record<string, unknown>)['_updateCanonicalMemoryCore'](
+                MEMORY_ID, { content_text: 'x' }, undefined, 'core-op-id',
+            ) as { success: boolean; _cause?: Error };
+            expect(result.success).toBe(false);
+            expect(result._cause).toBeInstanceOf(Error);
+        });
+
+        it('COR7: core methods emit write_failed on DB error', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('canonical_hash')) return Promise.resolve({ rows: [] });
+                    return Promise.reject(new Error('db gone'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            await (svc as never as Record<string, unknown>)['_createCanonicalMemoryCore']({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'test',
+            }, 'core-tel-id');
+            const failed = capturedEvents.filter(e => e.event === 'memory.write_failed');
+            expect(failed.length).toBeGreaterThan(0);
+            expect(failed.every(e => e.executionId === 'core-tel-id')).toBe(true);
+        });
+
+        it('COR8: durationMs is present and non-negative in all core failure results', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const [r1, r2] = await Promise.all([
+                (svc as never as Record<string, unknown>)['_updateCanonicalMemoryCore'](
+                    MEMORY_ID, {}, undefined, 'id1',
+                ) as Promise<{ durationMs: number }>,
+                (svc as never as Record<string, unknown>)['_tombstoneMemoryCore'](
+                    MEMORY_ID, undefined, 'id2',
+                ) as Promise<{ durationMs: number }>,
+            ]);
+            expect(r1.durationMs).toBeGreaterThanOrEqual(0);
+            expect(r2.durationMs).toBeGreaterThanOrEqual(0);
+        });
+    });
 });
