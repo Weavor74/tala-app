@@ -98,6 +98,14 @@ describe('ESS2: get', () => {
         // stored value must still be 'accepted'
         expect(store.get(s.executionId)?.status).toBe('accepted');
     });
+
+    it('returns a deep copy: mutating toolCalls array in get() result does not affect stored state', () => {
+        const s = makeState();
+        store.upsert(s);
+        const copy = store.get(s.executionId)!;
+        copy.toolCalls.push('tool-x');
+        expect(store.get(s.executionId)?.toolCalls).toHaveLength(0);
+    });
 });
 
 // ─── ESS3: has ────────────────────────────────────────────────────────────────
@@ -179,8 +187,7 @@ describe('ESS5: getByStatus', () => {
 
     it('filters by multiple statuses', () => {
         const a = makeState();
-        const req2 = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'u', input: null });
-        const b = createInitialExecutionState(req2);
+        const b = makeState();
         const bDone = finalizeExecutionState(b, { status: 'completed' });
         store.upsert(a);
         store.upsert(bDone);

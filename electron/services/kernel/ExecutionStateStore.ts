@@ -7,9 +7,10 @@
  *
  * Design principles:
  * - Single responsibility: store and retrieve ExecutionState values only
- * - Immutable reads: get() returns a shallow copy so callers cannot mutate
- *   stored state directly
- * - Safe writes: upsert() replaces the entire record atomically
+ * - Immutable reads: get() and getAll() return deep copies (via structuredClone)
+ *   so callers cannot mutate stored state — including nested arrays — directly
+ * - Safe writes: upsert() deep-copies on entry so mutations to the caller's
+ *   object after upsert() do not affect the stored record
  * - Bounded: enforces a max-size cap to prevent unbounded memory growth
  *   during long sessions; oldest entry is evicted when the cap is reached
  * - No side-effects: no IPC, no telemetry, no logging from within the store
@@ -70,18 +71,21 @@ export class ExecutionStateStore {
                 this._store.delete(oldestKey);
             }
         }
-        this._store.set(state.executionId, { ...state });
+        this._store.set(state.executionId, structuredClone(state));
     }
 
     // ─── Read ─────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a shallow copy of the stored ExecutionState, or `undefined` if
+     * Returns a deep copy of the stored ExecutionState, or `undefined` if
      * no entry exists for the given executionId.
+     *
+     * The returned value is fully independent: mutating top-level fields or
+     * nested arrays (e.g. `toolCalls`) will not affect the stored record.
      */
     get(executionId: string): ExecutionState | undefined {
         const entry = this._store.get(executionId);
-        return entry !== undefined ? { ...entry } : undefined;
+        return entry !== undefined ? structuredClone(entry) : undefined;
     }
 
     /**
@@ -92,22 +96,22 @@ export class ExecutionStateStore {
     }
 
     /**
-     * Returns shallow copies of all stored ExecutionState entries.
+     * Returns deep copies of all stored ExecutionState entries.
      * Order follows Map insertion order (oldest first).
      */
     getAll(): ExecutionState[] {
-        return Array.from(this._store.values()).map(s => ({ ...s }));
+        return Array.from(this._store.values()).map(s => structuredClone(s));
     }
 
     /**
-     * Returns shallow copies of all entries whose `status` matches one of the
+     * Returns deep copies of all entries whose `status` matches one of the
      * provided statuses.
      */
     getByStatus(...statuses: RuntimeExecutionStatus[]): ExecutionState[] {
         const statusSet = new Set<string>(statuses);
         return Array.from(this._store.values())
             .filter(s => statusSet.has(s.status))
-            .map(s => ({ ...s }));
+            .map(s => structuredClone(s));
     }
 
     // ─── Delete ───────────────────────────────────────────────────────────────
