@@ -927,5 +927,117 @@ describe('MemoryAuthorityService', () => {
             expect(result.conflict_logged).toBe(false);
         });
     });
+
+    // -----------------------------------------------------------------------
+    // 17. Unified CRUD facade — createMemory / readMemory / updateMemory / deleteMemory
+    // -----------------------------------------------------------------------
+    describe('Unified CRUD facade', () => {
+        const INPUT = {
+            memory_type: 'interaction',
+            subject_type: 'conversation',
+            subject_id: 'turn-1',
+            content_text: 'User: "hello" | Tala: "hi"',
+        };
+
+        describe('createMemory', () => {
+            it('delegates to createCanonicalMemory and returns the memory_id', async () => {
+                const pool = poolSequenced([
+                    { rows: [] },                          // detectDuplicates: exact hash check
+                    { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
+                    { rows: [] },                          // _appendLineage
+                    { rows: [] },                          // _emitProjectionEvents: mem0
+                    { rows: [] },                          // _emitProjectionEvents: graph
+                    { rows: [] },                          // _emitProjectionEvents: vector
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const id = await svc.createMemory(INPUT);
+                expect(id).toBe(MEMORY_ID);
+            });
+
+            it('returns the existing memory_id when a duplicate is detected', async () => {
+                const pool = poolWithRows([{ memory_id: MEMORY_ID }]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const id = await svc.createMemory(INPUT);
+                expect(id).toBe(MEMORY_ID);
+            });
+        });
+
+        describe('readMemory', () => {
+            it('returns the canonical record when found', async () => {
+                const pool = poolWithRows([makeMemoryRow()]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const record = await svc.readMemory(MEMORY_ID);
+                expect(record).not.toBeNull();
+                expect(record!.memory_id).toBe(MEMORY_ID);
+                expect(record!.authority_status).toBe('canonical');
+            });
+
+            it('returns null when the memory_id does not exist', async () => {
+                const pool = poolWithRows([]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const record = await svc.readMemory('non-existent-id');
+                expect(record).toBeNull();
+            });
+        });
+
+        describe('updateMemory', () => {
+            it('delegates to updateCanonicalMemory and returns the updated record', async () => {
+                const updatedRow = makeMemoryRow({
+                    content_text: 'updated text',
+                    version: 2,
+                    canonical_hash: 'newhash456',
+                });
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] },  // _fetchRecord
+                    { rows: [updatedRow] },         // UPDATE memory_records
+                    { rows: [] },                   // _appendLineage
+                    { rows: [] },                   // _markProjectionsStale
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const updated = await svc.updateMemory(MEMORY_ID, { content_text: 'updated text' });
+                expect(updated.memory_id).toBe(MEMORY_ID);
+                expect(updated.version).toBe(2);
+            });
+
+            it('forwards executionMode to the policy gate', async () => {
+                const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'h2' });
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] },
+                    { rows: [updatedRow] },
+                    { rows: [] },
+                    { rows: [] },
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                // Should not throw in non-rp mode
+                await expect(
+                    svc.updateMemory(MEMORY_ID, { content_text: 'new' }, 'assistant'),
+                ).resolves.not.toThrow();
+            });
+        });
+
+        describe('deleteMemory', () => {
+            it('delegates to tombstoneMemory and tombstones the record', async () => {
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] }, // _fetchRecord
+                    { rows: [] },                 // UPDATE tombstoned_at
+                    { rows: [] },                 // _appendLineage
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                await expect(svc.deleteMemory(MEMORY_ID)).resolves.toBeUndefined();
+            });
+
+            it('is idempotent when the record is already tombstoned', async () => {
+                const pool = poolWithRows([makeMemoryRow({ authority_status: 'tombstoned', tombstoned_at: NOW })]);
+                const svc = new MemoryAuthorityService(pool as never);
+                await expect(svc.deleteMemory(MEMORY_ID)).resolves.toBeUndefined();
+            });
+
+            it('throws when the memory_id does not exist', async () => {
+                const pool = poolWithRows([]);
+                const svc = new MemoryAuthorityService(pool as never);
+                await expect(svc.deleteMemory('missing-id')).rejects.toThrow('not found');
+            });
+        });
+    });
 });
 

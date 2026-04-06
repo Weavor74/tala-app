@@ -684,6 +684,54 @@ export class MemoryAuthorityService {
         return this._rebuildTargetFromCanonical('vector');
     }
 
+    // -----------------------------------------------------------------------
+    // UNIFIED CRUD FACADE
+    // Single entrypoint for memory create / read / update / delete.
+    // Each method delegates to the existing canonical implementation above.
+    // No behavior is changed — this layer adds discoverability only.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Create a new memory record.
+     * Delegates to createCanonicalMemory().
+     *
+     * @returns The canonical_memory_id (existing if duplicate, new if created)
+     */
+    async createMemory(input: ProposedMemoryInput): Promise<string> {
+        return this.createCanonicalMemory(input);
+    }
+
+    /**
+     * Read a single canonical memory record by its ID.
+     * Returns null when the record does not exist.
+     */
+    async readMemory(memoryId: string): Promise<CanonicalMemory | null> {
+        return this._fetchRecord(memoryId);
+    }
+
+    /**
+     * Update an existing canonical memory record.
+     * Delegates to updateCanonicalMemory().
+     */
+    async updateMemory(
+        memoryId: string,
+        updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
+        executionMode?: string,
+    ): Promise<CanonicalMemory> {
+        return this.updateCanonicalMemory(memoryId, updates, executionMode);
+    }
+
+    /**
+     * Delete (tombstone) a canonical memory record.
+     * Delegates to tombstoneMemory().
+     *
+     * Records are never physically deleted — tombstoning preserves referential
+     * integrity for lineage and rebuild operations.
+     */
+    async deleteMemory(memoryId: string, executionMode?: string): Promise<void> {
+        return this.tombstoneMemory(memoryId, executionMode);
+    }
+
     /**
      * Rank a set of memory candidates by authority tier.
      *
