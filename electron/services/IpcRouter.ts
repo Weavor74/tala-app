@@ -38,6 +38,7 @@ import { getRetrievalOrchestrator, refreshExternalProvider, getAvailableCuratedP
 import { testProvider } from './retrieval/providers/ExternalApiSearchProvider';
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
+import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 import { ContextAssemblyService } from './context/ContextAssemblyService';
 import { MemoryPolicyService } from './policy/MemoryPolicyService';
@@ -2308,6 +2309,22 @@ export class IpcRouter {
         actionDispatchCount: actionCounts.dispatched,
         actionFailureCount: actionCounts.failed,
       };
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — TELEMETRY BUS (read-only)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns a snapshot of the most recent runtime events from the TelemetryBus
+     * ring buffer (up to 200 events).  The array is a shallow copy — callers
+     * receive plain serialisable objects and cannot mutate internal state.
+     *
+     * Both chat (AgentKernel) and autonomy (AutonomousRunOrchestrator) events
+     * flow through the same bus and are therefore included in the result.
+     */
+    ipcMain.handle('telemetry:getRecentEvents', () => {
+      return TelemetryBus.getInstance().getRecentEvents().slice();
     });
 
   }
