@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/runtime/executionTypes';
 import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 import { ExecutionStateStore } from './ExecutionStateStore';
+import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -217,12 +218,30 @@ export class AgentKernel {
         };
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
 
+        // execution.created — execution request received; executionId assigned
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.created',
+            phase: 'intake',
+            payload: { type: executionType, origin, mode },
+        });
+
         // Register the initial ExecutionState in the store so downstream stages
         // can advance it through the lifecycle using the store's convenience APIs.
         this._stateStore.beginExecution(
             this._buildExecRequest(meta, request.userMessage),
             'AgentKernel'
         );
+
+        // execution.accepted — request registered and ready to begin
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.accepted',
+            phase: 'intake',
+            payload: { type: executionType, origin, mode },
+        });
 
         return meta;
     }
@@ -282,6 +301,15 @@ export class AgentKernel {
                 createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
                 { status: 'completed' }
             );
+
+        // execution.completed — execution finalized cleanly
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.completed',
+            phase: 'finalizing',
+            payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, durationMs: meta.durationMs },
+        });
 
         return { ...turnOutput, meta, executionState };
     }

@@ -14,9 +14,10 @@
  *   EC8  AgentKernel request forwarding via KernelRequest fields
  *   EC9  Cross-seam ID correlation
  *   EC10 AgentKernel ExecutionStateStore lifecycle tracking
+ *   EC11 AgentKernel TelemetryBus lifecycle emission
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type {
     RuntimeExecutionType,
     RuntimeExecutionOrigin,
@@ -34,6 +35,8 @@ import {
 import type { AutonomousRun } from '../shared/autonomyTypes';
 import type { PlanRun } from '../shared/reflectionPlanTypes';
 import { AgentKernel } from '../electron/services/kernel/AgentKernel';
+import { TelemetryBus } from '../electron/services/telemetry/TelemetryBus';
+import type { RuntimeEvent } from '../electron/services/telemetry/TelemetryBus';
 
 // ─── EC1: Type shape correctness ──────────────────────────────────────────────
 
@@ -535,5 +538,142 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         await kernel.execute({ userMessage: 'turn 3' });
         expect(kernel.stateStore.size).toBe(3);
         expect(kernel.stateStore.getByStatus('completed')).toHaveLength(3);
+    });
+});
+
+// ─── EC11: AgentKernel TelemetryBus lifecycle emission ────────────────────────
+
+describe('EC11: AgentKernel TelemetryBus lifecycle emission', () => {
+    const stubTurnOutput = {
+        message: 'hello',
+        artifact: null,
+        suppressChatContent: false,
+        outputChannel: 'chat',
+    } as const;
+
+    function makeKernel() {
+        const agentStub = { chat: vi.fn().mockResolvedValue(stubTurnOutput) };
+        return { kernel: new AgentKernel(agentStub as any), agentStub };
+    }
+
+    beforeEach(() => {
+        TelemetryBus._resetForTesting();
+    });
+
+    it('emits execution.created, execution.accepted, execution.completed in order', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'lifecycle test', origin: 'ipc', executionMode: 'assistant' });
+
+        const eventTypes = received.map((e) => e.event);
+        expect(eventTypes).toContain('execution.created');
+        expect(eventTypes).toContain('execution.accepted');
+        expect(eventTypes).toContain('execution.completed');
+
+        const createdIdx = eventTypes.indexOf('execution.created');
+        const acceptedIdx = eventTypes.indexOf('execution.accepted');
+        const completedIdx = eventTypes.indexOf('execution.completed');
+        expect(createdIdx).toBeLessThan(acceptedIdx);
+        expect(acceptedIdx).toBeLessThan(completedIdx);
+    });
+
+    it('all lifecycle events share the same executionId matching KernelResult.meta', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        const result = await kernel.execute({ userMessage: 'id correlation', origin: 'chat_ui', executionMode: 'assistant' });
+
+        const lifecycleEvents = received.filter((e) =>
+            e.event === 'execution.created' ||
+            e.event === 'execution.accepted' ||
+            e.event === 'execution.completed'
+        );
+        expect(lifecycleEvents).toHaveLength(3);
+        for (const evt of lifecycleEvents) {
+            expect(evt.executionId).toBe(result.meta.executionId);
+        }
+    });
+
+    it('all lifecycle events have subsystem=kernel', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'subsystem check' });
+
+        for (const evt of received) {
+            expect(evt.subsystem).toBe('kernel');
+        }
+    });
+
+    it('execution.created payload carries type, origin, and mode', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'payload test', origin: 'chat_ui', executionMode: 'rp' });
+
+        const created = received.find((e) => e.event === 'execution.created');
+        expect(created?.payload).toMatchObject({ type: 'chat_turn', origin: 'chat_ui', mode: 'rp' });
+    });
+
+    it('execution.completed payload includes durationMs', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'duration test' });
+
+        const completed = received.find((e) => e.event === 'execution.completed');
+        expect(completed?.payload).toHaveProperty('durationMs');
+        expect(typeof completed?.payload?.durationMs).toBe('number');
+    });
+
+    it('execution.created and execution.accepted both use phase=intake', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'phase check' });
+
+        const created = received.find((e) => e.event === 'execution.created');
+        const accepted = received.find((e) => e.event === 'execution.accepted');
+        expect(created?.phase).toBe('intake');
+        expect(accepted?.phase).toBe('intake');
+    });
+
+    it('execution.completed uses phase=finalizing', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'finalize phase check' });
+
+        const completed = received.find((e) => e.event === 'execution.completed');
+        expect(completed?.phase).toBe('finalizing');
+    });
+
+    it('three separate turns emit three independent sets of lifecycle events', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'turn 1' });
+        await kernel.execute({ userMessage: 'turn 2' });
+        await kernel.execute({ userMessage: 'turn 3' });
+
+        const created = received.filter((e) => e.event === 'execution.created');
+        const accepted = received.filter((e) => e.event === 'execution.accepted');
+        const completed = received.filter((e) => e.event === 'execution.completed');
+        expect(created).toHaveLength(3);
+        expect(accepted).toHaveLength(3);
+        expect(completed).toHaveLength(3);
+
+        // All executionIds should be distinct
+        const ids = new Set(created.map((e) => e.executionId));
+        expect(ids.size).toBe(3);
     });
 });
