@@ -184,6 +184,23 @@ export class ExecutionStateStore {
     }
 
     /**
+     * Mark an existing entry as blocked (terminal status).
+     * Sets `status='blocked'`, `blockedReason`, `completedAt`, and `updatedAt`.
+     * Returns the finalized state, or `undefined` if the executionId is not found.
+     *
+     * @param executionId  ID of the entry to block.
+     * @param reason       Human-readable block reason (e.g. policy rule that fired).
+     * @returns            A deep copy of the finalized state, or `undefined`.
+     */
+    blockExecution(executionId: string, reason: string): ExecutionState | undefined {
+        const current = this._store.get(executionId);
+        if (!current) return undefined;
+        const finalized = finalizeExecutionState(current, { status: 'blocked', blockedReason: reason });
+        this._store.set(executionId, structuredClone(finalized));
+        return structuredClone(finalized);
+    }
+
+    /**
      * Mark an existing entry as failed (terminal status).
      * Sets `status='failed'`, `failureReason`, `completedAt`, and `updatedAt`.
      * Returns the finalized state, or `undefined` if the executionId is not found.

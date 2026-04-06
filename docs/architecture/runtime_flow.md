@@ -31,7 +31,7 @@ user input
       → intake()                           [stamp executionId, startedAt, executionClass;
                                             reads origin/executionMode from request with 'ipc'/'assistant' fallbacks;
                                             emits execution.created → registers ExecutionState → emits execution.accepted via TelemetryBus]
-      → classifyExecution()                [classify turn; future: policy gate, context assembly trigger]
+      → classifyExecution()                [PolicyGate top-level admission check → advance state to 'planning'; future: context assembly trigger]
       → runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
           → AgentService.chat()
           → TalaContextRouter.process()       [mode/context assembly]
@@ -52,6 +52,7 @@ user input
           → GuardrailService                  [output safety check]
           → UI delivery (IPC stream)
       → finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.finalizing → execution.completed via TelemetryBus; future: outcome learning, audit records]
+      [on policy deny] classifyExecution → blockExecution() in store + emit execution.blocked via TelemetryBus → throw PolicyDeniedError → re-throw (no execution.failed)
       [on error] catch → failExecution() in store + emit execution.failed via TelemetryBus → re-throw
   → chat-done event (carries executionId + executionOrigin from KernelResult.meta)
 ```
@@ -66,7 +67,7 @@ each turn. Future runtime authority boundaries attach here:
 |-------|-----------------|----------------------|
 | `normalizeRequest` | Coerce missing fields to defaults | Request ACL, payload coercion |
 | `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'`; emit `execution.created` and `execution.accepted` via `TelemetryBus` | Budget checks, authority pre-validation |
-| `classifyExecution` | No-op placeholder | Mode detection, tool-need prediction, policy gate |
+| `classifyExecution` | PolicyGate top-level admission check (`policyGate.evaluate()` with `action='execution.admit'`). On deny: marks state `blocked`, emits `execution.blocked`, throws `PolicyDeniedError`. On allow: advances state to `planning/classifying`. | Mode detection, context assembly |
 | `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
 | `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), emit `execution.finalizing` then `execution.completed` via `TelemetryBus`, return `KernelResult` | Outcome learning, audit record |
 

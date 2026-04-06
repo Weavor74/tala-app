@@ -15,7 +15,7 @@ This document describes the Tala system as a collection of interacting component
 - **Future responsibility boundaries**:
   - `normalizeRequest`: request ACL, payload coercion
   - `intake`: execution budget checks, authority pre-validation
-  - `classifyExecution`: mode detection, tool-need prediction, policy gate, context assembly trigger
+  - `classifyExecution`: PolicyGate top-level admission check, mode detection, context assembly trigger
   - `runDelegatedFlow`: inference orchestration boundary, tool execution coordination, memory write coordination
   - `finalizeExecution`: telemetry emission, outcome learning hooks, audit record writes
 - **Initialized by**: `IpcRouter.registerAll()` as `this._kernel = new AgentKernel(agent)`.
