@@ -50,6 +50,12 @@ _No direct interface references matched from the interface docs._
 ## Security Notes
 
 - The primary defense against the most critical threats (**TH-001**, **TH-002**) is the **Isolation Kernel** pattern, where reasoning is decoupled from execution, and all execution is governed by a non-bypassable policy engine (`CodeAccessPolicy`).
+- **PolicyGate** (`electron/services/policy/PolicyGate.ts`) is a cross-cutting enforcement seam that evaluates every side-effecting action before it executes. In RP mode the following rules block execution unconditionally:
+  - `POLICY_FILE_WRITE_RP_BLOCK` — blocks direct file-system writes (`file_write` action kind)
+  - `POLICY_AUTONOMY_RP_BLOCK` — blocks autonomous goal-pipeline execution (`autonomy_action` kind)
+  - `POLICY_WORKFLOW_RP_BLOCK` — blocks every workflow node execution (`workflow_action` kind); `executionMode` is now threaded from the IPC caller through `WorkflowEngine.executeWorkflow()` to each `assertSideEffect()` call so the rule fires correctly
+  - `POLICY_MEMORY_WRITE_RP_BLOCK` — blocks canonical memory mutation (`memory_write` kind with `mutationIntent='write'`); applies to `updateCanonicalMemory()` and `tombstoneMemory()` in `MemoryAuthorityService`
+- Blocked actions throw `PolicyDeniedError` which propagates cleanly to the caller; no partial writes occur.
 
 ## Architecture References
 

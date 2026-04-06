@@ -181,7 +181,18 @@ export class MemoryAuthorityService {
     async updateCanonicalMemory(
         memoryId: string,
         updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
+        executionMode?: string,
     ): Promise<CanonicalMemory> {
+        // --- POLICY GATE: canonical memory update pre-check ---
+        // Fires before any fetch or database mutation.
+        // PolicyDeniedError propagates to the caller; no writes occur on block.
+        policyGate.assertSideEffect({
+            actionKind: 'memory_write',
+            executionMode,
+            targetSubsystem: 'MemoryAuthorityService',
+            mutationIntent: 'write',
+        });
+
         const existing = await this._fetchRecord(memoryId);
         if (!existing) {
             throw new Error(`[MemoryAuthority] Cannot update: memory_id ${memoryId} not found`);
@@ -245,7 +256,17 @@ export class MemoryAuthorityService {
      * Sets tombstoned_at and authority_status = 'tombstoned'. Does NOT DELETE —
      * the record must remain for referential integrity and rebuild purposes.
      */
-    async tombstoneMemory(memoryId: string): Promise<void> {
+    async tombstoneMemory(memoryId: string, executionMode?: string): Promise<void> {
+        // --- POLICY GATE: tombstone pre-check ---
+        // Fires before any fetch or database mutation.
+        // PolicyDeniedError propagates to the caller; no writes occur on block.
+        policyGate.assertSideEffect({
+            actionKind: 'memory_write',
+            executionMode,
+            targetSubsystem: 'MemoryAuthorityService',
+            mutationIntent: 'write',
+        });
+
         const existing = await this._fetchRecord(memoryId);
         if (!existing) {
             throw new Error(`[MemoryAuthority] Cannot tombstone: memory_id ${memoryId} not found`);

@@ -180,7 +180,11 @@ export interface SideEffectContext {
  * unaffected unless they match a named rule.
  *
  * Active rules:
- *   POLICY_FILE_WRITE_RP_BLOCK — blocks file_write when executionMode === 'rp'
+ *   POLICY_FILE_WRITE_RP_BLOCK        — blocks file_write when executionMode === 'rp'
+ *   POLICY_AUTONOMY_RP_BLOCK          — blocks autonomy_action when executionMode === 'rp'
+ *   POLICY_WORKFLOW_RP_BLOCK          — blocks workflow_action when executionMode === 'rp'
+ *   POLICY_MEMORY_WRITE_RP_BLOCK      — blocks memory_write when executionMode === 'rp'
+ *                                        and mutationIntent === 'write'
  */
 export class PolicyGate {
 
@@ -207,6 +211,47 @@ export class PolicyGate {
                 allowed: false,
                 reason: 'file_write not allowed in rp mode',
                 code: 'POLICY_FILE_WRITE_RP_BLOCK',
+            };
+        }
+
+        // ─── Rule: block autonomy_action in rp mode ───────────────────────────
+        // Autonomous pipeline execution is not permitted during role-play sessions.
+        // Autonomy actions run goal pipelines that may produce side effects outside
+        // the narrative context; they must be suppressed while rp mode is active.
+        if (context.action === 'autonomy_action' && context.mode === 'rp') {
+            return {
+                allowed: false,
+                reason: 'autonomy_action not allowed in rp mode',
+                code: 'POLICY_AUTONOMY_RP_BLOCK',
+            };
+        }
+
+        // ─── Rule: block workflow_action in rp mode ───────────────────────────
+        // Workflow node execution is not permitted during role-play sessions.
+        // Workflow actions can trigger arbitrary tool calls and state mutations;
+        // they must be suppressed while rp mode is active.
+        if (context.action === 'workflow_action' && context.mode === 'rp') {
+            return {
+                allowed: false,
+                reason: 'workflow_action not allowed in rp mode',
+                code: 'POLICY_WORKFLOW_RP_BLOCK',
+            };
+        }
+
+        // ─── Rule: block memory_write with intent 'write' in rp mode ────────
+        // Canonical memory mutations (update and tombstone) are not permitted
+        // during role-play sessions.  This rule matches on the combination of
+        // action, mode, and the specific mutationIntent='write' so that read-only
+        // memory queries and non-rp writes are unaffected.
+        if (
+            context.action === 'memory_write' &&
+            context.mode === 'rp' &&
+            context.payload?.mutationIntent === 'write'
+        ) {
+            return {
+                allowed: false,
+                reason: 'memory_write not allowed in rp mode',
+                code: 'POLICY_MEMORY_WRITE_RP_BLOCK',
             };
         }
 
@@ -296,7 +341,11 @@ export class PolicyGate {
      * Use this at side-effect seams (tool calls, memory writes, file writes, etc.)
      * where a denied action should halt before any state mutation occurs.
      *
-     * Currently enforces: file_write blocked in rp mode (POLICY_FILE_WRITE_RP_BLOCK).
+     * Currently enforces:
+     *   file_write blocked in rp mode     (POLICY_FILE_WRITE_RP_BLOCK)
+     *   autonomy_action blocked in rp mode (POLICY_AUTONOMY_RP_BLOCK)
+     *   workflow_action blocked in rp mode (POLICY_WORKFLOW_RP_BLOCK)
+     *   memory_write (intent='write') blocked in rp mode (POLICY_MEMORY_WRITE_RP_BLOCK)
      * Additional rules in evaluate() automatically enforce here as they are added.
      */
     assertSideEffect(ctx: SideEffectContext): void {
