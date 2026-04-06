@@ -174,10 +174,13 @@ export interface SideEffectContext {
 /**
  * PolicyGate — runtime enforcement stub.
  *
- * Currently implements a permissive allow-all policy so that wiring this gate
- * into call sites produces no behavioural change.  Rules are added here as the
- * policy system matures; existing callers automatically gain enforcement once
- * rules are present.
+ * Implements a named-rule evaluation approach.  Rules are evaluated in order
+ * inside evaluate(); the first matching rule wins.  Unmatched actions fall
+ * through to the default allow decision so that all existing callers remain
+ * unaffected unless they match a named rule.
+ *
+ * Active rules:
+ *   POLICY_FILE_WRITE_RP_BLOCK — blocks file_write when executionMode === 'rp'
  */
 export class PolicyGate {
 
@@ -188,8 +191,19 @@ export class PolicyGate {
      * @returns        A PolicyDecision that the caller must honour.
      */
     evaluate(context: PolicyContext): PolicyDecision {
-        // Stub: allow everything.  This is intentionally permissive until real
-        // rules are introduced.  The seam is in place; enforcement is additive.
+        // ─── Rule: block file_write in rp mode ────────────────────────────────
+        // File system writes are not permitted during role-play sessions.
+        // This is the first concrete enforcement rule; it proves the gate blocks
+        // unsafe behaviour end-to-end without requiring additional call-site wiring.
+        if (context.action === 'file_write' && context.mode === 'rp') {
+            return {
+                allowed: false,
+                reason: 'file_write not allowed in rp mode',
+                code: 'POLICY_FILE_WRITE_RP_BLOCK',
+            };
+        }
+
+        // Default: allow any action that did not match a named rule above.
         return {
             allowed: true,
             reason: `action '${context.action}' permitted — no policy rule matched`,
@@ -275,8 +289,8 @@ export class PolicyGate {
      * Use this at side-effect seams (tool calls, memory writes, file writes, etc.)
      * where a denied action should halt before any state mutation occurs.
      *
-     * Since the current implementation is stub allow-all, this never throws.
-     * Future rule additions will automatically enforce here.
+     * Currently enforces: file_write blocked in rp mode (POLICY_FILE_WRITE_RP_BLOCK).
+     * Additional rules in evaluate() automatically enforce here as they are added.
      */
     assertSideEffect(ctx: SideEffectContext): void {
         const decision = this.checkSideEffect(ctx);
