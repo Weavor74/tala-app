@@ -15,6 +15,7 @@
  *   EC9  Cross-seam ID correlation
  *   EC10 AgentKernel ExecutionStateStore lifecycle tracking
  *   EC11 AgentKernel TelemetryBus lifecycle emission
+ *   EC12 AgentKernel TelemetryBus expanded lifecycle (finalizing + failed)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -675,5 +676,192 @@ describe('EC11: AgentKernel TelemetryBus lifecycle emission', () => {
         // All executionIds should be distinct
         const ids = new Set(created.map((e) => e.executionId));
         expect(ids.size).toBe(3);
+    });
+});
+
+// ─── EC12: AgentKernel TelemetryBus expanded lifecycle (finalizing + failed) ──
+
+describe('EC12: AgentKernel TelemetryBus expanded lifecycle (finalizing + failed)', () => {
+    const stubTurnOutput = {
+        message: 'hello',
+        artifact: null,
+        suppressChatContent: false,
+        outputChannel: 'chat',
+    } as const;
+
+    function makeKernel() {
+        const agentStub = { chat: vi.fn().mockResolvedValue(stubTurnOutput) };
+        return { kernel: new AgentKernel(agentStub as any), agentStub };
+    }
+
+    beforeEach(() => {
+        TelemetryBus._resetForTesting();
+    });
+
+    it('emits execution.finalizing before execution.completed on success', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'finalizing test' });
+
+        const types = received.map((e) => e.event);
+        expect(types).toContain('execution.finalizing');
+        expect(types).toContain('execution.completed');
+
+        const finalizingIdx = types.indexOf('execution.finalizing');
+        const completedIdx = types.indexOf('execution.completed');
+        expect(finalizingIdx).toBeLessThan(completedIdx);
+    });
+
+    it('complete success ordering: created → accepted → finalizing → completed', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'full ordering' });
+
+        const types = received.map((e) => e.event);
+        const createdIdx = types.indexOf('execution.created');
+        const acceptedIdx = types.indexOf('execution.accepted');
+        const finalizingIdx = types.indexOf('execution.finalizing');
+        const completedIdx = types.indexOf('execution.completed');
+        expect(createdIdx).toBeLessThan(acceptedIdx);
+        expect(acceptedIdx).toBeLessThan(finalizingIdx);
+        expect(finalizingIdx).toBeLessThan(completedIdx);
+    });
+
+    it('execution.finalizing carries durationMs in payload', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'finalizing payload test' });
+
+        const finalizing = received.find((e) => e.event === 'execution.finalizing');
+        expect(finalizing?.payload).toHaveProperty('durationMs');
+        expect(typeof finalizing?.payload?.durationMs).toBe('number');
+    });
+
+    it('execution.finalizing uses phase=finalizing', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'finalizing phase label' });
+
+        const finalizing = received.find((e) => e.event === 'execution.finalizing');
+        expect(finalizing?.phase).toBe('finalizing');
+    });
+
+    it('emits execution.failed when AgentService.chat() throws', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('llm_error'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        try {
+            await kernel.execute({ userMessage: 'fail test', origin: 'ipc', executionMode: 'assistant' });
+        } catch {
+            // expected
+        }
+
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed).toBeDefined();
+    });
+
+    it('execution.failed carries the correct executionId', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('bad_request'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        let caughtId: string | undefined;
+        try {
+            await kernel.execute({ userMessage: 'fail id check' });
+        } catch {
+            // expected
+        }
+        // The created event has the executionId
+        const created = received.find((e) => e.event === 'execution.created');
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed?.executionId).toBeDefined();
+        expect(failed?.executionId).toBe(created?.executionId);
+    });
+
+    it('execution.failed payload carries failureReason', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('timeout_exceeded'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        try {
+            await kernel.execute({ userMessage: 'fail payload test' });
+        } catch {
+            // expected
+        }
+
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed?.payload?.failureReason).toBe('timeout_exceeded');
+    });
+
+    it('execution.failed uses phase=failed', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('any_error'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        try {
+            await kernel.execute({ userMessage: 'fail phase label' });
+        } catch {
+            // expected
+        }
+
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed?.phase).toBe('failed');
+    });
+
+    it('no execution.failed event is emitted on a successful execution', async () => {
+        const { kernel } = makeKernel();
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        await kernel.execute({ userMessage: 'success run' });
+
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed).toBeUndefined();
+    });
+
+    it('no execution.finalizing or execution.completed emitted when execution fails', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('crash'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        try {
+            await kernel.execute({ userMessage: 'fail no finalize' });
+        } catch {
+            // expected
+        }
+
+        const types = received.map((e) => e.event);
+        expect(types).not.toContain('execution.finalizing');
+        expect(types).not.toContain('execution.completed');
+    });
+
+    it('execution.failed carries subsystem=kernel', async () => {
+        const { kernel, agentStub } = makeKernel();
+        agentStub.chat.mockRejectedValue(new Error('subsystem_check'));
+        const received: RuntimeEvent[] = [];
+        TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
+
+        try {
+            await kernel.execute({ userMessage: 'subsystem check' });
+        } catch {
+            // expected
+        }
+
+        const failed = received.find((e) => e.event === 'execution.failed');
+        expect(failed?.subsystem).toBe('kernel');
     });
 });

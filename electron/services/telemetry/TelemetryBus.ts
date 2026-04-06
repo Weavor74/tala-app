@@ -10,13 +10,15 @@
  * - Deterministic: synchronous delivery to all subscribers; no async fan-out
  * - Safe: subscriber errors are caught and do not interrupt delivery
  *
- * Event vocabulary (initial lifecycle set):
- *   execution.created   — execution request received and registered
- *   execution.accepted  — request passed pre-flight; ready to begin
- *   execution.completed — execution finalized cleanly
+ * Event vocabulary (current lifecycle set):
+ *   execution.created     — execution request received and registered
+ *   execution.accepted    — request passed pre-flight; ready to begin
+ *   execution.finalizing  — entering the finalization stage before sealing
+ *   execution.completed   — execution finalized cleanly
+ *   execution.failed      — execution terminated due to an unrecoverable error
  *
  * Future phases may add:
- *   execution.failed / execution.cancelled / execution.degraded / execution.blocked
+ *   execution.cancelled / execution.degraded / execution.blocked
  *   planning.* / context.* / inference.* / tool.* / memory.*
  *
  * Relationship to existing types:
@@ -59,7 +61,9 @@ export type RuntimeEventSubsystem =
 export type RuntimeEventType =
     | 'execution.created'
     | 'execution.accepted'
+    | 'execution.finalizing'
     | 'execution.completed'
+    | 'execution.failed'
     | `execution.${string}`;
 
 /**

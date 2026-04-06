@@ -51,7 +51,8 @@ user input
           → TurnContext.artifactDecision      [routing decision recorded]
           → GuardrailService                  [output safety check]
           → UI delivery (IPC stream)
-      → finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.completed via TelemetryBus; future: outcome learning, audit records]
+      → finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.finalizing → execution.completed via TelemetryBus; future: outcome learning, audit records]
+      [on error] catch → failExecution() in store + emit execution.failed via TelemetryBus → re-throw
   → chat-done event (carries executionId + executionOrigin from KernelResult.meta)
 ```
 
@@ -67,7 +68,7 @@ each turn. Future runtime authority boundaries attach here:
 | `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'`; emit `execution.created` and `execution.accepted` via `TelemetryBus` | Budget checks, authority pre-validation |
 | `classifyExecution` | No-op placeholder | Mode detection, tool-need prediction, policy gate |
 | `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
-| `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), emit `execution.completed` via `TelemetryBus`, return `KernelResult` | Outcome learning, audit record |
+| `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), emit `execution.finalizing` then `execution.completed` via `TelemetryBus`, return `KernelResult` | Outcome learning, audit record |
 
 `KernelResult` extends `AgentTurnOutput` with a `meta: KernelExecutionMeta` field containing
 `executionId`, `startedAt`, `executionType`, `executionClass`, `durationMs`, `origin`, and `mode`.
