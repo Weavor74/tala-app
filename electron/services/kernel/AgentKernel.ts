@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/runtime/executionTypes';
 import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 import { ExecutionStateStore } from './ExecutionStateStore';
+import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -217,12 +218,30 @@ export class AgentKernel {
         };
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
 
+        // execution.created — execution request received; executionId assigned
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.created',
+            phase: 'intake',
+            payload: { type: executionType, origin, mode },
+        });
+
         // Register the initial ExecutionState in the store so downstream stages
         // can advance it through the lifecycle using the store's convenience APIs.
         this._stateStore.beginExecution(
             this._buildExecRequest(meta, request.userMessage),
             'AgentKernel'
         );
+
+        // execution.accepted — request registered and ready to begin
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.accepted',
+            phase: 'intake',
+            payload: { type: executionType, origin, mode },
+        });
 
         return meta;
     }
@@ -275,6 +294,15 @@ export class AgentKernel {
         // Advance to 'finalizing' before sealing the terminal record.
         this._stateStore.advancePhase(meta.executionId, 'finalizing', 'finalizing');
 
+        // execution.finalizing — entering the finalization stage
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.finalizing',
+            phase: 'finalizing',
+            payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, durationMs: meta.durationMs },
+        });
+
         // Seal the terminal state as 'completed'. Fall back to a freshly-constructed
         // state only in the unlikely case the store entry was evicted externally.
         const executionState = this._stateStore.completeExecution(meta.executionId)
@@ -282,6 +310,15 @@ export class AgentKernel {
                 createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
                 { status: 'completed' }
             );
+
+        // execution.completed — execution finalized cleanly
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'execution.completed',
+            phase: 'finalizing',
+            payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, durationMs: meta.durationMs },
+        });
 
         return { ...turnOutput, meta, executionState };
     }
@@ -318,10 +355,18 @@ export class AgentKernel {
             return this.finalizeExecution(meta, turnOutput, normalized);
         } catch (err: unknown) {
             // On any pipeline error, mark the stored state as 'failed' before re-throwing.
-            this._stateStore.failExecution(
-                meta.executionId,
-                err instanceof Error ? err.message : String(err)
-            );
+            const failureReason = err instanceof Error ? err.message : String(err);
+            this._stateStore.failExecution(meta.executionId, failureReason);
+
+            // execution.failed — execution terminated due to an unrecoverable error
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'kernel',
+                event: 'execution.failed',
+                phase: 'failed',
+                payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, failureReason },
+            });
+
             throw err;
         }
     }
