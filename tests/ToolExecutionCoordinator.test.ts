@@ -376,5 +376,3 @@ describe('ToolExecutionCoordinator', () => {
         expect(failedEvent?.payload?.error).toBe('network timeout');
     });
 });
-
-

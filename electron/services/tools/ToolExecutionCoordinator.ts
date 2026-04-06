@@ -166,14 +166,6 @@ export class ToolExecutionCoordinator {
             const durationMs = Date.now() - startTime;
             const errorMessage = err instanceof Error ? err.message : String(err);
 
-            // ── 6. Normalized result (failure) ────────────────────────────────
-            const invocationResult: ToolInvocationResult = {
-                success: false,
-                toolName: name,
-                error: errorMessage,
-                durationMs,
-            };
-
             // ── 7. Telemetry: tool.failed ─────────────────────────────────────
             bus.emit({
                 executionId,
@@ -191,9 +183,6 @@ export class ToolExecutionCoordinator {
             });
 
             // Re-throw so callers retain existing error-handling behavior.
-            // The ToolInvocationResult is available for internal use but we
-            // do not swallow errors at this seam.
-            void invocationResult;
             throw err;
         }
     }
