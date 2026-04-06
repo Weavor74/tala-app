@@ -45,15 +45,16 @@ This document describes the Tala system as a collection of interacting component
 
 ### ToolExecutionCoordinator
 - **Path**: `electron/services/tools/ToolExecutionCoordinator.ts`
-- **Purpose**: Thin, non-invasive wrapper providing a single controlled seam for all tool execution. Delegates directly to `ToolService.executeTool()` without changing runtime behavior. Exists so that future phases (retries, timeouts, per-tool telemetry) have a clean insertion point without requiring callers to change.
-- **Inputs**: Tool name, args, optional turn-scoped allowlist (forwarded unchanged to ToolService).
-- **Outputs**: Raw tool result (forwarded unchanged from ToolService).
-- **Policy gate**: PolicyGate enforcement (`policyGate.assertSideEffect({ actionKind: 'tool_invoke', ... })`) remains in `AgentService` before the call to `coordinator.executeTool()`. The coordinator itself does not duplicate this check.
+- **Purpose**: Primary live seam for all tool execution. Delegates to `ToolService.executeTool()` and owns the PolicyGate pre-execution check when `ctx.enforcePolicy === true`. Callers pass a `ToolInvocationContext` to forward execution identity (executionId, executionType, executionOrigin, executionMode) for policy enforcement and future telemetry.
+- **Inputs**: Tool name, args, optional turn-scoped allowlist (forwarded to ToolService), optional `ToolInvocationContext`.
+- **Outputs**: Raw tool result (forwarded from ToolService).
+- **Policy gate**: When `ctx.enforcePolicy === true`, calls `policyGate.assertSideEffect({ actionKind: 'tool_invoke', ...ctx })` before delegating to ToolService. A `PolicyDeniedError` propagates to the caller unchanged. Callers that omit `enforcePolicy` (or pass `false`) retain their own guards.
+- **Execution context**: `ToolInvocationContext` carries `executionId`, `executionType`, `executionOrigin`, `executionMode`. The main LLM call site in AgentService sets `executionId=turnId`, `executionType='chat_turn'`, `executionOrigin='ipc'`.
 - **Instantiated by**: `AgentService` constructor as `this.coordinator = new ToolExecutionCoordinator(this.tools)`.
 - **Live call sites in AgentService**:
-  - Fast-path deterministic bypass (`routedIntent.isDeterministic`)
-  - Main LLM tool-call loop (after PolicyGate side-effect check)
-  - Public `AgentService.executeTool()` API
+  - Fast-path deterministic bypass — passes context, `enforcePolicy` omitted (fast path already guards `activeMode !== 'rp'`)
+  - Main LLM tool-call loop — passes full context with `enforcePolicy: true`; direct `policyGate` call removed from this site
+  - Public `AgentService.executeTool()` API — passes minimal context (`executionType='direct_invocation'`, `executionOrigin='api'`); `enforcePolicy` omitted
 
 ### WorkflowRegistry
 - **Path**: `electron/services/router/WorkflowRegistry.ts`
