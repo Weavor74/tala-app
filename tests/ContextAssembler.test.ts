@@ -294,36 +294,45 @@ describe('ContextAssembler', () => {
     describe('CA22–CA23 — Side-effect purity', () => {
 
         it('CA22 — no memory writes occur during assembly', () => {
-            // Spy on potential storage objects that could be mutated during assembly.
-            // ContextAssembler should not call any write methods.
+            // ContextAssembler is a pure static class with no injected service dependencies.
+            // It has no references to MemoryService, MemoryAuthorityService, or any store.
+            // This test validates the interface design guarantee: assembleContext() accepts only
+            // ContextAssemblerInputs (a plain data object) and calls no external services.
+            //
+            // The spy below confirms that no write-like method on a hypothetical mock service
+            // is ever called — which is structurally guaranteed because ContextAssembler does
+            // not accept any service instance as a parameter.
             const writeSpy = vi.fn();
-            const mockMemoryService = { add: writeSpy, create: writeSpy, write: writeSpy };
 
-            // assembleContext does not accept or use any service references.
-            // We simply verify that no write-like globals are triggered.
             const result = ContextAssembler.assembleContext(substantiveInputs({
                 approvedMemories: [makeMemory('m1', 'Test memory.')],
             }));
 
-            // Confirm assembly completed and no write was triggered
+            // Assembly must complete successfully
             expect(result).toBeDefined();
+            expect(result.metadata.turnId).toBe('turn-001');
+            // writeSpy was never passed to assembleContext — confirming no service injection path
             expect(writeSpy).not.toHaveBeenCalled();
-            void mockMemoryService; // suppress unused warning
         });
 
         it('CA23 — no tool execution occurs during assembly', () => {
-            // ContextAssembler must not call executeTool or any tool service.
+            // ContextAssembler has no ToolService or ToolExecutionCoordinator dependency.
+            // assembleContext() is a pure transformation: inputs → AssembledContext.
+            // No tool call, no IPC call, no external network call is made during assembly.
+            //
+            // This test validates the interface design: the function signature accepts only
+            // ContextAssemblerInputs and returns AssembledContext — no service injection point exists.
             const executeToolSpy = vi.fn();
-            const mockToolService = { executeTool: executeToolSpy, run: executeToolSpy };
 
             const result = ContextAssembler.assembleContext(substantiveInputs({
                 allowedCapabilities: ['memory_retrieval'],
             }));
 
-            // Confirm assembly completed and no tool was executed
+            // Assembly must complete successfully
             expect(result).toBeDefined();
+            expect(result.sections.find(s => s.name === 'tool_availability')?.included).toBe(true);
+            // executeToolSpy was never passed to assembleContext — confirming no tool execution path
             expect(executeToolSpy).not.toHaveBeenCalled();
-            void mockToolService; // suppress unused warning
         });
     });
 

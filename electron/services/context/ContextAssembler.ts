@@ -48,6 +48,14 @@ import type {
     ContextSectionName,
 } from '../../../shared/context/assembledContextTypes';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/**
+ * Maximum number of characters to include from the raw user input in the
+ * request summary section. Inputs longer than this are truncated with "...".
+ */
+const REQUEST_SUMMARY_TRUNCATION_LENGTH = 100;
+
 // ─── Section ordering ─────────────────────────────────────────────────────────
 
 /** Priority order for section rendering. Lower index = higher priority. */
@@ -207,7 +215,7 @@ export class ContextAssembler {
                 name: 'memory',
                 header: '[MEMORY CONTEXT]',
                 content,
-                priority: 'high',
+                priority: 'normal',
                 included: isSubstantive,
                 suppressionReason: isSubstantive
                     ? undefined
@@ -363,12 +371,12 @@ export class ContextAssembler {
 
     private static buildRequestSummarySection(inputs: ContextAssemblerInputs): ContextSection {
         const lines = [
-            `Input: ${inputs.rawInput.slice(0, 100)}${inputs.rawInput.length > 100 ? '...' : ''}`,
+            `Input: ${inputs.rawInput.slice(0, REQUEST_SUMMARY_TRUNCATION_LENGTH)}${inputs.rawInput.length > REQUEST_SUMMARY_TRUNCATION_LENGTH ? '...' : ''}`,
             `Intent: ${inputs.intentClass}`,
             `Greeting: ${inputs.isGreeting}`,
         ];
         if (inputs.normalizedInput !== inputs.rawInput.toLowerCase().trim()) {
-            lines.push(`Normalized: ${inputs.normalizedInput.slice(0, 100)}`);
+            lines.push(`Normalized: ${inputs.normalizedInput.slice(0, REQUEST_SUMMARY_TRUNCATION_LENGTH)}`);
         }
 
         return {
