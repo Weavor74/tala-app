@@ -62,7 +62,7 @@ export function assertDerivedMemoryAnchor(
         const message =
             `[P7A] Derived write without canonical_memory_id from "${source}". ` +
             `This violates the Memory Authority Lock. ` +
-            `Ensure MemoryAuthorityService.createCanonicalMemory() is called first ` +
+            `Ensure MemoryAuthorityService.tryCreateCanonicalMemory() or createMemory() is called first ` +
             `and the returned ID is passed as canonical_memory_id in metadata.`;
 
         if (isStrictMode()) {

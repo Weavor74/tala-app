@@ -59,6 +59,12 @@ export interface MemoryOperationResult<T = unknown> {
     error?: string;
     /** Wall-clock execution time in milliseconds from facade entry to return. */
     durationMs: number;
+    /**
+     * Original error instance, preserved so callers and diagnostics can inspect
+     * the concrete error type (e.g. `instanceof PolicyDeniedError`).
+     * @internal Not part of the public contract — do not read in new callers.
+     */
+    _cause?: Error;
 }
 
 // ---------------------------------------------------------------------------

@@ -503,7 +503,7 @@ export class MemoryService {
             const source = metadata.source ?? 'unknown';
             const message =
                 `[P7A][MemoryService] Derived write without canonical_memory_id (source="${source}"). ` +
-                `Ensure MemoryAuthorityService.createCanonicalMemory() is called first and its ID ` +
+                `Ensure tryCreateCanonicalMemory() or createMemory() is called first and its ID ` +
                 `is passed as canonical_memory_id in metadata.`;
             if (process.env.NODE_ENV === 'test' && process.env.TALA_STRICT_MEMORY === '1') {
                 throw new Error(message);

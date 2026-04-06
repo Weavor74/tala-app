@@ -264,24 +264,24 @@ export class AgentService {
         // P7A: build a canonical write callback so ToolService's mem0_add tool
         // routes through MemoryAuthorityService before writing to the derived store.
         const _getCanonicalIdForTool = async (text: string, sourceKind: string): Promise<string | null> => {
-            try {
-                const repo = getCanonicalMemoryRepository();
-                if (!repo) return null;
-                const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
-                const authorityService = new MemoryAuthorityService(pool);
-                return await authorityService.createCanonicalMemory({
-                    memory_type: 'explicit_fact',
-                    subject_type: 'user',
-                    subject_id: 'user',
-                    content_text: text,
-                    source_kind: sourceKind,
-                    source_ref: sourceKind,
-                    confidence: 0.9,
-                });
-            } catch (e) {
-                console.warn(`[AgentService] P7A canonical write failed for ${sourceKind}:`, e);
+            const repo = getCanonicalMemoryRepository();
+            if (!repo) return null;
+            const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+            const authorityService = new MemoryAuthorityService(pool);
+            const result = await authorityService.tryCreateCanonicalMemory({
+                memory_type: 'explicit_fact',
+                subject_type: 'user',
+                subject_id: 'user',
+                content_text: text,
+                source_kind: sourceKind,
+                source_ref: sourceKind,
+                confidence: 0.9,
+            });
+            if (!result.success) {
+                console.warn(`[AgentService] P7A canonical write failed for ${sourceKind}:`, result.error);
                 return null;
             }
+            return result.data ?? null;
         };
         this.tools.setMemoryService(this.memory, _getCanonicalIdForTool);
         this.tools.setGoalManager(this.goals);
@@ -2751,32 +2751,33 @@ Failure to provide a tool call will result in system termination.`;
                 // any derived system (mem0, RAG, graph). canonical_memory_id is returned
                 // and passed downstream so derived systems can reference it.
                 let canonicalMemoryId: string | null = null;
-                try {
-                    const repo = getCanonicalMemoryRepository();
-                    if (repo) {
-                        const pgRepo = repo as unknown as PostgresMemoryRepository;
-                        const pool = pgRepo.getSharedPool();
-                        const authorityService = new MemoryAuthorityService(pool);
+                const repo = getCanonicalMemoryRepository();
+                if (repo) {
+                    const pgRepo = repo as unknown as PostgresMemoryRepository;
+                    const pool = pgRepo.getSharedPool();
+                    const authorityService = new MemoryAuthorityService(pool);
 
-                        const ts = new Date().toISOString().slice(0, 16);
-                        const contentText = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
+                    const ts = new Date().toISOString().slice(0, 16);
+                    const contentText = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
 
-                        canonicalMemoryId = await authorityService.createCanonicalMemory({
-                            memory_type: 'interaction',
-                            subject_type: 'conversation',
-                            subject_id: turnId,
-                            content_text: contentText,
-                            content_structured: {
-                                user_message: userMessage.slice(0, 500),
-                                agent_response: finalResponse.slice(0, 1000),
-                                mode: activeMode,
-                                turn_id: turnId,
-                            },
-                            confidence: 1.0,
-                            source_kind: 'conversation',
-                            source_ref: `turn:${turnId}`,
-                        });
+                    const writeResult = await authorityService.tryCreateCanonicalMemory({
+                        memory_type: 'interaction',
+                        subject_type: 'conversation',
+                        subject_id: turnId,
+                        content_text: contentText,
+                        content_structured: {
+                            user_message: userMessage.slice(0, 500),
+                            agent_response: finalResponse.slice(0, 1000),
+                            mode: activeMode,
+                            turn_id: turnId,
+                        },
+                        confidence: 1.0,
+                        source_kind: 'conversation',
+                        source_ref: `turn:${turnId}`,
+                    }, { executionId: turnId });
 
+                    if (writeResult.success) {
+                        canonicalMemoryId = writeResult.data ?? null;
                         console.log(`[AgentService] P7A canonical write complete: ${canonicalMemoryId}`);
                         telemetry.operational(
                             'cognitive',
@@ -2788,10 +2789,10 @@ Failure to provide a tool call will result in system termination.`;
                             { payload: { turnId, canonicalMemoryId, mode: activeMode, source: 'postgres' } },
                         );
                     } else {
-                        console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
+                        console.warn('[AgentService] P7A canonical write failed:', writeResult.error);
                     }
-                } catch (e) {
-                    console.warn('[AgentService] P7A canonical write failed:', e);
+                } else {
+                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
                 }
 
                 try {
@@ -3842,25 +3843,26 @@ Failure to provide a tool call will result in system termination.`;
         // writing to the derived mem0 store. If Postgres is unavailable, the write
         // proceeds but is flagged by the MemoryService P7A guard.
         let canonicalMemoryId: string | null = null;
-        try {
-            const repo = getCanonicalMemoryRepository();
-            if (repo) {
-                const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
-                const authorityService = new MemoryAuthorityService(pool);
-                canonicalMemoryId = await authorityService.createCanonicalMemory({
-                    memory_type: 'explicit_fact',
-                    subject_type: 'user',
-                    subject_id: 'user',
-                    content_text: text,
-                    source_kind: 'explicit',
-                    source_ref: 'addMemory',
-                    confidence: 0.9,
-                });
+        const repo = getCanonicalMemoryRepository();
+        if (repo) {
+            const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+            const authorityService = new MemoryAuthorityService(pool);
+            const result = await authorityService.tryCreateCanonicalMemory({
+                memory_type: 'explicit_fact',
+                subject_type: 'user',
+                subject_id: 'user',
+                content_text: text,
+                source_kind: 'explicit',
+                source_ref: 'addMemory',
+                confidence: 0.9,
+            });
+            if (result.success) {
+                canonicalMemoryId = result.data ?? null;
             } else {
-                console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
+                console.warn('[AgentService:addMemory] P7A canonical write failed:', result.error);
             }
-        } catch (e) {
-            console.warn('[AgentService:addMemory] P7A canonical write failed:', e);
+        } else {
+            console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
         }
 
         return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
