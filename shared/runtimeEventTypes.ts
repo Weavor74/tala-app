@@ -57,7 +57,15 @@ export type RuntimeEventType =
     | 'memory.write_requested'
     | 'memory.write_completed'
     | 'memory.write_failed'
-    | `memory.${string}`;
+    | `memory.${string}`
+    | 'validation.requested'
+    | 'validation.completed'
+    | 'validation.failed'
+    | `validation.${string}`
+    | 'policy.rule_matched'
+    | 'policy.rule_denied'
+    | 'policy.default_allow'
+    | `policy.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────
 
