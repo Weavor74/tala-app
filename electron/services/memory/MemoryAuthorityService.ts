@@ -27,12 +27,14 @@ import type {
     RebuildReport,
     RebuildAction,
     RankedMemoryCandidate,
+    MemoryInvocationContext,
+    MemoryOperationResult,
 } from '../../../shared/memory/authorityTypes';
 import {
     rankMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from './derivedWriteGuards';
-import { policyGate } from '../policy/PolicyGate';
+import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 // ---------------------------------------------------------------------------
@@ -113,7 +115,7 @@ export class MemoryAuthorityService {
      *
      * @returns The canonical_memory_id (existing if duplicate, new if created)
      */
-    async createCanonicalMemory(input: ProposedMemoryInput): Promise<string> {
+    async createCanonicalMemory(input: ProposedMemoryInput, callerExecutionId?: string): Promise<string> {
         const hash = computeCanonicalHash(input);
 
         // --- POLICY GATE: canonical memory write pre-check ---
@@ -125,7 +127,7 @@ export class MemoryAuthorityService {
             mutationIntent: 'canonical_memory_write',
         });
 
-        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
             executionId: writeOperationId,
@@ -214,6 +216,7 @@ export class MemoryAuthorityService {
         memoryId: string,
         updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
         executionMode?: string,
+        callerExecutionId?: string,
     ): Promise<CanonicalMemory> {
         // --- POLICY GATE: canonical memory update pre-check ---
         // Fires before any fetch or database mutation.
@@ -225,7 +228,7 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
             executionId: writeOperationId,
@@ -313,7 +316,7 @@ export class MemoryAuthorityService {
      * Sets tombstoned_at and authority_status = 'tombstoned'. Does NOT DELETE —
      * the record must remain for referential integrity and rebuild purposes.
      */
-    async tombstoneMemory(memoryId: string, executionMode?: string): Promise<void> {
+    async tombstoneMemory(memoryId: string, executionMode?: string, callerExecutionId?: string): Promise<void> {
         // --- POLICY GATE: tombstone pre-check ---
         // Fires before any fetch or database mutation.
         // PolicyDeniedError propagates to the caller; no writes occur on block.
@@ -324,7 +327,7 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const writeOperationId = `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         const bus = TelemetryBus.getInstance();
         bus.emit({
             executionId: writeOperationId,
@@ -781,12 +784,29 @@ export class MemoryAuthorityService {
 
     /**
      * Create a new memory record.
-     * Delegates to createCanonicalMemory().
      *
-     * @returns The canonical_memory_id (existing if duplicate, new if created)
+     * Wraps createCanonicalMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
+     *
+     * @param input  Proposed memory input to canonicalise.
+     * @param ctx    Optional invocation context for telemetry alignment and
+     *               executionMode forwarding.
+     * @returns      `MemoryOperationResult<string>` where `data` is the
+     *               canonical_memory_id (existing on duplicate, new on create).
      */
-    async createMemory(input: ProposedMemoryInput): Promise<string> {
-        return this.createCanonicalMemory(input);
+    async createMemory(
+        input: ProposedMemoryInput,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<string>> {
+        const startTime = Date.now();
+        try {
+            const memoryId = await this.createCanonicalMemory(input, ctx?.executionId);
+            return { success: true, data: memoryId, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
     }
 
     /**
@@ -799,25 +819,65 @@ export class MemoryAuthorityService {
 
     /**
      * Update an existing canonical memory record.
-     * Delegates to updateCanonicalMemory().
+     *
+     * Wraps updateCanonicalMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
+     *
+     * @param memoryId  UUID of the canonical record to update.
+     * @param updates   Fields to update on the record.
+     * @param ctx       Optional invocation context for telemetry alignment,
+     *                  executionMode, and executionId forwarding.
+     * @returns         `MemoryOperationResult<CanonicalMemory>` where `data`
+     *                  is the updated canonical record on success.
      */
     async updateMemory(
         memoryId: string,
         updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
-        executionMode?: string,
-    ): Promise<CanonicalMemory> {
-        return this.updateCanonicalMemory(memoryId, updates, executionMode);
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<CanonicalMemory>> {
+        const startTime = Date.now();
+        try {
+            const updated = await this.updateCanonicalMemory(
+                memoryId,
+                updates,
+                ctx?.executionMode,
+                ctx?.executionId,
+            );
+            return { success: true, data: updated, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
     }
 
     /**
      * Delete (tombstone) a canonical memory record.
-     * Delegates to tombstoneMemory().
+     *
+     * Wraps tombstoneMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
      *
      * Records are never physically deleted — tombstoning preserves referential
      * integrity for lineage and rebuild operations.
+     *
+     * @param memoryId  UUID of the canonical record to tombstone.
+     * @param ctx       Optional invocation context for telemetry alignment,
+     *                  executionMode, and executionId forwarding.
+     * @returns         `MemoryOperationResult<void>` — `data` is undefined.
      */
-    async deleteMemory(memoryId: string, executionMode?: string): Promise<void> {
-        return this.tombstoneMemory(memoryId, executionMode);
+    async deleteMemory(
+        memoryId: string,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<void>> {
+        const startTime = Date.now();
+        try {
+            await this.tombstoneMemory(memoryId, ctx?.executionMode, ctx?.executionId);
+            return { success: true, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
     }
 
     /**
