@@ -19,6 +19,7 @@
  * WRG10  rp mode causes POLICY_WORKFLOW_RP_BLOCK to fire (real policyGate, no mock)
  * WRG11  assistant mode does not block execution
  * WRG12  backward compat — executeWorkflow() with no executionMode arg does not throw
+ * WRG13  assertSideEffect receives executionOrigin='mcp' (telemetry compatibility)
  *
  * No DB, no IPC, no Electron.
  */
@@ -241,5 +242,16 @@ describe('WRG1–WRG12: WorkflowRegistry.executeWorkflow() — PolicyGate enforc
         await expect(
             registry.executeWorkflow('test_single'),
         ).resolves.toBeDefined();
+    });
+
+    it('WRG13: assertSideEffect receives executionOrigin=mcp (telemetry compatibility)', async () => {
+        const { registry } = buildRegistry();
+        registerSingleStep(registry);
+        const spy = vi.spyOn(policyGate, 'assertSideEffect');
+
+        await registry.executeWorkflow('test_single');
+
+        const ctx = spy.mock.calls[0][0];
+        expect(ctx.executionOrigin).toBe('mcp');
     });
 });

@@ -109,9 +109,16 @@ export class WorkflowRegistry {
                 // Fires before each step's tool execution.
                 // PolicyDeniedError is re-thrown so it propagates to the caller
                 // rather than being swallowed by the per-step error handler.
+                //
+                // executionOrigin is set to 'mcp' to identify this call site for
+                // telemetry correlation.  This aligns with the pattern used by
+                // AutonomousRunOrchestrator ('autonomy_engine') so the origin is
+                // available to any future telemetry or audit rule that needs to
+                // distinguish MCP-triggered workflow actions from IPC-triggered ones.
                 policyGate.assertSideEffect({
                     actionKind: 'workflow_action',
                     executionMode,
+                    executionOrigin: 'mcp',
                     targetSubsystem: 'workflow',
                     mutationIntent: `mcp_node_execute:${step.tool}`,
                 });
