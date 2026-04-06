@@ -33,6 +33,7 @@ This matrix provides a comprehensive mapping of all data and command flows betwe
 | **AutonomousRunOrchestrator** | **EscalationAuditTracker (P5.1F)** | Internal API | `record(goalId, eventKind, detail, runId?, data?)` — immutable audit append. `getRecentEscalationCount(windowMs)` — spam guard query. | Low |
 | **AutonomousRunOrchestrator** | **DecompositionOutcomeTracker (P5.1F)** | Internal API | `startPlan/recordStep/finalizePlan` lifecycle. `isCooldownActive(subsystemId)` — cooldown guard. | Low |
 | **Renderer UI** | **AutonomousRunOrchestrator** | Electron IPC | `autonomy:getDashboardState` now returns `AutonomyDashboardState` with optional `escalationState: EscalationDashboardState` when escalation services are injected. | Medium |
+| **Renderer UI** | **TelemetryBus** | Electron IPC (read-only) | `telemetry:getRecentEvents` — returns a snapshot of the TelemetryBus ring buffer (≤ 200 events). Exposed as `window.tala.telemetry.getRecentEvents()`. Read-only; no mutation, clearing, or streaming. Covers both chat (AgentKernel) and autonomy (AutonomousRunOrchestrator) lifecycle events. Schema: `RuntimeEvent[]` (id, timestamp, executionId, correlationId?, subsystem, event, phase?, payload?). | Low |
 
 ## 3. Boundary Definitions
 

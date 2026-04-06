@@ -815,7 +815,7 @@ contextBridge.exposeInMainWorld('tala', {
          * TelemetryBus ring buffer (up to 200 events).
          *
          * Both chat (AgentKernel) and autonomy (AutonomousRunOrchestrator)
-         * lifecycle events are included.  The result is a serialised copy —
+         * lifecycle events are included.  The result is a serialized copy —
          * callers cannot mutate internal bus state.
          *
          * Schema: RuntimeEvent[]

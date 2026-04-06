@@ -2318,7 +2318,7 @@ export class IpcRouter {
     /**
      * Returns a snapshot of the most recent runtime events from the TelemetryBus
      * ring buffer (up to 200 events).  The array is a shallow copy — callers
-     * receive plain serialisable objects and cannot mutate internal state.
+     * receive plain serializable objects and cannot mutate internal state.
      *
      * Both chat (AgentKernel) and autonomy (AutonomousRunOrchestrator) events
      * flow through the same bus and are therefore included in the result.
