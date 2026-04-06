@@ -114,6 +114,12 @@ export class MemoryAuthorityService {
      *   7. Emit projection events (log + insert into memory_projections)
      *
      * @returns The canonical_memory_id (existing if duplicate, new if created)
+     *
+     * @deprecated Prefer {@link tryCreateCanonicalMemory} (or the CRUD facade {@link createMemory}).
+     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
+     * handling deterministic and keeping callers decoupled from raw exception semantics.
+     * This method remains available for internal use by the wrapper layer only.
+     * Do NOT bind new external callers to this method.
      */
     async createCanonicalMemory(input: ProposedMemoryInput, callerExecutionId?: string): Promise<string> {
         const hash = computeCanonicalHash(input);
@@ -211,6 +217,12 @@ export class MemoryAuthorityService {
      * Update an existing canonical memory record.
      * Increments the version, recomputes the hash, and supersedes the previous
      * version in the lineage table.
+     *
+     * @deprecated Prefer {@link tryUpdateCanonicalMemory} (or the CRUD facade {@link updateMemory}).
+     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
+     * handling deterministic and keeping callers decoupled from raw exception semantics.
+     * This method remains available for internal use by the wrapper layer only.
+     * Do NOT bind new external callers to this method.
      */
     async updateCanonicalMemory(
         memoryId: string,
@@ -315,6 +327,12 @@ export class MemoryAuthorityService {
      * Tombstone a canonical memory record.
      * Sets tombstoned_at and authority_status = 'tombstoned'. Does NOT DELETE —
      * the record must remain for referential integrity and rebuild purposes.
+     *
+     * @deprecated Prefer {@link tryTombstoneMemory} (or the CRUD facade {@link deleteMemory}).
+     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
+     * handling deterministic and keeping callers decoupled from raw exception semantics.
+     * This method remains available for internal use by the wrapper layer only.
+     * Do NOT bind new external callers to this method.
      */
     async tombstoneMemory(memoryId: string, executionMode?: string, callerExecutionId?: string): Promise<void> {
         // --- POLICY GATE: tombstone pre-check ---
@@ -881,13 +899,38 @@ export class MemoryAuthorityService {
     }
 
     // -----------------------------------------------------------------------
-    // NORMALIZED CANONICAL WRAPPERS
-    // Migration-safe, non-throwing variants of the three canonical mutation
-    // paths.  These return MemoryOperationResult instead of throwing, enabling
-    // callers to adopt the facade contract without migrating all at once.
+    // NORMALIZED CANONICAL WRAPPERS  ◄─ PREFERRED MUTATION API
+    //
+    // These are the canonical mutation entry points for all new and migrated
+    // callers.  They return MemoryOperationResult<T> instead of throwing,
+    // making failure handling deterministic and decoupling callers from raw
+    // exception semantics.
+    //
+    // Preferred methods (use these):
+    //   tryCreateCanonicalMemory(input, ctx?)  → MemoryOperationResult<string>
+    //   tryUpdateCanonicalMemory(id, updates, ctx?)  → MemoryOperationResult<CanonicalMemory>
+    //   tryTombstoneMemory(id, ctx?)  → MemoryOperationResult<void>
+    //
+    // Alternatively, the CRUD facade (createMemory / updateMemory / deleteMemory)
+    // provides the same result-based contract and may be more ergonomic for
+    // callers that do not need the canonical* nomenclature.
     //
     // The original throwing methods (createCanonicalMemory, updateCanonicalMemory,
-    // tombstoneMemory) are left unchanged for backward compatibility.
+    // tombstoneMemory) are @deprecated but kept public because the wrapper layer
+    // delegates to them internally.  They must NOT be called from new external
+    // code — all existing external callers have been migrated (Phase 2).
+    //
+    // Remaining internal callers of the legacy throwing methods (within this
+    // file only):
+    //   createMemory()           → calls createCanonicalMemory()
+    //   updateMemory()           → calls updateCanonicalMemory()
+    //   deleteMemory()           → calls tombstoneMemory()
+    //   tryCreateCanonicalMemory() → calls createCanonicalMemory()
+    //   tryUpdateCanonicalMemory() → calls updateCanonicalMemory()
+    //   tryTombstoneMemory()       → calls tombstoneMemory()
+    //
+    // Phase 4 (future): consolidate these into a single non-throwing core
+    // and remove the wrapper indirection layer.
     // -----------------------------------------------------------------------
 
     /**

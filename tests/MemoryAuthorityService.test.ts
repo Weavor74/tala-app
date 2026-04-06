@@ -1744,5 +1744,129 @@ describe('MemoryAuthorityService', () => {
             await expect(svc.tombstoneMemory('missing-id')).rejects.toThrow('not found');
         });
     });
-});
 
+    // -----------------------------------------------------------------------
+    // 21. Preferred-path and deprecation contract (DEP1–DEP6)
+    //
+    // Confirms that the try* normalized wrappers are the preferred canonical
+    // mutation entry points and that the deprecated throwing methods still
+    // satisfy their backward-compat guarantees.  These tests serve as both
+    // regression guards and architectural documentation.
+    // -----------------------------------------------------------------------
+
+    describe('21. Preferred-path and deprecation contract', () => {
+        let capturedEvents: RuntimeEvent[];
+        let unsub: () => void;
+
+        beforeEach(() => {
+            TelemetryBus._resetForTesting();
+            capturedEvents = [];
+            unsub = TelemetryBus.getInstance().subscribe((evt) => capturedEvents.push(evt));
+        });
+
+        afterEach(() => {
+            unsub();
+            TelemetryBus._resetForTesting();
+        });
+
+        it('DEP1: tryCreateCanonicalMemory is the preferred entry point — returns success result without throwing', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] },
+                { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.tryCreateCanonicalMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'hello',
+            });
+            expect(result.success).toBe(true);
+            expect(result.data).toBe(MEMORY_ID);
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('DEP2: tryUpdateCanonicalMemory is the preferred entry point — returns success result without throwing', async () => {
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] },
+                { rows: [makeMemoryRow({ version: 2, content_text: 'updated content' })] },
+                { rows: [] },
+                { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'updated content' });
+            expect(result.success).toBe(true);
+            expect(result.data).toBeDefined();
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('DEP3: tryTombstoneMemory is the preferred entry point — returns success result without throwing', async () => {
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] },
+                { rows: [] },
+                { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.tryTombstoneMemory(MEMORY_ID);
+            expect(result.success).toBe(true);
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('DEP4: preferred try* wrappers return success:false on DB failure — no throw propagates', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    return Promise.reject(new Error('db unavailable'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const result = await svc.tryCreateCanonicalMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'test',
+            });
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('db unavailable');
+            expect(typeof result.durationMs).toBe('number');
+            warnSpy.mockRestore();
+        });
+
+        it('DEP5: deprecated createCanonicalMemory still satisfies its contract for internal wrapper use', async () => {
+            // The throwing methods must remain functional because tryCreateCanonicalMemory
+            // delegates to them internally.  This test protects that internal delegation.
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] },
+                { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            // Called internally by tryCreateCanonicalMemory — must not break
+            const id = await svc.createCanonicalMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'internal call',
+            });
+            expect(id).toBe(MEMORY_ID);
+        });
+
+        it('DEP6: preferred try* wrappers emit the same telemetry events as the deprecated methods', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] },
+                { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.tryCreateCanonicalMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'telemetry parity check',
+            });
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            const eventTypes = memEvents.map(e => e.event);
+            expect(eventTypes).toContain('memory.write_requested');
+            expect(eventTypes).toContain('memory.write_completed');
+        });
+    });
+});
