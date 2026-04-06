@@ -105,7 +105,7 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 |------|------|--------------------|
 | Chat turn entry | `AgentKernel.ts` | `RuntimeExecutionType ('chat_turn')`, `RuntimeExecutionOrigin`, `RuntimeExecutionMode`, `ExecutionState` |
 | IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` → passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
-| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'` |
+| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` emits `execution.created/accepted/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`) |
 | Reflection planning run | `PlanRun` (reflectionPlanTypes.ts) | `runtimeExecutionType: 'reflection_task'` |
 
 All shared types are in `shared/runtime/executionTypes.ts`. Factory helpers are in `shared/runtime/executionHelpers.ts`. Both are re-exported from `shared/runtime/index.ts`.
@@ -554,6 +554,10 @@ AutonomousRunOrchestrator.runCycleOnce()
       → GovernanceAppService.evaluate()    (Phase 3.5)
       → ExecutionOrchestrator.start()      (Phase 3)
       finally:
+        → TelemetryBus.emit(execution.completed) or TelemetryBus.emit(execution.failed)
+                                                    (executionId=runId, subsystem='kernel',
+                                                     type='autonomy_task', origin='autonomy_engine',
+                                                     mode='system')
         → OutcomeLearningRegistry.record()           (Phase 4)
         → RecoveryPackOutcomeTracker.record()        (Phase 4.3 — when pack used)
         → SubsystemProfileRegistry.update()          (Phase 5 feedback)

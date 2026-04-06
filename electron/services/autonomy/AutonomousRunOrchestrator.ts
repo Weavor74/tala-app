@@ -53,6 +53,7 @@ import { AutonomyAuditService } from './AutonomyAuditService';
 import { AutonomyTelemetryStore } from './AutonomyTelemetryStore';
 import { AutonomyDashboardBridge } from './AutonomyDashboardBridge';
 import { telemetry } from '../TelemetryService';
+import { TelemetryBus } from '../telemetry/TelemetryBus';
 // ── Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) ──
 import type { RecoveryPackRegistry } from './recovery/RecoveryPackRegistry';
 import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
@@ -1596,6 +1597,23 @@ export class AutonomousRunOrchestrator {
 
         this.activeRuns.set(run.runId, run);
         this.budgetManager.recordRunStart(run.runId, goal.subsystemId);
+
+        // ── TelemetryBus: execution lifecycle (mirrors AgentKernel schema) ──────
+        TelemetryBus.getInstance().emit({
+            executionId: run.runId,
+            subsystem: 'kernel',
+            event: 'execution.created',
+            phase: 'intake',
+            payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+        });
+        TelemetryBus.getInstance().emit({
+            executionId: run.runId,
+            subsystem: 'kernel',
+            event: 'execution.accepted',
+            phase: 'intake',
+            payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+        });
+
         this._addMilestone(run, 'run_started');
         this.auditService.saveRun(run);
         this.auditService.appendAuditRecord('run_started',
@@ -1773,6 +1791,30 @@ export class AutonomousRunOrchestrator {
             const finalGoal = this.activeGoals.get(goal.goalId)!;
             const finalRun = this.activeRuns.get(run.runId)!;
             const outcome = this._outcomeFromRunStatus(finalRun.status);
+
+            // ── TelemetryBus: terminal lifecycle event (mirrors AgentKernel schema) ──
+            if (outcome === 'succeeded') {
+                TelemetryBus.getInstance().emit({
+                    executionId: run.runId,
+                    subsystem: 'kernel',
+                    event: 'execution.completed',
+                    phase: 'finalizing',
+                    payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+                });
+            } else {
+                TelemetryBus.getInstance().emit({
+                    executionId: run.runId,
+                    subsystem: 'kernel',
+                    event: 'execution.failed',
+                    phase: 'failed',
+                    payload: {
+                        type: 'autonomy_task',
+                        origin: 'autonomy_engine',
+                        mode: 'system',
+                        failureReason: finalRun.failureReason ?? finalRun.abortReason ?? outcome,
+                    },
+                });
+            }
 
             const learningRecord = this.learningRegistry.record(finalGoal, finalRun, outcome);
             this._updateGoal(goal.goalId, { learningRecordId: learningRecord.recordId });
