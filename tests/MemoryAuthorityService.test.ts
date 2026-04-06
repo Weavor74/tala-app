@@ -946,7 +946,7 @@ describe('MemoryAuthorityService', () => {
         };
 
         describe('createMemory', () => {
-            it('delegates to _createCanonicalMemoryCore and returns success with the memory_id', async () => {
+            it('calls canonical creation logic and returns success with the memory_id', async () => {
                 const pool = poolSequenced([
                     { rows: [] },                          // detectDuplicates: exact hash check
                     { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
@@ -990,7 +990,7 @@ describe('MemoryAuthorityService', () => {
         });
 
         describe('updateMemory', () => {
-            it('delegates to _updateCanonicalMemoryCore and returns success with the updated record', async () => {
+            it('returns success with the updated record on successful update', async () => {
                 const updatedRow = makeMemoryRow({
                     content_text: 'updated text',
                     version: 2,
@@ -1029,7 +1029,7 @@ describe('MemoryAuthorityService', () => {
         });
 
         describe('deleteMemory', () => {
-            it('delegates to _tombstoneMemoryCore and returns success', async () => {
+            it('returns success on successful deletion', async () => {
                 const pool = poolSequenced([
                     { rows: [makeMemoryRow()] }, // _fetchRecord
                     { rows: [] },                 // UPDATE tombstoned_at
