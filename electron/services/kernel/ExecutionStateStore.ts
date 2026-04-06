@@ -27,7 +27,11 @@ import type { ExecutionState, RuntimeExecutionStatus } from '../../../shared/run
 /**
  * Maximum number of ExecutionState entries held in memory at one time.
  * When this limit is reached the oldest entry (by insertion order) is evicted.
- * Sized to accommodate long autonomy sessions without exhausting memory.
+ *
+ * Sizing rationale: a typical Tala session generates roughly 1 entry per
+ * chat turn plus autonomy runs. 2000 entries at ~1–2 KB each ≈ 2–4 MB,
+ * well within acceptable memory for a long-running desktop session. Adjust
+ * upward if session volumes grow significantly beyond ~1000 turns/day.
  */
 const MAX_STORE_SIZE = 2000;
 

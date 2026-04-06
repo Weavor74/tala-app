@@ -161,6 +161,25 @@ export class AgentKernel {
         return this._stateStore;
     }
 
+    // ─── Internal helpers ────────────────────────────────────────────────────
+
+    /**
+     * Constructs the canonical ExecutionRequest for a given meta + request pair.
+     * Used by intake() when registering the initial state and by finalizeExecution()
+     * as a defensive fallback so both paths stay consistent.
+     */
+    private _buildExecRequest(meta: KernelExecutionMeta, userMessage: string) {
+        return createExecutionRequest({
+            executionId: meta.executionId,
+            type: meta.executionType,
+            origin: meta.origin,
+            mode: meta.mode,
+            actor: 'user',
+            input: { message: userMessage },
+            metadata: {},
+        });
+    }
+
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
     // Validates and normalizes the inbound request before anything else runs.
     // Future: coerce malformed payloads, strip disallowed fields, source ACL.
@@ -199,16 +218,10 @@ export class AgentKernel {
 
         // Register the initial ExecutionState in the store so downstream stages
         // can advance it through the lifecycle rather than constructing it from scratch.
-        const execRequest = createExecutionRequest({
-            executionId: meta.executionId,
-            type: executionType,
-            origin,
-            mode,
-            actor: 'user',
-            input: { message: request.userMessage },
-            metadata: {},
-        });
-        this._stateStore.upsert(createInitialExecutionState(execRequest, 'AgentKernel'));
+        this._stateStore.upsert(createInitialExecutionState(
+            this._buildExecRequest(meta, request.userMessage),
+            'AgentKernel'
+        ));
 
         return meta;
     }
@@ -262,20 +275,11 @@ export class AgentKernel {
 
         // Finalize the execution state from the store so the terminal record
         // reflects the real lifecycle path rather than a freshly-constructed snapshot.
+        // The fallback to a freshly-built initial state guards against the unlikely
+        // case where the store lookup fails (e.g. store cleared externally).
         const current = this._stateStore.get(meta.executionId);
         const executionState = finalizeExecutionState(
-            current ?? createInitialExecutionState(
-                createExecutionRequest({
-                    executionId: meta.executionId,
-                    type: meta.executionType,
-                    origin: meta.origin,
-                    mode: meta.mode,
-                    actor: 'user',
-                    input: { message: request.userMessage },
-                    metadata: {},
-                }),
-                'AgentKernel'
-            ),
+            current ?? createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
             { status: 'completed' }
         );
         this._stateStore.upsert(executionState);
