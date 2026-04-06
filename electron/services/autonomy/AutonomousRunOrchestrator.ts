@@ -54,6 +54,8 @@ import { AutonomyTelemetryStore } from './AutonomyTelemetryStore';
 import { AutonomyDashboardBridge } from './AutonomyDashboardBridge';
 import { telemetry } from '../TelemetryService';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
+import { ExecutionStateStore } from '../kernel/ExecutionStateStore';
+import { createExecutionRequest } from '../../../shared/runtime/executionHelpers';
 // ── Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) ──
 import type { RecoveryPackRegistry } from './recovery/RecoveryPackRegistry';
 import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
@@ -163,6 +165,15 @@ export class AutonomousRunOrchestrator {
     // ── Phase 6.1: Strategy Routing services (optional) ───────────────────────
     private _strategyRoutingEngine: import('./crossSystem/StrategyRoutingEngine').StrategyRoutingEngine | undefined;
     private _strategyRoutingOutcomeTracker: import('./crossSystem/StrategyRoutingOutcomeTracker').StrategyRoutingOutcomeTracker | undefined;
+
+    // ── Shared runtime execution state tracking ────────────────────────────────
+    /** In-memory ExecutionState store for cross-seam lifecycle tracking. Mirrors AgentKernel.stateStore. */
+    private readonly _stateStore: ExecutionStateStore = new ExecutionStateStore();
+
+    /** Exposes the ExecutionStateStore so observers (e.g. tests, dashboards) can query autonomy run states. */
+    get stateStore(): ExecutionStateStore {
+        return this._stateStore;
+    }
 
     constructor(
         private readonly dataDir: string,
@@ -1578,8 +1589,9 @@ export class AutonomousRunOrchestrator {
         decompositionScopeHint?: string,
     ): Promise<void> {
         const cycleId = uuidv4();
+        const runId = uuidv4();
         const run: AutonomousRun = {
-            runId: uuidv4(),
+            runId,
             goalId: goal.goalId,
             cycleId,
             startedAt: new Date().toISOString(),
@@ -1591,12 +1603,26 @@ export class AutonomousRunOrchestrator {
             decompositionPlanId: decompositionPlan?.planId,
             decompositionStepIndex: decompositionPlan ? 0 : undefined,
             // ── Runtime Execution Vocabulary ──
+            executionId: runId,
             runtimeExecutionType: 'autonomy_task',
             runtimeExecutionOrigin: 'autonomy_engine',
         };
 
         this.activeRuns.set(run.runId, run);
         this.budgetManager.recordRunStart(run.runId, goal.subsystemId);
+
+        // ── Register with ExecutionStateStore for cross-seam lifecycle tracking ──
+        this._stateStore.beginExecution(
+            createExecutionRequest({
+                executionId: run.runId,
+                type: 'autonomy_task',
+                origin: 'autonomy_engine',
+                mode: 'system',
+                actor: 'autonomy_engine',
+                input: { goalId: goal.goalId, subsystemId: goal.subsystemId },
+            }),
+            'AutonomousRunOrchestrator',
+        );
 
         // ── TelemetryBus: execution lifecycle (mirrors AgentKernel schema) ──────
         const _intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;
@@ -1802,7 +1828,9 @@ export class AutonomousRunOrchestrator {
                     phase: 'finalizing',
                     payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
                 });
+                this._stateStore.completeExecution(run.runId);
             } else {
+                const _failureReason = finalRun.failureReason ?? finalRun.abortReason ?? outcome;
                 TelemetryBus.getInstance().emit({
                     executionId: run.runId,
                     subsystem: 'kernel',
@@ -1812,9 +1840,10 @@ export class AutonomousRunOrchestrator {
                         type: 'autonomy_task',
                         origin: 'autonomy_engine',
                         mode: 'system',
-                        failureReason: finalRun.failureReason ?? finalRun.abortReason ?? outcome,
+                        failureReason: _failureReason,
                     },
                 });
+                this._stateStore.failExecution(run.runId, _failureReason);
             }
 
             const learningRecord = this.learningRegistry.record(finalGoal, finalRun, outcome);

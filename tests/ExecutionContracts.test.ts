@@ -16,6 +16,7 @@
  *   EC10 AgentKernel ExecutionStateStore lifecycle tracking
  *   EC11 AgentKernel TelemetryBus lifecycle emission
  *   EC12 AgentKernel TelemetryBus expanded lifecycle (finalizing + failed)
+ *   EC13 AutonomousRun executionId alignment and ExecutionStateStore registration
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -36,6 +37,7 @@ import {
 import type { AutonomousRun } from '../shared/autonomyTypes';
 import type { PlanRun } from '../shared/reflectionPlanTypes';
 import { AgentKernel } from '../electron/services/kernel/AgentKernel';
+import { ExecutionStateStore } from '../electron/services/kernel/ExecutionStateStore';
 import { TelemetryBus } from '../electron/services/telemetry/TelemetryBus';
 import type { RuntimeEvent } from '../electron/services/telemetry/TelemetryBus';
 
@@ -863,5 +865,114 @@ describe('EC12: AgentKernel TelemetryBus expanded lifecycle (finalizing + failed
 
         const failed = received.find((e) => e.event === 'execution.failed');
         expect(failed?.subsystem).toBe('kernel');
+    });
+});
+
+// ─── EC13: AutonomousRun executionId alignment ────────────────────────────────
+
+describe('EC13: AutonomousRun executionId alignment', () => {
+    it('AutonomousRun accepts executionId field that maps to runId', () => {
+        const id = 'run-exec-001';
+        const run: AutonomousRun = {
+            runId: id,
+            goalId: 'goal-001',
+            cycleId: 'cycle-001',
+            startedAt: new Date().toISOString(),
+            status: 'running',
+            subsystemId: 'inference',
+            milestones: [],
+            executionId: id,
+            runtimeExecutionType: 'autonomy_task',
+            runtimeExecutionOrigin: 'autonomy_engine',
+        };
+        expect(run.executionId).toBe(run.runId);
+    });
+
+    it('executionId is optional (backward-compatible)', () => {
+        const run: AutonomousRun = {
+            runId: 'run-002',
+            goalId: 'goal-002',
+            cycleId: 'cycle-002',
+            startedAt: new Date().toISOString(),
+            status: 'running',
+            subsystemId: 'inference',
+            milestones: [],
+        };
+        expect(run.executionId).toBeUndefined();
+    });
+
+    it('executionId and runId resolve to the same value when set', () => {
+        const sharedId = 'shared-exec-id';
+        const run: AutonomousRun = {
+            runId: sharedId,
+            goalId: 'goal-003',
+            cycleId: 'cycle-003',
+            startedAt: new Date().toISOString(),
+            status: 'succeeded',
+            subsystemId: 'inference',
+            milestones: [],
+            executionId: sharedId,
+        };
+        expect(run.executionId).toBe(run.runId);
+        expect(run.executionId).toBe(sharedId);
+    });
+
+    it('ExecutionStateStore tracks an autonomy_task execution by runId', () => {
+        const store = new ExecutionStateStore();
+        const runId = 'autonomy-run-001';
+
+        const req = createExecutionRequest({
+            executionId: runId,
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: { goalId: 'goal-x', subsystemId: 'inference' },
+        });
+
+        const state = store.beginExecution(req, 'AutonomousRunOrchestrator');
+        expect(state.executionId).toBe(runId);
+        expect(state.type).toBe('autonomy_task');
+        expect(state.origin).toBe('autonomy_engine');
+        expect(state.mode).toBe('system');
+        expect(state.status).toBe('accepted');
+    });
+
+    it('ExecutionStateStore completes an autonomy_task execution', () => {
+        const store = new ExecutionStateStore();
+        const runId = 'autonomy-run-002';
+
+        const req = createExecutionRequest({
+            executionId: runId,
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: {},
+        });
+        store.beginExecution(req, 'AutonomousRunOrchestrator');
+
+        const completed = store.completeExecution(runId);
+        expect(completed?.status).toBe('completed');
+        expect(completed?.completedAt).toBeDefined();
+    });
+
+    it('ExecutionStateStore fails an autonomy_task execution with a reason', () => {
+        const store = new ExecutionStateStore();
+        const runId = 'autonomy-run-003';
+
+        const req = createExecutionRequest({
+            executionId: runId,
+            type: 'autonomy_task',
+            origin: 'autonomy_engine',
+            mode: 'system',
+            actor: 'autonomy_engine',
+            input: {},
+        });
+        store.beginExecution(req, 'AutonomousRunOrchestrator');
+
+        const failed = store.failExecution(runId, 'planning_failed');
+        expect(failed?.status).toBe('failed');
+        expect(failed?.failureReason).toBe('planning_failed');
     });
 });

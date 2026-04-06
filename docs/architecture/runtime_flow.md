@@ -105,7 +105,7 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 |------|------|--------------------|
 | Chat turn entry | `AgentKernel.ts` | `RuntimeExecutionType ('chat_turn')`, `RuntimeExecutionOrigin`, `RuntimeExecutionMode`, `ExecutionState` |
 | IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` → passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
-| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` emits `execution.created/accepted/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`) |
+| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `executionId` (maps to `runId`), `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` registers with `ExecutionStateStore` and emits `execution.created/accepted/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`) |
 | Reflection planning run | `PlanRun` (reflectionPlanTypes.ts) | `runtimeExecutionType: 'reflection_task'` |
 
 All shared types are in `shared/runtime/executionTypes.ts`. Factory helpers are in `shared/runtime/executionHelpers.ts`. Both are re-exported from `shared/runtime/index.ts`.
@@ -550,6 +550,9 @@ AutonomousRunOrchestrator.runCycleOnce()
           → decompose_local → _executeGoalPipeline with scopeHint from first step
           → defer           → goal reset to scored (next cycle)
   → _executeGoalPipeline()
+      → set run.executionId = run.runId (canonical cross-seam identifier)
+      → ExecutionStateStore.beginExecution() (registers run as 'accepted' autonomy_task)
+      → TelemetryBus.emit(execution.created, execution.accepted)
       → SafeChangePlanner.plan()           (Phase 2)
       → GovernanceAppService.evaluate()    (Phase 3.5)
       → ExecutionOrchestrator.start()      (Phase 3)
@@ -558,6 +561,7 @@ AutonomousRunOrchestrator.runCycleOnce()
                                                     (executionId=runId, subsystem='kernel',
                                                      type='autonomy_task', origin='autonomy_engine',
                                                      mode='system')
+        → ExecutionStateStore.completeExecution() or failExecution()
         → OutcomeLearningRegistry.record()           (Phase 4)
         → RecoveryPackOutcomeTracker.record()        (Phase 4.3 — when pack used)
         → SubsystemProfileRegistry.update()          (Phase 5 feedback)

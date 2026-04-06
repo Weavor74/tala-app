@@ -315,6 +315,13 @@ export interface AutonomousRun {
     decompositionStepIndex?: number;
     // ── Runtime Execution Vocabulary (shared/runtime) ──
     /**
+     * Canonical execution identifier for cross-seam correlation.
+     * Maps to `runId` — set at run creation so all telemetry, StateStore entries,
+     * and external observers share a single stable identifier.
+     * `runId` is preserved for backward compatibility.
+     */
+    executionId?: string;
+    /**
      * Canonical execution type from the shared runtime vocabulary.
      * Always `'autonomy_task'` for autonomous runs.
      * Enables cross-seam correlation with AgentKernel and IPC execution records.
