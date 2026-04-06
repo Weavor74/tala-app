@@ -1599,19 +1599,20 @@ export class AutonomousRunOrchestrator {
         this.budgetManager.recordRunStart(run.runId, goal.subsystemId);
 
         // ── TelemetryBus: execution lifecycle (mirrors AgentKernel schema) ──────
+        const _intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;
         TelemetryBus.getInstance().emit({
             executionId: run.runId,
             subsystem: 'kernel',
             event: 'execution.created',
             phase: 'intake',
-            payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+            payload: _intakePayload,
         });
         TelemetryBus.getInstance().emit({
             executionId: run.runId,
             subsystem: 'kernel',
             event: 'execution.accepted',
             phase: 'intake',
-            payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+            payload: _intakePayload,
         });
 
         this._addMilestone(run, 'run_started');
