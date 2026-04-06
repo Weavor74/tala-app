@@ -1625,20 +1625,20 @@ export class AutonomousRunOrchestrator {
         );
 
         // ── TelemetryBus: execution lifecycle (mirrors AgentKernel schema) ──────
-        const _intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;
+        const intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;
         TelemetryBus.getInstance().emit({
             executionId: run.runId,
             subsystem: 'kernel',
             event: 'execution.created',
             phase: 'intake',
-            payload: _intakePayload,
+            payload: intakePayload,
         });
         TelemetryBus.getInstance().emit({
             executionId: run.runId,
             subsystem: 'kernel',
             event: 'execution.accepted',
             phase: 'intake',
-            payload: _intakePayload,
+            payload: intakePayload,
         });
 
         this._addMilestone(run, 'run_started');
@@ -1830,7 +1830,7 @@ export class AutonomousRunOrchestrator {
                 });
                 this._stateStore.completeExecution(run.runId);
             } else {
-                const _failureReason = finalRun.failureReason ?? finalRun.abortReason ?? outcome;
+                const failureReason = finalRun.failureReason ?? finalRun.abortReason ?? outcome;
                 TelemetryBus.getInstance().emit({
                     executionId: run.runId,
                     subsystem: 'kernel',
@@ -1840,10 +1840,10 @@ export class AutonomousRunOrchestrator {
                         type: 'autonomy_task',
                         origin: 'autonomy_engine',
                         mode: 'system',
-                        failureReason: _failureReason,
+                        failureReason,
                     },
                 });
-                this._stateStore.failExecution(run.runId, _failureReason);
+                this._stateStore.failExecution(run.runId, failureReason);
             }
 
             const learningRecord = this.learningRegistry.record(finalGoal, finalRun, outcome);
