@@ -5,6 +5,7 @@ import type {
     RuntimeExecutionType,
     RuntimeExecutionOrigin,
     RuntimeExecutionMode,
+    ExecutionRequest,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
 import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
@@ -168,7 +169,7 @@ export class AgentKernel {
      * Used by intake() when registering the initial state and by finalizeExecution()
      * as a defensive fallback so both paths stay consistent.
      */
-    private _buildExecRequest(meta: KernelExecutionMeta, userMessage: string) {
+    private _buildExecRequest(meta: KernelExecutionMeta, userMessage: string): ExecutionRequest {
         return createExecutionRequest({
             executionId: meta.executionId,
             type: meta.executionType,
@@ -232,7 +233,7 @@ export class AgentKernel {
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
         // Advance state to 'planning' to mark that the kernel is evaluating the turn.
-        // Placeholder — routing logic attaches here in future phases.
+        // Future: mode detection, tool-need prediction, policy gate, context assembly.
         this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
         console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass}`);
     }

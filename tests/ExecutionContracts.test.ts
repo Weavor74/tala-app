@@ -413,15 +413,18 @@ describe('EC9: Cross-seam ID correlation', () => {
 // ─── EC10: AgentKernel ExecutionStateStore lifecycle tracking ─────────────────
 
 describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
+    /** Shared stub turn output returned by all default chat() mocks. */
+    const stubTurnOutput = {
+        message: 'hello',
+        artifact: null,
+        suppressChatContent: false,
+        outputChannel: 'chat',
+    } as const;
+
     function makeKernel() {
         // Minimal AgentService stub — only chat() is called by AgentKernel
         const agentStub = {
-            chat: vi.fn().mockResolvedValue({
-                message: 'hello',
-                artifact: null,
-                suppressChatContent: false,
-                outputChannel: 'chat',
-            }),
+            chat: vi.fn().mockResolvedValue(stubTurnOutput),
         };
         const kernel = new AgentKernel(agentStub as any);
         return { kernel, agentStub };
@@ -438,7 +441,7 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         let stateAtDelegate: any;
         agentStub.chat.mockImplementation(async () => {
             stateAtDelegate = kernel.stateStore.getByStatus('executing')[0];
-            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+            return stubTurnOutput;
         });
         await kernel.execute({ userMessage: 'hello', origin: 'ipc', executionMode: 'assistant' });
         expect(stateAtDelegate).toBeDefined();
@@ -454,7 +457,7 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         let stateAtDelegate: any;
         agentStub.chat.mockImplementation(async () => {
             stateAtDelegate = kernel.stateStore.getByStatus('executing')[0];
-            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+            return stubTurnOutput;
         });
         await kernel.execute({ userMessage: 'classify test', origin: 'ipc', executionMode: 'assistant' });
         // At the delegate point state must already be executing (classifying was completed first)
@@ -480,7 +483,7 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         let executionId: string | undefined;
         agentStub.chat.mockImplementation(async () => {
             executionId = kernel.stateStore.getByStatus('executing')[0]?.executionId;
-            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+            return stubTurnOutput;
         });
         await kernel.execute({ userMessage: 'finalize test' });
         // After execute() the terminal status must be 'completed' (finalizing is a transient phase)
