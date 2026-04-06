@@ -224,7 +224,9 @@ export class TelemetryBus {
     /**
      * Returns a snapshot of the most recent events (up to MAX_RECENT_EVENTS).
      * Useful for diagnostics and inspection without requiring a persistent store.
-     * Returns a shallow copy; the caller must not mutate the returned events.
+     * Returns a shallow copy of the buffer array; the caller must not mutate
+     * the returned array. Individual event objects are shared references —
+     * callers must not modify their properties.
      */
     getRecentEvents(): readonly RuntimeEvent[] {
         return this._recentEvents.slice();
