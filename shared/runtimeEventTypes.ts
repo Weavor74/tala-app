@@ -1,0 +1,92 @@
+/**
+ * Canonical RuntimeEvent schema for the TelemetryBus.
+ *
+ * Defined in `shared/` so both the Electron main process (TelemetryBus) and
+ * the renderer (TelemetryEventsPanel) share a single authoritative type source.
+ *
+ * All lifecycle events emitted through TelemetryBus must conform to RuntimeEvent.
+ * Raw user content and model prompts must never appear in payload.
+ */
+
+// ─── Subsystem ───────────────────────────────────────────────────────────────
+
+/**
+ * Subsystem that emitted the event.
+ * Aligns with TelemetrySubsystem in shared/telemetry.ts.
+ * Typed narrowly so the bus does not depend on the full telemetry schema.
+ */
+export type RuntimeEventSubsystem =
+    | 'kernel'
+    | 'agent'
+    | 'router'
+    | 'autonomy'
+    | 'planning'
+    | 'inference'
+    | 'memory'
+    | 'mcp'
+    | 'system'
+    | 'unknown';
+
+// ─── Event type ───────────────────────────────────────────────────────────────
+
+/**
+ * Lifecycle event vocabulary for basic execution observability.
+ *
+ * Naming convention: `<domain>.<lifecycle_verb>`
+ *
+ * New event types should be added as explicit union members (e.g.
+ * `'execution.cancelled'`, `'execution.degraded'`) so tooling and
+ * consumers can enumerate them statically.  The template literal
+ * catch-all `execution.${string}` exists as a forward-compatibility
+ * escape hatch only — do not rely on it for new first-class events.
+ */
+export type RuntimeEventType =
+    | 'execution.created'
+    | 'execution.accepted'
+    | 'execution.finalizing'
+    | 'execution.completed'
+    | 'execution.failed'
+    | `execution.${string}`;
+
+// ─── Event envelope ───────────────────────────────────────────────────────────
+
+/**
+ * Canonical runtime event envelope.
+ *
+ * Every significant lifecycle transition emitted through TelemetryBus must
+ * conform to this shape. Fields are ordered from most stable (id, timestamp)
+ * to most contextual (phase, payload).
+ */
+export interface RuntimeEvent {
+    /** Unique event ID — `tevt-<uuid v4>`. */
+    id: string;
+    /** ISO 8601 UTC timestamp of emission. */
+    timestamp: string;
+    /** ID of the execution this event belongs to. Matches ExecutionRequest.executionId. */
+    executionId: string;
+    /**
+     * Optional correlation chain ID. Use to link related events across subsystems
+     * (e.g. an autonomy task spawning a chat_turn).
+     */
+    correlationId?: string;
+    /** Subsystem that emitted this event. */
+    subsystem: RuntimeEventSubsystem;
+    /** Lifecycle event type. */
+    event: RuntimeEventType;
+    /**
+     * Optional sub-phase label within the event's lifecycle stage.
+     * Examples: 'intake', 'classify', 'context_assembly', 'tool_dispatch'.
+     * Subsystems define their own phase labels.
+     */
+    phase?: string;
+    /**
+     * Optional structured payload. Must not contain raw user content or model prompts.
+     * Typed as `Record<string, unknown>` to remain open for future extension.
+     */
+    payload?: Record<string, unknown>;
+}
+
+// ─── Handler type ─────────────────────────────────────────────────────────────
+
+/** Handler invoked synchronously for each emitted event. */
+export type RuntimeEventHandler = (event: RuntimeEvent) => void;

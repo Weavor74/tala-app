@@ -4,6 +4,7 @@ import ReflectionProposalCard from './ReflectionProposalCard';
 import ExecutionPipelinePanel from './ExecutionPipelinePanel';
 import GovernancePanel from './GovernancePanel';
 import AutonomyDashboardPanel from './AutonomyDashboardPanel';
+import TelemetryEventsPanel from './TelemetryEventsPanel';
 
 /**
  * Reflection Dashboard Component
@@ -23,7 +24,7 @@ import AutonomyDashboardPanel from './AutonomyDashboardPanel';
  */
 const ReflectionPanel: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'engineering' | 'soul'>('engineering');
-    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events' | 'goals' | 'telemetry' | 'execution' | 'governance' | 'autonomy'>('proposals');
+    const [engineeringSubTab, setEngineeringSubTab] = useState<'proposals' | 'events' | 'goals' | 'telemetry' | 'execution' | 'governance' | 'autonomy' | 'exec-events'>('proposals');
     const [dashboardState, setDashboardState] = useState<ReflectionDashboardState | null>(null);
     const [proposals, setProposals] = useState<ChangeProposal[]>([]);
     const [reflectionEvents, setReflectionEvents] = useState<ReflectionJournalEntry[]>([]);
@@ -342,6 +343,17 @@ const ReflectionPanel: React.FC = () => {
                         >
                             🤖 Autonomy
                         </button>
+                        <button
+                            onClick={() => setEngineeringSubTab('exec-events')}
+                            style={{
+                                padding: '0.4rem 0.8rem', borderRadius: '20px', fontSize: '0.75rem', border: '1px solid #374151',
+                                background: engineeringSubTab === 'exec-events' ? '#0e7490' : 'transparent',
+                                color: engineeringSubTab === 'exec-events' ? '#fff' : '#9ca3af',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            🔍 Exec Events
+                        </button>
                     </div>
 
                     {engineeringSubTab === 'proposals' ? (
@@ -455,6 +467,9 @@ const ReflectionPanel: React.FC = () => {
                     )}
                     {engineeringSubTab === 'autonomy' && (
                         <AutonomyDashboardPanel />
+                    )}
+                    {engineeringSubTab === 'exec-events' && (
+                        <TelemetryEventsPanel />
                     )}
                 </>
             ) : (

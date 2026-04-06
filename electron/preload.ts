@@ -807,4 +807,27 @@ contextBridge.exposeInMainWorld('tala', {
         queryInvariant: (filter?: any) => ipcRenderer.invoke('selfModel:queryInvariant', filter),
         queryCapability: (filter?: any) => ipcRenderer.invoke('selfModel:queryCapability', filter),
     },
+
+    // ─── Telemetry Bus (read-only) ────────────────────────────────
+    telemetry: {
+        /**
+         * Returns a snapshot of the most recent runtime events from the
+         * TelemetryBus ring buffer (up to 200 events).
+         *
+         * Both chat (AgentKernel) and autonomy (AutonomousRunOrchestrator)
+         * lifecycle events are included.  The result is a serialized copy —
+         * callers cannot mutate internal bus state.
+         *
+         * Schema: RuntimeEvent[]
+         *   id          — unique event id (tevt-<uuid>)
+         *   timestamp   — ISO 8601 UTC
+         *   executionId — matches the originating ExecutionRequest
+         *   correlationId? — optional chain id
+         *   subsystem   — emitting subsystem (kernel | autonomy | …)
+         *   event       — lifecycle type (execution.created | execution.completed | …)
+         *   phase?      — optional sub-phase label
+         *   payload?    — optional structured data (no raw content)
+         */
+        getRecentEvents: () => ipcRenderer.invoke('telemetry:getRecentEvents'),
+    },
 });
