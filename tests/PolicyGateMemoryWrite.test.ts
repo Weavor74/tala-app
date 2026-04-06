@@ -6,7 +6,7 @@
  * Validates that policyGate.assertSideEffect() is called before any mutation
  * in both key write seams:
  *   1. MemoryService.add()         — derived write (local JSON + mem0)
- *   2. MemoryAuthorityService.createCanonicalMemory() — canonical PostgreSQL write
+ *   2. MemoryAuthorityService.tryCreateCanonicalMemory() — canonical PostgreSQL write
  *
  * PMW1  MemoryService.add() calls assertSideEffect with actionKind='memory_write'
  * PMW2  MemoryService.add() passes executionMode to assertSideEffect
@@ -15,12 +15,12 @@
  * PMW5  No local write occurs when MemoryService.add() is blocked
  * PMW6  Allowed write in MemoryService.add() succeeds and writes to local store
  * PMW7  MemoryService.add() assertSideEffect fires before any state mutation
- * PMW8  MemoryAuthorityService.createCanonicalMemory() calls assertSideEffect
- * PMW9  MemoryAuthorityService.createCanonicalMemory() passes targetSubsystem='MemoryAuthorityService'
- * PMW10 Blocked write in MemoryAuthorityService.createCanonicalMemory() throws PolicyDeniedError
- * PMW11 No DB query issued when MemoryAuthorityService.createCanonicalMemory() is blocked
+ * PMW8  MemoryAuthorityService.tryCreateCanonicalMemory() calls assertSideEffect
+ * PMW9  MemoryAuthorityService.tryCreateCanonicalMemory() passes targetSubsystem='MemoryAuthorityService'
+ * PMW10 Blocked write in MemoryAuthorityService.tryCreateCanonicalMemory() returns success:false with PolicyDeniedError
+ * PMW11 No DB query issued when tryCreateCanonicalMemory is blocked
  * PMW12 PolicyDeniedError propagates cleanly from MemoryService.add()
- * PMW13 PolicyDeniedError propagates cleanly from MemoryAuthorityService.createCanonicalMemory()
+ * PMW13 PolicyDeniedError captured in _cause from MemoryAuthorityService.tryCreateCanonicalMemory()
  *
  * No DB, no IPC, no Electron file-system I/O.
  */
@@ -173,9 +173,9 @@ describe('PMW1–PMW7: MemoryService.add() — PolicyGate enforcement', () => {
     });
 });
 
-// ─── PMW8–PMW11, PMW13: MemoryAuthorityService.createCanonicalMemory() ───────
+// ─── PMW8–PMW11, PMW13: MemoryAuthorityService.tryCreateCanonicalMemory() ────
 
-describe('PMW8–PMW11, PMW13: MemoryAuthorityService.createCanonicalMemory() — PolicyGate enforcement', () => {
+describe('PMW8–PMW11, PMW13: MemoryAuthorityService.tryCreateCanonicalMemory() — PolicyGate enforcement', () => {
     const minimalInput = {
         memory_type: 'explicit_fact',
         subject_type: 'user',
@@ -194,7 +194,7 @@ describe('PMW8–PMW11, PMW13: MemoryAuthorityService.createCanonicalMemory() �
         const pool = makePool();
         const auth = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
-        await auth.createCanonicalMemory(minimalInput);
+        await auth.tryCreateCanonicalMemory(minimalInput);
         expect(spy).toHaveBeenCalledWith(
             expect.objectContaining({ actionKind: 'memory_write' }),
         );
@@ -204,18 +204,20 @@ describe('PMW8–PMW11, PMW13: MemoryAuthorityService.createCanonicalMemory() �
         const pool = makePool();
         const auth = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
-        await auth.createCanonicalMemory(minimalInput);
+        await auth.tryCreateCanonicalMemory(minimalInput);
         const ctx = spy.mock.calls[0][0];
         expect(ctx.targetSubsystem).toBe('MemoryAuthorityService');
     });
 
-    it('PMW10: blocked write throws PolicyDeniedError', async () => {
+    it('PMW10: blocked write returns success:false with PolicyDeniedError in _cause', async () => {
         const pool = makePool();
         const auth = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
-        await expect(auth.createCanonicalMemory(minimalInput)).rejects.toThrow(PolicyDeniedError);
+        const result = await auth.tryCreateCanonicalMemory(minimalInput);
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
     });
 
     it('PMW11: no DB query issued when assertSideEffect throws', async () => {
@@ -224,28 +226,21 @@ describe('PMW8–PMW11, PMW13: MemoryAuthorityService.createCanonicalMemory() �
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
-        try {
-            await auth.createCanonicalMemory(minimalInput);
-        } catch (_) {
-            // expected
-        }
+        const result = await auth.tryCreateCanonicalMemory(minimalInput);
+        expect(result.success).toBe(false);
         expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('PMW13: PolicyDeniedError propagates with correct decision from createCanonicalMemory', async () => {
+    it('PMW13: PolicyDeniedError captured with correct decision in _cause', async () => {
         const pool = makePool();
         const auth = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
-        let caught: unknown;
-        try {
-            await auth.createCanonicalMemory(minimalInput);
-        } catch (err) {
-            caught = err;
-        }
-        expect(caught).toBeInstanceOf(PolicyDeniedError);
-        const denied = caught as PolicyDeniedError;
+        const result = await auth.tryCreateCanonicalMemory(minimalInput);
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
+        const denied = result._cause as PolicyDeniedError;
         expect(denied.decision.code).toBe('TEST_MEMORY_BLOCK');
     });
 });

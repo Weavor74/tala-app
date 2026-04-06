@@ -60,9 +60,8 @@ export interface MemoryOperationResult<T = unknown> {
     /** Wall-clock execution time in milliseconds from facade entry to return. */
     durationMs: number;
     /**
-     * Original error instance, preserved for legacy `@deprecated` throwing
-     * adapters (createCanonicalMemory / updateCanonicalMemory / tombstoneMemory)
-     * so they can re-throw the exact error type (e.g. PolicyDeniedError).
+     * Original error instance, preserved so callers and diagnostics can inspect
+     * the concrete error type (e.g. `instanceof PolicyDeniedError`).
      * @internal Not part of the public contract — do not read in new callers.
      */
     _cause?: Error;

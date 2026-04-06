@@ -102,73 +102,6 @@ export class MemoryAuthorityService {
     // -----------------------------------------------------------------------
 
     /**
-     * Create a new canonical memory record.
-     *
-     * Flow:
-     *   1. Normalize input
-     *   2. Compute canonical_hash
-     *   3. Detect exact duplicates (Phase 1)
-     *   4. Semantic duplicate placeholder (Phase 2)
-     *   5. If no duplicate → INSERT into memory_records (version = 1, status = 'canonical')
-     *   6. Record lineage entry
-     *   7. Emit projection events (log + insert into memory_projections)
-     *
-     * @returns The canonical_memory_id (existing if duplicate, new if created)
-     *
-     * @deprecated Prefer {@link tryCreateCanonicalMemory} (or the CRUD facade {@link createMemory}).
-     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
-     * handling deterministic and keeping callers decoupled from raw exception semantics.
-     * This method remains available for internal use by the wrapper layer only.
-     * Do NOT bind new external callers to this method.
-     */
-    async createCanonicalMemory(input: ProposedMemoryInput, callerExecutionId?: string): Promise<string> {
-        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
-        const result = await this._createCanonicalMemoryCore(input, writeOperationId);
-        if (!result.success) throw result._cause ?? new Error(result.error!);
-        return result.data!;
-    }
-
-    /**
-     * Update an existing canonical memory record.
-     * Increments the version, recomputes the hash, and supersedes the previous
-     * version in the lineage table.
-     *
-     * @deprecated Prefer {@link tryUpdateCanonicalMemory} (or the CRUD facade {@link updateMemory}).
-     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
-     * handling deterministic and keeping callers decoupled from raw exception semantics.
-     * This method remains available for internal use by the wrapper layer only.
-     * Do NOT bind new external callers to this method.
-     */
-    async updateCanonicalMemory(
-        memoryId: string,
-        updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
-        executionMode?: string,
-        callerExecutionId?: string,
-    ): Promise<CanonicalMemory> {
-        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
-        const result = await this._updateCanonicalMemoryCore(memoryId, updates, executionMode, writeOperationId);
-        if (!result.success) throw result._cause ?? new Error(result.error!);
-        return result.data!;
-    }
-
-    /**
-     * Tombstone a canonical memory record.
-     * Sets tombstoned_at and authority_status = 'tombstoned'. Does NOT DELETE —
-     * the record must remain for referential integrity and rebuild purposes.
-     *
-     * @deprecated Prefer {@link tryTombstoneMemory} (or the CRUD facade {@link deleteMemory}).
-     * Both return a normalized `MemoryOperationResult` instead of throwing, making failure
-     * handling deterministic and keeping callers decoupled from raw exception semantics.
-     * This method remains available for internal use by the wrapper layer only.
-     * Do NOT bind new external callers to this method.
-     */
-    async tombstoneMemory(memoryId: string, executionMode?: string, callerExecutionId?: string): Promise<void> {
-        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
-        const result = await this._tombstoneMemoryCore(memoryId, executionMode, writeOperationId);
-        if (!result.success) throw result._cause ?? new Error(result.error!);
-    }
-
-    /**
      * Detect exact and semantic duplicates for a proposed memory write.
      *
      * Phase 1: Exact hash match against memory_records.
@@ -640,10 +573,9 @@ export class MemoryAuthorityService {
     // -----------------------------------------------------------------------
     // NORMALIZED CANONICAL WRAPPERS  ◄─ PREFERRED MUTATION API
     //
-    // These are the canonical mutation entry points for all new and migrated
-    // callers.  They return MemoryOperationResult<T> instead of throwing,
-    // making failure handling deterministic and decoupling callers from raw
-    // exception semantics.
+    // These are the canonical mutation entry points for all callers.  They
+    // return MemoryOperationResult<T> instead of throwing, making failure
+    // handling deterministic and decoupling callers from raw exception semantics.
     //
     // Preferred methods (use these):
     //   tryCreateCanonicalMemory(input, ctx?)  → MemoryOperationResult<string>
@@ -654,16 +586,8 @@ export class MemoryAuthorityService {
     // provides the same result-based contract and may be more ergonomic for
     // callers that do not need the canonical* nomenclature.
     //
-    // All six public non-throwing methods now delegate directly to the private
-    // _*Core methods.  There is no wrapper indirection layer remaining.
-    //
-    // The original throwing methods (createCanonicalMemory, updateCanonicalMemory,
-    // tombstoneMemory) are @deprecated and now thin adapters over the same private
-    // core methods.  They must NOT be called from new external code — all
-    // existing external callers have been migrated (Phase 2).
-    //
-    // Phase 5 (future): remove the three @deprecated public throwing methods.
-    // The private core and the preferred public non-throwing API will remain.
+    // All six public non-throwing methods delegate directly to the private
+    // _*Core methods.  There is no wrapper indirection layer.
     // -----------------------------------------------------------------------
 
     /**
@@ -763,17 +687,13 @@ export class MemoryAuthorityService {
     // mutation operation.  They are non-throwing — all errors (DB, policy,
     // validation) are captured and returned as MemoryOperationResult<T>.
     //
-    // All public-facing methods (legacy @deprecated throwing variants, CRUD
-    // facade, and try* wrappers) now delegate here.  There is no duplicated
-    // mutation logic outside these three methods.
+    // All public-facing methods (CRUD facade and try* wrappers) delegate here.
+    // There is no duplicated mutation logic outside these three methods.
     //
     // Telemetry contract preserved:
     //   - memory.write_requested emitted after policy check, before DB work
     //   - memory.write_completed emitted on success (including idempotent case)
     //   - memory.write_failed emitted on any error (policy, validation, DB)
-    //
-    // Future phase: once all @deprecated throwing wrappers are removed, these
-    // become the sole mutation entry points.
     // -----------------------------------------------------------------------
 
     /**

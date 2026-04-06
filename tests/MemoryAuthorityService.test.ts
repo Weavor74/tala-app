@@ -2,15 +2,15 @@
  * MemoryAuthorityService.test.ts — P7A Memory Authority Lock
  *
  * Validates:
- *   1. write routes through authority service (createCanonicalMemory inserts a record)
+ *   1. write routes through authority service (tryCreateCanonicalMemory inserts a record)
  *   2. duplicate detection prevents double insert (exact hash match returns existing ID)
  *   3. duplicate detection returns report fields correctly
  *   4. orphan detection works (validateIntegrity finds orphaned projections)
  *   5. projection records are created after canonical write
  *   6. rebuild does not lose data (rebuildDerivedState reads all canonical records)
  *   7. canonical precedence: tombstoned records cannot be updated
- *   8. tombstoneMemory sets correct status and lineage
- *   9. updateCanonicalMemory increments version and marks projections stale
+ *   8. tryTombstoneMemory sets correct status and lineage
+ *   9. tryUpdateCanonicalMemory increments version and marks projections stale
  *  10. duplicate conflict detection (multiple canonical records with same hash)
  *  11. projection mismatch detection (stale projected_version)
  *  12. tombstone violation detection (projected status for tombstoned record)
@@ -98,7 +98,7 @@ describe('MemoryAuthorityService', () => {
     // -----------------------------------------------------------------------
     // 1. write routes through authority service
     // -----------------------------------------------------------------------
-    describe('createCanonicalMemory', () => {
+    describe('write routes — tryCreateCanonicalMemory', () => {
         it('inserts a new record when no duplicate exists and returns the memory_id', async () => {
             const pool = poolSequenced([
                 // detectDuplicates → exact hash check → no match
@@ -114,7 +114,7 @@ describe('MemoryAuthorityService', () => {
             ]);
 
             const svc = new MemoryAuthorityService(pool as never);
-            const id = await svc.createCanonicalMemory({
+            const result = await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-1',
@@ -123,7 +123,8 @@ describe('MemoryAuthorityService', () => {
                 source_ref: 'turn:turn-1',
             });
 
-            expect(id).toBe(MEMORY_ID);
+            expect(result.success).toBe(true);
+            expect(result.data).toBe(MEMORY_ID);
             // INSERT should have been called (the 2nd query call)
             expect(pool.query).toHaveBeenCalledTimes(6); // detect(1) + insert(1) + lineage(1) + 3 projections
         });
@@ -143,7 +144,7 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.createCanonicalMemory({
+            await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-2',
@@ -192,7 +193,7 @@ describe('MemoryAuthorityService', () => {
             expect(report.match_kind).toBe('none');
         });
 
-        it('createCanonicalMemory returns existing ID without inserting when duplicate detected', async () => {
+        it('tryCreateCanonicalMemory returns existing ID without inserting when duplicate detected', async () => {
             let insertCalled = false;
             const pool = {
                 query: vi.fn().mockImplementation((sql: string) => {
@@ -210,14 +211,15 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            const id = await svc.createCanonicalMemory({
+            const result = await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-1',
                 content_text: 'User: "hello" | Tala: "hi"',
             });
 
-            expect(id).toBe(MEMORY_ID);
+            expect(result.success).toBe(true);
+            expect(result.data).toBe(MEMORY_ID);
             expect(insertCalled).toBe(false);
         });
     });
@@ -405,7 +407,7 @@ describe('MemoryAuthorityService', () => {
     // -----------------------------------------------------------------------
     // 7. canonical precedence: tombstoned records cannot be updated
     // -----------------------------------------------------------------------
-    describe('tombstoneMemory', () => {
+    describe('tryTombstoneMemory', () => {
         it('sets authority_status to tombstoned and records lineage', async () => {
             let updateCalled = false;
             let lineageInsertCalled = false;
@@ -427,13 +429,14 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.tombstoneMemory(MEMORY_ID);
+            const result = await svc.tryTombstoneMemory(MEMORY_ID);
 
+            expect(result.success).toBe(true);
             expect(updateCalled).toBe(true);
             expect(lineageInsertCalled).toBe(true);
         });
 
-        it('throws when trying to update a tombstoned record', async () => {
+        it('returns success:false when trying to update a tombstoned record', async () => {
             const pool = {
                 query: vi.fn().mockImplementation((sql: string) => {
                     if (sql.includes('SELECT * FROM memory_records')) {
@@ -444,12 +447,12 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            await expect(
-                svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'new content' }),
-            ).rejects.toThrow(/tombstoned/);
+            const result = await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'new content' });
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch(/tombstoned/);
         });
 
-        it('is idempotent — does not throw when already tombstoned', async () => {
+        it('is idempotent — returns success when already tombstoned', async () => {
             const pool = {
                 query: vi.fn().mockImplementation((sql: string) => {
                     if (sql.includes('SELECT * FROM memory_records')) {
@@ -460,15 +463,15 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            // Should not throw
-            await expect(svc.tombstoneMemory(MEMORY_ID)).resolves.toBeUndefined();
+            const result = await svc.tryTombstoneMemory(MEMORY_ID);
+            expect(result.success).toBe(true);
         });
     });
 
     // -----------------------------------------------------------------------
-    // 9. updateCanonicalMemory increments version and marks projections stale
+    // 9. tryUpdateCanonicalMemory increments version and marks projections stale
     // -----------------------------------------------------------------------
-    describe('updateCanonicalMemory', () => {
+    describe('tryUpdateCanonicalMemory', () => {
         it('increments version and marks projections stale', async () => {
             let projectionStaleUpdateCalled = false;
             let lineageInsertCalled = false;
@@ -493,20 +496,21 @@ describe('MemoryAuthorityService', () => {
             };
 
             const svc = new MemoryAuthorityService(pool as never);
-            const updated = await svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'updated content' });
+            const result = await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'updated content' });
 
-            expect(updated.version).toBe(2);
+            expect(result.success).toBe(true);
+            expect(result.data!.version).toBe(2);
             expect(projectionStaleUpdateCalled).toBe(true);
             expect(lineageInsertCalled).toBe(true);
         });
 
-        it('throws when trying to update a non-existent record', async () => {
+        it('returns success:false when trying to update a non-existent record', async () => {
             const pool = poolWithRows([]); // _fetchRecord returns null
             const svc = new MemoryAuthorityService(pool as never);
 
-            await expect(
-                svc.updateCanonicalMemory('non-existent-id', { content_text: 'new' }),
-            ).rejects.toThrow(/not found/);
+            const result = await svc.tryUpdateCanonicalMemory('non-existent-id', { content_text: 'new' });
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch(/not found/);
         });
     });
 
@@ -942,7 +946,7 @@ describe('MemoryAuthorityService', () => {
         };
 
         describe('createMemory', () => {
-            it('delegates to createCanonicalMemory and returns success with the memory_id', async () => {
+            it('delegates to _createCanonicalMemoryCore and returns success with the memory_id', async () => {
                 const pool = poolSequenced([
                     { rows: [] },                          // detectDuplicates: exact hash check
                     { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
@@ -986,7 +990,7 @@ describe('MemoryAuthorityService', () => {
         });
 
         describe('updateMemory', () => {
-            it('delegates to updateCanonicalMemory and returns success with the updated record', async () => {
+            it('delegates to _updateCanonicalMemoryCore and returns success with the updated record', async () => {
                 const updatedRow = makeMemoryRow({
                     content_text: 'updated text',
                     version: 2,
@@ -1025,7 +1029,7 @@ describe('MemoryAuthorityService', () => {
         });
 
         describe('deleteMemory', () => {
-            it('delegates to tombstoneMemory and returns success', async () => {
+            it('delegates to _tombstoneMemoryCore and returns success', async () => {
                 const pool = poolSequenced([
                     { rows: [makeMemoryRow()] }, // _fetchRecord
                     { rows: [] },                 // UPDATE tombstoned_at
@@ -1072,7 +1076,7 @@ describe('MemoryAuthorityService', () => {
             TelemetryBus._resetForTesting();
         });
 
-        it('createCanonicalMemory emits write_requested then write_completed on success', async () => {
+        it('tryCreateCanonicalMemory emits write_requested then write_completed on success', async () => {
             const pool = poolSequenced([
                 { rows: [] },                          // detectDuplicates: exact hash check
                 { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
@@ -1082,7 +1086,7 @@ describe('MemoryAuthorityService', () => {
                 { rows: [] },                          // _emitProjectionEvents: vector
             ]);
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.createCanonicalMemory({
+            await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-1',
@@ -1099,10 +1103,10 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents[0].executionId).toBe(memEvents[1].executionId);
         });
 
-        it('createCanonicalMemory emits write_requested then write_completed for a duplicate', async () => {
+        it('tryCreateCanonicalMemory emits write_requested then write_completed for a duplicate', async () => {
             const pool = poolWithRows([{ memory_id: MEMORY_ID }]); // exact duplicate found
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.createCanonicalMemory({
+            await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-1',
@@ -1116,7 +1120,7 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents[1].payload).toMatchObject({ duplicate: true });
         });
 
-        it('createCanonicalMemory emits write_failed when the DB throws', async () => {
+        it('tryCreateCanonicalMemory emits write_failed when the DB throws', async () => {
             const pool = {
                 query: vi.fn().mockImplementation((sql: string) => {
                     if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
@@ -1126,12 +1130,14 @@ describe('MemoryAuthorityService', () => {
                 }),
             };
             const svc = new MemoryAuthorityService(pool as never);
-            await expect(svc.createCanonicalMemory({
+            const result = await svc.tryCreateCanonicalMemory({
                 memory_type: 'interaction',
                 subject_type: 'conversation',
                 subject_id: 'turn-1',
                 content_text: 'hello',
-            })).rejects.toThrow('DB connection lost');
+            });
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('DB connection lost');
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.some(e => e.event === 'memory.write_requested')).toBe(true);
@@ -1140,7 +1146,7 @@ describe('MemoryAuthorityService', () => {
             expect(failEvent.payload).toMatchObject({ operation: 'create' });
         });
 
-        it('updateCanonicalMemory emits write_requested then write_completed on success', async () => {
+        it('tryUpdateCanonicalMemory emits write_requested then write_completed on success', async () => {
             const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'newhash' });
             const pool = poolSequenced([
                 { rows: [makeMemoryRow()] },  // _fetchRecord
@@ -1149,7 +1155,7 @@ describe('MemoryAuthorityService', () => {
                 { rows: [] },                   // _markProjectionsStale
             ]);
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'updated' });
+            await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'updated' });
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.length).toBe(2);
@@ -1159,11 +1165,12 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents[1].payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
         });
 
-        it('updateCanonicalMemory emits write_failed when record not found', async () => {
+        it('tryUpdateCanonicalMemory emits write_failed when record not found', async () => {
             const pool = poolWithRows([]); // _fetchRecord returns nothing
             const svc = new MemoryAuthorityService(pool as never);
-            await expect(svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'x' }))
-                .rejects.toThrow('not found');
+            const result = await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'x' });
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
@@ -1171,14 +1178,14 @@ describe('MemoryAuthorityService', () => {
                 .toMatchObject({ operation: 'update' });
         });
 
-        it('tombstoneMemory emits write_requested then write_completed on success', async () => {
+        it('tryTombstoneMemory emits write_requested then write_completed on success', async () => {
             const pool = poolSequenced([
                 { rows: [makeMemoryRow()] }, // _fetchRecord
                 { rows: [] },                 // UPDATE tombstoned_at
                 { rows: [] },                 // _appendLineage
             ]);
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.tombstoneMemory(MEMORY_ID);
+            await svc.tryTombstoneMemory(MEMORY_ID);
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.length).toBe(2);
@@ -1188,10 +1195,10 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents[1].payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
         });
 
-        it('tombstoneMemory emits write_completed (idempotent) when already tombstoned', async () => {
+        it('tryTombstoneMemory emits write_completed (idempotent) when already tombstoned', async () => {
             const pool = poolWithRows([makeMemoryRow({ authority_status: 'tombstoned', tombstoned_at: NOW })]);
             const svc = new MemoryAuthorityService(pool as never);
-            await svc.tombstoneMemory(MEMORY_ID);
+            await svc.tryTombstoneMemory(MEMORY_ID);
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.length).toBe(2);
@@ -1199,10 +1206,12 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents[1].payload).toMatchObject({ idempotent: true });
         });
 
-        it('tombstoneMemory emits write_failed when record not found', async () => {
+        it('tryTombstoneMemory emits write_failed when record not found', async () => {
             const pool = poolWithRows([]);
             const svc = new MemoryAuthorityService(pool as never);
-            await expect(svc.tombstoneMemory('missing-id')).rejects.toThrow('not found');
+            const result = await svc.tryTombstoneMemory('missing-id');
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
@@ -1221,10 +1230,10 @@ describe('MemoryAuthorityService', () => {
             ]);
             const svc = new MemoryAuthorityService(pool1 as never);
             const input = { memory_type: 'interaction', subject_type: 'conversation', subject_id: 's', content_text: 'a' };
-            await svc.createCanonicalMemory(input);
+            await svc.tryCreateCanonicalMemory(input);
 
             const svc2 = new MemoryAuthorityService(pool2 as never);
-            await svc2.createCanonicalMemory({ ...input, content_text: 'b' });
+            await svc2.tryCreateCanonicalMemory({ ...input, content_text: 'b' });
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
             const firstId = memEvents[0].executionId;
@@ -1712,49 +1721,17 @@ describe('MemoryAuthorityService', () => {
             expect(memEvents.every(e => e.executionId === callerExecutionId)).toBe(true);
         });
 
-        // ── Original throwing methods still throw (backward compatibility) ─────
-
-        it('TRY16: createCanonicalMemory still throws on DB error (backward compatibility)', async () => {
-            const pool = {
-                query: vi.fn().mockImplementation((sql: string) => {
-                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
-                        return Promise.resolve({ rows: [] });
-                    }
-                    return Promise.reject(new Error('db error'));
-                }),
-            };
-            const svc = new MemoryAuthorityService(pool as never);
-            await expect(
-                svc.createCanonicalMemory({
-                    memory_type: 'interaction', subject_type: 'conversation',
-                    subject_id: 's', content_text: 'x',
-                }),
-            ).rejects.toThrow('db error');
-        });
-
-        it('TRY17: updateCanonicalMemory still throws when record not found (backward compatibility)', async () => {
-            const pool = poolWithRows([]);
-            const svc = new MemoryAuthorityService(pool as never);
-            await expect(svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'x' })).rejects.toThrow('not found');
-        });
-
-        it('TRY18: tombstoneMemory still throws when record not found (backward compatibility)', async () => {
-            const pool = poolWithRows([]);
-            const svc = new MemoryAuthorityService(pool as never);
-            await expect(svc.tombstoneMemory('missing-id')).rejects.toThrow('not found');
-        });
     });
 
     // -----------------------------------------------------------------------
-    // 21. Preferred-path and deprecation contract (DEP1–DEP6)
+    // 21. Preferred-path contract (DEP1–DEP4, DEP6)
     //
-    // Confirms that the try* normalized wrappers are the preferred canonical
-    // mutation entry points and that the deprecated throwing methods still
-    // satisfy their backward-compat guarantees.  These tests serve as both
-    // regression guards and architectural documentation.
+    // Confirms that the try* normalized wrappers are the canonical mutation
+    // entry points.  These tests serve as regression guards and architectural
+    // documentation.
     // -----------------------------------------------------------------------
 
-    describe('21. Preferred-path and deprecation contract', () => {
+    describe('21. Preferred-path contract', () => {
         let capturedEvents: RuntimeEvent[];
         let unsub: () => void;
 
@@ -1851,25 +1828,7 @@ describe('MemoryAuthorityService', () => {
             warnSpy.mockRestore();
         });
 
-        it('DEP5: deprecated createCanonicalMemory still satisfies its contract for internal wrapper use', async () => {
-            // The throwing methods must remain functional because tryCreateCanonicalMemory
-            // delegates to them internally.  This test protects that internal delegation.
-            const pool = poolSequenced([
-                { rows: [] },
-                { rows: [{ memory_id: MEMORY_ID }] },
-                { rows: [] },
-                { rows: [] }, { rows: [] }, { rows: [] },
-            ]);
-            const svc = new MemoryAuthorityService(pool as never);
-            // Called internally by tryCreateCanonicalMemory — must not break
-            const id = await svc.createCanonicalMemory({
-                memory_type: 'interaction', subject_type: 'conversation',
-                subject_id: 'turn-1', content_text: 'internal call',
-            });
-            expect(id).toBe(MEMORY_ID);
-        });
-
-        it('DEP6: preferred try* wrappers emit the same telemetry events as the deprecated methods', async () => {
+        it('DEP6: try* wrappers emit the correct telemetry events', async () => {
             const pool = poolSequenced([
                 { rows: [] },
                 { rows: [{ memory_id: MEMORY_ID }] },

@@ -2,7 +2,7 @@
  * PolicyGateMemoryProtection.test.ts
  *
  * Tests for the POLICY_MEMORY_WRITE_RP_BLOCK rule and the gate enforcement wired
- * into MemoryAuthorityService.updateCanonicalMemory() and tombstoneMemory().
+ * into MemoryAuthorityService.tryUpdateCanonicalMemory() and tryTombstoneMemory().
  *
  * Rule:
  *   POLICY_MEMORY_WRITE_RP_BLOCK — blocks memory_write when executionMode === 'rp'
@@ -21,21 +21,21 @@
  *   PMP10  thrown error carries POLICY_MEMORY_WRITE_RP_BLOCK code
  *   PMP11  assertSideEffect() does NOT throw for memory_write in non-rp modes
  *   PMP12  policyGate singleton enforces the rule
- *   PMP13  updateCanonicalMemory() calls assertSideEffect with actionKind=memory_write
- *   PMP14  updateCanonicalMemory() passes executionMode to assertSideEffect
- *   PMP15  updateCanonicalMemory() passes targetSubsystem=MemoryAuthorityService
- *   PMP16  updateCanonicalMemory() passes mutationIntent=write
- *   PMP17  updateCanonicalMemory() blocked in rp mode throws PolicyDeniedError
- *   PMP18  updateCanonicalMemory() blocked does NOT call pool.query
- *   PMP19  updateCanonicalMemory() allowed in system mode succeeds
- *   PMP20  tombstoneMemory() calls assertSideEffect with actionKind=memory_write
- *   PMP21  tombstoneMemory() passes executionMode to assertSideEffect
- *   PMP22  tombstoneMemory() passes targetSubsystem=MemoryAuthorityService
- *   PMP23  tombstoneMemory() passes mutationIntent=write
- *   PMP24  tombstoneMemory() blocked in rp mode throws PolicyDeniedError
- *   PMP25  tombstoneMemory() blocked does NOT call pool.query
- *   PMP26  PolicyDeniedError propagates cleanly from updateCanonicalMemory()
- *   PMP27  PolicyDeniedError propagates cleanly from tombstoneMemory()
+ *   PMP13  tryUpdateCanonicalMemory() calls assertSideEffect with actionKind=memory_write
+ *   PMP14  tryUpdateCanonicalMemory() passes executionMode to assertSideEffect
+ *   PMP15  tryUpdateCanonicalMemory() passes targetSubsystem=MemoryAuthorityService
+ *   PMP16  tryUpdateCanonicalMemory() passes mutationIntent=write
+ *   PMP17  tryUpdateCanonicalMemory() blocked in rp mode returns success:false with PolicyDeniedError
+ *   PMP18  tryUpdateCanonicalMemory() blocked does NOT call pool.query
+ *   PMP19  tryUpdateCanonicalMemory() allowed in system mode returns success:true
+ *   PMP20  tryTombstoneMemory() calls assertSideEffect with actionKind=memory_write
+ *   PMP21  tryTombstoneMemory() passes executionMode to assertSideEffect
+ *   PMP22  tryTombstoneMemory() passes targetSubsystem=MemoryAuthorityService
+ *   PMP23  tryTombstoneMemory() passes mutationIntent=write
+ *   PMP24  tryTombstoneMemory() blocked in rp mode returns success:false with PolicyDeniedError
+ *   PMP25  tryTombstoneMemory() blocked does NOT call pool.query
+ *   PMP26  PolicyDeniedError captured in _cause from tryUpdateCanonicalMemory()
+ *   PMP27  PolicyDeniedError captured in _cause from tryTombstoneMemory()
  *
  * No DB, no IPC, no Electron.
  */
@@ -200,9 +200,9 @@ describe('PMP8–PMP12: checkSideEffect / assertSideEffect for memory_write', ()
     });
 });
 
-// ─── PMP13–PMP19: updateCanonicalMemory() enforcement ────────────────────────
+// ─── PMP13–PMP19: tryUpdateCanonicalMemory() enforcement ─────────────────────
 
-describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — PolicyGate enforcement', () => {
+describe('PMP13–PMP19: MemoryAuthorityService.tryUpdateCanonicalMemory() — PolicyGate enforcement', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
@@ -212,7 +212,7 @@ describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — Poli
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
+        await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
 
         expect(spy).toHaveBeenCalledWith(
             expect.objectContaining({ actionKind: 'memory_write' }),
@@ -224,7 +224,7 @@ describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — Poli
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'new text' }, 'system');
+        await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'new text' }, { executionMode: 'system' });
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.executionMode).toBe('system');
@@ -235,7 +235,7 @@ describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — Poli
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
+        await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.targetSubsystem).toBe('MemoryAuthorityService');
@@ -246,22 +246,22 @@ describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — Poli
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
+        await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'new text' });
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.mutationIntent).toBe('write');
     });
 
-    it('PMP17: blocked in rp mode throws PolicyDeniedError', async () => {
+    it('PMP17: blocked in rp mode returns success:false with PolicyDeniedError in _cause', async () => {
         const pool = makePool();
         const svc = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        await expect(
-            svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, 'rp'),
-        ).rejects.toThrow(PolicyDeniedError);
+        const result = await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, { executionMode: 'rp' });
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
     });
 
     it('PMP18: blocked does NOT call pool.query', async () => {
@@ -271,28 +271,23 @@ describe('PMP13–PMP19: MemoryAuthorityService.updateCanonicalMemory() — Poli
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        try {
-            await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, 'rp');
-        } catch (_) {
-            // expected
-        }
-
+        const result = await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, { executionMode: 'rp' });
+        expect(result.success).toBe(false);
         expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('PMP19: allowed in system mode — assertSideEffect does not throw', async () => {
+    it('PMP19: allowed in system mode — returns success:true', async () => {
         const pool = makePool();
         const svc = new MemoryAuthorityService(pool as any);
         // no spy mock — uses real policyGate; system mode should not block
-        await expect(
-            svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'updated text' }, 'system'),
-        ).resolves.toBeDefined();
+        const result = await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'updated text' }, { executionMode: 'system' });
+        expect(result.success).toBe(true);
     });
 });
 
-// ─── PMP20–PMP27: tombstoneMemory() enforcement ───────────────────────────────
+// ─── PMP20–PMP27: tryTombstoneMemory() enforcement ───────────────────────────
 
-describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate enforcement', () => {
+describe('PMP20–PMP27: MemoryAuthorityService.tryTombstoneMemory() — PolicyGate enforcement', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
@@ -302,7 +297,7 @@ describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.tombstoneMemory('mem-pmp-01');
+        await svc.tryTombstoneMemory('mem-pmp-01');
 
         expect(spy).toHaveBeenCalledWith(
             expect.objectContaining({ actionKind: 'memory_write' }),
@@ -314,7 +309,7 @@ describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.tombstoneMemory('mem-pmp-01', 'assistant');
+        await svc.tryTombstoneMemory('mem-pmp-01', { executionMode: 'assistant' });
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.executionMode).toBe('assistant');
@@ -325,7 +320,7 @@ describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.tombstoneMemory('mem-pmp-01');
+        await svc.tryTombstoneMemory('mem-pmp-01');
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.targetSubsystem).toBe('MemoryAuthorityService');
@@ -336,22 +331,22 @@ describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate
         const svc = new MemoryAuthorityService(pool as any);
         const spy = vi.spyOn(policyGate, 'assertSideEffect');
 
-        await svc.tombstoneMemory('mem-pmp-01');
+        await svc.tryTombstoneMemory('mem-pmp-01');
 
         const ctx = spy.mock.calls[0][0];
         expect(ctx.mutationIntent).toBe('write');
     });
 
-    it('PMP24: blocked in rp mode throws PolicyDeniedError', async () => {
+    it('PMP24: blocked in rp mode returns success:false with PolicyDeniedError in _cause', async () => {
         const pool = makePool();
         const svc = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        await expect(
-            svc.tombstoneMemory('mem-pmp-01', 'rp'),
-        ).rejects.toThrow(PolicyDeniedError);
+        const result = await svc.tryTombstoneMemory('mem-pmp-01', { executionMode: 'rp' });
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
     });
 
     it('PMP25: blocked does NOT call pool.query', async () => {
@@ -361,51 +356,37 @@ describe('PMP20–PMP27: MemoryAuthorityService.tombstoneMemory() — PolicyGate
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        try {
-            await svc.tombstoneMemory('mem-pmp-01', 'rp');
-        } catch (_) {
-            // expected
-        }
-
+        const result = await svc.tryTombstoneMemory('mem-pmp-01', { executionMode: 'rp' });
+        expect(result.success).toBe(false);
         expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('PMP26: PolicyDeniedError propagates cleanly from updateCanonicalMemory', async () => {
+    it('PMP26: PolicyDeniedError captured in _cause from tryUpdateCanonicalMemory', async () => {
         const pool = makePool();
         const svc = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        let caught: unknown;
-        try {
-            await svc.updateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, 'rp');
-        } catch (err) {
-            caught = err;
-        }
-
-        expect(caught).toBeInstanceOf(PolicyDeniedError);
-        const denied = caught as PolicyDeniedError;
+        const result = await svc.tryUpdateCanonicalMemory('mem-pmp-01', { content_text: 'blocked' }, { executionMode: 'rp' });
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
+        const denied = result._cause as PolicyDeniedError;
         expect(denied.decision.code).toBe('TEST_MEM_BLOCK');
         expect(denied.decision.reason).toContain('blocked by test rule');
     });
 
-    it('PMP27: PolicyDeniedError propagates cleanly from tombstoneMemory', async () => {
+    it('PMP27: PolicyDeniedError captured in _cause from tryTombstoneMemory', async () => {
         const pool = makePool();
         const svc = new MemoryAuthorityService(pool as any);
         vi.spyOn(policyGate, 'assertSideEffect').mockImplementation(() => {
             throw new PolicyDeniedError(makeBlockDecision());
         });
 
-        let caught: unknown;
-        try {
-            await svc.tombstoneMemory('mem-pmp-01', 'rp');
-        } catch (err) {
-            caught = err;
-        }
-
-        expect(caught).toBeInstanceOf(PolicyDeniedError);
-        const denied = caught as PolicyDeniedError;
+        const result = await svc.tryTombstoneMemory('mem-pmp-01', { executionMode: 'rp' });
+        expect(result.success).toBe(false);
+        expect(result._cause).toBeInstanceOf(PolicyDeniedError);
+        const denied = result._cause as PolicyDeniedError;
         expect(denied.decision.code).toBe('TEST_MEM_BLOCK');
         expect(denied.decision.reason).toContain('blocked by test rule');
     });
