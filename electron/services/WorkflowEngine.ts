@@ -315,7 +315,7 @@ export class WorkflowEngine {
      * @returns {Promise<{ success: boolean, logs: string[], context?: WorkflowContext, error?: string }>}
      *   Execution result with timestamped logs, context history, and optional error.
      */
-    public async executeWorkflow(workflow: { nodes: WorkflowNode[], edges: WorkflowEdge[] }, startNodeId?: string, initialInput: any = {}) {
+    public async executeWorkflow(workflow: { nodes: WorkflowNode[], edges: WorkflowEdge[] }, startNodeId?: string, initialInput: any = {}, executionMode?: string) {
         const consoleLog: string[] = [];
         const log = (msg: string) => consoleLog.push(`[${new Date().toISOString()}] ${msg}`);
 
@@ -370,6 +370,7 @@ export class WorkflowEngine {
                 // PolicyDeniedError propagates out of the BFS loop and is surfaced as an error.
                 policyGate.assertSideEffect({
                     actionKind: 'workflow_action',
+                    executionMode,
                     targetSubsystem: 'workflow',
                     mutationIntent: `node_execute:${node.type}`,
                 });
@@ -871,7 +872,7 @@ Do not output markdown.
                     log(`Executing sub-workflow with ${subWorkflowData.nodes.length} nodes...`);
 
                     // Recursively execute sub-workflow
-                    const subResult = await this.executeWorkflow(subWorkflowData);
+                    const subResult = await this.executeWorkflow(subWorkflowData, undefined, undefined, executionMode);
 
                     if (!subResult.success) {
                         log(`Sub-workflow failed: ${subResult.error}`);

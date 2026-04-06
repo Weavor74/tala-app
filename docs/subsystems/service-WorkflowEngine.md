@@ -165,11 +165,17 @@ Executes a complete workflow from start to finish.
  @param {{ nodes: WorkflowNode[], edges: WorkflowEdge[] }} workflow - The workflow definition.
  @param {string} [startNodeId] - Optional specific node ID to start from.
    If omitted, auto-detects trigger nodes.
+ @param {any} [initialInput] - Data to pass to the first node(s). Defaults to `{}`.
+ @param {string} [executionMode] - Optional runtime mode (`'rp'`, `'assistant'`, `'hybrid'`, `'system'`).
+   Forwarded to `policyGate.assertSideEffect()` before each node execution.
+   When `executionMode === 'rp'`, the `POLICY_WORKFLOW_RP_BLOCK` rule fires and execution is
+   rejected before any node runs. Defaults to `undefined` (no mode constraint applied).
+   Sub-workflow nodes inherit the parent's `executionMode` automatically.
  @returns {Promise<{ success: boolean, logs: string[], context?: WorkflowContext, error?: string }>}
    Execution result with timestamped logs, context history, and optional error.
 /
 
-**Arguments**: `workflow: { nodes: WorkflowNode[], edges: WorkflowEdge[] }, startNodeId?: string, initialInput: any = {}`
+**Arguments**: `workflow: { nodes: WorkflowNode[], edges: WorkflowEdge[] }, startNodeId?: string, initialInput: any = {}, executionMode?: string`
 
 ---
 #### `getCredential`

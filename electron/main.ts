@@ -698,7 +698,7 @@ workflowService.initScheduler(async (workflowId) => {
     const workflows = workflowService.listWorkflows();
     const wf = workflows.find((w: any) => w.id === workflowId);
     if (!wf) return;
-    const result = await workflowEngine.executeWorkflow(wf);
+    const result = await workflowEngine.executeWorkflow(wf, undefined, undefined, 'system');
     const runId = Date.now().toString();
     workflowService.saveRun(workflowId, runId, {
       id: runId,

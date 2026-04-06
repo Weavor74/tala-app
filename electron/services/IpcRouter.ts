@@ -670,7 +670,11 @@ export class IpcRouter {
       if (!wf) throw new Error('Workflow not found');
 
       const runId = Date.now().toString();
-      const result = await workflowEngine.executeWorkflow(wf, undefined, input);
+      const rawMode = getActiveMode(getSettingsPath(), 'IpcRouter.execute-workflow');
+      const wfExecutionMode: RuntimeExecutionMode = VALID_EXECUTION_MODES.has(rawMode)
+        ? (rawMode as RuntimeExecutionMode)
+        : 'assistant';
+      const result = await workflowEngine.executeWorkflow(wf, undefined, input, wfExecutionMode);
 
       // Save Run Log
       workflowService.saveRun(workflowId, runId, {
