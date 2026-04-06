@@ -29,7 +29,8 @@ user input
   → AgentKernel.execute()                  [top-level execution shell — Phase 2d]
       → normalizeRequest()                 [normalize/validate KernelRequest; preserve origin/executionMode]
       → intake()                           [stamp executionId, startedAt, executionClass;
-                                            reads origin/executionMode from request with 'ipc'/'assistant' fallbacks]
+                                            reads origin/executionMode from request with 'ipc'/'assistant' fallbacks;
+                                            emits execution.created → registers ExecutionState → emits execution.accepted via TelemetryBus]
       → classifyExecution()                [classify turn; future: policy gate, context assembly trigger]
       → runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
           → AgentService.chat()
@@ -50,7 +51,7 @@ user input
           → TurnContext.artifactDecision      [routing decision recorded]
           → GuardrailService                  [output safety check]
           → UI delivery (IPC stream)
-      → finalizeExecution()                [record durationMs, build terminal ExecutionState; future: telemetry emit, learning hooks, audit]
+      → finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.completed via TelemetryBus; future: outcome learning, audit records]
   → chat-done event (carries executionId + executionOrigin from KernelResult.meta)
 ```
 
@@ -63,10 +64,10 @@ each turn. Future runtime authority boundaries attach here:
 | Stage | Current behavior | Future responsibility |
 |-------|-----------------|----------------------|
 | `normalizeRequest` | Coerce missing fields to defaults | Request ACL, payload coercion |
-| `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'` | Budget checks, authority pre-validation |
+| `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'`; emit `execution.created` and `execution.accepted` via `TelemetryBus` | Budget checks, authority pre-validation |
 | `classifyExecution` | No-op placeholder | Mode detection, tool-need prediction, policy gate |
 | `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
-| `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), return `KernelResult` | Telemetry emission, outcome learning, audit record |
+| `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), emit `execution.completed` via `TelemetryBus`, return `KernelResult` | Outcome learning, audit record |
 
 `KernelResult` extends `AgentTurnOutput` with a `meta: KernelExecutionMeta` field containing
 `executionId`, `startedAt`, `executionType`, `executionClass`, `durationMs`, `origin`, and `mode`.
