@@ -115,14 +115,11 @@ describe('PG4–PG10: PolicyGate denied path — execution stopped cleanly', () 
 
     it('PG5: execution state is marked blocked with the block reason', async () => {
         const { kernel } = makeKernel();
-        let executionId: string | undefined;
 
         try {
             await kernel.execute({ userMessage: 'blocked turn', origin: 'ipc', executionMode: 'assistant' });
-        } catch (err) {
-            if (err instanceof PolicyDeniedError) {
-                executionId = err.decision.metadata?.['executionId'] as string | undefined;
-            }
+        } catch {
+            // expected — PolicyDeniedError
         }
 
         // Find the blocked entry in the state store.

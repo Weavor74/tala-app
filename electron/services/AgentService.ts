@@ -58,6 +58,7 @@ import { getCanonicalMemoryRepository } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
+import { policyGate } from './policy/PolicyGate';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -2608,6 +2609,18 @@ Failure to provide a tool call will result in system termination.`;
                             if (activeMode === 'hybrid' && toolName === 'fs_write_text' && !capabilitiesOverride?.allowWritesThisTurn) {
                                 throw new Error("Action Blocked: File writes in Hybrid mode require per-turn UI authorization. Please check 'Allow writes' and try again.");
                             }
+
+                            // --- POLICY GATE: side-effect pre-check ---
+                            // Stub allow-all; this seam is wired for future enforcement.
+                            // A real rule added to PolicyGate will automatically block here
+                            // without any further change to this call site.
+                            policyGate.assertSideEffect({
+                                actionKind: 'tool_invoke',
+                                executionMode: activeMode,
+                                capability: toolName,
+                                targetSubsystem: 'ToolService',
+                                mutationIntent: `tool invocation: ${toolName}`,
+                            });
 
                             return await this.tools.executeTool(toolName, args, allowedToolNames);
                         })();

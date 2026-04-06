@@ -68,7 +68,7 @@ each turn. Future runtime authority boundaries attach here:
 | `normalizeRequest` | Coerce missing fields to defaults | Request ACL, payload coercion |
 | `intake` | Stamp `executionId`, `startedAt`, `executionType='chat_turn'`, `origin='ipc'`, `mode='assistant'`, `executionClass='standard'`; emit `execution.created` and `execution.accepted` via `TelemetryBus` | Budget checks, authority pre-validation |
 | `classifyExecution` | PolicyGate top-level admission check (`policyGate.evaluate()` with `action='execution.admit'`). On deny: marks state `blocked`, emits `execution.blocked`, throws `PolicyDeniedError`. On allow: advances state to `planning/classifying`. | Mode detection, context assembly |
-| `runDelegatedFlow` | Calls `AgentService.chat()` | Inference orchestration, tool execution, memory write coordination |
+| `runDelegatedFlow` | Calls `AgentService.chat()`; `policyGate.assertSideEffect()` is called before each `tools.executeTool()` invocation (stub allow-all; future enforcement attaches here without further changes) | Inference orchestration, tool execution, memory write coordination |
 | `finalizeExecution` | Record `durationMs`, build terminal `ExecutionState` (shared contracts), emit `execution.finalizing` then `execution.completed` via `TelemetryBus`, return `KernelResult` | Outcome learning, audit record |
 
 `KernelResult` extends `AgentTurnOutput` with a `meta: KernelExecutionMeta` field containing
@@ -121,6 +121,7 @@ Both `AgentKernel` (chat) and `AutonomousRunOrchestrator` (autonomy) emit into t
 |---|---|---|---|
 | `execution.created` | `intake` | `type`, `origin`, `mode` | Request received and ID assigned |
 | `execution.accepted` | `intake` | `type`, `origin`, `mode` | Request registered and ready to begin |
+| `execution.blocked` | `classify` | `type`, `origin`, `mode`, `blockedReason`, `code` | Policy denied: execution blocked at classifyExecution |
 | `execution.finalizing` | `finalizing` | `type`, `origin`, `mode`, `durationMs` | Success path: entering terminal finalization |
 | `execution.completed` | `finalizing` | `type`, `origin`, `mode`, `durationMs` | Success path: execution finalized cleanly |
 | `execution.failed` | `failed` | `type`, `origin`, `mode`, `failureReason` | Failure path: unrecoverable error |
@@ -132,7 +133,43 @@ For autonomy tasks: `type='autonomy_task'`, `origin='autonomy_engine'`, `mode='s
 
 This unified schema enables a future dashboard to consume both streams without distinguishing the source.
 
-### TurnContext — Canonical Turn Carrier
+### PolicyGate — Runtime Enforcement Seam
+
+`PolicyGate` (`electron/services/policy/PolicyGate.ts`) is the central cross-cutting enforcement seam.
+It is stateless and deterministic: the same context always produces the same decision.
+The current implementation is stub allow-all; enforcement is added by inserting real rules without
+changing any call site.
+
+#### Evaluation tiers
+
+| Tier | Method | Context type | Where called |
+|------|--------|--------------|--------------|
+| Execution admission | `checkExecution(ctx)` / `evaluate()` | `ExecutionAdmissionContext` | `AgentKernel.classifyExecution()` |
+| Side-effect pre-check | `checkSideEffect(ctx)` / `assertSideEffect(ctx)` | `SideEffectContext` | `AgentService` before `tools.executeTool()` |
+
+#### `SideEffectContext` fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `actionKind` | `SideEffectActionKind` | `'tool_invoke'` \| `'memory_write'` \| `'file_write'` \| `'workflow_action'` \| `'autonomy_action'` |
+| `executionId?` | `string` | Parent execution ID for telemetry correlation |
+| `executionType?` | `string` | Logical type of the parent execution |
+| `executionOrigin?` | `string` | Origin of the parent execution |
+| `executionMode?` | `string` | Runtime mode in effect |
+| `capability?` | `string` | Tool or capability name being exercised |
+| `targetSubsystem?` | `string` | Subsystem that would execute the action |
+| `mutationIntent?` | `string` | Human-readable description of what would be mutated |
+
+#### Future enforcement seams (prepared, not yet enforced)
+
+The following call sites are identified for future rule attachment; wiring them requires only adding
+rules to `PolicyGate.evaluate()` — no call-site changes are needed:
+
+- `AgentService` post-turn memory write (after tool loop, before `mem0`/Postgres write)
+- `AutonomousRunOrchestrator._executeGoalPipeline()` — before each goal action
+- `WorkflowRunner` (when introduced) — before each workflow step
+
+
 
 `TurnContext` (source: `electron/services/router/ContextAssembler.ts`) is the single structured
 object that describes everything known about a turn from start to finish.
