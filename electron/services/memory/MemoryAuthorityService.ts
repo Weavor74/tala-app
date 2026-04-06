@@ -880,6 +880,106 @@ export class MemoryAuthorityService {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // NORMALIZED CANONICAL WRAPPERS
+    // Migration-safe, non-throwing variants of the three canonical mutation
+    // paths.  These return MemoryOperationResult instead of throwing, enabling
+    // callers to adopt the facade contract without migrating all at once.
+    //
+    // The original throwing methods (createCanonicalMemory, updateCanonicalMemory,
+    // tombstoneMemory) are left unchanged for backward compatibility.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Non-throwing wrapper for createCanonicalMemory().
+     *
+     * Accepts the same core inputs as createCanonicalMemory plus an optional
+     * MemoryInvocationContext for telemetry correlation and executionId
+     * forwarding.  All errors — including PolicyDeniedError and DB failures —
+     * are captured and returned as `{ success: false, error }`.
+     *
+     * @param input  Proposed memory input to canonicalise.
+     * @param ctx    Optional invocation context.  ctx.executionId is forwarded
+     *               to the underlying canonical method as the callerExecutionId.
+     * @returns      `MemoryOperationResult<string>` where `data` is the
+     *               canonical_memory_id on success.
+     */
+    async tryCreateCanonicalMemory(
+        input: ProposedMemoryInput,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<string>> {
+        const startTime = Date.now();
+        try {
+            const memoryId = await this.createCanonicalMemory(input, ctx?.executionId);
+            return { success: true, data: memoryId, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
+    }
+
+    /**
+     * Non-throwing wrapper for updateCanonicalMemory().
+     *
+     * Accepts the same core inputs as updateCanonicalMemory plus an optional
+     * MemoryInvocationContext.  ctx.executionMode and ctx.executionId are
+     * forwarded to the underlying canonical method.  All errors — including
+     * PolicyDeniedError and DB failures — are captured and returned as
+     * `{ success: false, error }`.
+     *
+     * @param memoryId  UUID of the canonical record to update.
+     * @param updates   Fields to update on the record.
+     * @param ctx       Optional invocation context.
+     * @returns         `MemoryOperationResult<CanonicalMemory>` where `data` is
+     *                  the updated record on success.
+     */
+    async tryUpdateCanonicalMemory(
+        memoryId: string,
+        updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<CanonicalMemory>> {
+        const startTime = Date.now();
+        try {
+            const updated = await this.updateCanonicalMemory(
+                memoryId,
+                updates,
+                ctx?.executionMode,
+                ctx?.executionId,
+            );
+            return { success: true, data: updated, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
+    }
+
+    /**
+     * Non-throwing wrapper for tombstoneMemory().
+     *
+     * Accepts the same core inputs as tombstoneMemory plus an optional
+     * MemoryInvocationContext.  ctx.executionMode and ctx.executionId are
+     * forwarded to the underlying canonical method.  All errors — including
+     * PolicyDeniedError and DB failures — are captured and returned as
+     * `{ success: false, error }`.
+     *
+     * @param memoryId  UUID of the canonical record to tombstone.
+     * @param ctx       Optional invocation context.
+     * @returns         `MemoryOperationResult<void>` — `data` is undefined.
+     */
+    async tryTombstoneMemory(
+        memoryId: string,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<void>> {
+        const startTime = Date.now();
+        try {
+            await this.tombstoneMemory(memoryId, ctx?.executionMode, ctx?.executionId);
+            return { success: true, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
+    }
+
     /**
      * Rank a set of memory candidates by authority tier.
      *
