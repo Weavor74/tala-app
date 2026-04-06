@@ -24,6 +24,7 @@ import type {
     SourceControlProvider,
     AgentProfile
 } from '../../shared/settings';
+import { makeDefaultGuardrailPolicyConfig } from '../../shared/guardrails/guardrailPolicyTypes';
 
 export type { 
     McpServerConfig,
@@ -160,6 +161,7 @@ CORE CONSTRAINTS:
         { id: 'google-search', name: 'Google Search', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-google-search'], enabled: false }
     ],
     guardrails: [],
+    guardrailPolicy: makeDefaultGuardrailPolicyConfig(),
     search: {
         activeProviderId: 'default-google',
         providers: [
@@ -311,6 +313,11 @@ export const migrateSettings = (loaded: any): AppSettings => {
     // Migrate Guardrails
     if (loaded.guardrails && Array.isArray(loaded.guardrails)) {
         base.guardrails = loaded.guardrails;
+    }
+
+    // Migrate GuardrailPolicy (structured policy config authored by GuardrailsTab)
+    if (loaded.guardrailPolicy && loaded.guardrailPolicy.version === 1) {
+        base.guardrailPolicy = loaded.guardrailPolicy;
     }
 
     // Migrate Workflows
