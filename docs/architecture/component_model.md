@@ -43,6 +43,17 @@ This document describes the Tala system as a collection of interacting component
 - **Dependencies**: MCP Client, local file system modules.
 - **P7A Note**: `setMemoryService(memory, getCanonicalId?)` accepts an optional authority callback. When wired (by AgentService), the `mem0_add` tool calls `getCanonicalId` to obtain a `canonical_memory_id` from MemoryAuthorityService before writing to the derived mem0 store.
 
+### WorkflowRegistry
+- **Path**: `electron/services/router/WorkflowRegistry.ts`
+- **Purpose**: Deterministic MCP-triggered workflow executor. Maintains a registry of named multi-step `WorkflowDefinition`s and executes them sequentially via `ToolService`. Returns a Markdown summary log per run.
+- **Inputs**: Workflow ID, optional initial args, optional `executionMode` (defaults to `'system'`).
+- **Outputs**: Markdown string summary of the execution.
+- **Pre-registered workflows**: `repo_audit` (runs `npm run repo:check` + `npm run code:check` via `shell_run`), `docs_selfheal` (runs `npm run docs:selfheal` via `shell_run`).
+- **Policy gate**: `policyGate.assertSideEffect({ actionKind: 'workflow_action', executionMode, targetSubsystem: 'workflow', mutationIntent: 'mcp_node_execute:<tool>' })` is called before every step's `toolDef.execute()`. `PolicyDeniedError` is re-thrown from the per-step catch block so callers receive the denial directly.
+- **executionMode default**: Defaults to `'system'` because MCP-triggered workflows run outside any user chat session and have no ambient runtime mode. Callers with a real mode (e.g. from `getActiveMode()`) should pass it explicitly to enable accurate policy evaluation.
+- **Failure behaviour**: First step failure halts the loop (subsequent steps are skipped). `PolicyDeniedError` is not treated as a step failure and always propagates.
+- **Initialized by**: `AgentService` constructor as `this.workflows = new WorkflowRegistry(this.tools)`.
+
 ## 2. Inference Pipeline
 
 ### InferenceService
