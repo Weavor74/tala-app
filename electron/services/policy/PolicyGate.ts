@@ -508,8 +508,13 @@ export class PolicyGate {
                         ruleId: rule.id,
                         error: String(err),
                     });
-                    // ValidatorRegistry never throws, but this defensive fallback
-                    // treats unexpected errors as fail-open to avoid blocking safe paths.
+                    // ValidatorRegistry.runRuleBindings() is designed to never throw —
+                    // all adapter errors are caught and returned as result records.
+                    // This catch is a defensive safeguard against unexpected infrastructure
+                    // failures (e.g. out-of-memory, import errors after hot-reload).
+                    // Fail-open here is intentional: infrastructure failures should not
+                    // silently block safe execution paths. This is distinct from per-binding
+                    // failOpen/failClosed semantics, which govern validator-level errors.
                     continue;
                 }
 

@@ -199,6 +199,20 @@ describe('Active profile loading', () => {
         const result = await gate.evaluateAsync({ action: 'tool_invoke' });
         expect(result.allowed).toBe(true);
     });
+
+    it('PGI05b: setConfig(undefined) clears previously-set config and reverts to hard-coded only', async () => {
+        const { gate } = makePolicyGate();
+        // First: set a deny-all config
+        gate.setConfig(makeConfig([makeRule({ action: 'deny' })]));
+        const blocked = await gate.evaluateAsync({ action: 'tool_invoke' });
+        expect(blocked.allowed).toBe(false);
+
+        // Then: clear the config
+        gate.setConfig(undefined);
+        const allowed = await gate.evaluateAsync({ action: 'tool_invoke' });
+        expect(allowed.allowed).toBe(true);
+        expect(allowed.code).toBe('POLICY_DEFAULT_ALLOW');
+    });
 });
 
 // ─── 2. Rule scope matching ───────────────────────────────────────────────────
