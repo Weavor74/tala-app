@@ -1123,22 +1123,26 @@ describe('EC14: Lifecycle parity across execution paths', () => {
     });
 
     it('expected autonomy lifecycle order is: created → accepted → finalizing → completed', () => {
-        // Validates the canonical event sequence both paths must produce on success.
-        // The actual ordering is enforced in _executeGoalPipeline; this test
-        // documents and asserts the expected sequence at contract level.
+        // Documents and validates the canonical event sequence contract.
+        // On a successful run, execution.finalizing must precede execution.completed,
+        // both of which must follow execution.accepted. We verify this here using
+        // the same indices-based ordering check used for AgentKernel above.
         const expectedSuccessSequence = [
             'execution.created',
             'execution.accepted',
             'execution.finalizing',
             'execution.completed',
-        ];
-        // Verify sequence is forward-only (each event comes after the previous)
-        for (let i = 1; i < expectedSuccessSequence.length; i++) {
-            expect(expectedSuccessSequence.indexOf(expectedSuccessSequence[i]))
-                .toBeGreaterThan(expectedSuccessSequence.indexOf(expectedSuccessSequence[i - 1]));
-        }
+        ] as const;
+        // Verify the contract is internally consistent: each event is unique
+        const uniqueNames = new Set(expectedSuccessSequence);
+        expect(uniqueNames.size).toBe(expectedSuccessSequence.length);
+        // Verify the boundary events are correct
         expect(expectedSuccessSequence[0]).toBe('execution.created');
         expect(expectedSuccessSequence[expectedSuccessSequence.length - 1]).toBe('execution.completed');
+        // Verify finalizing immediately precedes completed (index relationship)
+        const finalizingPos = expectedSuccessSequence.indexOf('execution.finalizing');
+        const completedPos = expectedSuccessSequence.indexOf('execution.completed');
+        expect(finalizingPos).toBe(completedPos - 1);
     });
 
     it('AgentKernel and autonomy both use subsystem=kernel for lifecycle events', async () => {

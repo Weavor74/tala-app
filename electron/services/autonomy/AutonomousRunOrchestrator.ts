@@ -1590,7 +1590,6 @@ export class AutonomousRunOrchestrator {
     ): Promise<void> {
         const cycleId = uuidv4();
         const runId = uuidv4();
-        const startedAtMs = Date.now();
         const run: AutonomousRun = {
             runId,
             goalId: goal.goalId,
@@ -1608,6 +1607,9 @@ export class AutonomousRunOrchestrator {
             runtimeExecutionType: 'autonomy_task',
             runtimeExecutionOrigin: 'autonomy_engine',
         };
+        // Capture numeric start time from run.startedAt as the single source of truth
+        // for duration tracking — mirrors KernelExecutionMeta.startedAt (Date.now()).
+        const startedAtMs = Date.parse(run.startedAt);
 
         this.activeRuns.set(run.runId, run);
         this.budgetManager.recordRunStart(run.runId, goal.subsystemId);
