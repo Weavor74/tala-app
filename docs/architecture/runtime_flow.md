@@ -146,6 +146,8 @@ changing any call site.
 |------|--------|--------------|--------------|
 | Execution admission | `checkExecution(ctx)` / `evaluate()` | `ExecutionAdmissionContext` | `AgentKernel.classifyExecution()` |
 | Side-effect pre-check | `checkSideEffect(ctx)` / `assertSideEffect(ctx)` | `SideEffectContext` | `AgentService` before `tools.executeTool()` |
+| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowEngine.executeWorkflow()` — before each BFS node, with `executionMode` threaded from caller |
+| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowRegistry.executeWorkflow()` — before each step's `toolDef.execute()`; `executionMode` defaults to `'system'` (MCP/system origin); `mutationIntent=mcp_node_execute:<tool>` |
 
 #### `SideEffectContext` fields
 
@@ -166,8 +168,6 @@ The following call sites are identified for future rule attachment; wiring them 
 rules to `PolicyGate.evaluate()` — no call-site changes are needed:
 
 - `AgentService` post-turn memory write (after tool loop, before `mem0`/Postgres write)
-- `AutonomousRunOrchestrator._executeGoalPipeline()` — before each goal action
-- `WorkflowRunner` (when introduced) — before each workflow step
 
 
 
