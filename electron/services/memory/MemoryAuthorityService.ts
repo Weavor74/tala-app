@@ -32,6 +32,7 @@ import {
     rankMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from './derivedWriteGuards';
+import { policyGate } from '../policy/PolicyGate';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -113,6 +114,15 @@ export class MemoryAuthorityService {
      */
     async createCanonicalMemory(input: ProposedMemoryInput): Promise<string> {
         const hash = computeCanonicalHash(input);
+
+        // --- POLICY GATE: canonical memory write pre-check ---
+        // Fires before any database operation.
+        // PolicyDeniedError propagates to the caller; no writes occur on block.
+        policyGate.assertSideEffect({
+            actionKind: 'memory_write',
+            targetSubsystem: 'MemoryAuthorityService',
+            mutationIntent: 'canonical_memory_create',
+        });
 
         // Phase 1+2: duplicate detection
         const dup = await this.detectDuplicates({ ...input, canonical_hash: hash });

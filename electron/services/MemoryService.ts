@@ -4,6 +4,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { RuntimeFlags } from './RuntimeFlags';
+import { policyGate } from './policy/PolicyGate';
 
 /**
  * Association
@@ -511,6 +512,16 @@ export class MemoryService {
         }
         const role = mode === 'rp' ? 'rp' : 'core';
         const finalMetadata = { ...metadata, role };
+
+        // --- POLICY GATE: memory write pre-check ---
+        // Fires before any local or remote write mutation.
+        // PolicyDeniedError propagates to the caller; no writes occur on block.
+        policyGate.assertSideEffect({
+            actionKind: 'memory_write',
+            executionMode: mode,
+            targetSubsystem: 'MemoryService',
+            mutationIntent: 'mem0 write',
+        });
 
         const now = Date.now();
         const newItem: MemoryItem = {
