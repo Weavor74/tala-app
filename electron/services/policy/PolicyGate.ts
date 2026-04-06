@@ -193,8 +193,15 @@ export class PolicyGate {
     evaluate(context: PolicyContext): PolicyDecision {
         // ─── Rule: block file_write in rp mode ────────────────────────────────
         // File system writes are not permitted during role-play sessions.
-        // This is the first concrete enforcement rule; it proves the gate blocks
-        // unsafe behaviour end-to-end without requiring additional call-site wiring.
+        //
+        // Seam note: this rule fires when action === 'file_write'.  The 'file_write'
+        // SideEffectActionKind is the correct seam for direct file-system write
+        // operations outside of tool invocations.  Tool-dispatched writes in
+        // AgentService flow through the 'tool_invoke' seam (different action kind),
+        // which is intentional — those are gated by capability-level checks at that
+        // call site.  A Phase 2 rule can extend this gate to also match
+        // actionKind='tool_invoke' with capability 'fs_write_text' if tighter
+        // cross-seam enforcement is required.
         if (context.action === 'file_write' && context.mode === 'rp') {
             return {
                 allowed: false,
