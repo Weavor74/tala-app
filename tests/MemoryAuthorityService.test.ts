@@ -18,8 +18,10 @@
  * Uses a mock pg Pool — no real database connection required.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryAuthorityService } from '../electron/services/memory/MemoryAuthorityService';
+import { TelemetryBus } from '../electron/services/telemetry/TelemetryBus';
+import type { RuntimeEvent } from '../shared/runtimeEventTypes';
 
 vi.mock('electron', () => ({
     app: { getPath: () => '/tmp/tala-test' },
@@ -925,6 +927,551 @@ describe('MemoryAuthorityService', () => {
 
             expect(result.winner_content).toBe('same truth');
             expect(result.conflict_logged).toBe(false);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 17. Unified CRUD facade — createMemory / readMemory / updateMemory / deleteMemory
+    // -----------------------------------------------------------------------
+    describe('Unified CRUD facade', () => {
+        const INPUT = {
+            memory_type: 'interaction',
+            subject_type: 'conversation',
+            subject_id: 'turn-1',
+            content_text: 'User: "hello" | Tala: "hi"',
+        };
+
+        describe('createMemory', () => {
+            it('delegates to createCanonicalMemory and returns success with the memory_id', async () => {
+                const pool = poolSequenced([
+                    { rows: [] },                          // detectDuplicates: exact hash check
+                    { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
+                    { rows: [] },                          // _appendLineage
+                    { rows: [] },                          // _emitProjectionEvents: mem0
+                    { rows: [] },                          // _emitProjectionEvents: graph
+                    { rows: [] },                          // _emitProjectionEvents: vector
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.createMemory(INPUT);
+                expect(result.success).toBe(true);
+                expect(result.data).toBe(MEMORY_ID);
+                expect(typeof result.durationMs).toBe('number');
+            });
+
+            it('returns success with the existing memory_id when a duplicate is detected', async () => {
+                const pool = poolWithRows([{ memory_id: MEMORY_ID }]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.createMemory(INPUT);
+                expect(result.success).toBe(true);
+                expect(result.data).toBe(MEMORY_ID);
+            });
+        });
+
+        describe('readMemory', () => {
+            it('returns the canonical record when found', async () => {
+                const pool = poolWithRows([makeMemoryRow()]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const record = await svc.readMemory(MEMORY_ID);
+                expect(record).not.toBeNull();
+                expect(record!.memory_id).toBe(MEMORY_ID);
+                expect(record!.authority_status).toBe('canonical');
+            });
+
+            it('returns null when the memory_id does not exist', async () => {
+                const pool = poolWithRows([]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const record = await svc.readMemory('non-existent-id');
+                expect(record).toBeNull();
+            });
+        });
+
+        describe('updateMemory', () => {
+            it('delegates to updateCanonicalMemory and returns success with the updated record', async () => {
+                const updatedRow = makeMemoryRow({
+                    content_text: 'updated text',
+                    version: 2,
+                    canonical_hash: 'newhash456',
+                });
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] },  // _fetchRecord
+                    { rows: [updatedRow] },         // UPDATE memory_records
+                    { rows: [] },                   // _appendLineage
+                    { rows: [] },                   // _markProjectionsStale
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.updateMemory(MEMORY_ID, { content_text: 'updated text' });
+                expect(result.success).toBe(true);
+                expect(result.data!.memory_id).toBe(MEMORY_ID);
+                expect(result.data!.version).toBe(2);
+                expect(typeof result.durationMs).toBe('number');
+            });
+
+            it('forwards executionMode from context to the policy gate', async () => {
+                const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'h2' });
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] },
+                    { rows: [updatedRow] },
+                    { rows: [] },
+                    { rows: [] },
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.updateMemory(
+                    MEMORY_ID,
+                    { content_text: 'new' },
+                    { executionMode: 'assistant' },
+                );
+                expect(result.success).toBe(true);
+            });
+        });
+
+        describe('deleteMemory', () => {
+            it('delegates to tombstoneMemory and returns success', async () => {
+                const pool = poolSequenced([
+                    { rows: [makeMemoryRow()] }, // _fetchRecord
+                    { rows: [] },                 // UPDATE tombstoned_at
+                    { rows: [] },                 // _appendLineage
+                ]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.deleteMemory(MEMORY_ID);
+                expect(result.success).toBe(true);
+                expect(typeof result.durationMs).toBe('number');
+            });
+
+            it('returns success when the record is already tombstoned (idempotent)', async () => {
+                const pool = poolWithRows([makeMemoryRow({ authority_status: 'tombstoned', tombstoned_at: NOW })]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.deleteMemory(MEMORY_ID);
+                expect(result.success).toBe(true);
+            });
+
+            it('returns success:false (no throw) when the memory_id does not exist', async () => {
+                const pool = poolWithRows([]);
+                const svc = new MemoryAuthorityService(pool as never);
+                const result = await svc.deleteMemory('missing-id');
+                expect(result.success).toBe(false);
+                expect(result.error).toMatch('not found');
+            });
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 18. TelemetryBus integration — memory.write_* events
+    // -----------------------------------------------------------------------
+    describe('TelemetryBus telemetry', () => {
+        let capturedEvents: RuntimeEvent[];
+        let unsub: () => void;
+
+        beforeEach(() => {
+            TelemetryBus._resetForTesting();
+            capturedEvents = [];
+            unsub = TelemetryBus.getInstance().subscribe((evt) => capturedEvents.push(evt));
+        });
+
+        afterEach(() => {
+            unsub();
+            TelemetryBus._resetForTesting();
+        });
+
+        it('createCanonicalMemory emits write_requested then write_completed on success', async () => {
+            const pool = poolSequenced([
+                { rows: [] },                          // detectDuplicates: exact hash check
+                { rows: [{ memory_id: MEMORY_ID }] }, // INSERT memory_records
+                { rows: [] },                          // _appendLineage
+                { rows: [] },                          // _emitProjectionEvents: mem0
+                { rows: [] },                          // _emitProjectionEvents: graph
+                { rows: [] },                          // _emitProjectionEvents: vector
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.createCanonicalMemory({
+                memory_type: 'interaction',
+                subject_type: 'conversation',
+                subject_id: 'turn-1',
+                content_text: 'hello',
+            });
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBe(2);
+            expect(memEvents[0].event).toBe('memory.write_requested');
+            expect(memEvents[0].payload).toMatchObject({ operation: 'create' });
+            expect(memEvents[1].event).toBe('memory.write_completed');
+            expect(memEvents[1].payload).toMatchObject({ operation: 'create', memory_id: MEMORY_ID });
+            // Both events share the same executionId (the write operation ID)
+            expect(memEvents[0].executionId).toBe(memEvents[1].executionId);
+        });
+
+        it('createCanonicalMemory emits write_requested then write_completed for a duplicate', async () => {
+            const pool = poolWithRows([{ memory_id: MEMORY_ID }]); // exact duplicate found
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.createCanonicalMemory({
+                memory_type: 'interaction',
+                subject_type: 'conversation',
+                subject_id: 'turn-1',
+                content_text: 'hello',
+            });
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBe(2);
+            expect(memEvents[0].event).toBe('memory.write_requested');
+            expect(memEvents[1].event).toBe('memory.write_completed');
+            expect(memEvents[1].payload).toMatchObject({ duplicate: true });
+        });
+
+        it('createCanonicalMemory emits write_failed when the DB throws', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
+                        return Promise.resolve({ rows: [] }); // no duplicate
+                    }
+                    return Promise.reject(new Error('DB connection lost'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            await expect(svc.createCanonicalMemory({
+                memory_type: 'interaction',
+                subject_type: 'conversation',
+                subject_id: 'turn-1',
+                content_text: 'hello',
+            })).rejects.toThrow('DB connection lost');
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.some(e => e.event === 'memory.write_requested')).toBe(true);
+            expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
+            const failEvent = memEvents.find(e => e.event === 'memory.write_failed')!;
+            expect(failEvent.payload).toMatchObject({ operation: 'create' });
+        });
+
+        it('updateCanonicalMemory emits write_requested then write_completed on success', async () => {
+            const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'newhash' });
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] },  // _fetchRecord
+                { rows: [updatedRow] },         // UPDATE
+                { rows: [] },                   // _appendLineage
+                { rows: [] },                   // _markProjectionsStale
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'updated' });
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBe(2);
+            expect(memEvents[0].event).toBe('memory.write_requested');
+            expect(memEvents[0].payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
+            expect(memEvents[1].event).toBe('memory.write_completed');
+            expect(memEvents[1].payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
+        });
+
+        it('updateCanonicalMemory emits write_failed when record not found', async () => {
+            const pool = poolWithRows([]); // _fetchRecord returns nothing
+            const svc = new MemoryAuthorityService(pool as never);
+            await expect(svc.updateCanonicalMemory(MEMORY_ID, { content_text: 'x' }))
+                .rejects.toThrow('not found');
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
+            expect(memEvents.find(e => e.event === 'memory.write_failed')!.payload)
+                .toMatchObject({ operation: 'update' });
+        });
+
+        it('tombstoneMemory emits write_requested then write_completed on success', async () => {
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] }, // _fetchRecord
+                { rows: [] },                 // UPDATE tombstoned_at
+                { rows: [] },                 // _appendLineage
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.tombstoneMemory(MEMORY_ID);
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBe(2);
+            expect(memEvents[0].event).toBe('memory.write_requested');
+            expect(memEvents[0].payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
+            expect(memEvents[1].event).toBe('memory.write_completed');
+            expect(memEvents[1].payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
+        });
+
+        it('tombstoneMemory emits write_completed (idempotent) when already tombstoned', async () => {
+            const pool = poolWithRows([makeMemoryRow({ authority_status: 'tombstoned', tombstoned_at: NOW })]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.tombstoneMemory(MEMORY_ID);
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBe(2);
+            expect(memEvents[1].event).toBe('memory.write_completed');
+            expect(memEvents[1].payload).toMatchObject({ idempotent: true });
+        });
+
+        it('tombstoneMemory emits write_failed when record not found', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await expect(svc.tombstoneMemory('missing-id')).rejects.toThrow('not found');
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
+        });
+
+        it('each write operation uses its own unique executionId', async () => {
+            const pool1 = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const pool2 = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: '00000000-0000-0000-0000-000000000002' }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool1 as never);
+            const input = { memory_type: 'interaction', subject_type: 'conversation', subject_id: 's', content_text: 'a' };
+            await svc.createCanonicalMemory(input);
+
+            const svc2 = new MemoryAuthorityService(pool2 as never);
+            await svc2.createCanonicalMemory({ ...input, content_text: 'b' });
+
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            const firstId = memEvents[0].executionId;
+            const thirdId = memEvents[2].executionId;
+            expect(firstId).not.toBe(thirdId);
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // 19. MemoryOperationResult — structured result, timing, error normalization,
+    //     policy blocking, and executionId alignment
+    // -----------------------------------------------------------------------
+    describe('MemoryOperationResult', () => {
+        let capturedEvents: RuntimeEvent[];
+        let unsub: () => void;
+
+        beforeEach(() => {
+            TelemetryBus._resetForTesting();
+            capturedEvents = [];
+            unsub = TelemetryBus.getInstance().subscribe((evt) => capturedEvents.push(evt));
+        });
+
+        afterEach(() => {
+            unsub();
+            TelemetryBus._resetForTesting();
+        });
+
+        // ── Allowed writes ───────────────────────────────────────────────────
+
+        it('MOR1: createMemory returns { success:true, data:memoryId, durationMs }', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'hello',
+            });
+            expect(result.success).toBe(true);
+            expect(result.data).toBe(MEMORY_ID);
+            expect(result.durationMs).toBeGreaterThanOrEqual(0);
+            expect(result.error).toBeUndefined();
+        });
+
+        it('MOR2: updateMemory returns { success:true, data:CanonicalMemory, durationMs }', async () => {
+            const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'h2' });
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] },
+                { rows: [updatedRow] },
+                { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.updateMemory(MEMORY_ID, { content_text: 'new text' });
+            expect(result.success).toBe(true);
+            expect(result.data!.memory_id).toBe(MEMORY_ID);
+            expect(result.durationMs).toBeGreaterThanOrEqual(0);
+            expect(result.error).toBeUndefined();
+        });
+
+        it('MOR3: deleteMemory returns { success:true, durationMs } with no data', async () => {
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.deleteMemory(MEMORY_ID);
+            expect(result.success).toBe(true);
+            expect(result.data).toBeUndefined();
+            expect(result.durationMs).toBeGreaterThanOrEqual(0);
+        });
+
+        // ── Blocked writes (PolicyDeniedError) ────────────────────────────────
+
+        it('MOR4: createMemory returns { success:false, error } when policy blocks — no write occurs', async () => {
+            // policyGate is allow-all by default in tests; mock assertSideEffect to deny
+            const { policyGate: pg } = await import('../electron/services/policy/PolicyGate');
+            const spy = vi.spyOn(pg, 'assertSideEffect').mockImplementationOnce(() => {
+                throw Object.assign(new Error('memory_write blocked in rp mode'), { name: 'PolicyDeniedError' });
+            });
+
+            const pool = { query: vi.fn() }; // should never be called
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'user',
+                subject_id: 'u1', content_text: 'blocked',
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch('blocked');
+            expect(pool.query).not.toHaveBeenCalled(); // no DB write
+            spy.mockRestore();
+        });
+
+        it('MOR5: updateMemory returns { success:false, error } when policy blocks — no write occurs', async () => {
+            const { policyGate: pg } = await import('../electron/services/policy/PolicyGate');
+            const spy = vi.spyOn(pg, 'assertSideEffect').mockImplementationOnce(() => {
+                throw Object.assign(new Error('memory_write blocked'), { name: 'PolicyDeniedError' });
+            });
+
+            const pool = { query: vi.fn() };
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.updateMemory(MEMORY_ID, { content_text: 'x' });
+
+            expect(result.success).toBe(false);
+            expect(pool.query).not.toHaveBeenCalled();
+            spy.mockRestore();
+        });
+
+        it('MOR6: deleteMemory returns { success:false, error } when policy blocks — no write occurs', async () => {
+            const { policyGate: pg } = await import('../electron/services/policy/PolicyGate');
+            const spy = vi.spyOn(pg, 'assertSideEffect').mockImplementationOnce(() => {
+                throw Object.assign(new Error('memory_write blocked'), { name: 'PolicyDeniedError' });
+            });
+
+            const pool = { query: vi.fn() };
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.deleteMemory(MEMORY_ID);
+
+            expect(result.success).toBe(false);
+            expect(pool.query).not.toHaveBeenCalled();
+            spy.mockRestore();
+        });
+
+        // ── Error normalization ────────────────────────────────────────────────
+
+        it('MOR7: createMemory returns { success:false, error } on DB failure — does not throw', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    return Promise.reject(new Error('connection reset'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 's', content_text: 'x',
+            });
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch('connection reset');
+            expect(result.durationMs).toBeGreaterThanOrEqual(0);
+        });
+
+        it('MOR8: updateMemory returns { success:false, error } when record not found — does not throw', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.updateMemory(MEMORY_ID, { content_text: 'new' });
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch('not found');
+        });
+
+        it('MOR9: deleteMemory returns { success:false, error } when record not found — does not throw', async () => {
+            const pool = poolWithRows([]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.deleteMemory('missing');
+            expect(result.success).toBe(false);
+            expect(result.error).toMatch('not found');
+        });
+
+        // ── Telemetry emission via facade ─────────────────────────────────────
+
+        it('MOR10: createMemory emits memory.write_requested then memory.write_completed on success', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 'turn-1', content_text: 'hello',
+            });
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.some(e => e.event === 'memory.write_requested')).toBe(true);
+            expect(memEvents.some(e => e.event === 'memory.write_completed')).toBe(true);
+        });
+
+        it('MOR11: createMemory emits memory.write_failed on DB error', async () => {
+            const pool = {
+                query: vi.fn().mockImplementation((sql: string) => {
+                    if (sql.includes('FROM memory_records') && sql.includes('canonical_hash')) {
+                        return Promise.resolve({ rows: [] });
+                    }
+                    return Promise.reject(new Error('db error'));
+                }),
+            };
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'conversation',
+                subject_id: 's', content_text: 'x',
+            });
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.some(e => e.event === 'memory.write_failed')).toBe(true);
+        });
+
+        // ── executionId alignment ─────────────────────────────────────────────
+
+        it('MOR12: createMemory uses caller executionId in telemetry when provided in context', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const callerExecutionId = 'turn-exec-abc123';
+            await svc.createMemory(
+                { memory_type: 'interaction', subject_type: 'conversation', subject_id: 's', content_text: 'x' },
+                { executionId: callerExecutionId },
+            );
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.every(e => e.executionId === callerExecutionId)).toBe(true);
+        });
+
+        it('MOR13: updateMemory uses caller executionId in telemetry when provided in context', async () => {
+            const updatedRow = makeMemoryRow({ version: 2, canonical_hash: 'h2' });
+            const pool = poolSequenced([
+                { rows: [makeMemoryRow()] }, { rows: [updatedRow] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            const callerExecutionId = 'turn-exec-def456';
+            await svc.updateMemory(
+                MEMORY_ID,
+                { content_text: 'updated' },
+                { executionId: callerExecutionId },
+            );
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.every(e => e.executionId === callerExecutionId)).toBe(true);
+        });
+
+        it('MOR14: auto-generates executionId when none provided in context', async () => {
+            const pool = poolSequenced([
+                { rows: [] },
+                { rows: [{ memory_id: MEMORY_ID }] },
+                { rows: [] }, { rows: [] }, { rows: [] }, { rows: [] },
+            ]);
+            const svc = new MemoryAuthorityService(pool as never);
+            await svc.createMemory({
+                memory_type: 'interaction', subject_type: 'conversation', subject_id: 's', content_text: 'x',
+            });
+            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
+            expect(memEvents.length).toBeGreaterThan(0);
+            expect(memEvents[0].executionId).toMatch(/^mem-write-/);
+            // All events in the same operation share the same executionId
+            const ids = new Set(memEvents.map(e => e.executionId));
+            expect(ids.size).toBe(1);
         });
     });
 });

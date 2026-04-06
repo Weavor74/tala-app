@@ -9,6 +9,59 @@
  */
 
 // ---------------------------------------------------------------------------
+// MemoryInvocationContext — caller-supplied context for memory write operations
+// ---------------------------------------------------------------------------
+
+/**
+ * Context carried through a single memory write invocation via the CRUD facade.
+ *
+ * All fields are optional.  Callers may supply only what is available at
+ * their call site.  These mirror the fields used by TelemetryBus and
+ * PolicyGate so that memory operations can be correlated with their parent
+ * execution (e.g. a chat turn or autonomy run).
+ */
+export interface MemoryInvocationContext {
+    /** ID of the parent execution (e.g. turnId) for telemetry correlation. */
+    executionId?: string;
+    /** Runtime mode in effect (e.g. 'rp', 'hybrid', 'assistant'). */
+    executionMode?: string;
+    /**
+     * Reserved for future use.  Policy enforcement is always active inside
+     * MemoryAuthorityService; this field exists for API symmetry with
+     * ToolInvocationContext.
+     */
+    enforcePolicy?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// MemoryOperationResult — normalized result returned by the public CRUD facade
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalized result produced by MemoryAuthorityService CRUD facade methods.
+ *
+ * Mirrors the shape of ToolInvocationResult so that memory writes are as
+ * observable and deterministic as tool invocations.
+ *
+ * On success:  `{ success: true, data: T, durationMs }`
+ * On failure:  `{ success: false, error: string, durationMs }`
+ *
+ * The facade methods never throw — all errors (including PolicyDeniedError)
+ * are captured in the `error` field.  This guarantees consistent, structured
+ * results for all callers without per-call try/catch boilerplate.
+ */
+export interface MemoryOperationResult<T = unknown> {
+    /** Whether the operation completed without error. */
+    success: boolean;
+    /** Return value of the operation. Present when `success` is true. */
+    data?: T;
+    /** Error message. Present when `success` is false. */
+    error?: string;
+    /** Wall-clock execution time in milliseconds from facade entry to return. */
+    durationMs: number;
+}
+
+// ---------------------------------------------------------------------------
 // Proposed input — what callers submit for canonicalisation
 // ---------------------------------------------------------------------------
 

@@ -38,8 +38,9 @@ export type RuntimeEventSubsystem =
  * New event types should be added as explicit union members (e.g.
  * `'execution.cancelled'`, `'execution.degraded'`) so tooling and
  * consumers can enumerate them statically.  The template literal
- * catch-all `execution.${string}` exists as a forward-compatibility
- * escape hatch only — do not rely on it for new first-class events.
+ * catch-alls (`execution.${string}`, `memory.${string}`, etc.) exist as
+ * forward-compatibility escape hatches only — do not rely on them for new
+ * first-class events.
  */
 export type RuntimeEventType =
     | 'execution.created'
@@ -52,7 +53,11 @@ export type RuntimeEventType =
     | 'tool.requested'
     | 'tool.completed'
     | 'tool.failed'
-    | `tool.${string}`;
+    | `tool.${string}`
+    | 'memory.write_requested'
+    | 'memory.write_completed'
+    | 'memory.write_failed'
+    | `memory.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────
 

@@ -27,12 +27,15 @@ import type {
     RebuildReport,
     RebuildAction,
     RankedMemoryCandidate,
+    MemoryInvocationContext,
+    MemoryOperationResult,
 } from '../../../shared/memory/authorityTypes';
 import {
     rankMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from './derivedWriteGuards';
-import { policyGate } from '../policy/PolicyGate';
+import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
+import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -112,7 +115,7 @@ export class MemoryAuthorityService {
      *
      * @returns The canonical_memory_id (existing if duplicate, new if created)
      */
-    async createCanonicalMemory(input: ProposedMemoryInput): Promise<string> {
+    async createCanonicalMemory(input: ProposedMemoryInput, callerExecutionId?: string): Promise<string> {
         const hash = computeCanonicalHash(input);
 
         // --- POLICY GATE: canonical memory write pre-check ---
@@ -124,53 +127,84 @@ export class MemoryAuthorityService {
             mutationIntent: 'canonical_memory_write',
         });
 
-        // Phase 1+2: duplicate detection
-        const dup = await this.detectDuplicates({ ...input, canonical_hash: hash });
-        if (dup.duplicate_found && dup.matched_memory_id) {
-            console.log(
-                `[MemoryAuthority] Duplicate detected (${dup.match_kind}, score=${dup.match_score}) → returning existing ${dup.matched_memory_id}`,
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const bus = TelemetryBus.getInstance();
+        bus.emit({
+            executionId: writeOperationId,
+            subsystem: 'memory',
+            event: 'memory.write_requested',
+            payload: { operation: 'create', memory_type: input.memory_type, subject_type: input.subject_type },
+        });
+
+        try {
+            // Phase 1+2: duplicate detection
+            const dup = await this.detectDuplicates({ ...input, canonical_hash: hash });
+            if (dup.duplicate_found && dup.matched_memory_id) {
+                console.log(
+                    `[MemoryAuthority] Duplicate detected (${dup.match_kind}, score=${dup.match_score}) → returning existing ${dup.matched_memory_id}`,
+                );
+                // Record that this was seen as a duplicate
+                await this._recordDuplicate(dup.matched_memory_id, null, hash, dup.match_kind, dup.match_score);
+                bus.emit({
+                    executionId: writeOperationId,
+                    subsystem: 'memory',
+                    event: 'memory.write_completed',
+                    payload: { operation: 'create', memory_id: dup.matched_memory_id, duplicate: true },
+                });
+                return dup.matched_memory_id;
+            }
+
+            const normalised = normalizeText(input.content_text);
+
+            const result = await this.pool.query<{ memory_id: string }>(
+                `INSERT INTO memory_records
+                    (memory_type, subject_type, subject_id, content_text, content_structured,
+                     canonical_hash, authority_status, version, confidence,
+                     source_kind, source_ref, valid_from, valid_to)
+                 VALUES ($1,$2,$3,$4,$5,$6,'canonical',1,$7,$8,$9,
+                         COALESCE($10::timestamptz, NOW()),
+                         $11::timestamptz)
+                 RETURNING memory_id`,
+                [
+                    input.memory_type,
+                    input.subject_type,
+                    input.subject_id,
+                    normalised,
+                    input.content_structured ? JSON.stringify(input.content_structured) : null,
+                    hash,
+                    input.confidence ?? 1.0,
+                    input.source_kind ?? 'unknown',
+                    input.source_ref ?? '',
+                    input.valid_from ?? null,
+                    input.valid_to ?? null,
+                ],
             );
-            // Record that this was seen as a duplicate
-            await this._recordDuplicate(dup.matched_memory_id, null, hash, dup.match_kind, dup.match_score);
-            return dup.matched_memory_id;
+
+            const memoryId = result.rows[0].memory_id;
+
+            // Record creation lineage
+            await this._appendLineage(memoryId, null, 1, 'create', [], null, hash, 'system');
+
+            // Emit projection events (Step 5 — log only; no full projection implemented yet)
+            await this._emitProjectionEvents(memoryId, 1);
+
+            console.log(`[MemoryAuthority] Canonical record created: ${memoryId} (type=${input.memory_type})`);
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_completed',
+                payload: { operation: 'create', memory_id: memoryId, memory_type: input.memory_type },
+            });
+            return memoryId;
+        } catch (err) {
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_failed',
+                payload: { operation: 'create', memory_type: input.memory_type, error: String(err) },
+            });
+            throw err;
         }
-
-        const normalised = normalizeText(input.content_text);
-
-        const result = await this.pool.query<{ memory_id: string }>(
-            `INSERT INTO memory_records
-                (memory_type, subject_type, subject_id, content_text, content_structured,
-                 canonical_hash, authority_status, version, confidence,
-                 source_kind, source_ref, valid_from, valid_to)
-             VALUES ($1,$2,$3,$4,$5,$6,'canonical',1,$7,$8,$9,
-                     COALESCE($10::timestamptz, NOW()),
-                     $11::timestamptz)
-             RETURNING memory_id`,
-            [
-                input.memory_type,
-                input.subject_type,
-                input.subject_id,
-                normalised,
-                input.content_structured ? JSON.stringify(input.content_structured) : null,
-                hash,
-                input.confidence ?? 1.0,
-                input.source_kind ?? 'unknown',
-                input.source_ref ?? '',
-                input.valid_from ?? null,
-                input.valid_to ?? null,
-            ],
-        );
-
-        const memoryId = result.rows[0].memory_id;
-
-        // Record creation lineage
-        await this._appendLineage(memoryId, null, 1, 'create', [], null, hash, 'system');
-
-        // Emit projection events (Step 5 — log only; no full projection implemented yet)
-        await this._emitProjectionEvents(memoryId, 1);
-
-        console.log(`[MemoryAuthority] Canonical record created: ${memoryId} (type=${input.memory_type})`);
-        return memoryId;
     }
 
     /**
@@ -182,6 +216,7 @@ export class MemoryAuthorityService {
         memoryId: string,
         updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
         executionMode?: string,
+        callerExecutionId?: string,
     ): Promise<CanonicalMemory> {
         // --- POLICY GATE: canonical memory update pre-check ---
         // Fires before any fetch or database mutation.
@@ -193,62 +228,87 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const existing = await this._fetchRecord(memoryId);
-        if (!existing) {
-            throw new Error(`[MemoryAuthority] Cannot update: memory_id ${memoryId} not found`);
-        }
-        if (existing.authority_status === 'tombstoned') {
-            throw new Error(`[MemoryAuthority] Cannot update tombstoned memory: ${memoryId}`);
-        }
-
-        const newContentText = updates.content_text != null
-            ? normalizeText(updates.content_text)
-            : existing.content_text;
-
-        const newHash = computeCanonicalHash({
-            memory_type: existing.memory_type,
-            subject_type: existing.subject_type,
-            subject_id: existing.subject_id,
-            content_text: newContentText,
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const bus = TelemetryBus.getInstance();
+        bus.emit({
+            executionId: writeOperationId,
+            subsystem: 'memory',
+            event: 'memory.write_requested',
+            payload: { operation: 'update', memory_id: memoryId },
         });
 
-        const priorHash = existing.canonical_hash;
-        const newVersion = existing.version + 1;
-        const changedFields: string[] = [];
-        if (updates.content_text != null) changedFields.push('content_text');
-        if (updates.content_structured != null) changedFields.push('content_structured');
-        if (updates.confidence != null) changedFields.push('confidence');
-        if (updates.valid_to != null) changedFields.push('valid_to');
+        try {
+            const existing = await this._fetchRecord(memoryId);
+            if (!existing) {
+                throw new Error(`[MemoryAuthority] Cannot update: memory_id ${memoryId} not found`);
+            }
+            if (existing.authority_status === 'tombstoned') {
+                throw new Error(`[MemoryAuthority] Cannot update tombstoned memory: ${memoryId}`);
+            }
 
-        const result = await this.pool.query<Record<string, unknown>>(
-            `UPDATE memory_records SET
-                content_text       = COALESCE($2, content_text),
-                content_structured = COALESCE($3::jsonb, content_structured),
-                confidence         = COALESCE($4, confidence),
-                valid_to           = COALESCE($5::timestamptz, valid_to),
-                canonical_hash     = $6,
-                version            = $7,
-                updated_at         = NOW()
-             WHERE memory_id = $1
-             RETURNING *`,
-            [
-                memoryId,
-                updates.content_text != null ? newContentText : null,
-                updates.content_structured != null ? JSON.stringify(updates.content_structured) : null,
-                updates.confidence ?? null,
-                updates.valid_to ?? null,
-                newHash,
-                newVersion,
-            ],
-        );
+            const newContentText = updates.content_text != null
+                ? normalizeText(updates.content_text)
+                : existing.content_text;
 
-        const updated = rowToCanonical(result.rows[0]);
-        await this._appendLineage(memoryId, null, newVersion, 'update', changedFields, priorHash, newHash, 'system');
-        // Mark projections as stale since the canonical record changed
-        await this._markProjectionsStale(memoryId);
+            const newHash = computeCanonicalHash({
+                memory_type: existing.memory_type,
+                subject_type: existing.subject_type,
+                subject_id: existing.subject_id,
+                content_text: newContentText,
+            });
 
-        console.log(`[MemoryAuthority] Record updated: ${memoryId} → v${newVersion}`);
-        return updated;
+            const priorHash = existing.canonical_hash;
+            const newVersion = existing.version + 1;
+            const changedFields: string[] = [];
+            if (updates.content_text != null) changedFields.push('content_text');
+            if (updates.content_structured != null) changedFields.push('content_structured');
+            if (updates.confidence != null) changedFields.push('confidence');
+            if (updates.valid_to != null) changedFields.push('valid_to');
+
+            const result = await this.pool.query<Record<string, unknown>>(
+                `UPDATE memory_records SET
+                    content_text       = COALESCE($2, content_text),
+                    content_structured = COALESCE($3::jsonb, content_structured),
+                    confidence         = COALESCE($4, confidence),
+                    valid_to           = COALESCE($5::timestamptz, valid_to),
+                    canonical_hash     = $6,
+                    version            = $7,
+                    updated_at         = NOW()
+                 WHERE memory_id = $1
+                 RETURNING *`,
+                [
+                    memoryId,
+                    updates.content_text != null ? newContentText : null,
+                    updates.content_structured != null ? JSON.stringify(updates.content_structured) : null,
+                    updates.confidence ?? null,
+                    updates.valid_to ?? null,
+                    newHash,
+                    newVersion,
+                ],
+            );
+
+            const updated = rowToCanonical(result.rows[0]);
+            await this._appendLineage(memoryId, null, newVersion, 'update', changedFields, priorHash, newHash, 'system');
+            // Mark projections as stale since the canonical record changed
+            await this._markProjectionsStale(memoryId);
+
+            console.log(`[MemoryAuthority] Record updated: ${memoryId} → v${newVersion}`);
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_completed',
+                payload: { operation: 'update', memory_id: memoryId, version: newVersion },
+            });
+            return updated;
+        } catch (err) {
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_failed',
+                payload: { operation: 'update', memory_id: memoryId, error: String(err) },
+            });
+            throw err;
+        }
     }
 
     /**
@@ -256,7 +316,7 @@ export class MemoryAuthorityService {
      * Sets tombstoned_at and authority_status = 'tombstoned'. Does NOT DELETE —
      * the record must remain for referential integrity and rebuild purposes.
      */
-    async tombstoneMemory(memoryId: string, executionMode?: string): Promise<void> {
+    async tombstoneMemory(memoryId: string, executionMode?: string, callerExecutionId?: string): Promise<void> {
         // --- POLICY GATE: tombstone pre-check ---
         // Fires before any fetch or database mutation.
         // PolicyDeniedError propagates to the caller; no writes occur on block.
@@ -267,34 +327,65 @@ export class MemoryAuthorityService {
             mutationIntent: 'write',
         });
 
-        const existing = await this._fetchRecord(memoryId);
-        if (!existing) {
-            throw new Error(`[MemoryAuthority] Cannot tombstone: memory_id ${memoryId} not found`);
+        const writeOperationId = callerExecutionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
+        const bus = TelemetryBus.getInstance();
+        bus.emit({
+            executionId: writeOperationId,
+            subsystem: 'memory',
+            event: 'memory.write_requested',
+            payload: { operation: 'delete', memory_id: memoryId },
+        });
+
+        try {
+            const existing = await this._fetchRecord(memoryId);
+            if (!existing) {
+                throw new Error(`[MemoryAuthority] Cannot tombstone: memory_id ${memoryId} not found`);
+            }
+            if (existing.authority_status === 'tombstoned') {
+                console.warn(`[MemoryAuthority] Memory ${memoryId} already tombstoned — skipping`);
+                bus.emit({
+                    executionId: writeOperationId,
+                    subsystem: 'memory',
+                    event: 'memory.write_completed',
+                    payload: { operation: 'delete', memory_id: memoryId, idempotent: true },
+                });
+                return;
+            }
+
+            await this.pool.query(
+                `UPDATE memory_records
+                 SET tombstoned_at = NOW(), authority_status = 'tombstoned', updated_at = NOW()
+                 WHERE memory_id = $1`,
+                [memoryId],
+            );
+
+            await this._appendLineage(
+                memoryId,
+                null,
+                existing.version,
+                'tombstone',
+                ['tombstoned_at', 'authority_status'],
+                existing.canonical_hash,
+                existing.canonical_hash,
+                'system',
+            );
+
+            console.log(`[MemoryAuthority] Record tombstoned: ${memoryId}`);
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_completed',
+                payload: { operation: 'delete', memory_id: memoryId },
+            });
+        } catch (err) {
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.write_failed',
+                payload: { operation: 'delete', memory_id: memoryId, error: String(err) },
+            });
+            throw err;
         }
-        if (existing.authority_status === 'tombstoned') {
-            console.warn(`[MemoryAuthority] Memory ${memoryId} already tombstoned — skipping`);
-            return;
-        }
-
-        await this.pool.query(
-            `UPDATE memory_records
-             SET tombstoned_at = NOW(), authority_status = 'tombstoned', updated_at = NOW()
-             WHERE memory_id = $1`,
-            [memoryId],
-        );
-
-        await this._appendLineage(
-            memoryId,
-            null,
-            existing.version,
-            'tombstone',
-            ['tombstoned_at', 'authority_status'],
-            existing.canonical_hash,
-            existing.canonical_hash,
-            'system',
-        );
-
-        console.log(`[MemoryAuthority] Record tombstoned: ${memoryId}`);
     }
 
     /**
@@ -682,6 +773,111 @@ export class MemoryAuthorityService {
      */
     async rebuildVectorIndexFromCanonical(): Promise<RebuildReport> {
         return this._rebuildTargetFromCanonical('vector');
+    }
+
+    // -----------------------------------------------------------------------
+    // UNIFIED CRUD FACADE
+    // Single entrypoint for memory create / read / update / delete.
+    // Each method delegates to the existing canonical implementation above.
+    // No behavior is changed — this layer adds discoverability only.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Create a new memory record.
+     *
+     * Wraps createCanonicalMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
+     *
+     * @param input  Proposed memory input to canonicalise.
+     * @param ctx    Optional invocation context for telemetry alignment and
+     *               executionMode forwarding.
+     * @returns      `MemoryOperationResult<string>` where `data` is the
+     *               canonical_memory_id (existing on duplicate, new on create).
+     */
+    async createMemory(
+        input: ProposedMemoryInput,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<string>> {
+        const startTime = Date.now();
+        try {
+            const memoryId = await this.createCanonicalMemory(input, ctx?.executionId);
+            return { success: true, data: memoryId, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
+    }
+
+    /**
+     * Read a single canonical memory record by its ID.
+     * Returns null when the record does not exist.
+     */
+    async readMemory(memoryId: string): Promise<CanonicalMemory | null> {
+        return this._fetchRecord(memoryId);
+    }
+
+    /**
+     * Update an existing canonical memory record.
+     *
+     * Wraps updateCanonicalMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
+     *
+     * @param memoryId  UUID of the canonical record to update.
+     * @param updates   Fields to update on the record.
+     * @param ctx       Optional invocation context for telemetry alignment,
+     *                  executionMode, and executionId forwarding.
+     * @returns         `MemoryOperationResult<CanonicalMemory>` where `data`
+     *                  is the updated canonical record on success.
+     */
+    async updateMemory(
+        memoryId: string,
+        updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<CanonicalMemory>> {
+        const startTime = Date.now();
+        try {
+            const updated = await this.updateCanonicalMemory(
+                memoryId,
+                updates,
+                ctx?.executionMode,
+                ctx?.executionId,
+            );
+            return { success: true, data: updated, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
+    }
+
+    /**
+     * Delete (tombstone) a canonical memory record.
+     *
+     * Wraps tombstoneMemory() in a normalized result envelope.
+     * All errors (including PolicyDeniedError) are returned as
+     * `{ success: false, error }` rather than thrown.
+     *
+     * Records are never physically deleted — tombstoning preserves referential
+     * integrity for lineage and rebuild operations.
+     *
+     * @param memoryId  UUID of the canonical record to tombstone.
+     * @param ctx       Optional invocation context for telemetry alignment,
+     *                  executionMode, and executionId forwarding.
+     * @returns         `MemoryOperationResult<void>` — `data` is undefined.
+     */
+    async deleteMemory(
+        memoryId: string,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<void>> {
+        const startTime = Date.now();
+        try {
+            await this.tombstoneMemory(memoryId, ctx?.executionMode, ctx?.executionId);
+            return { success: true, durationMs: Date.now() - startTime };
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return { success: false, error, durationMs: Date.now() - startTime };
+        }
     }
 
     /**
