@@ -20,7 +20,8 @@
  * state value, then pass it to upsert().
  */
 
-import type { ExecutionState, RuntimeExecutionStatus } from '../../../shared/runtime/executionTypes';
+import type { ExecutionRequest, ExecutionState, RuntimeExecutionStatus } from '../../../shared/runtime/executionTypes';
+import { createInitialExecutionState, advanceExecutionState, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 
 // ─── Bounds ───────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,11 @@ const MAX_STORE_SIZE = 2000;
  *
  * Usage:
  *   const store = new ExecutionStateStore();
+ *   const state = store.beginExecution(request, 'AgentKernel');
+ *   store.advancePhase(state.executionId, 'executing', 'tool_dispatch');
+ *   store.completeExecution(state.executionId);
+ *
+ * Low-level usage (still supported):
  *   store.upsert(initialState);
  *   const state = store.get(executionId);
  *   store.upsert(advanceExecutionState(state!, 'executing', 'tool_dispatch'));
@@ -116,6 +122,82 @@ export class ExecutionStateStore {
         return Array.from(this._store.values())
             .filter(s => statusSet.has(s.status))
             .map(s => structuredClone(s));
+    }
+
+    // ─── Convenience lifecycle APIs ───────────────────────────────────────────
+
+    /**
+     * Create an initial ExecutionState from an ExecutionRequest, store it, and
+     * return a copy of the created state.
+     *
+     * Equivalent to `createInitialExecutionState(request, subsystem)` + `upsert()`,
+     * combined for ergonomic use in execution entry seams.
+     *
+     * @param request    The ExecutionRequest to register.
+     * @param subsystem  Optional name of the owning subsystem (e.g. 'AgentKernel').
+     * @returns          A deep copy of the created initial state.
+     */
+    beginExecution(request: ExecutionRequest, subsystem?: string): ExecutionState {
+        const state = createInitialExecutionState(request, subsystem);
+        this.upsert(state);
+        return structuredClone(state);
+    }
+
+    /**
+     * Advance an existing entry to a new status and phase.
+     * Returns the updated state, or `undefined` if the executionId is not found.
+     *
+     * Callers should treat an `undefined` return as a no-op (e.g. store was
+     * cleared externally). No error is thrown.
+     *
+     * @param executionId  ID of the entry to update.
+     * @param status       The new lifecycle status.
+     * @param phase        The new human-readable phase label.
+     * @returns            A deep copy of the updated state, or `undefined`.
+     */
+    advancePhase(executionId: string, status: RuntimeExecutionStatus, phase: string): ExecutionState | undefined {
+        const current = this._store.get(executionId);
+        if (!current) return undefined;
+        const updated = advanceExecutionState(current, status, phase);
+        this._store.set(executionId, structuredClone(updated));
+        return structuredClone(updated);
+    }
+
+    /**
+     * Mark an existing entry as completed (terminal status).
+     * Sets `status='completed'`, `completedAt`, and `updatedAt`.
+     * Returns the finalized state, or `undefined` if the executionId is not found.
+     *
+     * @param executionId  ID of the entry to finalize.
+     * @param outcome      Optional outcome fields (e.g. `{ degraded: true }`).
+     * @returns            A deep copy of the finalized state, or `undefined`.
+     */
+    completeExecution(
+        executionId: string,
+        outcome: { degraded?: boolean } = {}
+    ): ExecutionState | undefined {
+        const current = this._store.get(executionId);
+        if (!current) return undefined;
+        const finalized = finalizeExecutionState(current, { status: 'completed', ...outcome });
+        this._store.set(executionId, structuredClone(finalized));
+        return structuredClone(finalized);
+    }
+
+    /**
+     * Mark an existing entry as failed (terminal status).
+     * Sets `status='failed'`, `failureReason`, `completedAt`, and `updatedAt`.
+     * Returns the finalized state, or `undefined` if the executionId is not found.
+     *
+     * @param executionId  ID of the entry to fail.
+     * @param reason       Human-readable failure reason for logging and telemetry.
+     * @returns            A deep copy of the finalized state, or `undefined`.
+     */
+    failExecution(executionId: string, reason: string): ExecutionState | undefined {
+        const current = this._store.get(executionId);
+        if (!current) return undefined;
+        const finalized = finalizeExecutionState(current, { status: 'failed', failureReason: reason });
+        this._store.set(executionId, structuredClone(finalized));
+        return structuredClone(finalized);
     }
 
     // ─── Delete ───────────────────────────────────────────────────────────────

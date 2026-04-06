@@ -14,6 +14,10 @@
  *   ESS8  size   — count tracking
  *   ESS9  bounds — max-size eviction
  *   ESS10 validation — empty executionId guard
+ *   ESS11 beginExecution — convenience lifecycle create
+ *   ESS12 advancePhase   — convenience lifecycle advance
+ *   ESS13 completeExecution — convenience lifecycle terminal (completed)
+ *   ESS14 failExecution     — convenience lifecycle terminal (failed)
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -314,5 +318,220 @@ describe('ESS10: validation', () => {
         const s = makeState();
         (s as Record<string, unknown>).executionId = '';
         expect(() => store.upsert(s)).toThrow('ExecutionStateStore.upsert');
+    });
+});
+
+// ─── ESS11: beginExecution ────────────────────────────────────────────────────
+
+describe('ESS11: beginExecution', () => {
+    let store: ExecutionStateStore;
+    beforeEach(() => { store = new ExecutionStateStore(); });
+
+    function makeRequest() {
+        return createExecutionRequest({
+            type: 'chat_turn',
+            origin: 'ipc',
+            mode: 'assistant',
+            actor: 'user',
+            input: { message: 'hello' },
+        });
+    }
+
+    it('inserts an entry and returns the initial state', () => {
+        const req = makeRequest();
+        const state = store.beginExecution(req, 'AgentKernel');
+        expect(store.has(req.executionId)).toBe(true);
+        expect(store.size).toBe(1);
+        expect(state.executionId).toBe(req.executionId);
+    });
+
+    it('initial status is accepted and phase is intake', () => {
+        const req = makeRequest();
+        const state = store.beginExecution(req);
+        expect(state.status).toBe('accepted');
+        expect(state.phase).toBe('intake');
+    });
+
+    it('stamps activeSubsystem when provided', () => {
+        const req = makeRequest();
+        const state = store.beginExecution(req, 'AgentKernel');
+        expect(state.activeSubsystem).toBe('AgentKernel');
+    });
+
+    it('omits activeSubsystem when not provided', () => {
+        const req = makeRequest();
+        const state = store.beginExecution(req);
+        expect(state.activeSubsystem).toBeUndefined();
+    });
+
+    it('returns a copy — mutating the return value does not affect the stored entry', () => {
+        const req = makeRequest();
+        const state = store.beginExecution(req, 'AgentKernel');
+        state.status = 'failed' as any;
+        expect(store.get(req.executionId)?.status).toBe('accepted');
+    });
+
+    it('preserves origin and mode from the request', () => {
+        const req = createExecutionRequest({
+            type: 'chat_turn',
+            origin: 'chat_ui',
+            mode: 'rp',
+            actor: 'user',
+            input: null,
+        });
+        const state = store.beginExecution(req);
+        expect(state.origin).toBe('chat_ui');
+        expect(state.mode).toBe('rp');
+    });
+});
+
+// ─── ESS12: advancePhase ──────────────────────────────────────────────────────
+
+describe('ESS12: advancePhase', () => {
+    let store: ExecutionStateStore;
+    beforeEach(() => { store = new ExecutionStateStore(); });
+
+    it('updates status and phase for an existing entry', () => {
+        const s = makeState();
+        store.upsert(s);
+        const updated = store.advancePhase(s.executionId, 'executing', 'tool_dispatch');
+        expect(updated).toBeDefined();
+        expect(updated?.status).toBe('executing');
+        expect(updated?.phase).toBe('tool_dispatch');
+    });
+
+    it('the stored entry reflects the new status and phase', () => {
+        const s = makeState();
+        store.upsert(s);
+        store.advancePhase(s.executionId, 'planning', 'classifying');
+        const stored = store.get(s.executionId);
+        expect(stored?.status).toBe('planning');
+        expect(stored?.phase).toBe('classifying');
+    });
+
+    it('returns undefined for a missing executionId', () => {
+        const result = store.advancePhase('ghost-id', 'executing', 'tool_dispatch');
+        expect(result).toBeUndefined();
+    });
+
+    it('updates updatedAt timestamp', () => {
+        const s = makeState();
+        store.upsert(s);
+        const updated = store.advancePhase(s.executionId, 'executing', 'p')!;
+        // updatedAt must be a valid ISO 8601 timestamp
+        expect(updated.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        // status must have advanced
+        expect(updated.status).toBe('executing');
+    });
+
+    it('returns a copy — mutating the return value does not affect the stored entry', () => {
+        const s = makeState();
+        store.upsert(s);
+        const updated = store.advancePhase(s.executionId, 'executing', 'tool_dispatch')!;
+        updated.status = 'failed' as any;
+        expect(store.get(s.executionId)?.status).toBe('executing');
+    });
+
+    it('does not affect other entries in the store', () => {
+        const a = makeState();
+        const b = makeState();
+        store.upsert(a);
+        store.upsert(b);
+        store.advancePhase(a.executionId, 'executing', 'p');
+        expect(store.get(b.executionId)?.status).toBe('accepted');
+    });
+});
+
+// ─── ESS13: completeExecution ─────────────────────────────────────────────────
+
+describe('ESS13: completeExecution', () => {
+    let store: ExecutionStateStore;
+    beforeEach(() => { store = new ExecutionStateStore(); });
+
+    it('marks an existing entry as completed', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.completeExecution(s.executionId);
+        expect(finalized?.status).toBe('completed');
+    });
+
+    it('sets completedAt and updatedAt', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.completeExecution(s.executionId)!;
+        expect(finalized.completedAt).toBeDefined();
+        expect(finalized.updatedAt).toBeDefined();
+    });
+
+    it('returns undefined for a missing executionId', () => {
+        expect(store.completeExecution('not-here')).toBeUndefined();
+    });
+
+    it('entry persists in the store after completion', () => {
+        const s = makeState();
+        store.upsert(s);
+        store.completeExecution(s.executionId);
+        expect(store.has(s.executionId)).toBe(true);
+        expect(store.get(s.executionId)?.status).toBe('completed');
+    });
+
+    it('supports degraded completion via outcome option', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.completeExecution(s.executionId, { degraded: true })!;
+        expect(finalized.status).toBe('completed');
+        expect(finalized.degraded).toBe(true);
+    });
+
+    it('returns a copy — mutating the return value does not affect the stored entry', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.completeExecution(s.executionId)!;
+        finalized.status = 'failed' as any;
+        expect(store.get(s.executionId)?.status).toBe('completed');
+    });
+});
+
+// ─── ESS14: failExecution ─────────────────────────────────────────────────────
+
+describe('ESS14: failExecution', () => {
+    let store: ExecutionStateStore;
+    beforeEach(() => { store = new ExecutionStateStore(); });
+
+    it('marks an existing entry as failed with the provided reason', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.failExecution(s.executionId, 'llm_timeout');
+        expect(finalized?.status).toBe('failed');
+        expect(finalized?.failureReason).toBe('llm_timeout');
+    });
+
+    it('sets completedAt and updatedAt', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.failExecution(s.executionId, 'network_error')!;
+        expect(finalized.completedAt).toBeDefined();
+        expect(finalized.updatedAt).toBeDefined();
+    });
+
+    it('returns undefined for a missing executionId', () => {
+        expect(store.failExecution('ghost', 'some_reason')).toBeUndefined();
+    });
+
+    it('entry persists in the store after failure', () => {
+        const s = makeState();
+        store.upsert(s);
+        store.failExecution(s.executionId, 'crash');
+        expect(store.has(s.executionId)).toBe(true);
+        expect(store.get(s.executionId)?.status).toBe('failed');
+        expect(store.get(s.executionId)?.failureReason).toBe('crash');
+    });
+
+    it('returns a copy — mutating the return value does not affect the stored entry', () => {
+        const s = makeState();
+        store.upsert(s);
+        const finalized = store.failExecution(s.executionId, 'err')!;
+        finalized.status = 'completed' as any;
+        expect(store.get(s.executionId)?.status).toBe('failed');
     });
 });

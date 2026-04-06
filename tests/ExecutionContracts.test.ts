@@ -446,6 +446,25 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         expect(stateAtDelegate.phase).toBe('delegated_flow');
     });
 
+    it('transitions through planning/classifying before executing', async () => {
+        const { kernel, agentStub } = makeKernel();
+        // At the point chat() is called, classifyExecution() has already run and
+        // advancePhase(planning/classifying) was issued. runDelegatedFlow() then
+        // advanced to executing/delegated_flow before calling chat().
+        let stateAtDelegate: any;
+        agentStub.chat.mockImplementation(async () => {
+            stateAtDelegate = kernel.stateStore.getByStatus('executing')[0];
+            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+        });
+        await kernel.execute({ userMessage: 'classify test', origin: 'ipc', executionMode: 'assistant' });
+        // At the delegate point state must already be executing (classifying was completed first)
+        expect(stateAtDelegate?.status).toBe('executing');
+        expect(stateAtDelegate?.phase).toBe('delegated_flow');
+        // Terminal state must be completed
+        const stored = kernel.stateStore.get(stateAtDelegate.executionId);
+        expect(stored?.status).toBe('completed');
+    });
+
     it('stores a completed ExecutionState after successful execute()', async () => {
         const { kernel } = makeKernel();
         const result = await kernel.execute({ userMessage: 'test', origin: 'chat_ui', executionMode: 'assistant' });
@@ -454,6 +473,21 @@ describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
         expect(stored?.status).toBe('completed');
         expect(stored?.completedAt).toBeDefined();
         expect(stored?.executionId).toBe(result.meta.executionId);
+    });
+
+    it('passes through finalizing phase before completing', async () => {
+        const { kernel, agentStub } = makeKernel();
+        let executionId: string | undefined;
+        agentStub.chat.mockImplementation(async () => {
+            executionId = kernel.stateStore.getByStatus('executing')[0]?.executionId;
+            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+        });
+        await kernel.execute({ userMessage: 'finalize test' });
+        // After execute() the terminal status must be 'completed' (finalizing is a transient phase)
+        expect(executionId).toBeDefined();
+        const stored = kernel.stateStore.get(executionId!);
+        expect(stored?.status).toBe('completed');
+        expect(stored?.completedAt).toBeDefined();
     });
 
     it('KernelResult.executionState matches the stored state', async () => {

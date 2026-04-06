@@ -7,7 +7,7 @@ import type {
     RuntimeExecutionMode,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
-import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState, advanceExecutionState } from '../../../shared/runtime/executionHelpers';
+import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 import { ExecutionStateStore } from './ExecutionStateStore';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -217,11 +217,11 @@ export class AgentKernel {
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
 
         // Register the initial ExecutionState in the store so downstream stages
-        // can advance it through the lifecycle rather than constructing it from scratch.
-        this._stateStore.upsert(createInitialExecutionState(
+        // can advance it through the lifecycle using the store's convenience APIs.
+        this._stateStore.beginExecution(
             this._buildExecRequest(meta, request.userMessage),
             'AgentKernel'
-        ));
+        );
 
         return meta;
     }
@@ -231,8 +231,9 @@ export class AgentKernel {
     // Future: mode detection, tool-need prediction, policy gate, context assembly.
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
-        // Placeholder — classification logic attaches here in Phase 3.
-        // Currently always resolves to 'standard' (set during intake).
+        // Advance state to 'planning' to mark that the kernel is evaluating the turn.
+        // Placeholder — routing logic attaches here in future phases.
+        this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
         console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass}`);
     }
 
@@ -250,10 +251,7 @@ export class AgentKernel {
         console.log(`[AgentKernel] ── DELEGATE         ── id=${meta.executionId} class=${meta.executionClass}`);
 
         // Advance execution state to 'executing' before handing off to AgentService.
-        const current = this._stateStore.get(meta.executionId);
-        if (current) {
-            this._stateStore.upsert(advanceExecutionState(current, 'executing', 'delegated_flow'));
-        }
+        this._stateStore.advancePhase(meta.executionId, 'executing', 'delegated_flow');
 
         return this.agent.chat(
             request.userMessage,
@@ -273,16 +271,16 @@ export class AgentKernel {
         meta.durationMs = Date.now() - meta.startedAt;
         console.log(`[AgentKernel] ── FINALIZE         ── id=${meta.executionId} duration=${meta.durationMs}ms channel=${turnOutput.outputChannel ?? 'chat'}`);
 
-        // Finalize the execution state from the store so the terminal record
-        // reflects the real lifecycle path rather than a freshly-constructed snapshot.
-        // The fallback to a freshly-built initial state guards against the unlikely
-        // case where the store lookup fails (e.g. store cleared externally).
-        const current = this._stateStore.get(meta.executionId);
-        const executionState = finalizeExecutionState(
-            current ?? createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
-            { status: 'completed' }
-        );
-        this._stateStore.upsert(executionState);
+        // Advance to 'finalizing' before sealing the terminal record.
+        this._stateStore.advancePhase(meta.executionId, 'finalizing', 'finalizing');
+
+        // Seal the terminal state as 'completed'. Fall back to a freshly-constructed
+        // state only in the unlikely case the store entry was evicted externally.
+        const executionState = this._stateStore.completeExecution(meta.executionId)
+            ?? finalizeExecutionState(
+                createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
+                { status: 'completed' }
+            );
 
         return { ...turnOutput, meta, executionState };
     }
@@ -319,13 +317,10 @@ export class AgentKernel {
             return this.finalizeExecution(meta, turnOutput, normalized);
         } catch (err: unknown) {
             // On any pipeline error, mark the stored state as 'failed' before re-throwing.
-            const current = this._stateStore.get(meta.executionId);
-            if (current) {
-                this._stateStore.upsert(finalizeExecutionState(current, {
-                    status: 'failed',
-                    failureReason: err instanceof Error ? err.message : String(err),
-                }));
-            }
+            this._stateStore.failExecution(
+                meta.executionId,
+                err instanceof Error ? err.message : String(err)
+            );
             throw err;
         }
     }
