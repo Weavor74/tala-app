@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import type { RuntimeEvent } from '../../../shared/runtimeEventTypes';
 
 /**
  * TelemetryEventsPanel
@@ -15,19 +16,6 @@ import React, { useState, useEffect, useCallback } from 'react';
  *
  * Integrated as the 'exec-events' sub-tab in ReflectionPanel > Engineering.
  */
-
-// ─── Local schema (mirrors electron/services/telemetry/TelemetryBus.ts) ───────
-
-interface RuntimeEvent {
-    id: string;
-    timestamp: string;
-    executionId: string;
-    correlationId?: string;
-    subsystem: string;
-    event: string;
-    phase?: string;
-    payload?: Record<string, unknown>;
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
