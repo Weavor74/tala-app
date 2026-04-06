@@ -19,15 +19,31 @@ import type { RuntimeEvent } from '../../../shared/runtimeEventTypes';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Explicit lookup keyed on the terminal word of each RuntimeEventType value.
+// The RuntimeEventType union uses 'execution.<verb>' naming, so we key on <verb>.
+const EVENT_COLORS: Record<string, string> = {
+    failed:     '#ef4444',
+    completed:  '#10b981',
+    finalizing: '#f59e0b',
+    accepted:   '#3b82f6',
+    created:    '#8b5cf6',
+};
+
 function eventColor(event: string): string {
-    if (event.includes('failed'))    return '#ef4444';
-    if (event.includes('completed')) return '#10b981';
-    if (event.includes('finalizing'))return '#f59e0b';
-    if (event.includes('accepted'))  return '#3b82f6';
-    if (event.includes('created'))   return '#8b5cf6';
-    return '#6b7280';
+    const verb = event.split('.').pop() ?? '';
+    return EVENT_COLORS[verb] ?? '#6b7280';
 }
 
+/**
+ * Derives a human-readable origin label from a RuntimeEvent.
+ *
+ * Payload contract (set by AgentKernel and AutonomousRunOrchestrator):
+ *   - Chat runs:     payload.origin = 'kernel'   (or absent)
+ *   - Autonomy runs: payload.origin = 'autonomy_engine'
+ *                    payload.type   = 'autonomy_task'
+ *
+ * Falls back to event.subsystem when no origin payload field is present.
+ */
 function originLabel(event: RuntimeEvent): string {
     const p = event.payload ?? {};
     if (p['origin'] === 'autonomy_engine' || p['type'] === 'autonomy_task') return 'autonomy';
@@ -52,7 +68,7 @@ const TelemetryEventsPanel: React.FC = () => {
         try {
             setLoading(true);
             setError(null);
-            const api = (window as any).tala;
+            const api = (window as any).tala; // established codebase pattern — all renderer components use (window as any).tala
             const result: RuntimeEvent[] = await api.telemetry.getRecentEvents();
             // Most-recent first
             setEvents([...result].reverse());
@@ -151,7 +167,7 @@ const TelemetryEventsPanel: React.FC = () => {
                         const origin = originLabel(ev);
                         const durationMs = ev.payload?.['durationMs'];
                         const failureReason = ev.payload?.['failureReason'];
-                        const isFailed = ev.event.includes('failed');
+                        const isFailed = ev.event.split('.').pop() === 'failed';
                         return (
                             <div
                                 key={ev.id}
@@ -167,7 +183,7 @@ const TelemetryEventsPanel: React.FC = () => {
                             >
                                 {/* Timestamp */}
                                 <span style={{ color: '#475569', whiteSpace: 'nowrap' }}>
-                                    {new Date(ev.timestamp).toLocaleTimeString()}.{String(new Date(ev.timestamp).getMilliseconds()).padStart(3, '0')}
+                                    {(() => { const d = new Date(ev.timestamp); return `${d.toLocaleTimeString()}.${String(d.getMilliseconds()).padStart(3, '0')}`; })()}
                                 </span>
 
                                 {/* executionId (shortened) */}

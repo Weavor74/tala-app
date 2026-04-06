@@ -33,8 +33,12 @@ export type RuntimeEventSubsystem =
  * Lifecycle event vocabulary for basic execution observability.
  *
  * Naming convention: `<domain>.<lifecycle_verb>`
- * The template literal tail `execution.${string}` is intentionally open so
- * future phases can add new event types without breaking existing subscribers.
+ *
+ * New event types should be added as explicit union members (e.g.
+ * `'execution.cancelled'`, `'execution.degraded'`) so tooling and
+ * consumers can enumerate them statically.  The template literal
+ * catch-all `execution.${string}` exists as a forward-compatibility
+ * escape hatch only — do not rely on it for new first-class events.
  */
 export type RuntimeEventType =
     | 'execution.created'
