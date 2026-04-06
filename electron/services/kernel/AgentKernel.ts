@@ -11,6 +11,7 @@ import type {
 import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
 import { ExecutionStateStore } from './ExecutionStateStore';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
+import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -248,11 +249,39 @@ export class AgentKernel {
 
     // ─── Stage 3: classifyExecution ─────────────────────────────────────────
     // Classifies the turn to produce a routing hint for downstream stages.
-    // Future: mode detection, tool-need prediction, policy gate, context assembly.
+    // Also performs the top-level policy admission check (PolicyGate).
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
+        // ── Policy gate — top-level execution admission check ─────────────────
+        // Evaluate before any further execution state is advanced.  If denied,
+        // mark the state as blocked, emit execution.blocked, and stop cleanly.
+        const decision = policyGate.evaluate({
+            action: 'execution.admit',
+            mode: meta.mode,
+            origin: meta.origin,
+            payload: { type: meta.executionType, executionId: meta.executionId },
+        });
+
+        if (!decision.allowed) {
+            console.log(`[AgentKernel] ── POLICY BLOCKED   ── id=${meta.executionId} code=${decision.code ?? 'none'} reason=${decision.reason}`);
+            this._stateStore.blockExecution(meta.executionId, decision.reason);
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'kernel',
+                event: 'execution.blocked',
+                phase: 'classify',
+                payload: {
+                    type: meta.executionType,
+                    origin: meta.origin,
+                    mode: meta.mode,
+                    blockedReason: decision.reason,
+                    code: decision.code,
+                },
+            });
+            throw new PolicyDeniedError(decision);
+        }
+
         // Advance state to 'planning' to mark that the kernel is evaluating the turn.
-        // Future: mode detection, tool-need prediction, policy gate, context assembly.
         this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
         console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass}`);
     }
@@ -354,7 +383,14 @@ export class AgentKernel {
             // Stage 5 -- finalizeExecution (finalizes state to 'completed')
             return this.finalizeExecution(meta, turnOutput, normalized);
         } catch (err: unknown) {
-            // On any pipeline error, mark the stored state as 'failed' before re-throwing.
+            // A PolicyDeniedError means execution.blocked was already emitted and
+            // the state was already marked 'blocked' in classifyExecution().
+            // Do not overwrite the state or double-emit execution.failed.
+            if (err instanceof PolicyDeniedError) {
+                throw err;
+            }
+
+            // On any other pipeline error, mark the stored state as 'failed' before re-throwing.
             const failureReason = err instanceof Error ? err.message : String(err);
             this._stateStore.failExecution(meta.executionId, failureReason);
 

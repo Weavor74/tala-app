@@ -43,6 +43,7 @@ export type RuntimeEventSubsystem =
 export type RuntimeEventType =
     | 'execution.created'
     | 'execution.accepted'
+    | 'execution.blocked'
     | 'execution.finalizing'
     | 'execution.completed'
     | 'execution.failed'
