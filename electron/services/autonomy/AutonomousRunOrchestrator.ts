@@ -1590,6 +1590,7 @@ export class AutonomousRunOrchestrator {
     ): Promise<void> {
         const cycleId = uuidv4();
         const runId = uuidv4();
+        const startedAtMs = Date.now();
         const run: AutonomousRun = {
             runId,
             goalId: goal.goalId,
@@ -1820,13 +1821,23 @@ export class AutonomousRunOrchestrator {
             const outcome = this._outcomeFromRunStatus(finalRun.status);
 
             // ── TelemetryBus: terminal lifecycle event (mirrors AgentKernel schema) ──
+            const durationMs = Date.now() - startedAtMs;
             if (outcome === 'succeeded') {
+                // Advance state to 'finalizing' before sealing (mirrors AgentKernel.finalizeExecution)
+                this._stateStore.advancePhase(run.runId, 'finalizing', 'finalizing');
+                TelemetryBus.getInstance().emit({
+                    executionId: run.runId,
+                    subsystem: 'kernel',
+                    event: 'execution.finalizing',
+                    phase: 'finalizing',
+                    payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system', durationMs },
+                });
                 TelemetryBus.getInstance().emit({
                     executionId: run.runId,
                     subsystem: 'kernel',
                     event: 'execution.completed',
                     phase: 'finalizing',
-                    payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' },
+                    payload: { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system', durationMs },
                 });
                 this._stateStore.completeExecution(run.runId);
             } else {

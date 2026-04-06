@@ -105,12 +105,31 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 |------|------|--------------------|
 | Chat turn entry | `AgentKernel.ts` | `RuntimeExecutionType ('chat_turn')`, `RuntimeExecutionOrigin`, `RuntimeExecutionMode`, `ExecutionState` |
 | IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` → passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
-| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `executionId` (maps to `runId`), `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` registers with `ExecutionStateStore` and emits `execution.created/accepted/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`) |
+| Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `executionId` (maps to `runId`), `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` registers with `ExecutionStateStore` and emits `execution.created/accepted/finalizing/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`); `execution.finalizing` and `execution.completed` include `durationMs` |
 | Reflection planning run | `PlanRun` (reflectionPlanTypes.ts) | `runtimeExecutionType: 'reflection_task'` |
 
 All shared types are in `shared/runtime/executionTypes.ts`. Factory helpers are in `shared/runtime/executionHelpers.ts`. Both are re-exported from `shared/runtime/index.ts`.
 
 The Phase 3 controlled-execution vocabulary in `shared/executionTypes.ts` (`ExecutionStatus`, `ExecutionRun`, etc.) is a separate, narrower contract for the patch-apply/rollback pipeline and is **not** merged with the runtime contracts above. Use `shared/runtime/executionTypes.ts` (or `shared/runtime/index.ts`) when tagging cross-seam execution identity. Use `shared/executionTypes.ts` when working with the controlled-execution patch/apply pipeline in `electron/services/execution/`.
+
+#### Shared TelemetryBus Lifecycle Schema
+
+Both `AgentKernel` (chat) and `AutonomousRunOrchestrator` (autonomy) emit into the same `TelemetryBus` with a unified event lifecycle. Events are indistinguishable at schema level except for `type` and `origin` in the payload.
+
+| Event | Phase label | Payload fields | When emitted |
+|---|---|---|---|
+| `execution.created` | `intake` | `type`, `origin`, `mode` | Request received and ID assigned |
+| `execution.accepted` | `intake` | `type`, `origin`, `mode` | Request registered and ready to begin |
+| `execution.finalizing` | `finalizing` | `type`, `origin`, `mode`, `durationMs` | Success path: entering terminal finalization |
+| `execution.completed` | `finalizing` | `type`, `origin`, `mode`, `durationMs` | Success path: execution finalized cleanly |
+| `execution.failed` | `failed` | `type`, `origin`, `mode`, `failureReason` | Failure path: unrecoverable error |
+
+All events carry `executionId` (matching `runId` for autonomy, `executionId` for kernel) and `subsystem='kernel'`.
+
+For chat turns: `type='chat_turn'`, `origin='ipc'` (or `'chat_ui'`), `mode='assistant'|'hybrid'|'rp'`.
+For autonomy tasks: `type='autonomy_task'`, `origin='autonomy_engine'`, `mode='system'`.
+
+This unified schema enables a future dashboard to consume both streams without distinguishing the source.
 
 ### TurnContext — Canonical Turn Carrier
 
@@ -557,11 +576,15 @@ AutonomousRunOrchestrator.runCycleOnce()
       → GovernanceAppService.evaluate()    (Phase 3.5)
       → ExecutionOrchestrator.start()      (Phase 3)
       finally:
-        → TelemetryBus.emit(execution.completed) or TelemetryBus.emit(execution.failed)
-                                                    (executionId=runId, subsystem='kernel',
-                                                     type='autonomy_task', origin='autonomy_engine',
-                                                     mode='system')
-        → ExecutionStateStore.completeExecution() or failExecution()
+        → compute durationMs = Date.now() - startedAtMs
+        on success:
+          → ExecutionStateStore.advancePhase('finalizing')
+          → TelemetryBus.emit(execution.finalizing)  (executionId=runId, durationMs)
+          → TelemetryBus.emit(execution.completed)   (executionId=runId, durationMs)
+          → ExecutionStateStore.completeExecution()
+        on failure:
+          → TelemetryBus.emit(execution.failed)      (executionId=runId, failureReason)
+          → ExecutionStateStore.failExecution()
         → OutcomeLearningRegistry.record()           (Phase 4)
         → RecoveryPackOutcomeTracker.record()        (Phase 4.3 — when pack used)
         → SubsystemProfileRegistry.update()          (Phase 5 feedback)
