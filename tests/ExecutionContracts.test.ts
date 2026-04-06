@@ -13,9 +13,10 @@
  *   EC7  PlanRun runtime vocabulary stamp
  *   EC8  AgentKernel request forwarding via KernelRequest fields
  *   EC9  Cross-seam ID correlation
+ *   EC10 AgentKernel ExecutionStateStore lifecycle tracking
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type {
     RuntimeExecutionType,
     RuntimeExecutionOrigin,
@@ -32,6 +33,7 @@ import {
 } from '../shared/runtime/executionHelpers';
 import type { AutonomousRun } from '../shared/autonomyTypes';
 import type { PlanRun } from '../shared/reflectionPlanTypes';
+import { AgentKernel } from '../electron/services/kernel/AgentKernel';
 
 // ─── EC1: Type shape correctness ──────────────────────────────────────────────
 
@@ -405,5 +407,96 @@ describe('EC9: Cross-seam ID correlation', () => {
         const running = advanceExecutionState(initial, 'executing', 'planning');
         const final = finalizeExecutionState(running, { status: 'completed' });
         expect(final.executionId).toBe(req.executionId);
+    });
+});
+
+// ─── EC10: AgentKernel ExecutionStateStore lifecycle tracking ─────────────────
+
+describe('EC10: AgentKernel ExecutionStateStore lifecycle tracking', () => {
+    function makeKernel() {
+        // Minimal AgentService stub — only chat() is called by AgentKernel
+        const agentStub = {
+            chat: vi.fn().mockResolvedValue({
+                message: 'hello',
+                artifact: null,
+                suppressChatContent: false,
+                outputChannel: 'chat',
+            }),
+        };
+        const kernel = new AgentKernel(agentStub as any);
+        return { kernel, agentStub };
+    }
+
+    it('stateStore is exposed and starts empty', () => {
+        const { kernel } = makeKernel();
+        expect(kernel.stateStore).toBeDefined();
+        expect(kernel.stateStore.size).toBe(0);
+    });
+
+    it('advances state to executing before delegate, then completed after', async () => {
+        const { kernel, agentStub } = makeKernel();
+        let stateAtDelegate: any;
+        agentStub.chat.mockImplementation(async () => {
+            stateAtDelegate = kernel.stateStore.getByStatus('executing')[0];
+            return { message: 'ok', artifact: null, suppressChatContent: false, outputChannel: 'chat' };
+        });
+        await kernel.execute({ userMessage: 'hello', origin: 'ipc', executionMode: 'assistant' });
+        expect(stateAtDelegate).toBeDefined();
+        expect(stateAtDelegate.status).toBe('executing');
+        expect(stateAtDelegate.phase).toBe('delegated_flow');
+    });
+
+    it('stores a completed ExecutionState after successful execute()', async () => {
+        const { kernel } = makeKernel();
+        const result = await kernel.execute({ userMessage: 'test', origin: 'chat_ui', executionMode: 'assistant' });
+        const stored = kernel.stateStore.get(result.meta.executionId);
+        expect(stored).toBeDefined();
+        expect(stored?.status).toBe('completed');
+        expect(stored?.completedAt).toBeDefined();
+        expect(stored?.executionId).toBe(result.meta.executionId);
+    });
+
+    it('KernelResult.executionState matches the stored state', async () => {
+        const { kernel } = makeKernel();
+        const result = await kernel.execute({ userMessage: 'test' });
+        const stored = kernel.stateStore.get(result.meta.executionId);
+        expect(result.executionState.executionId).toBe(stored?.executionId);
+        expect(result.executionState.status).toBe(stored?.status);
+    });
+
+    it('stores origin and mode from the KernelRequest', async () => {
+        const { kernel } = makeKernel();
+        const result = await kernel.execute({ userMessage: 'hi', origin: 'chat_ui', executionMode: 'rp' });
+        const stored = kernel.stateStore.get(result.meta.executionId);
+        expect(stored?.origin).toBe('chat_ui');
+        expect(stored?.mode).toBe('rp');
+    });
+
+    it('marks state as failed on pipeline error', async () => {
+        const { kernel, agentStub } = makeKernel();
+        let executionId: string | undefined;
+        agentStub.chat.mockImplementation(async () => {
+            executionId = kernel.stateStore.getByStatus('executing')[0]?.executionId;
+            throw new Error('llm_timeout');
+        });
+        try {
+            await kernel.execute({ userMessage: 'fail me', origin: 'ipc', executionMode: 'assistant' });
+        } catch {
+            // expected
+        }
+        expect(executionId).toBeDefined();
+        const stored = kernel.stateStore.get(executionId!);
+        expect(stored?.status).toBe('failed');
+        expect(stored?.failureReason).toBe('llm_timeout');
+        expect(stored?.completedAt).toBeDefined();
+    });
+
+    it('accumulates multiple executions in the store', async () => {
+        const { kernel } = makeKernel();
+        await kernel.execute({ userMessage: 'turn 1' });
+        await kernel.execute({ userMessage: 'turn 2' });
+        await kernel.execute({ userMessage: 'turn 3' });
+        expect(kernel.stateStore.size).toBe(3);
+        expect(kernel.stateStore.getByStatus('completed')).toHaveLength(3);
     });
 });

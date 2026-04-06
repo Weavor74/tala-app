@@ -7,7 +7,8 @@ import type {
     RuntimeExecutionMode,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
-import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
+import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState, advanceExecutionState } from '../../../shared/runtime/executionHelpers';
+import { ExecutionStateStore } from './ExecutionStateStore';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -145,9 +146,19 @@ export interface KernelResult extends AgentTurnOutput {
  */
 export class AgentKernel {
     private readonly agent: AgentService;
+    private readonly _stateStore: ExecutionStateStore = new ExecutionStateStore();
 
     constructor(agent: AgentService) {
         this.agent = agent;
+    }
+
+    /**
+     * Read-only access to the kernel's execution state store.
+     * Callers may inspect active and completed execution states without
+     * mutating the store directly.
+     */
+    get stateStore(): ExecutionStateStore {
+        return this._stateStore;
     }
 
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
@@ -185,6 +196,20 @@ export class AgentKernel {
             mode,
         };
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
+
+        // Register the initial ExecutionState in the store so downstream stages
+        // can advance it through the lifecycle rather than constructing it from scratch.
+        const execRequest = createExecutionRequest({
+            executionId: meta.executionId,
+            type: executionType,
+            origin,
+            mode,
+            actor: 'user',
+            input: { message: request.userMessage },
+            metadata: {},
+        });
+        this._stateStore.upsert(createInitialExecutionState(execRequest, 'AgentKernel'));
+
         return meta;
     }
 
@@ -210,6 +235,13 @@ export class AgentKernel {
         onEvent?: (type: string, data: any) => void
     ): Promise<AgentTurnOutput> {
         console.log(`[AgentKernel] ── DELEGATE         ── id=${meta.executionId} class=${meta.executionClass}`);
+
+        // Advance execution state to 'executing' before handing off to AgentService.
+        const current = this._stateStore.get(meta.executionId);
+        if (current) {
+            this._stateStore.upsert(advanceExecutionState(current, 'executing', 'delegated_flow'));
+        }
+
         return this.agent.chat(
             request.userMessage,
             onToken,
@@ -228,20 +260,25 @@ export class AgentKernel {
         meta.durationMs = Date.now() - meta.startedAt;
         console.log(`[AgentKernel] ── FINALIZE         ── id=${meta.executionId} duration=${meta.durationMs}ms channel=${turnOutput.outputChannel ?? 'chat'}`);
 
-        // Build terminal ExecutionState using the shared helpers.
-        // The initial state represents the accepted intake snapshot; we then finalize
-        // to 'completed' (or 'degraded' in the future when partial output is detected).
-        const execRequest = createExecutionRequest({
-            executionId: meta.executionId,
-            type: meta.executionType,
-            origin: meta.origin,
-            mode: meta.mode,
-            actor: 'user',
-            input: { message: request.userMessage },
-            metadata: {},
-        });
-        const initialState = createInitialExecutionState(execRequest, 'AgentKernel');
-        const executionState = finalizeExecutionState(initialState, { status: 'completed' });
+        // Finalize the execution state from the store so the terminal record
+        // reflects the real lifecycle path rather than a freshly-constructed snapshot.
+        const current = this._stateStore.get(meta.executionId);
+        const executionState = finalizeExecutionState(
+            current ?? createInitialExecutionState(
+                createExecutionRequest({
+                    executionId: meta.executionId,
+                    type: meta.executionType,
+                    origin: meta.origin,
+                    mode: meta.mode,
+                    actor: 'user',
+                    input: { message: request.userMessage },
+                    metadata: {},
+                }),
+                'AgentKernel'
+            ),
+            { status: 'completed' }
+        );
+        this._stateStore.upsert(executionState);
 
         return { ...turnOutput, meta, executionState };
     }
@@ -264,16 +301,28 @@ export class AgentKernel {
         // Stage 1 -- normalizeRequest
         const normalized = this.normalizeRequest(request);
 
-        // Stage 2 -- intake
+        // Stage 2 -- intake (stamps metadata and registers initial ExecutionState)
         const meta = this.intake(normalized, 'chat_turn');
 
-        // Stage 3 -- classifyExecution
-        this.classifyExecution(normalized, meta);
+        try {
+            // Stage 3 -- classifyExecution
+            this.classifyExecution(normalized, meta);
 
-        // Stage 4 -- runDelegatedFlow
-        const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
+            // Stage 4 -- runDelegatedFlow (advances state to 'executing')
+            const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
 
-        // Stage 5 -- finalizeExecution
-        return this.finalizeExecution(meta, turnOutput, normalized);
+            // Stage 5 -- finalizeExecution (finalizes state to 'completed')
+            return this.finalizeExecution(meta, turnOutput, normalized);
+        } catch (err: unknown) {
+            // On any pipeline error, mark the stored state as 'failed' before re-throwing.
+            const current = this._stateStore.get(meta.executionId);
+            if (current) {
+                this._stateStore.upsert(finalizeExecutionState(current, {
+                    status: 'failed',
+                    failureReason: err instanceof Error ? err.message : String(err),
+                }));
+            }
+            throw err;
+        }
     }
 }
