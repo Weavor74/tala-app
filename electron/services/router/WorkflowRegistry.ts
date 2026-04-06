@@ -1,4 +1,5 @@
 import { ToolService } from '../ToolService';
+import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
 
 export interface WorkflowStep {
     name: string;
@@ -73,8 +74,15 @@ export class WorkflowRegistry {
     /**
      * Executes a registered workflow deterministically.
      * Returns a summarized log of the execution.
+     *
+     * @param executionMode  Runtime mode in effect at the call site (e.g. 'assistant', 'rp',
+     *                       'hybrid', 'system').  Defaults to 'system' because MCP-triggered
+     *                       workflows are initiated outside any user chat session and therefore
+     *                       have no ambient mode.  Pass the caller's mode explicitly when one
+     *                       is available (e.g. from getActiveMode()) to enable accurate policy
+     *                       evaluation.
      */
-    public async executeWorkflow(id: string, initialArgs: any = {}): Promise<string> {
+    public async executeWorkflow(id: string, initialArgs: any = {}, executionMode: string = 'system'): Promise<string> {
         const workflow = this.workflows.get(id);
         if (!workflow) {
             throw new Error(`Workflow not found: ${id}`);
@@ -97,6 +105,17 @@ export class WorkflowRegistry {
                 const args = step.getArgs(context, initialArgs);
                 summary += `*Executing \`${step.tool}\` with args: ${JSON.stringify(args)}*\n\n`;
 
+                // --- POLICY GATE: MCP workflow step pre-check ---
+                // Fires before each step's tool execution.
+                // PolicyDeniedError is re-thrown so it propagates to the caller
+                // rather than being swallowed by the per-step error handler.
+                policyGate.assertSideEffect({
+                    actionKind: 'workflow_action',
+                    executionMode,
+                    targetSubsystem: 'workflow',
+                    mutationIntent: `mcp_node_execute:${step.tool}`,
+                });
+
                 const rawResult = await toolDef.execute(args);
                 
                 let textResult = "";
@@ -113,6 +132,9 @@ export class WorkflowRegistry {
                 }
 
             } catch (e: any) {
+                // PolicyDeniedError is not a step failure — re-throw so callers
+                // know the workflow was blocked by policy rather than a tool error.
+                if (e instanceof PolicyDeniedError) throw e;
                 summary += `❌ **Failed:** ${e.message}\n\n`;
                 break; // Stop on first failure
             }
