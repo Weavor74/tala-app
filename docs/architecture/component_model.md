@@ -121,7 +121,21 @@ This document describes the Tala system as a collection of interacting component
     - `ChatContainer.tsx`: Central message handling.
 - **Dependencies**: Electron Preload (IPC Bridge).
 
-## 5. Storage Layer
+## 5. Policy and Enforcement Layer
+
+### PolicyGate
+- **Path**: `electron/services/policy/PolicyGate.ts`
+- **Purpose**: Lightweight runtime enforcement stub that provides a single, consistent place to check whether an action should be allowed before any side effects occur. Returns a `PolicyDecision` (`allowed`, `reason`, `code`, optional `metadata`).
+- **Design**: Stateless and deterministic. Currently implements a permissive allow-all stub so wiring the gate into call sites produces no behavioural change. Rules are added here incrementally; existing callers automatically gain enforcement once rules are present.
+- **Public API**:
+  - `evaluate(context: PolicyContext): PolicyDecision` — full decision with reason and code.
+  - `isAllowed(context: PolicyContext): boolean` — convenience boolean wrapper.
+  - `assertAllowed(context: PolicyContext): void` — throws `PolicyDeniedError` on deny.
+- **Singleton**: `policyGate` (module-level export, stateless so sharing is safe).
+- **Error type**: `PolicyDeniedError` — extends `Error`, carries the originating `PolicyDecision`.
+- **Extension path**: Add named rule methods (e.g. `checkMemoryWrite`, `checkToolInvocation`) that delegate to `evaluate()` as the policy system matures. Domain-specific gates (`AutonomyPolicyGate`, `AdaptivePolicyGate`) remain separate.
+
+## 6. Storage Layer
 
 ### Local Filesystem
 - **Path**: `data/`
@@ -131,7 +145,7 @@ This document describes the Tala system as a collection of interacting component
 - **Path**: `memory/` (Logical)
 - **Purpose**: Hosts SQLite databases for the knowledge graph and vector stores for RAG.
 
-## 6. Memory Authority Layer (P7A)
+## 7. Memory Authority Layer (P7A)
 
 ### MemoryAuthorityService
 - **Path**: `electron/services/memory/MemoryAuthorityService.ts`
