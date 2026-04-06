@@ -43,6 +43,18 @@ This document describes the Tala system as a collection of interacting component
 - **Dependencies**: MCP Client, local file system modules.
 - **P7A Note**: `setMemoryService(memory, getCanonicalId?)` accepts an optional authority callback. When wired (by AgentService), the `mem0_add` tool calls `getCanonicalId` to obtain a `canonical_memory_id` from MemoryAuthorityService before writing to the derived mem0 store.
 
+### ToolExecutionCoordinator
+- **Path**: `electron/services/tools/ToolExecutionCoordinator.ts`
+- **Purpose**: Thin, non-invasive wrapper providing a single controlled seam for all tool execution. Delegates directly to `ToolService.executeTool()` without changing runtime behavior. Exists so that future phases (retries, timeouts, per-tool telemetry) have a clean insertion point without requiring callers to change.
+- **Inputs**: Tool name, args, optional turn-scoped allowlist (forwarded unchanged to ToolService).
+- **Outputs**: Raw tool result (forwarded unchanged from ToolService).
+- **Policy gate**: PolicyGate enforcement (`policyGate.assertSideEffect({ actionKind: 'tool_invoke', ... })`) remains in `AgentService` before the call to `coordinator.executeTool()`. The coordinator itself does not duplicate this check.
+- **Instantiated by**: `AgentService` constructor as `this.coordinator = new ToolExecutionCoordinator(this.tools)`.
+- **Live call sites in AgentService**:
+  - Fast-path deterministic bypass (`routedIntent.isDeterministic`)
+  - Main LLM tool-call loop (after PolicyGate side-effect check)
+  - Public `AgentService.executeTool()` API
+
 ### WorkflowRegistry
 - **Path**: `electron/services/router/WorkflowRegistry.ts`
 - **Purpose**: Deterministic MCP-triggered workflow executor. Maintains a registry of named multi-step `WorkflowDefinition`s and executes them sequentially via `ToolService`. Returns a Markdown summary log per run.

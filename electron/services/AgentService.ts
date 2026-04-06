@@ -13,6 +13,7 @@ import { BackupService } from './BackupService';
 import type { IBrain, ChatMessage, BrainResponse, ToolCall } from '../brains/IBrain';
 import type { StreamInferenceResult, CanonicalToolCall } from '../../shared/inferenceProviderTypes';
 import { ToolService } from './ToolService';
+import { ToolExecutionCoordinator } from './tools/ToolExecutionCoordinator';
 import { SystemService } from './SystemService';
 import { RagService } from './RagService';
 import { MemoryService } from './MemoryService';
@@ -165,6 +166,8 @@ export class AgentService {
     private workflows: WorkflowRegistry;
     /** Central registry for all executable tools. */
     private tools: ToolService;
+    /** Thin seam wrapping tool execution; delegates to ToolService. */
+    private coordinator: ToolExecutionCoordinator;
     /** Manages system backups and state snapshots. */
     private backup: BackupService;
     /** Higher-level inference wrapper for specialized tasks. */
@@ -235,6 +238,7 @@ export class AgentService {
         this.world = new WorldService();
         this.rag = new RagService();
         this.tools = new ToolService();
+        this.coordinator = new ToolExecutionCoordinator(this.tools);
         this.backup = new BackupService();
         this.inference = inference || new InferenceService();
         this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
@@ -1827,7 +1831,7 @@ Exported standalone package from Tala.
                 try {
                     const parsedArgs = routedIntent.extractedArgs || {};
                     const toolStartTime = Date.now();
-                    const rawResult = await this.tools.executeTool(toolName, parsedArgs, new Set([toolName]));
+                    const rawResult = await this.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]));
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
                     
                     return await this.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, onToken, onEvent);
@@ -2622,7 +2626,7 @@ Failure to provide a tool call will result in system termination.`;
                                 mutationIntent: `tool invocation: ${toolName}`,
                             });
 
-                            return await this.tools.executeTool(toolName, args, allowedToolNames);
+                            return await this.coordinator.executeTool(toolName, args, allowedToolNames);
                         })();
 
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
@@ -3538,7 +3542,7 @@ Failure to provide a tool call will result in system termination.`;
      * @returns The stringified result of the tool execution.
      */
     public async executeTool(name: string, args: any): Promise<any> {
-        return await this.tools.executeTool(name, args);
+        return await this.coordinator.executeTool(name, args);
     }
 
     public async performSearch(query: string): Promise<any[]> {
