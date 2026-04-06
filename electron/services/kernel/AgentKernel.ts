@@ -5,9 +5,11 @@ import type {
     RuntimeExecutionType,
     RuntimeExecutionOrigin,
     RuntimeExecutionMode,
+    ExecutionRequest,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
 import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
+import { ExecutionStateStore } from './ExecutionStateStore';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -145,9 +147,38 @@ export interface KernelResult extends AgentTurnOutput {
  */
 export class AgentKernel {
     private readonly agent: AgentService;
+    private readonly _stateStore: ExecutionStateStore = new ExecutionStateStore();
 
     constructor(agent: AgentService) {
         this.agent = agent;
+    }
+
+    /**
+     * Read-only access to the kernel's execution state store.
+     * Callers may inspect active and completed execution states without
+     * mutating the store directly.
+     */
+    get stateStore(): ExecutionStateStore {
+        return this._stateStore;
+    }
+
+    // ─── Internal helpers ────────────────────────────────────────────────────
+
+    /**
+     * Constructs the canonical ExecutionRequest for a given meta + request pair.
+     * Used by intake() when registering the initial state and by finalizeExecution()
+     * as a defensive fallback so both paths stay consistent.
+     */
+    private _buildExecRequest(meta: KernelExecutionMeta, userMessage: string): ExecutionRequest {
+        return createExecutionRequest({
+            executionId: meta.executionId,
+            type: meta.executionType,
+            origin: meta.origin,
+            mode: meta.mode,
+            actor: 'user',
+            input: { message: userMessage },
+            metadata: {},
+        });
     }
 
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
@@ -185,6 +216,14 @@ export class AgentKernel {
             mode,
         };
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
+
+        // Register the initial ExecutionState in the store so downstream stages
+        // can advance it through the lifecycle using the store's convenience APIs.
+        this._stateStore.beginExecution(
+            this._buildExecRequest(meta, request.userMessage),
+            'AgentKernel'
+        );
+
         return meta;
     }
 
@@ -193,8 +232,9 @@ export class AgentKernel {
     // Future: mode detection, tool-need prediction, policy gate, context assembly.
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
-        // Placeholder — classification logic attaches here in Phase 3.
-        // Currently always resolves to 'standard' (set during intake).
+        // Advance state to 'planning' to mark that the kernel is evaluating the turn.
+        // Future: mode detection, tool-need prediction, policy gate, context assembly.
+        this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
         console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass}`);
     }
 
@@ -210,6 +250,10 @@ export class AgentKernel {
         onEvent?: (type: string, data: any) => void
     ): Promise<AgentTurnOutput> {
         console.log(`[AgentKernel] ── DELEGATE         ── id=${meta.executionId} class=${meta.executionClass}`);
+
+        // Advance execution state to 'executing' before handing off to AgentService.
+        this._stateStore.advancePhase(meta.executionId, 'executing', 'delegated_flow');
+
         return this.agent.chat(
             request.userMessage,
             onToken,
@@ -228,20 +272,16 @@ export class AgentKernel {
         meta.durationMs = Date.now() - meta.startedAt;
         console.log(`[AgentKernel] ── FINALIZE         ── id=${meta.executionId} duration=${meta.durationMs}ms channel=${turnOutput.outputChannel ?? 'chat'}`);
 
-        // Build terminal ExecutionState using the shared helpers.
-        // The initial state represents the accepted intake snapshot; we then finalize
-        // to 'completed' (or 'degraded' in the future when partial output is detected).
-        const execRequest = createExecutionRequest({
-            executionId: meta.executionId,
-            type: meta.executionType,
-            origin: meta.origin,
-            mode: meta.mode,
-            actor: 'user',
-            input: { message: request.userMessage },
-            metadata: {},
-        });
-        const initialState = createInitialExecutionState(execRequest, 'AgentKernel');
-        const executionState = finalizeExecutionState(initialState, { status: 'completed' });
+        // Advance to 'finalizing' before sealing the terminal record.
+        this._stateStore.advancePhase(meta.executionId, 'finalizing', 'finalizing');
+
+        // Seal the terminal state as 'completed'. Fall back to a freshly-constructed
+        // state only in the unlikely case the store entry was evicted externally.
+        const executionState = this._stateStore.completeExecution(meta.executionId)
+            ?? finalizeExecutionState(
+                createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
+                { status: 'completed' }
+            );
 
         return { ...turnOutput, meta, executionState };
     }
@@ -264,16 +304,25 @@ export class AgentKernel {
         // Stage 1 -- normalizeRequest
         const normalized = this.normalizeRequest(request);
 
-        // Stage 2 -- intake
+        // Stage 2 -- intake (stamps metadata and registers initial ExecutionState)
         const meta = this.intake(normalized, 'chat_turn');
 
-        // Stage 3 -- classifyExecution
-        this.classifyExecution(normalized, meta);
+        try {
+            // Stage 3 -- classifyExecution
+            this.classifyExecution(normalized, meta);
 
-        // Stage 4 -- runDelegatedFlow
-        const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
+            // Stage 4 -- runDelegatedFlow (advances state to 'executing')
+            const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
 
-        // Stage 5 -- finalizeExecution
-        return this.finalizeExecution(meta, turnOutput, normalized);
+            // Stage 5 -- finalizeExecution (finalizes state to 'completed')
+            return this.finalizeExecution(meta, turnOutput, normalized);
+        } catch (err: unknown) {
+            // On any pipeline error, mark the stored state as 'failed' before re-throwing.
+            this._stateStore.failExecution(
+                meta.executionId,
+                err instanceof Error ? err.message : String(err)
+            );
+            throw err;
+        }
     }
 }
