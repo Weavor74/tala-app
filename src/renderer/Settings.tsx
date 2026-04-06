@@ -26,6 +26,17 @@ import { GitView } from './components/GitView';
 import { WORKFLOW_TEMPLATES } from './catalog/WorkflowTemplates';
 import { LogViewerPanel } from './components/LogViewerPanel';
 import { SelfModelPanel } from './components/SelfModelPanel';
+import {
+    makeDefaultGuardrailPolicyConfig,
+    VALIDATOR_PROVIDER_REGISTRY,
+    type GuardrailPolicyConfig,
+    type GuardrailProfile,
+    type GuardrailRule,
+    type ValidatorBinding,
+    type GuardrailAction,
+    type GuardrailSeverity,
+    type ValidatorProviderKind,
+} from '../../shared/guardrails/guardrailPolicyTypes';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -4353,9 +4364,9 @@ function GuardBuilderPanel({ api }: { settings: any; api: any }) {
 // GuardrailsTab — sub-tab wrapper (Guard Builder | Validator Builder)
 // ═══════════════════════════════════════════════════════════════
 function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
-    const [subTab, setSubTab] = useState<'guards' | 'validators'>('guards');
+    const [subTab, setSubTab] = useState<'guards' | 'validators' | 'policy'>('guards');
 
-    const pill = (id: 'guards' | 'validators', emoji: string, label: string) => (
+    const pill = (id: 'guards' | 'validators' | 'policy', emoji: string, label: string) => (
         <button
             key={id}
             onClick={() => setSubTab(id)}
@@ -4387,11 +4398,710 @@ function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
             <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
                 {pill('guards', '🛡', 'Guard Builder')}
                 {pill('validators', '🔧', 'Validator Builder')}
+                {pill('policy', '📋', 'Policy Config')}
             </div>
-            {subTab === 'guards'
-                ? <GuardBuilderPanel settings={settings} api={api} />
-                : <ValidatorBuilderPanel api={api} />
-            }
+            {subTab === 'guards' && <GuardBuilderPanel settings={settings} api={api} />}
+            {subTab === 'validators' && <ValidatorBuilderPanel api={api} />}
+            {subTab === 'policy' && <PolicyAuthoringPanel settings={settings} api={api} />}
+        </div>
+    );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// PolicyAuthoringPanel — structured policy config authoring UI
+// ═══════════════════════════════════════════════════════════════
+// This panel is an AUTHORING SURFACE ONLY.
+// It writes GuardrailPolicyConfig to AppSettings via api.saveSettings().
+// No enforcement, no validator execution, no runtime decisions happen here.
+// PolicyGate consumes this config at runtime (electron side only).
+// ═══════════════════════════════════════════════════════════════
+
+const SEVERITY_OPTIONS: { value: GuardrailSeverity; label: string; color: string }[] = [
+    { value: 'info',     label: 'Info',     color: '#458588' },
+    { value: 'low',      label: 'Low',      color: '#689d6a' },
+    { value: 'medium',   label: 'Medium',   color: '#d79921' },
+    { value: 'high',     label: 'High',     color: '#d65d0e' },
+    { value: 'critical', label: 'Critical', color: '#cc241d' },
+];
+
+const ACTION_OPTIONS: { value: GuardrailAction; label: string; desc: string }[] = [
+    { value: 'allow',                label: '✅ Allow',                desc: 'Permit the action' },
+    { value: 'warn',                 label: '⚠️ Warn',                  desc: 'Log and allow; surface in audit log' },
+    { value: 'deny',                 label: '🚫 Deny',                  desc: 'Block the action; throw PolicyDeniedError' },
+    { value: 'require_validation',   label: '🔍 Require Validation',    desc: 'Block until bound validators pass' },
+    { value: 'require_confirmation', label: '❓ Require Confirmation',  desc: 'Future: request user confirmation' },
+];
+
+function makeDraftRule(): GuardrailRule {
+    const now = new Date().toISOString();
+    return {
+        id: `rule-${Date.now()}`,
+        name: 'New Rule',
+        description: '',
+        enabled: true,
+        scopes: [],
+        severity: 'medium',
+        action: 'warn',
+        validatorBindings: [],
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+
+function makeDraftBinding(): ValidatorBinding {
+    return {
+        id: `vb-${Date.now()}`,
+        name: 'New Validator',
+        providerKind: 'local_guardrails_ai',
+        enabled: true,
+        executionScopes: [],
+        supportedActions: ['require_validation'],
+        failOpen: false,
+        priority: 0,
+    };
+}
+
+function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
+    const getPolicy = (): GuardrailPolicyConfig =>
+        settings?.guardrailPolicy ?? makeDefaultGuardrailPolicyConfig();
+
+    const [policy, setPolicy] = useState<GuardrailPolicyConfig>(getPolicy);
+    const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
+    const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+    const [status, setPolicyStatus] = useState('');
+    const [section, setSection] = useState<'rules' | 'bindings'>('rules');
+
+    const selectedRule = policy.rules.find(r => r.id === selectedRuleId) ?? null;
+    const selectedBinding = policy.validatorBindings.find(b => b.id === selectedBindingId) ?? null;
+
+    const flash = (msg: string) => { setPolicyStatus(msg); setTimeout(() => setPolicyStatus(''), 3000); };
+
+    const savePolicy = async (updated: GuardrailPolicyConfig) => {
+        const newPolicy = { ...updated, updatedAt: new Date().toISOString() };
+        setPolicy(newPolicy);
+        if (api?.saveSettings) {
+            const currentSettings: AppSettings = settings ?? {};
+            await api.saveSettings({ ...currentSettings, guardrailPolicy: newPolicy });
+            flash('Policy saved ✓');
+        }
+    };
+
+    const handleProfileChange = (profileId: string) => {
+        savePolicy({ ...policy, activeProfileId: profileId });
+    };
+
+    const handleNewRule = () => {
+        const rule = makeDraftRule();
+        const updated = { ...policy, rules: [...policy.rules, rule] };
+        savePolicy(updated);
+        setSelectedRuleId(rule.id);
+        setSection('rules');
+    };
+
+    const handleDeleteRule = () => {
+        if (!selectedRuleId) return;
+        const updated: GuardrailPolicyConfig = {
+            ...policy,
+            rules: policy.rules.filter(r => r.id !== selectedRuleId),
+            profiles: policy.profiles.map(p => ({
+                ...p,
+                ruleIds: p.ruleIds.filter(id => id !== selectedRuleId),
+            })),
+        };
+        savePolicy(updated);
+        setSelectedRuleId(null);
+    };
+
+    const patchRule = (changes: Partial<GuardrailRule>) => {
+        if (!selectedRuleId) return;
+        const updated = {
+            ...policy,
+            rules: policy.rules.map(r =>
+                r.id === selectedRuleId ? { ...r, ...changes, updatedAt: new Date().toISOString() } : r
+            ),
+        };
+        savePolicy(updated);
+    };
+
+    const toggleRuleInProfile = (profileId: string, ruleId: string, include: boolean) => {
+        const updated = {
+            ...policy,
+            profiles: policy.profiles.map(p => {
+                if (p.id !== profileId) return p;
+                return {
+                    ...p,
+                    ruleIds: include
+                        ? [...p.ruleIds.filter(id => id !== ruleId), ruleId]
+                        : p.ruleIds.filter(id => id !== ruleId),
+                };
+            }),
+        };
+        savePolicy(updated);
+    };
+
+    const handleNewBinding = () => {
+        const binding = makeDraftBinding();
+        const updated = {
+            ...policy,
+            validatorBindings: [...policy.validatorBindings, binding],
+        };
+        savePolicy(updated);
+        setSelectedBindingId(binding.id);
+        setSection('bindings');
+    };
+
+    const handleDeleteBinding = () => {
+        if (!selectedBindingId) return;
+        const updated = {
+            ...policy,
+            validatorBindings: policy.validatorBindings.filter(b => b.id !== selectedBindingId),
+            rules: policy.rules.map(r => ({
+                ...r,
+                validatorBindings: r.validatorBindings.filter(b => b.id !== selectedBindingId),
+            })),
+        };
+        savePolicy(updated);
+        setSelectedBindingId(null);
+    };
+
+    const patchBinding = (changes: Partial<ValidatorBinding>) => {
+        if (!selectedBindingId) return;
+        const updated = {
+            ...policy,
+            validatorBindings: policy.validatorBindings.map(b =>
+                b.id === selectedBindingId ? { ...b, ...changes } : b
+            ),
+        };
+        savePolicy(updated);
+    };
+
+    const toggleBindingOnRule = (bindingId: string, include: boolean) => {
+        if (!selectedRule) return;
+        const existing = policy.validatorBindings.find(b => b.id === bindingId);
+        if (!existing) return;
+        patchRule({
+            validatorBindings: include
+                ? [...selectedRule.validatorBindings.filter(b => b.id !== bindingId), existing]
+                : selectedRule.validatorBindings.filter(b => b.id !== bindingId),
+        });
+    };
+
+    // Styles
+    const panelBase: React.CSSProperties = { background: 'rgba(30,30,30,0.7)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 8, padding: 18, backdropFilter: 'blur(8px)', marginBottom: 14 };
+    const inp: React.CSSProperties = { background: '#111', border: '1px solid #333', color: '#eee', padding: '8px 11px', fontSize: 12, borderRadius: 4, width: '100%', outline: 'none', boxSizing: 'border-box' };
+    const sel: React.CSSProperties = { ...inp, cursor: 'pointer' };
+    const lbl9: React.CSSProperties = { display: 'block', fontSize: 9, fontWeight: 800, color: '#888', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 };
+    const btnP: React.CSSProperties = { background: 'linear-gradient(135deg,#007acc,#005f9e)', color: '#fff', border: 'none', padding: '7px 14px', borderRadius: 4, cursor: 'pointer', fontWeight: 700, fontSize: 11, letterSpacing: 0.8 };
+    const btnD: React.CSSProperties = { background: 'rgba(197,48,48,0.8)', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 };
+    const btnG: React.CSSProperties = { background: 'rgba(255,255,255,0.05)', color: '#bbb', border: '1px solid rgba(255,255,255,0.1)', padding: '7px 13px', borderRadius: 4, cursor: 'pointer', fontSize: 11 };
+    const tabBtn = (active: boolean): React.CSSProperties => ({
+        padding: '6px 14px', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+        background: active ? 'rgba(0,122,204,0.3)' : 'rgba(255,255,255,0.04)',
+        color: active ? '#7ab8e8' : '#666',
+        border: active ? '1px solid rgba(0,122,204,0.4)' : '1px solid rgba(255,255,255,0.06)',
+    });
+
+    const providerMeta = (kind: ValidatorProviderKind) =>
+        VALIDATOR_PROVIDER_REGISTRY.find(p => p.kind === kind);
+
+    return (
+        <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+            {/* Header */}
+            <div style={{ marginBottom: 18 }}>
+                <h2 style={{ margin: 0, color: '#dcdcaa', fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>📋 POLICY CONFIG</h2>
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: '#555' }}>
+                    Authoring surface for structured guardrail policy — saved to AppSettings and consumed by PolicyGate at runtime.
+                    No enforcement runs here.
+                </p>
+            </div>
+
+            {/* Active profile selector */}
+            <div style={panelBase}>
+                <label style={lbl9}>Active Policy Profile</label>
+                <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+                    {policy.profiles.map(p => (
+                        <button
+                            key={p.id}
+                            onClick={() => handleProfileChange(p.id)}
+                            style={{
+                                padding: '8px 16px', borderRadius: 6, cursor: 'pointer',
+                                fontWeight: 700, fontSize: 11,
+                                background: policy.activeProfileId === p.id
+                                    ? 'linear-gradient(135deg,rgba(0,122,204,0.4),rgba(0,95,158,0.3))'
+                                    : 'rgba(255,255,255,0.04)',
+                                color: policy.activeProfileId === p.id ? '#fff' : '#777',
+                                border: policy.activeProfileId === p.id
+                                    ? '1px solid rgba(0,122,204,0.6)'
+                                    : '1px solid rgba(255,255,255,0.07)',
+                            }}
+                            title={p.description}
+                        >
+                            {p.name}
+                        </button>
+                    ))}
+                </div>
+                {policy.profiles.find(p => p.id === policy.activeProfileId)?.description && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#555' }}>
+                        {policy.profiles.find(p => p.id === policy.activeProfileId)?.description}
+                    </div>
+                )}
+            </div>
+
+            {/* Section tabs: Rules | Validator Bindings */}
+            <div style={{ display: 'flex', gap: 7, marginBottom: 14 }}>
+                <button style={tabBtn(section === 'rules')} onClick={() => setSection('rules')}>
+                    📏 Rules ({policy.rules.length})
+                </button>
+                <button style={tabBtn(section === 'bindings')} onClick={() => setSection('bindings')}>
+                    🔌 Validator Bindings ({policy.validatorBindings.length})
+                </button>
+            </div>
+
+            {/* ── Rules Section ─────────────────────────────────────────── */}
+            {section === 'rules' && (
+                <div style={{ display: 'grid', gridTemplateColumns: policy.rules.length > 0 ? '200px 1fr' : '1fr', gap: 14 }}>
+                    {/* Rule list */}
+                    {policy.rules.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            <button onClick={handleNewRule} style={{ ...btnP, marginBottom: 7 }}>+ NEW RULE</button>
+                            {policy.rules.map(r => (
+                                <div
+                                    key={r.id}
+                                    onClick={() => setSelectedRuleId(r.id)}
+                                    style={{
+                                        padding: '10px 12px', borderRadius: 6, cursor: 'pointer',
+                                        background: selectedRuleId === r.id ? 'rgba(0,122,204,0.2)' : 'rgba(255,255,255,0.03)',
+                                        border: selectedRuleId === r.id ? '1px solid rgba(0,122,204,0.4)' : '1px solid rgba(255,255,255,0.05)',
+                                        opacity: r.enabled ? 1 : 0.5,
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 700, fontSize: 12, color: '#eee', marginBottom: 2 }}>{r.name}</div>
+                                    <div style={{ fontSize: 9, color: '#555', display: 'flex', gap: 6 }}>
+                                        <span style={{ color: SEVERITY_OPTIONS.find(s => s.value === r.severity)?.color }}>{r.severity}</span>
+                                        <span>{r.action}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Rule editor or empty state */}
+                    <div>
+                        {policy.rules.length === 0 ? (
+                            <div style={{ ...panelBase, textAlign: 'center', padding: 50 }}>
+                                <div style={{ fontSize: 34, opacity: 0.2, marginBottom: 10 }}>📏</div>
+                                <div style={{ color: '#444', fontSize: 13 }}>No rules yet.</div>
+                                <button onClick={handleNewRule} style={{ ...btnP, marginTop: 16 }}>+ NEW RULE</button>
+                            </div>
+                        ) : !selectedRule ? (
+                            <div style={{ ...panelBase, textAlign: 'center', padding: 50 }}>
+                                <div style={{ color: '#444', fontSize: 13 }}>Select a rule to edit.</div>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Rule meta */}
+                                <div style={panelBase}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                                        <div style={{ flex: 1, marginRight: 14 }}>
+                                            <label style={lbl9}>Rule Name</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedRule.name}
+                                                onChange={e => patchRule({ name: e.target.value })}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 7, marginTop: 18 }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#888', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedRule.enabled}
+                                                    onChange={e => patchRule({ enabled: e.target.checked })}
+                                                /> Enabled
+                                            </label>
+                                            <button onClick={handleDeleteRule} style={btnD}>DELETE</button>
+                                        </div>
+                                    </div>
+                                    <label style={lbl9}>Description</label>
+                                    <input
+                                        style={{ ...inp, marginBottom: 12 }}
+                                        value={selectedRule.description ?? ''}
+                                        placeholder="Optional description..."
+                                        onChange={e => patchRule({ description: e.target.value })}
+                                    />
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                        <div>
+                                            <label style={lbl9}>Severity</label>
+                                            <select
+                                                style={sel}
+                                                value={selectedRule.severity}
+                                                onChange={e => patchRule({ severity: e.target.value as GuardrailSeverity })}
+                                            >
+                                                {SEVERITY_OPTIONS.map(o => (
+                                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={lbl9}>Action</label>
+                                            <select
+                                                style={sel}
+                                                value={selectedRule.action}
+                                                onChange={e => patchRule({ action: e.target.value as GuardrailAction })}
+                                            >
+                                                {ACTION_OPTIONS.map(o => (
+                                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                                ))}
+                                            </select>
+                                            <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                                                {ACTION_OPTIONS.find(o => o.value === selectedRule.action)?.desc}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Scopes */}
+                                <div style={panelBase}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                        <h3 style={{ margin: 0, fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>Scopes</h3>
+                                        <button
+                                            style={btnG}
+                                            onClick={() => patchRule({ scopes: [...selectedRule.scopes, {}] })}
+                                        >+ ADD SCOPE</button>
+                                    </div>
+                                    {selectedRule.scopes.length === 0 && (
+                                        <div style={{ color: '#444', fontSize: 11 }}>No scopes — rule applies globally to all contexts.</div>
+                                    )}
+                                    {selectedRule.scopes.map((scope, idx) => (
+                                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 9, marginBottom: 8, alignItems: 'end' }}>
+                                            <div>
+                                                <label style={lbl9}>Scope Kind</label>
+                                                <select
+                                                    style={sel}
+                                                    value={
+                                                        scope.executionType ? 'executionType' :
+                                                        scope.executionOrigin ? 'executionOrigin' :
+                                                        scope.mode ? 'mode' :
+                                                        scope.capability ? 'capability' :
+                                                        scope.memoryAction ? 'memoryAction' :
+                                                        scope.workflowNodeType ? 'workflowNodeType' :
+                                                        scope.autonomyAction ? 'autonomyAction' : ''
+                                                    }
+                                                    onChange={e => {
+                                                        const scopes = [...selectedRule.scopes];
+                                                        scopes[idx] = { [e.target.value]: '' } as any;
+                                                        patchRule({ scopes });
+                                                    }}
+                                                >
+                                                    <option value="">Select kind...</option>
+                                                    <option value="executionType">Execution Type</option>
+                                                    <option value="executionOrigin">Execution Origin</option>
+                                                    <option value="mode">Mode</option>
+                                                    <option value="capability">Capability</option>
+                                                    <option value="memoryAction">Memory Action</option>
+                                                    <option value="workflowNodeType">Workflow Node Type</option>
+                                                    <option value="autonomyAction">Autonomy Action</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style={lbl9}>Value</label>
+                                                <input
+                                                    style={inp}
+                                                    value={Object.values(scope)[0] as string ?? ''}
+                                                    placeholder="e.g. rp / chat_turn / fs_write..."
+                                                    onChange={e => {
+                                                        const scopes = [...selectedRule.scopes];
+                                                        const key = Object.keys(scope)[0];
+                                                        if (key) scopes[idx] = { [key]: e.target.value } as any;
+                                                        patchRule({ scopes });
+                                                    }}
+                                                />
+                                            </div>
+                                            <button
+                                                style={btnD}
+                                                onClick={() => {
+                                                    patchRule({ scopes: selectedRule.scopes.filter((_, i) => i !== idx) });
+                                                }}
+                                            >✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Profiles this rule belongs to */}
+                                <div style={panelBase}>
+                                    <h3 style={{ margin: '0 0 11px', fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>Assign to Profiles</h3>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {policy.profiles.map(p => (
+                                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: '#ccc', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={p.ruleIds.includes(selectedRule.id)}
+                                                    onChange={e => toggleRuleInProfile(p.id, selectedRule.id, e.target.checked)}
+                                                />
+                                                {p.name}
+                                                {p.readonly && <span style={{ fontSize: 9, color: '#555' }}>(built-in)</span>}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Validator bindings attached to this rule */}
+                                {selectedRule.action === 'require_validation' && (
+                                    <div style={panelBase}>
+                                        <h3 style={{ margin: '0 0 11px', fontSize: 11, fontWeight: 800, color: '#ccc', letterSpacing: 1.5, textTransform: 'uppercase' }}>Attached Validator Bindings</h3>
+                                        {policy.validatorBindings.length === 0 ? (
+                                            <div style={{ color: '#555', fontSize: 11 }}>
+                                                No validator bindings defined yet. Create them in the "Validator Bindings" section, then attach here.
+                                            </div>
+                                        ) : (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                                {policy.validatorBindings.map(b => (
+                                                    <label key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: '#ccc', cursor: 'pointer' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedRule.validatorBindings.some(vb => vb.id === b.id)}
+                                                            onChange={e => toggleBindingOnRule(b.id, e.target.checked)}
+                                                        />
+                                                        <span style={{ fontWeight: 700 }}>{b.name}</span>
+                                                        <span style={{ fontSize: 9, color: '#555' }}>({b.providerKind})</span>
+                                                        {!b.enabled && <span style={{ fontSize: 9, color: '#cc241d' }}>DISABLED</span>}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── Validator Bindings Section ─────────────────────────── */}
+            {section === 'bindings' && (
+                <div style={{ display: 'grid', gridTemplateColumns: policy.validatorBindings.length > 0 ? '200px 1fr' : '1fr', gap: 14 }}>
+                    {policy.validatorBindings.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            <button onClick={handleNewBinding} style={{ ...btnP, marginBottom: 7 }}>+ NEW BINDING</button>
+                            {policy.validatorBindings.map(b => (
+                                <div
+                                    key={b.id}
+                                    onClick={() => setSelectedBindingId(b.id)}
+                                    style={{
+                                        padding: '10px 12px', borderRadius: 6, cursor: 'pointer',
+                                        background: selectedBindingId === b.id ? 'rgba(0,122,204,0.2)' : 'rgba(255,255,255,0.03)',
+                                        border: selectedBindingId === b.id ? '1px solid rgba(0,122,204,0.4)' : '1px solid rgba(255,255,255,0.05)',
+                                        opacity: b.enabled ? 1 : 0.5,
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 700, fontSize: 12, color: '#eee', marginBottom: 2 }}>{b.name}</div>
+                                    <div style={{ fontSize: 9, color: '#555' }}>
+                                        {providerMeta(b.providerKind)?.isRemote ? '🌐 Remote' : '💻 Local'} · {b.providerKind}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    <div>
+                        {policy.validatorBindings.length === 0 ? (
+                            <div style={{ ...panelBase, textAlign: 'center', padding: 50 }}>
+                                <div style={{ fontSize: 34, opacity: 0.2, marginBottom: 10 }}>🔌</div>
+                                <div style={{ color: '#444', fontSize: 13 }}>No validator bindings yet.</div>
+                                <button onClick={handleNewBinding} style={{ ...btnP, marginTop: 16 }}>+ NEW BINDING</button>
+                            </div>
+                        ) : !selectedBinding ? (
+                            <div style={{ ...panelBase, textAlign: 'center', padding: 50 }}>
+                                <div style={{ color: '#444', fontSize: 13 }}>Select a binding to edit.</div>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={panelBase}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                                        <div style={{ flex: 1, marginRight: 14 }}>
+                                            <label style={lbl9}>Binding Name</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.name}
+                                                onChange={e => patchBinding({ name: e.target.value })}
+                                            />
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 7, marginTop: 18 }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#888', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedBinding.enabled}
+                                                    onChange={e => patchBinding({ enabled: e.target.checked })}
+                                                /> Enabled
+                                            </label>
+                                            <button onClick={handleDeleteBinding} style={btnD}>DELETE</button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                                        <div>
+                                            <label style={lbl9}>Provider Kind</label>
+                                            <select
+                                                style={sel}
+                                                value={selectedBinding.providerKind}
+                                                onChange={e => patchBinding({ providerKind: e.target.value as ValidatorProviderKind })}
+                                            >
+                                                {VALIDATOR_PROVIDER_REGISTRY.map(p => (
+                                                    <option key={p.kind} value={p.kind}>
+                                                        {p.isRemote ? '🌐' : '💻'} {p.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                                                {providerMeta(selectedBinding.providerKind)?.description}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label style={lbl9}>Priority (lower runs first)</label>
+                                            <input
+                                                type="number"
+                                                style={inp}
+                                                value={selectedBinding.priority}
+                                                min={0}
+                                                onChange={e => patchBinding({ priority: parseInt(e.target.value) || 0 })}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Remote endpoint — shown for remote providers */}
+                                    {providerMeta(selectedBinding.providerKind)?.isRemote && (
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Endpoint URL</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.endpointUrl ?? ''}
+                                                placeholder="https://validator.example.com/v1/check"
+                                                onChange={e => patchBinding({ endpointUrl: e.target.value || undefined })}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Timeout */}
+                                    <div style={{ marginBottom: 12 }}>
+                                        <label style={lbl9}>Timeout (ms)</label>
+                                        <input
+                                            type="number"
+                                            style={inp}
+                                            value={selectedBinding.timeoutMs ?? 5000}
+                                            min={100}
+                                            onChange={e => patchBinding({ timeoutMs: parseInt(e.target.value) || 5000 })}
+                                        />
+                                    </div>
+
+                                    {/* GuardrailsAI-specific */}
+                                    {(selectedBinding.providerKind === 'local_guardrails_ai' || selectedBinding.providerKind === 'remote_guardrails_service') && (
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Validator Name (GuardrailsAI class)</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.validatorName ?? ''}
+                                                placeholder="e.g. ToxicLanguage"
+                                                onChange={e => patchBinding({ validatorName: e.target.value || undefined })}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Presidio-specific */}
+                                    {selectedBinding.providerKind === 'local_presidio' && (
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Entity Types (comma-separated)</label>
+                                            <input
+                                                style={inp}
+                                                value={(selectedBinding.entityTypes ?? []).join(', ')}
+                                                placeholder="PERSON, EMAIL_ADDRESS, PHONE_NUMBER"
+                                                onChange={e => patchBinding({
+                                                    entityTypes: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
+                                                })}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* NeMo-specific */}
+                                    {(selectedBinding.providerKind === 'local_nemo_guardrails' || selectedBinding.providerKind === 'remote_nemo_guardrails') && (
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Rail Set / Config Name</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.railSet ?? ''}
+                                                placeholder="e.g. safe_assistant"
+                                                onChange={e => patchBinding({ railSet: e.target.value || undefined })}
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* OPA-specific */}
+                                    {(selectedBinding.providerKind === 'local_opa' || selectedBinding.providerKind === 'remote_opa') && (<>
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Policy Module</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.policyModule ?? ''}
+                                                placeholder="e.g. policy/guardrails"
+                                                onChange={e => patchBinding({ policyModule: e.target.value || undefined })}
+                                            />
+                                        </div>
+                                        <div style={{ marginBottom: 12 }}>
+                                            <label style={lbl9}>Rule Name</label>
+                                            <input
+                                                style={inp}
+                                                value={selectedBinding.ruleName ?? ''}
+                                                placeholder="e.g. allow"
+                                                onChange={e => patchBinding({ ruleName: e.target.value || undefined })}
+                                            />
+                                        </div>
+                                    </>)}
+
+                                    {/* Fail mode */}
+                                    <div style={{ marginTop: 4 }}>
+                                        <label style={lbl9}>On Validator Failure</label>
+                                        <div style={{ display: 'flex', gap: 10 }}>
+                                            <label style={{ fontSize: 11, color: '#ccc', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                                <input
+                                                    type="radio"
+                                                    name={`failmode-${selectedBinding.id}`}
+                                                    checked={!selectedBinding.failOpen}
+                                                    onChange={() => patchBinding({ failOpen: false })}
+                                                />
+                                                🔒 Fail Closed (deny action)
+                                            </label>
+                                            <label style={{ fontSize: 11, color: '#ccc', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                                <input
+                                                    type="radio"
+                                                    name={`failmode-${selectedBinding.id}`}
+                                                    checked={selectedBinding.failOpen}
+                                                    onChange={() => patchBinding({ failOpen: true })}
+                                                />
+                                                🔓 Fail Open (allow action)
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Status bar */}
+            {status && (
+                <div style={{ marginTop: 14, padding: '9px 13px', background: 'rgba(78,201,176,0.1)', border: '1px solid rgba(78,201,176,0.3)', borderRadius: 4, color: '#4ec9b0', fontSize: 12 }}>
+                    {status}
+                </div>
+            )}
+
+            {/* Readonly note */}
+            <div style={{ marginTop: 18, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 4 }}>
+                <div style={{ fontSize: 10, color: '#444', fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>📋 Runtime Note</div>
+                <div style={{ fontSize: 11, color: '#3a5a7a' }}>
+                    This config is stored in AppSettings.guardrailPolicy and consumed by PolicyGate (electron/services/policy/PolicyGate.ts) at runtime.
+                    No enforcement decisions are made here. Validators are invoked by PolicyGate, not the UI.
+                </div>
+            </div>
         </div>
     );
 }

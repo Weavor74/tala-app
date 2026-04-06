@@ -19,16 +19,43 @@
  *                             Use checkExecution(ExecutionAdmissionContext) for typed access.
  *   2. Side-effect pre-check — checked before tool invocations, memory writes, file writes,
  *                             workflow actions, and autonomy actions.
- *                             Use checkSideEffect(SideEffectContext) / assertSideEffect().
+ *                             Use checkSideEffect(SideEffectContext) / assertSideEffect() (sync)
+ *                             or checkSideEffectAsync() / assertSideEffectAsync() (config-driven).
  *
- * Extension path:
- *   - Add named rule methods (e.g. checkMemoryWrite, checkToolInvocation)
- *     that delegate to evaluate() with a typed PolicyContext.
- *   - Replace the stub allow-all body with real rules as the policy system
- *     matures.
+ * Config-driven evaluation (Phase 3):
+ *   Call setConfig(GuardrailPolicyConfig) to load builder-authored guardrail rules.
+ *   Then call evaluateAsync() / checkSideEffectAsync() / assertSideEffectAsync() to run
+ *   both the existing hard-coded rules AND the config-driven profile rules, including
+ *   validator dispatch via ValidatorRegistry.
+ *
+ *   Rule resolution order (evaluateAsync):
+ *     1. Existing hard-coded synchronous rules (file_write/rp, autonomy_action/rp, etc.) run first.
+ *        A hard-coded deny short-circuits the rest.
+ *     2. Active profile rules are evaluated in ruleIds order (index 0 = highest priority).
+ *        Each rule's scopes array must ALL match (AND semantics).
+ *        An empty scopes array is a global rule that always matches.
+ *     3. First rule whose action is 'deny' → block immediately.
+ *     4. Rules whose action is 'require_validation' → run validators;
+ *        if shouldDenyOverall → block immediately; else continue.
+ *     5. Rules whose action is 'warn' or 'require_confirmation' → record warning, continue.
+ *     6. Rules whose action is 'allow' → no-op, continue checking.
+ *     7. Default → allow.
+ *
+ * Telemetry events emitted (via TelemetryBus):
+ *   execution.blocked     — emitted when a rule or validator denies
+ *   policy.rule_matched   — emitted for each rule whose scopes matched
+ *   validation.requested  — emitted before running validators for a rule
+ *   validation.completed  — emitted after validators return (pass or deny)
+ *   validation.failed     — emitted if ValidatorRegistry throws (defensive)
  *
  * Node.js — lives in electron/. Not imported by renderer code.
  */
+
+import type { GuardrailPolicyConfig, GuardrailRule, GuardrailScope } from '../../../shared/guardrails/guardrailPolicyTypes';
+import type { GuardrailValidationRequest } from '../guardrails/types';
+import { ValidatorRegistry, validatorRegistry as _defaultRegistry } from '../guardrails/ValidatorRegistry';
+import { TelemetryBus } from '../telemetry/TelemetryBus';
+import type { RuntimeEventType } from '../../../shared/runtimeEventTypes';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -187,6 +214,32 @@ export interface SideEffectContext {
  *                                        and mutationIntent === 'write'
  */
 export class PolicyGate {
+
+    // ─── Config and registry injection ────────────────────────────────────────
+
+    /** Active guardrail policy config (set via setConfig). */
+    private _config: GuardrailPolicyConfig | undefined;
+
+    /** ValidatorRegistry used for require_validation rules. Defaults to module singleton. */
+    private _registry: ValidatorRegistry = _defaultRegistry;
+
+    /**
+     * Load a GuardrailPolicyConfig so evaluateAsync() can apply builder-authored rules.
+     * Pass undefined to clear and fall back to hard-coded rules only.
+     */
+    setConfig(config: GuardrailPolicyConfig | undefined): void {
+        this._config = config;
+    }
+
+    /**
+     * Override the ValidatorRegistry used for require_validation dispatching.
+     * Use in tests to inject a custom registry with mock adapters.
+     */
+    setRegistry(registry: ValidatorRegistry): void {
+        this._registry = registry;
+    }
+
+    // ─── Synchronous evaluation ───────────────────────────────────────────────
 
     /**
      * Evaluate whether the described action should be allowed.
@@ -352,6 +405,327 @@ export class PolicyGate {
         const decision = this.checkSideEffect(ctx);
         if (!decision.allowed) {
             throw new PolicyDeniedError(decision);
+        }
+    }
+
+    // ─── Async config-driven evaluation (Phase 3) ─────────────────────────────
+
+    /**
+     * Async extension of evaluate() that also applies builder-authored guardrail
+     * rules from the active GuardrailPolicyConfig (set via setConfig).
+     *
+     * Resolution order: hard-coded rules first, then active profile rules in
+     * ruleIds order. See class-level JSDoc for full semantics.
+     *
+     * @param context  PolicyContext (same as evaluate()).
+     * @param content  Optional content to pass to validators.
+     */
+    async evaluateAsync(
+        context: PolicyContext,
+        content?: string | Record<string, unknown>,
+    ): Promise<PolicyDecision> {
+        // Step 1: hard-coded synchronous rules always run first
+        const hardcoded = this.evaluate(context);
+        if (!hardcoded.allowed) {
+            this._emitPolicyEvent('execution.blocked', context, {
+                code: hardcoded.code,
+                reason: hardcoded.reason,
+                source: 'hardcoded',
+            });
+            return hardcoded;
+        }
+
+        // Step 2: no config → return hard-coded default
+        if (!this._config) {
+            return hardcoded;
+        }
+
+        // Step 3: gather active profile rules in priority order
+        const profileRules = this._getActiveProfileRules();
+        const warnings: string[] = [];
+
+        // Step 4: evaluate each rule in profile order
+        for (const rule of profileRules) {
+            if (!rule.enabled) continue;
+            if (!this._ruleMatchesContext(rule, context)) continue;
+
+            this._emitPolicyEvent('policy.rule_matched', context, {
+                ruleId: rule.id,
+                ruleName: rule.name,
+                ruleAction: rule.action,
+                severity: rule.severity,
+            });
+
+            if (rule.action === 'deny') {
+                const decision: PolicyDecision = {
+                    allowed: false,
+                    reason: `Rule '${rule.name}' denied the action`,
+                    code: `RULE_DENY:${rule.id}`,
+                    metadata: { ruleId: rule.id, severity: rule.severity },
+                };
+                this._emitPolicyEvent('execution.blocked', context, {
+                    code: decision.code,
+                    reason: decision.reason,
+                    ruleId: rule.id,
+                    source: 'rule_deny',
+                });
+                return decision;
+            }
+
+            if (rule.action === 'warn') {
+                warnings.push(
+                    `Rule '${rule.name}' flagged this action (severity: ${rule.severity})`,
+                );
+                continue;
+            }
+
+            if (rule.action === 'require_validation') {
+                const validationRequest = this._makeValidationRequest(context, content);
+                const executionId =
+                    (context.payload?.executionId as string | undefined) ?? 'policy-eval';
+
+                this._emitTelemetry('validation.requested', executionId, {
+                    ruleId: rule.id,
+                    ruleName: rule.name,
+                });
+
+                let aggregated;
+                try {
+                    aggregated = await this._registry.runRuleBindings(
+                        this._config,
+                        rule.id,
+                        validationRequest,
+                    );
+                    this._emitTelemetry('validation.completed', executionId, {
+                        ruleId: rule.id,
+                        shouldDenyOverall: aggregated.shouldDenyOverall,
+                        validatorCount: aggregated.results.length,
+                        totalDurationMs: aggregated.totalDurationMs,
+                        allSucceeded: aggregated.allSucceeded,
+                    });
+                } catch (err) {
+                    this._emitTelemetry('validation.failed', executionId, {
+                        ruleId: rule.id,
+                        error: String(err),
+                    });
+                    // ValidatorRegistry.runRuleBindings() is designed to never throw —
+                    // all adapter errors are caught and returned as result records.
+                    // This catch is a defensive safeguard against unexpected infrastructure
+                    // failures (e.g. out-of-memory, import errors after hot-reload).
+                    // Fail-open here is intentional: infrastructure failures should not
+                    // silently block safe execution paths. This is distinct from per-binding
+                    // failOpen/failClosed semantics, which govern validator-level errors.
+                    continue;
+                }
+
+                if (aggregated.shouldDenyOverall) {
+                    const violationSummary = aggregated.allViolations
+                        .map(v => v.message)
+                        .join('; ');
+                    const decision: PolicyDecision = {
+                        allowed: false,
+                        reason: `Validation blocked: ${
+                            violationSummary || 'validator denied the action'
+                        }`,
+                        code: `VALIDATION_DENY:${rule.id}`,
+                        metadata: {
+                            ruleId: rule.id,
+                            violations: aggregated.allViolations,
+                            validatorResults: aggregated.results.map(r => ({
+                                validatorId: r.validatorId,
+                                shouldDeny: r.shouldDeny,
+                                error: r.error,
+                            })),
+                        },
+                    };
+                    this._emitPolicyEvent('execution.blocked', context, {
+                        code: decision.code,
+                        reason: decision.reason,
+                        ruleId: rule.id,
+                        source: 'validation_deny',
+                    });
+                    return decision;
+                }
+
+                for (const w of aggregated.allWarnings) {
+                    warnings.push(w);
+                }
+                continue;
+            }
+
+            if (rule.action === 'allow') {
+                continue;
+            }
+
+            if (rule.action === 'require_confirmation') {
+                warnings.push(
+                    `Rule '${rule.name}' would require confirmation (severity: ${rule.severity})`,
+                );
+                continue;
+            }
+        }
+
+        return {
+            allowed: true,
+            reason: hardcoded.reason,
+            code: warnings.length > 0 ? 'POLICY_ALLOW_WITH_WARNINGS' : hardcoded.code,
+            metadata: warnings.length > 0 ? { warnings } : undefined,
+        };
+    }
+
+    /**
+     * Typed async pre-check for a side-effect action.
+     * Applies both hard-coded rules and config-driven rules.
+     */
+    async checkSideEffectAsync(
+        ctx: SideEffectContext,
+        content?: string | Record<string, unknown>,
+    ): Promise<PolicyDecision> {
+        return this.evaluateAsync(
+            {
+                action: ctx.actionKind,
+                mode: ctx.executionMode,
+                origin: ctx.executionOrigin,
+                payload: {
+                    executionId: ctx.executionId,
+                    executionType: ctx.executionType,
+                    capability: ctx.capability,
+                    targetSubsystem: ctx.targetSubsystem,
+                    mutationIntent: ctx.mutationIntent,
+                },
+            },
+            content,
+        );
+    }
+
+    /**
+     * Typed async side-effect guard: throws PolicyDeniedError when
+     * checkSideEffectAsync() returns allowed=false.
+     */
+    async assertSideEffectAsync(
+        ctx: SideEffectContext,
+        content?: string | Record<string, unknown>,
+    ): Promise<void> {
+        const decision = await this.checkSideEffectAsync(ctx, content);
+        if (!decision.allowed) {
+            throw new PolicyDeniedError(decision);
+        }
+    }
+
+    // ─── Private: rule resolution helpers ─────────────────────────────────────
+
+    /** Return the ordered rule list for the active profile (index 0 = highest priority). */
+    private _getActiveProfileRules(): GuardrailRule[] {
+        if (!this._config) return [];
+        const profile = this._config.profiles.find(
+            p => p.id === this._config!.activeProfileId,
+        );
+        if (!profile) return [];
+        return profile.ruleIds
+            .map(ruleId => this._config!.rules.find(r => r.id === ruleId))
+            .filter((r): r is GuardrailRule => r !== undefined);
+    }
+
+    /**
+     * Return true when ALL scopes in rule.scopes match context.
+     * Empty scopes array = global rule that always matches.
+     */
+    private _ruleMatchesContext(rule: GuardrailRule, context: PolicyContext): boolean {
+        if (!rule.scopes || rule.scopes.length === 0) return true;
+        return rule.scopes.every(scope => this._scopeMatchesContext(scope, context));
+    }
+
+    /**
+     * Return true when every populated field in scope matches context.
+     * ModeScope '*' is a wildcard that matches any mode value.
+     */
+    private _scopeMatchesContext(scope: GuardrailScope, context: PolicyContext): boolean {
+        if (scope.mode !== undefined) {
+            if (scope.mode !== '*' && context.mode !== scope.mode) return false;
+        }
+        if (scope.executionOrigin !== undefined) {
+            if (context.origin !== scope.executionOrigin) return false;
+        }
+        if (scope.executionType !== undefined) {
+            const ctxType = context.payload?.executionType as string | undefined;
+            if (ctxType !== scope.executionType) return false;
+        }
+        if (scope.capability !== undefined) {
+            const ctxCap = context.payload?.capability as string | undefined;
+            if (ctxCap !== scope.capability) return false;
+        }
+        if (scope.memoryAction !== undefined) {
+            if (context.action !== 'memory_write') return false;
+            const ctxMemAction = context.payload?.memoryAction as string | undefined;
+            if (ctxMemAction !== scope.memoryAction) return false;
+        }
+        if (scope.workflowNodeType !== undefined) {
+            if (context.action !== 'workflow_action') return false;
+            const ctxWfNodeType = context.payload?.workflowNodeType as string | undefined;
+            if (ctxWfNodeType !== scope.workflowNodeType) return false;
+        }
+        if (scope.autonomyAction !== undefined) {
+            if (context.action !== 'autonomy_action') return false;
+            const ctxAutoAction = context.payload?.autonomyAction as string | undefined;
+            if (ctxAutoAction !== scope.autonomyAction) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Build a GuardrailValidationRequest from context.
+     * If content is not provided, the context payload is used as structured content.
+     */
+    private _makeValidationRequest(
+        context: PolicyContext,
+        content?: string | Record<string, unknown>,
+    ): GuardrailValidationRequest {
+        return {
+            executionId: context.payload?.executionId as string | undefined,
+            executionType: context.payload?.executionType as string | undefined,
+            executionOrigin: context.origin,
+            executionMode: context.mode,
+            content: content ?? (context.payload ?? {}),
+            targetSubsystem: context.payload?.targetSubsystem as string | undefined,
+            actionKind: context.action,
+        };
+    }
+
+    // ─── Private: telemetry helpers ───────────────────────────────────────────
+
+    /** Emit a policy-domain event with action/mode and extra payload fields. */
+    private _emitPolicyEvent(
+        event: RuntimeEventType,
+        context: PolicyContext,
+        extra?: Record<string, unknown>,
+    ): void {
+        const executionId =
+            (context.payload?.executionId as string | undefined) ?? 'policy-eval';
+        this._emitTelemetry(event, executionId, {
+            action: context.action,
+            mode: context.mode,
+            ...extra,
+        });
+    }
+
+    /**
+     * Emit a TelemetryBus event. Errors are swallowed so telemetry never
+     * interrupts policy enforcement.
+     */
+    private _emitTelemetry(
+        event: RuntimeEventType,
+        executionId: string,
+        payload?: Record<string, unknown>,
+    ): void {
+        try {
+            TelemetryBus.getInstance().emit({
+                executionId,
+                subsystem: 'kernel',
+                event,
+                ...(payload !== undefined && { payload }),
+            });
+        } catch {
+            // Telemetry failures must never interrupt policy enforcement.
         }
     }
 }

@@ -1,5 +1,6 @@
 import type { DatabaseConfig } from './dbConfig';
 import type { DatabaseBootstrapConfig } from './dbBootstrapConfig';
+import type { GuardrailPolicyConfig } from './guardrails/guardrailPolicyTypes';
 
 /**
  * Application Settings Schema Definitions
@@ -277,6 +278,7 @@ export interface AppSettings {
     system: SystemConfig;
     mcpServers: McpServerConfig[];
     guardrails: GuardrailConfig[];
+    guardrailPolicy?: GuardrailPolicyConfig;
     search: SearchConfig;
     workflows: WorkflowConfig;
     notebooks: Notebook[];
