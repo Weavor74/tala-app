@@ -1800,6 +1800,15 @@ describe('MemoryAuthorityService', () => {
             expect(typeof result.durationMs).toBe('number');
         });
 
+        it('DEP2b: tryUpdateCanonicalMemory returns success:false on DB failure — no throw propagates', async () => {
+            const pool = poolWithRows([]);   // empty rows → record not found → legacy throws
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'x' });
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
+            expect(typeof result.durationMs).toBe('number');
+        });
+
         it('DEP3: tryTombstoneMemory is the preferred entry point — returns success result without throwing', async () => {
             const pool = poolSequenced([
                 { rows: [makeMemoryRow()] },
@@ -1809,6 +1818,15 @@ describe('MemoryAuthorityService', () => {
             const svc = new MemoryAuthorityService(pool as never);
             const result = await svc.tryTombstoneMemory(MEMORY_ID);
             expect(result.success).toBe(true);
+            expect(typeof result.durationMs).toBe('number');
+        });
+
+        it('DEP3b: tryTombstoneMemory returns success:false on DB failure — no throw propagates', async () => {
+            const pool = poolWithRows([]);   // empty rows → record not found → legacy throws
+            const svc = new MemoryAuthorityService(pool as never);
+            const result = await svc.tryTombstoneMemory(MEMORY_ID);
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('not found');
             expect(typeof result.durationMs).toBe('number');
         });
 

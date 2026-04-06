@@ -807,7 +807,7 @@ export class MemoryAuthorityService {
      * All errors (including PolicyDeniedError) are returned as
      * `{ success: false, error }` rather than thrown.
      *
-     * @param input  Proposed memory input to canonicalise.
+     * @param input  Proposed memory input to canonicalize.
      * @param ctx    Optional invocation context for telemetry alignment and
      *               executionMode forwarding.
      * @returns      `MemoryOperationResult<string>` where `data` is the
@@ -941,7 +941,7 @@ export class MemoryAuthorityService {
      * forwarding.  All errors — including PolicyDeniedError and DB failures —
      * are captured and returned as `{ success: false, error }`.
      *
-     * @param input  Proposed memory input to canonicalise.
+     * @param input  Proposed memory input to canonicalize.
      * @param ctx    Optional invocation context.  ctx.executionId is forwarded
      *               to the underlying canonical method as the callerExecutionId.
      * @returns      `MemoryOperationResult<string>` where `data` is the
