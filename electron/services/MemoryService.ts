@@ -520,7 +520,7 @@ export class MemoryService {
             actionKind: 'memory_write',
             executionMode: mode,
             targetSubsystem: 'MemoryService',
-            mutationIntent: 'mem0 write',
+            mutationIntent: 'derived_memory_write',
         });
 
         const now = Date.now();

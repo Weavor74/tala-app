@@ -121,7 +121,7 @@ export class MemoryAuthorityService {
         policyGate.assertSideEffect({
             actionKind: 'memory_write',
             targetSubsystem: 'MemoryAuthorityService',
-            mutationIntent: 'canonical_memory_create',
+            mutationIntent: 'canonical_memory_write',
         });
 
         // Phase 1+2: duplicate detection
