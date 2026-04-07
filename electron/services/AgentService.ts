@@ -2260,33 +2260,47 @@ Exported standalone package from Tala.
                 }
 
                 // --- HARD TOOL GATE ---
-                // Strip all tools whenever the turn is a greeting, capabilities explicitly
-                // block tool use, or retrieval was suppressed for a social/conversational reason.
+                // Strip all tools whenever the turn is a greeting or no capabilities are
+                // explicitly allowed. Authorization is derived from intent and the
+                // allowedCapabilities array length — 'tools' is not a valid ToolCapability
+                // value and must not be used in any capability check.
                 // This is the authoritative enforcement point — it fires AFTER all mode-gating
                 // so it cannot be bypassed by earlier incomplete checks.
-                const capabilitiesBlockTools =
-                    turnObject.blockedCapabilities.includes('tools') ||
-                    turnObject.blockedCapabilities.includes('all');
-                const shouldStripAllTools =
-                    isGreeting ||
-                    turnObject.intent.class === 'greeting' ||
-                    capabilitiesBlockTools;
-                if (shouldStripAllTools && toolsToSend.length > 0) {
+                const requestedTools = toolsToSend;
+                const allowedCaps = allowedCapabilities ?? [];
+
+                const authorizedTools =
+                    isGreeting || turnObject.intent.class === 'greeting' || allowedCaps.length === 0
+                        ? []
+                        : requestedTools;
+
+                const toolGateApplied = authorizedTools.length !== requestedTools.length;
+                const strippedToolNames = requestedTools
+                    .filter((t: any) => !authorizedTools.includes(t))
+                    .map((t: any) => t.function?.name ?? (t as any).name)
+                    .filter(Boolean);
+
+                const finalTools = authorizedTools;
+                const finalToolChoice = finalTools.length > 0 ? brainOptions.tool_choice : undefined;
+
+                if (toolGateApplied && requestedTools.length > 0) {
                     console.log(
                         `[ToolGate] stripped tools for turn=${turnId} intent=${turnObject.intent.class}` +
-                        ` isGreeting=${isGreeting} blocked=${turnObject.blockedCapabilities.length > 0 ? turnObject.blockedCapabilities.join(',') : 'none'}` +
-                        ` toolCount=${toolsToSend.length}`
+                        ` isGreeting=${isGreeting} allowed=${allowedCaps.length}` +
+                        ` toolCount=${requestedTools.length}`
                     );
                     telemetry.operational(
                         'cognitive',
                         'capability_gated',
                         'info',
                         `turn:${turnId}`,
-                        `[ToolGate] stripped ${toolsToSend.length} tool(s): intent=${turnObject.intent.class} isGreeting=${isGreeting}`,
+                        `[ToolGate] stripped ${requestedTools.length} tool(s): intent=${turnObject.intent.class} isGreeting=${isGreeting}`,
                         'success',
-                        { payload: { intent: turnObject.intent.class, isGreeting, blocked: turnObject.blockedCapabilities, toolCount: toolsToSend.length } }
+                        { payload: { intent: turnObject.intent.class, isGreeting, strippedTools: strippedToolNames, toolCount: requestedTools.length } }
                     );
-                    toolsToSend = [];
+                }
+                toolsToSend = finalTools;
+                if (finalToolChoice === undefined) {
                     delete brainOptions.tool_choice;
                 }
 
