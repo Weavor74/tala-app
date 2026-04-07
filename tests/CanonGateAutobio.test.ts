@@ -4,7 +4,7 @@
  * Validates the autobiographical canon gate introduced to prevent hallucinated
  * first-person memories when no high-trust canon source exists.
  *
- * Gate behaviour (controlled by isAutobiographicalLoreRequest + hasSufficientCanonMemoryForAutobio):
+ * Gate behavior (controlled by isAutobiographicalLoreRequest + hasSufficientCanonMemoryForAutobio):
  *
  *  CGA01  Autobiographical query + no canon memory → responseMode=canon_required
  *  CGA02  Autobiographical query + explicit/chat fallback only → still insufficient → canon_required

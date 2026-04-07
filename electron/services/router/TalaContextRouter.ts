@@ -104,7 +104,7 @@ export class TalaContextRouter {
         // Personal life-period phrases
         /\b(your\s+(childhood|upbringing|early\s+life|younger\s+years?)|growing\s+up|back\s+when\s+you\s+were)\b/i,
         // "your past" / "your personal history" / "your life story"
-        /\byour\s+(past|personal\s+histor|life\s+story)\b/i,
+        /\byour\s+(past|personal\s+history|life\s+story)\b/i,
         // First-person memory recall requests ("do you remember", "can you remember")
         /\b(do|can|could)\s+you\s+(remember|recall)\b/i,
         // "tell me about your [past/childhood/memories/experience]" or "a time when you"
