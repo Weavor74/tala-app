@@ -381,7 +381,7 @@ export class WorkflowEngine {
                 let activeOutputHandle: string | null = null; // null means "all handles" or "default"
 
                 try {
-                    const result = await this.executeNode(node, input, log);
+                    const result = await this.executeNode(node, input, log, executionMode);
                     // Standardize result
                     if (result && typeof result === 'object' && 'output' in result) {
                         output = result.output;
@@ -522,7 +522,7 @@ export class WorkflowEngine {
      * @returns {Promise<any>} The node's output, typically `{ output: any, activeHandle?: string }`.
      * @throws {Error} If the node encounters an unrecoverable error.
      */
-    private async executeNode(node: WorkflowNode, input: any, log: (msg: string) => void): Promise<any> {
+    private async executeNode(node: WorkflowNode, input: any, log: (msg: string) => void, executionMode?: string): Promise<any> {
         // Global Variable / Context Injection if we had it. 
         // For now, input flows.
 
