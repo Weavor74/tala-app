@@ -29,8 +29,14 @@ import { NOTEBOOK_GROUNDING_CONTRACT_TEXT } from '../plan/notebookGroundingContr
  *  memory_grounded_strict — optional, activated by explicit user wording ("exactly",
  *                           "don't make anything up", etc.). Tala stays tightly factual,
  *                           minimal extrapolation, and plainly says what she does not recall.
+ *
+ *  canon_required         — activated by the canon gate when an autobiographical lore request
+ *                           lacks sufficient high-trust canon memory (diary/graph/rag/core_bio).
+ *                           Tala must not fabricate autobiographical events; she must state
+ *                           that no grounded memory is available and may invite the user to
+ *                           define that canon deliberately.
  */
-export type ResponseMode = 'memory_grounded_soft' | 'memory_grounded_strict';
+export type ResponseMode = 'memory_grounded_soft' | 'memory_grounded_strict' | 'canon_required';
 
 /**
  * A discrete block of text to be injected into the system prompt.
@@ -170,9 +176,27 @@ export interface TurnContext {
      * Set to 'memory_grounded_soft' by default when lore memories are present.
      * Set to 'memory_grounded_strict' when the user's query contains explicit
      * precision-demanding phrases ("exactly", "don't make anything up", etc.).
+     * Set to 'canon_required' when the canon gate fires (autobiographical request
+     * with insufficient high-trust canon memory).
      * Undefined for non-lore turns or when no lore memories were retrieved.
      */
     responseMode?: ResponseMode;
+
+    /**
+     * Canon gate decision for autobiographical lore turns.
+     * Populated by TalaContextRouter when intent=lore and the autobiographical
+     * pattern fires. Used for audit and telemetry.
+     */
+    canonGateDecision?: {
+        /** Whether the query was classified as a first-person autobiographical memory request. */
+        isAutobiographicalLoreRequest: boolean;
+        /** Whether at least one approved memory came from a high-trust canon source. */
+        sufficientCanonMemory: boolean;
+        /** Distinct source types present in the approved memory set at gate evaluation. */
+        canonSourceTypes: string[];
+        /** Whether the canon gate fired and forced responseMode=canon_required. */
+        canonGateApplied: boolean;
+    };
 }
 
 interface AssemblyResult {
@@ -263,6 +287,28 @@ export class ContextAssembler {
                         count: memories.length
                     }
                 });
+            } else if (responseMode === 'canon_required') {
+                // Canon gate: fallback-only memories exist but are insufficient for
+                // autobiographical fact claims.  Label them explicitly so the model
+                // knows their provenance, then the canon gate instruction (emitted below)
+                // will forbid using them to fabricate first-person events.
+                const labeledContent = memories
+                    .map((m, idx) => {
+                        const sourceLabel = ContextAssembler.loreSourceLabel(m.metadata?.source);
+                        return `Snippet ${idx + 1}:\nSource: ${sourceLabel} (fallback only — insufficient for autobiographical fact claims)\nContent: ${m.text}`;
+                    })
+                    .join('\n\n');
+
+                blocks.push({
+                    header: '[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]',
+                    source: 'router',
+                    priority: 'normal',
+                    content: labeledContent,
+                    metadata: {
+                        memory_ids: memories.map(m => m.id),
+                        count: memories.length
+                    }
+                });
             } else if (responseMode) {
                 // Lore/autobiographical turn — use labeled canon format so the model
                 // treats these entries as lived history rather than background context.
@@ -310,12 +356,25 @@ export class ContextAssembler {
             }
         }
 
+        // 2b. Canon gate instruction — always injected when canon_required is active,
+        //     regardless of whether fallback memories were present in step 2.
+        //     Placed after any fallback context block so the model reads: context → restriction.
+        if (responseMode === 'canon_required') {
+            blocks.push({
+                header: '[CANON GATE — NO VERIFIED AUTOBIOGRAPHICAL MEMORY]',
+                source: 'system',
+                priority: 'high',
+                content: ContextAssembler.CANON_REQUIRED_BLOCK,
+            });
+        }
+
         // 3. Fallback Block (SAFE NO-MEMORY CONTRACT)
         // If no memories were found but intent is substantive, inject fallback instructions.
         // In notebook mode the absence of retrieved content is the expected answer — the
         // grounding contract already instructs the model to say so explicitly, so we do NOT
         // inject a separate fallback that could confuse the source-restriction rules.
-        if (memories.length === 0 && !retrievalSuppressed && intent !== 'unknown' && !notebookGrounded) {
+        // In canon_required mode the canon gate block already handles the no-memory case.
+        if (memories.length === 0 && !retrievalSuppressed && intent !== 'unknown' && !notebookGrounded && responseMode !== 'canon_required') {
             blocks.push({
                 header: '[FALLBACK CONTRACT — NO MEMORY FOUND]',
                 source: 'system',
@@ -390,6 +449,29 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
         `- If a detail is not present in memory, say you do not recall it clearly.\n` +
         `- Prefer precision over flourish.\n` +
         `- Do not generalize vague themes when specific memory content is available.`;
+
+    /**
+     * Canon gate instruction — injected when an autobiographical lore request lacks
+     * sufficient high-trust canon memory (diary / graph / rag / core_bio / lore).
+     *
+     * This block is placed near the memory/context section so the model sees it
+     * before composing any autobiographical answer.
+     *
+     * Allowed: "I don't have a grounded memory from when I was 17."
+     * Allowed: "I don't want to invent a false memory."
+     * Allowed: "If you want, we can define that part of my canon deliberately."
+     * Forbidden: "I was 17 when I got into a minor car accident..."
+     */
+    private static readonly CANON_REQUIRED_BLOCK =
+        `This is an autobiographical memory request. No verified canonical memory exists for the period or event being asked about.\n\n` +
+        `Rules:\n` +
+        `- Do NOT fabricate autobiographical events, people, places, or experiences.\n` +
+        `- Do NOT present invented details as recalled memory.\n` +
+        `- State clearly that you do not have a grounded memory for this.\n` +
+        `- You may say: "I don't have a grounded memory from that time" or "I don't want to invent a false memory."\n` +
+        `- You may invite the user to help define that part of your canon deliberately.\n` +
+        `- If fallback context snippets were provided above, they are chat/session fragments only — do NOT use them to construct first-person autobiographical fact claims.\n` +
+        `- Staying truthful about absent memory is more important than providing a complete-sounding answer.`;
 
     private static sanitize(blocks: ContextBlock[]): ContextBlock[] {
         return blocks.map(block => {

@@ -327,11 +327,13 @@ describe('LoreMemoryGrounding — TalaContextRouter strict trigger detection', (
         expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
-    it('responseMode is undefined when no lore memories are retrieved', async () => {
+    it('responseMode is canon_required when no lore memories are retrieved for an autobiographical query', async () => {
         mockSearch.mockResolvedValue([]);
         mockRagSearch.mockResolvedValue([]);
         const ctx = await router.process('turn-5', 'can you tell me about when you were 17?', 'rp');
-        expect(ctx.responseMode).toBeUndefined();
+        // Canon gate fires: autobiographical query + no canon memories → canon_required
+        expect(ctx.responseMode).toBe('canon_required');
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
     });
 
     it('responseMode is undefined for greeting intent', async () => {

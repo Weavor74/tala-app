@@ -86,12 +86,63 @@ export class TalaContextRouter {
         /\bquote\s+the\s+memory\b/i,
     ];
 
+    /**
+     * Patterns that identify a query as a first-person autobiographical memory request —
+     * specifically asking for Tala's own lived experiences, not general worldbuilding lore.
+     *
+     * These are a narrow subset of LORE_PATTERNS that signal the user wants Tala to
+     * recall events from her own personal timeline (age references, childhood, past events).
+     * Only evaluated when intent=lore is already established.
+     */
+    private static readonly AUTOBIO_LORE_PATTERNS = [
+        // Explicit event-happened-to-you framing
+        /\b(something|what|an?\s+event|a\s+time)\s+(that\s+)?happened\s+to\s+you\b/i,
+        // Life-stage / age references: "when you were 17", "when you were young/a child"
+        /\bwhen\s+you\s+were\s+(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
+        // "at age [N]" or "at [N] years old"
+        /\bat\s+(age\s+)?\d+(\s+years?\s*old)?\b/i,
+        // Personal life-period phrases
+        /\b(your\s+(childhood|upbringing|early\s+life|younger\s+years?)|growing\s+up|back\s+when\s+you\s+were)\b/i,
+        // "your past" / "your personal history" / "your life story"
+        /\byour\s+(past|personal\s+histor|life\s+story)\b/i,
+        // First-person memory recall requests ("do you remember", "can you remember")
+        /\b(do|can|could)\s+you\s+(remember|recall)\b/i,
+        // "tell me about your [past/childhood/memories/experience]" or "a time when you"
+        /\btell\s+(me\s+)?about\s+(your\s+(past|childhood|early|memory|memories?|life\s+story|experience)|something\s+that\s+happened\s+to\s+you|a\s+time\s+when\s+you)\b/i,
+        // "what happened to you when"
+        /\bwhat\s+happened\s+to\s+you\s+when\b/i,
+    ];
+
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
     private lastLoreQueryTs: number = 0;
 
     constructor(memoryService: MemoryService, ragService?: RagService) {
         this.memoryService = memoryService;
         this.ragService = ragService;
+    }
+
+    /**
+     * Returns true when the query is specifically asking for Tala's own lived experiences —
+     * first-person autobiographical queries about her personal timeline, childhood, past events,
+     * or age-specific life stages.
+     *
+     * Only called when intent=lore is already established.  Distinct from general worldbuilding
+     * lore (universe history, character backgrounds) which does not require autobiographical canon.
+     */
+    private static isAutobiographicalLoreRequest(query: string): boolean {
+        return TalaContextRouter.AUTOBIO_LORE_PATTERNS.some(p => p.test(query));
+    }
+
+    /**
+     * Returns true when the resolved memory set contains at least one item from a
+     * high-trust autobiographical canon source (diary / graph / core_bio / lore / rag).
+     *
+     * Fallback sources (explicit, conversation, mem0) alone are NOT sufficient:
+     * they are chat snippets or low-confidence fragments that must not be the sole
+     * basis for first-person autobiographical fact claims.
+     */
+    private static hasSufficientCanonMemoryForAutobio(resolved: MemoryItem[]): boolean {
+        return resolved.some(m => TalaContextRouter.LORE_CANON_SOURCES.has(m.metadata?.source ?? ''));
     }
 
     /**
@@ -301,19 +352,57 @@ export class TalaContextRouter {
             docContext = docIntel.getRelevantContext(query);
         }
 
-        // 7. Assembly & Handoff
+        // 7. Canon gate for autobiographical lore requests.
+        //
+        //    Evaluated after source-bucket composition so we work with the final
+        //    approved memory set.  Only fires when:
+        //      a) intent=lore
+        //      b) the query matches AUTOBIO_LORE_PATTERNS (first-person personal timeline)
+        //      c) none of the approved memories come from a high-trust canon source
+        //
+        //    When the gate fires, responseMode is forced to 'canon_required' regardless
+        //    of approved memory count — even partial fallback-only sets are insufficient.
+        let isAutobiographicalLoreRequest = false;
+        let sufficientCanonMemory = true;
+        let canonGateApplied = false;
+        let canonSourceTypes: string[] = [];
+
+        if (intent.class === 'lore') {
+            isAutobiographicalLoreRequest = TalaContextRouter.isAutobiographicalLoreRequest(query);
+            if (isAutobiographicalLoreRequest) {
+                console.log('[CanonGate] autobiographical lore request detected');
+                canonSourceTypes = [...new Set(resolved.map(m => m.metadata?.source ?? 'unknown'))];
+                sufficientCanonMemory = TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved);
+                if (!sufficientCanonMemory) {
+                    console.log(
+                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length}`
+                    );
+                    console.log('[CanonGate] forcing strict no-canon response mode');
+                    console.log('[CanonGate] hallucination prevention active for autobiographical turn');
+                    canonGateApplied = true;
+                }
+            }
+        }
+
+        // 8. Assembly & Handoff
         // Derive response grounding mode.
         //
         // Notebook active:  always 'memory_grounded_strict' — the user has an open notebook
         //   and all replies must be restricted to retrieved notebook content, regardless of
         //   intent or phrasing.
         //
-        // Lore intent:  'memory_grounded_strict' when the user's query contains explicit
-        //   precision-demanding phrases; otherwise 'memory_grounded_soft'.
+        // Canon gate fired:  'canon_required' — autobiographical request with no high-trust
+        //   canon memory; Tala must not fabricate first-person events.
+        //
+        // Lore intent (sufficient canon):  'memory_grounded_strict' when the user's query
+        //   contains explicit precision-demanding phrases; otherwise 'memory_grounded_soft'.
         let responseMode: ResponseMode | undefined;
         if (notebookActive) {
             responseMode = 'memory_grounded_strict';
             console.log(`[TalaRouter] Notebook context active — forcing responseMode=memory_grounded_strict`);
+        } else if (canonGateApplied) {
+            responseMode = 'canon_required';
+            console.log(`[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn`);
         } else if (intent.class === 'lore' && resolved.length > 0) {
             const isStrictGrounding = TalaContextRouter.STRICT_GROUNDING_PATTERNS.some(p => p.test(query));
             responseMode = isStrictGrounding ? 'memory_grounded_strict' : 'memory_grounded_soft';
@@ -390,6 +479,14 @@ export class TalaContextRouter {
             errorState: null,
             resolvedMemories: resolved,
             responseMode,
+            ...(intent.class === 'lore' ? {
+                canonGateDecision: {
+                    isAutobiographicalLoreRequest,
+                    sufficientCanonMemory,
+                    canonSourceTypes,
+                    canonGateApplied,
+                },
+            } : {}),
         };
 
         // Emit structured routing telemetry
@@ -405,6 +502,10 @@ export class TalaContextRouter {
             blockedCapabilities,
             memoryWriteCategory: memoryWriteDecision.category,
             responseMode: responseMode ?? 'none',
+            isAutobiographicalLoreRequest,
+            sufficientCanonMemory,
+            canonSourceTypes,
+            canonGateApplied,
             correlationId
         });
 
