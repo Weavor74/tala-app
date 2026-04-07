@@ -31,6 +31,98 @@ export type ContextSectionName =
     | 'tool_availability' // Summary of allowed and blocked tool capabilities
     | 'request_summary';  // Normalized user-turn and intent summary
 
+// ─── Budget policy ────────────────────────────────────────────────────────────
+
+/**
+ * Per-section token/character budget contract.
+ *
+ * Budget enforcement uses a 4-chars-per-token heuristic (consistent with
+ * the rest of the context assembly pipeline). All budgets are soft limits:
+ * content that exceeds `maxChars` is truncated at a word boundary and
+ * marked with the truncation suffix.
+ *
+ * Budget enforcement priority:
+ *   1. mandatoryInclude sections are always included regardless of budget.
+ *   2. Sections are filled in canonical priority order (high → normal → low).
+ *   3. Once totalBudgetChars is reached, subsequent optional sections are dropped.
+ *   4. Sections with mandatoryInclude=true are never dropped by total budget.
+ */
+export interface ContextBudgetPolicy {
+    /**
+     * Maximum character count for this section's rendered content.
+     * Content exceeding this is truncated at a word boundary.
+     * 0 means no per-section cap (only total budget applies).
+     */
+    maxChars: number;
+    /**
+     * Approximate maximum token count for this section.
+     * Derived from maxChars using the 4-chars/token heuristic.
+     * Provided for display and metadata only — enforcement uses maxChars.
+     */
+    maxTokens: number;
+    /**
+     * Whether this section must always be included regardless of total budget.
+     * Mandatory sections are never dropped even if the total budget is exceeded.
+     */
+    mandatoryInclude: boolean;
+    /**
+     * What to do when the section content exceeds maxChars:
+     *   'truncate'  — include truncated content, record truncation in reason
+     *   'drop'      — drop the section entirely if content exceeds maxChars
+     */
+    overflowPolicy: 'truncate' | 'drop';
+}
+
+// ─── Reason codes ─────────────────────────────────────────────────────────────
+
+/**
+ * Typed reason codes for why a section was included in the assembled context.
+ * Enables deterministic, auditable inclusion decisions.
+ */
+export type ContextSelectionReason =
+    | 'mandatory'                // Always included by contract (mandatoryInclude=true)
+    | 'content_available'        // Content was present and within budget
+    | 'fallback_contract'        // No evidence found; fallback instruction injected
+    | 'notebook_grounding'       // Notebook strict grounding mode activated
+    | 'lore_grounding'           // Lore/autobiographical memory grounding mode
+    | 'content_truncated';       // Content available but truncated to fit budget
+
+/**
+ * Typed reason codes for why a section was excluded from the assembled context.
+ * Enables deterministic, auditable exclusion decisions.
+ */
+export type ContextExclusionReason =
+    | 'no_content'               // No content available for this section
+    | 'retrieval_suppressed'     // Retrieval was suppressed by mode or policy
+    | 'policy_suppressed'        // Mode policy disallows this section
+    | 'total_budget_exceeded'    // Section dropped because total context budget was reached
+    | 'section_budget_exceeded'  // Content exceeds per-section budget and policy=drop
+    | 'greeting_turn'            // Section not included for greeting/trivial turns
+    | 'unknown_intent';          // Section not included for unknown intent turns
+
+// ─── Section budget result ────────────────────────────────────────────────────
+
+/**
+ * Budget accounting record for one assembled section.
+ * Included in AssembledContext metadata for full budget traceability.
+ */
+export interface SectionBudgetResult {
+    /** Canonical name of the section. */
+    name: ContextSectionName;
+    /** Budget policy that governed this section. */
+    policy: ContextBudgetPolicy;
+    /** Character count of the raw content before truncation. */
+    rawCharCount: number;
+    /** Character count of the content after budget enforcement (≤ policy.maxChars if capped). */
+    finalCharCount: number;
+    /** Estimated token count of the final content (finalCharCount / 4, ceil). */
+    estimatedTokens: number;
+    /** Whether the content was truncated to fit the per-section budget. */
+    wasTruncated: boolean;
+    /** Whether this section was included in the assembled output. */
+    included: boolean;
+}
+
 // ─── Core section shape ───────────────────────────────────────────────────────
 
 /**
@@ -46,7 +138,7 @@ export interface ContextSection {
     name: ContextSectionName;
     /** Model-facing header string, e.g. "[MEMORY CONTEXT]". */
     header: string;
-    /** Rendered text content for this section. */
+    /** Rendered text content for this section (budget-enforced). */
     content: string;
     /** Priority determines inclusion order and truncation resistance. */
     priority: 'high' | 'normal' | 'low';
@@ -54,6 +146,16 @@ export interface ContextSection {
     included: boolean;
     /** Human-readable reason why this section was suppressed (if !included). */
     suppressionReason?: string;
+    /** Typed reason code for why this section was selected (if included). */
+    selectionReason?: ContextSelectionReason;
+    /** Typed reason code for why this section was excluded (if !included). */
+    exclusionReason?: ContextExclusionReason;
+    /** Character count of the rendered content after budget enforcement. */
+    charCount: number;
+    /** Estimated token count of the rendered content (charCount / 4, ceil). */
+    estimatedTokens: number;
+    /** Budget policy that governed this section. */
+    budgetPolicy: ContextBudgetPolicy;
 }
 
 // ─── Evidence ─────────────────────────────────────────────────────────────────
@@ -116,6 +218,29 @@ export interface ContextAssemblyMetadata {
     wasCompacted: boolean;
     /** Wall-clock duration of the assembly phase in milliseconds. */
     assemblyDurationMs: number;
+
+    // ─── Budget fields ─────────────────────────────────────────────────────
+    /** Total character count of all included section content. */
+    totalCharCount: number;
+    /** Total estimated token count across all included sections (charCount / 4, ceil). */
+    totalEstimatedTokens: number;
+    /**
+     * Total token budget for this assembly run.
+     * Derived from DEFAULT_TOTAL_BUDGET_TOKENS or overridden via inputs.
+     */
+    totalBudgetTokens: number;
+    /**
+     * Budget utilization as a fraction [0, 1].
+     * Computed as totalEstimatedTokens / totalBudgetTokens.
+     * Values > 1 indicate the budget was exceeded (should not happen for included content).
+     */
+    budgetUtilization: number;
+    /** Per-section budget accounting records, in canonical section order. */
+    sectionBudgets: SectionBudgetResult[];
+    /** Number of sections that were truncated to fit their per-section budget. */
+    truncatedSectionCount: number;
+    /** Number of sections that were dropped because the total budget was exceeded. */
+    droppedSectionCount: number;
 }
 
 // ─── Assembled context ────────────────────────────────────────────────────────
@@ -249,4 +374,12 @@ export interface ContextAssemblerInputs {
     allowedCapabilities?: string[];
     /** Capabilities blocked for this turn. */
     blockedCapabilities?: string[];
+
+    // ─── Budget override ──────────────────────────────────────────────────
+    /**
+     * Optional total token budget override for this assembly run.
+     * When not provided, the default budget (DEFAULT_TOTAL_BUDGET_TOKENS) is used.
+     * Use this to tighten the budget for constrained models or widen it for large-context models.
+     */
+    totalBudgetTokensOverride?: number;
 }

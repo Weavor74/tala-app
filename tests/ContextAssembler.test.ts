@@ -476,3 +476,293 @@ describe('ContextAssembler', () => {
         });
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: Budget & Contract Tests (CB01–CB20)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * CB01–CB20 — ContextAssembler Budget Controls & Section Contracts
+ *
+ * Validates:
+ *   CB01 — sections carry budgetPolicy field matching SECTION_BUDGET_POLICIES
+ *   CB02 — sections carry charCount and estimatedTokens fields
+ *   CB03 — charCount of included section equals content.length
+ *   CB04 — estimatedTokens equals ceil(charCount / 4)
+ *   CB05 — metadata contains totalCharCount, totalEstimatedTokens, totalBudgetTokens
+ *   CB06 — metadata.budgetUtilization is a number in [0, 1] for normal input
+ *   CB07 — metadata.sectionBudgets has an entry for every canonical section
+ *   CB08 — per-section budget truncation: content exceeding maxChars is truncated with "[...]"
+ *   CB09 — truncated section carries selectionReason='content_truncated'
+ *   CB10 — truncated section has wasTruncated=true in sectionBudgets
+ *   CB11 — metadata.truncatedSectionCount reflects number of truncated sections
+ *   CB12 — total budget enforcement: non-mandatory section dropped when budget tight
+ *   CB13 — mandatory sections (mode_constraints, request_summary) survive total budget drop
+ *   CB14 — dropped section carries exclusionReason='total_budget_exceeded'
+ *   CB15 — metadata.droppedSectionCount reflects number of budget-dropped sections
+ *   CB16 — selectionReason='mandatory' for mode_constraints and request_summary
+ *   CB17 — selectionReason='fallback_contract' for zero-memory substantive turn
+ *   CB18 — exclusionReason='retrieval_suppressed' when retrieval suppressed
+ *   CB19 — exclusionReason='greeting_turn' for greeting with no memories
+ *   CB20 — totalEstimatedTokens does not exceed totalBudgetTokens for normal inputs
+ */
+
+import {
+    SECTION_BUDGET_POLICIES,
+    DEFAULT_TOTAL_BUDGET_TOKENS,
+} from '../electron/services/context/ContextAssembler';
+import type { ContextSectionName } from '../shared/context/assembledContextTypes';
+
+describe('ContextAssembler — Phase 2: Budget & Contract Tests', () => {
+
+    describe('CB01–CB04 — Section contract fields', () => {
+
+        it('CB01 — sections carry budgetPolicy field matching SECTION_BUDGET_POLICIES', () => {
+            const result = ContextAssembler.assembleContext(baseInputs());
+            for (const section of result.sections) {
+                const expected = SECTION_BUDGET_POLICIES[section.name];
+                expect(section.budgetPolicy).toEqual(expected);
+            }
+        });
+
+        it('CB02 — sections carry charCount and estimatedTokens fields', () => {
+            const result = ContextAssembler.assembleContext(baseInputs());
+            for (const section of result.sections) {
+                expect(typeof section.charCount).toBe('number');
+                expect(typeof section.estimatedTokens).toBe('number');
+                expect(section.charCount).toBeGreaterThanOrEqual(0);
+                expect(section.estimatedTokens).toBeGreaterThanOrEqual(0);
+            }
+        });
+
+        it('CB03 — charCount of included section equals content.length', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'I am Tala, an introspective AI.',
+                approvedMemories: [makeMemory('m1', 'A memory.')],
+            }));
+            for (const section of result.sections) {
+                if (section.included) {
+                    expect(section.charCount).toBe(section.content.length);
+                } else {
+                    expect(section.charCount).toBe(0);
+                }
+            }
+        });
+
+        it('CB04 — estimatedTokens equals ceil(charCount / 4)', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [makeMemory('m1', 'Content text here.')],
+            }));
+            for (const section of result.sections) {
+                expect(section.estimatedTokens).toBe(Math.ceil(section.charCount / 4));
+            }
+        });
+    });
+
+    describe('CB05–CB07 — Metadata budget fields', () => {
+
+        it('CB05 — metadata contains totalCharCount, totalEstimatedTokens, totalBudgetTokens', () => {
+            const result = ContextAssembler.assembleContext(baseInputs());
+            expect(typeof result.metadata.totalCharCount).toBe('number');
+            expect(typeof result.metadata.totalEstimatedTokens).toBe('number');
+            expect(typeof result.metadata.totalBudgetTokens).toBe('number');
+            expect(result.metadata.totalBudgetTokens).toBeGreaterThan(0);
+        });
+
+        it('CB06 — metadata.budgetUtilization is a number in [0, 1] for normal input', () => {
+            const result = ContextAssembler.assembleContext(baseInputs({
+                identityText: 'I am Tala.',
+                approvedMemories: [makeMemory('m1', 'A memory.')],
+            }));
+            expect(result.metadata.budgetUtilization).toBeGreaterThanOrEqual(0);
+            expect(result.metadata.budgetUtilization).toBeLessThanOrEqual(1);
+        });
+
+        it('CB07 — metadata.sectionBudgets has an entry for every canonical section', () => {
+            const result = ContextAssembler.assembleContext(baseInputs());
+            const canonicalNames: ContextSectionName[] = [
+                'identity', 'mode_constraints', 'memory', 'document',
+                'graph_retrieval', 'affective', 'tool_availability', 'request_summary',
+            ];
+            for (const name of canonicalNames) {
+                const budgetRecord = result.metadata.sectionBudgets.find(b => b.name === name);
+                expect(budgetRecord, `Missing sectionBudgets entry for '${name}'`).toBeDefined();
+            }
+        });
+    });
+
+    describe('CB08–CB11 — Per-section budget truncation', () => {
+
+        it('CB08 — content exceeding maxChars is truncated and ends with "[...]"', () => {
+            // memory section maxChars = 8000. Generate content > 8000 chars.
+            const bigText = 'x'.repeat(9000);
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [makeMemory('m1', bigText)],
+            }));
+            const section = result.sections.find(s => s.name === 'memory');
+            expect(section?.included).toBe(true);
+            expect(section!.content.length).toBeLessThanOrEqual(
+                SECTION_BUDGET_POLICIES['memory'].maxChars,
+            );
+            expect(section!.content.endsWith('[...]')).toBe(true);
+        });
+
+        it('CB09 — truncated section carries selectionReason="content_truncated"', () => {
+            const bigText = 'word '.repeat(2000); // ~10000 chars > 8000 maxChars
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [makeMemory('m1', bigText)],
+            }));
+            const section = result.sections.find(s => s.name === 'memory');
+            expect(section?.selectionReason).toBe('content_truncated');
+        });
+
+        it('CB10 — truncated section has wasTruncated=true in sectionBudgets', () => {
+            const bigText = 'word '.repeat(2000);
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [makeMemory('m1', bigText)],
+            }));
+            const budgetRecord = result.metadata.sectionBudgets.find(b => b.name === 'memory');
+            expect(budgetRecord?.wasTruncated).toBe(true);
+        });
+
+        it('CB11 — metadata.truncatedSectionCount reflects number of truncated sections', () => {
+            // Provide content that exceeds memory section budget
+            const bigMemory = 'z '.repeat(5000); // ~10000 chars
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [makeMemory('m1', bigMemory)],
+            }));
+            expect(result.metadata.truncatedSectionCount).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    describe('CB12–CB15 — Total budget enforcement', () => {
+
+        it('CB12 — non-mandatory section dropped when total budget is very tight', () => {
+            // Use totalBudgetTokensOverride=50 (200 chars) — only mandatory sections fit
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'I am Tala.',
+                approvedMemories: [makeMemory('m1', 'A rich memory about the past.')],
+                docContextText: 'Documentation content here.',
+                graphContextText: 'Graph node A connected to B.',
+                astroStateText: 'Contemplative mood.',
+                emotionalModulationApplied: true,
+                allowedCapabilities: ['memory_retrieval'],
+                totalBudgetTokensOverride: 50, // very tight: 200 chars total
+            }));
+            // Mandatory sections must still be included
+            const mode = result.sections.find(s => s.name === 'mode_constraints');
+            const req = result.sections.find(s => s.name === 'request_summary');
+            expect(mode?.included).toBe(true);
+            expect(req?.included).toBe(true);
+            // At least one optional section should have been dropped
+            expect(result.metadata.droppedSectionCount).toBeGreaterThan(0);
+        });
+
+        it('CB13 — mandatory sections (mode_constraints, request_summary) survive total budget drop', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'A very long identity '.repeat(100), // ~2100 chars
+                approvedMemories: [makeMemory('m1', 'Long memory content. '.repeat(400))], // ~8400 chars
+                totalBudgetTokensOverride: 100, // 400 chars — mandatory sections alone exceed this
+            }));
+            const mode = result.sections.find(s => s.name === 'mode_constraints');
+            const req = result.sections.find(s => s.name === 'request_summary');
+            expect(mode?.included).toBe(true);
+            expect(req?.included).toBe(true);
+        });
+
+        it('CB14 — dropped section carries exclusionReason="total_budget_exceeded"', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'I am Tala.',
+                approvedMemories: [makeMemory('m1', 'Memory content.')],
+                docContextText: 'Doc content.',
+                graphContextText: 'Graph content.',
+                astroStateText: 'Mood.',
+                emotionalModulationApplied: true,
+                allowedCapabilities: ['memory_retrieval'],
+                totalBudgetTokensOverride: 20, // 80 chars — tight enough to drop optional sections
+            }));
+            const droppedSections = result.sections.filter(
+                s => s.exclusionReason === 'total_budget_exceeded',
+            );
+            expect(droppedSections.length).toBeGreaterThan(0);
+        });
+
+        it('CB15 — metadata.droppedSectionCount reflects number of budget-dropped sections', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'I am Tala.',
+                approvedMemories: [makeMemory('m1', 'Memory content.')],
+                docContextText: 'Doc content.',
+                graphContextText: 'Graph content.',
+                astroStateText: 'Mood.',
+                emotionalModulationApplied: true,
+                totalBudgetTokensOverride: 50,
+            }));
+            const droppedSections = result.sections.filter(
+                s => s.exclusionReason === 'total_budget_exceeded',
+            );
+            expect(result.metadata.droppedSectionCount).toBe(droppedSections.length);
+        });
+    });
+
+    describe('CB16–CB19 — Reason codes', () => {
+
+        it('CB16 — selectionReason="mandatory" for mode_constraints and request_summary', () => {
+            const result = ContextAssembler.assembleContext(baseInputs());
+            const mode = result.sections.find(s => s.name === 'mode_constraints');
+            const req = result.sections.find(s => s.name === 'request_summary');
+            expect(mode?.selectionReason).toBe('mandatory');
+            expect(req?.selectionReason).toBe('mandatory');
+        });
+
+        it('CB17 — selectionReason="fallback_contract" for zero-memory substantive turn', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                approvedMemories: [],
+                memoryRetrievalSuppressed: false,
+            }));
+            const memory = result.sections.find(s => s.name === 'memory');
+            expect(memory?.selectionReason).toBe('fallback_contract');
+        });
+
+        it('CB18 — exclusionReason="retrieval_suppressed" when retrieval is suppressed', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                memoryRetrievalSuppressed: true,
+                memorySuppressionReason: 'Mode policy',
+            }));
+            const memory = result.sections.find(s => s.name === 'memory');
+            expect(memory?.exclusionReason).toBe('retrieval_suppressed');
+        });
+
+        it('CB19 — exclusionReason="greeting_turn" for greeting with no memories', () => {
+            const result = ContextAssembler.assembleContext(baseInputs({
+                isGreeting: true,
+                intentClass: 'greeting',
+                approvedMemories: [],
+            }));
+            const memory = result.sections.find(s => s.name === 'memory');
+            expect(memory?.exclusionReason).toBe('greeting_turn');
+        });
+    });
+
+    describe('CB20 — Total budget not exceeded', () => {
+
+        it('CB20 — totalEstimatedTokens does not exceed totalBudgetTokens for normal inputs', () => {
+            const result = ContextAssembler.assembleContext(substantiveInputs({
+                identityText: 'I am Tala, an introspective AI companion.',
+                approvedMemories: [
+                    makeMemory('m1', 'First memory content about our conversations.'),
+                    makeMemory('m2', 'Second memory content about preferences.'),
+                ],
+                docContextText: 'API documentation reference material.',
+                graphContextText: 'PersonA → connected to → PersonB.',
+                astroStateText: 'Contemplative and reflective.',
+                emotionalModulationApplied: true,
+                emotionalModulationStrength: 'medium',
+                allowedCapabilities: ['memory_retrieval', 'system_core'],
+            }));
+            expect(result.metadata.totalEstimatedTokens).toBeLessThanOrEqual(
+                result.metadata.totalBudgetTokens,
+            );
+        });
+    });
+});
+
