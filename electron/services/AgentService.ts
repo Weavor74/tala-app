@@ -2234,7 +2234,7 @@ Exported standalone package from Tala.
 
             // Tracks the tool set actually sent to the model for this iteration, so the
             // outer catch can perform a no-tool fallback on StreamOpenTimeoutError.
-            let _toolsSentThisIteration: any[] = [];
+            let toolsSentThisIteration: any[] = [];
 
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
@@ -2274,7 +2274,7 @@ Exported standalone package from Tala.
                 if (shouldStripAllTools && toolsToSend.length > 0) {
                     console.log(
                         `[ToolGate] stripped tools for turn=${turnId} intent=${turnObject.intent.class}` +
-                        ` isGreeting=${isGreeting} blocked=${turnObject.blockedCapabilities.join(',') || 'none'}` +
+                        ` isGreeting=${isGreeting} blocked=${turnObject.blockedCapabilities.length > 0 ? turnObject.blockedCapabilities.join(',') : 'none'}` +
                         ` toolCount=${toolsToSend.length}`
                     );
                     telemetry.operational(
@@ -2370,7 +2370,7 @@ Exported standalone package from Tala.
                 }
 
                 // Capture the final tool set so the outer catch can act on it for timeout fallback.
-                _toolsSentThisIteration = toolsToSend;
+                toolsSentThisIteration = toolsToSend;
 
                 const response = await this.streamWithBrain(this.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
@@ -2465,8 +2465,7 @@ Exported standalone package from Tala.
                     calls.length === 0 &&
                     activeMode !== 'rp' &&
                     !isGreeting &&
-                    turnObject.intent.class !== 'greeting' &&
-                    toolsToSend.length > 0;
+                    turnObject.intent.class !== 'greeting';
 
                 if (toolRequiredEligible) {
                     console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${toolsToSend.length}`);
@@ -2787,9 +2786,9 @@ Failure to provide a tool call will result in system termination.`;
                 const isStreamOpenTimeout =
                     e?.name === 'StreamOpenTimeoutError' ||
                     (typeof e?.message === 'string' && e.message.includes('Stream open timeout'));
-                if (isStreamOpenTimeout && _toolsSentThisIteration.length > 0 && turn === 1) {
+                if (isStreamOpenTimeout && toolsSentThisIteration.length > 0 && turn === 1) {
                     console.warn(
-                        `[AgentService] StreamOpenTimeoutError with tools=${_toolsSentThisIteration.length}.` +
+                        `[AgentService] StreamOpenTimeoutError with tools=${toolsSentThisIteration.length}.` +
                         ` Retrying once without tools. turn=${turnId}`
                     );
                     telemetry.operational(
@@ -2799,17 +2798,22 @@ Failure to provide a tool call will result in system termination.`;
                         `turn:${turnId}`,
                         `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
                         'failure',
-                        { payload: { turnId, toolCount: _toolsSentThisIteration.length, intent: turnObject.intent.class } }
+                        { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
                     );
                     try {
-                        const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
-                        const fallbackResponse = await this.streamWithBrain(
-                            this.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
-                        );
-                        finalResponse = fallbackResponse.content || "";
-                        const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
-                        this.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
-                        console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
+                        // Only attempt fallback if the user hasn't already aborted the request.
+                        if (signal.aborted) {
+                            console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
+                        } else {
+                            const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
+                            const fallbackResponse = await this.streamWithBrain(
+                                this.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
+                            );
+                            finalResponse = fallbackResponse.content || "";
+                            const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
+                            this.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
+                            console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
+                        }
                     } catch (fallbackErr: any) {
                         console.error(`[AgentService] StreamOpenTimeout fallback also failed turn=${turnId}:`, fallbackErr?.message);
                     }
