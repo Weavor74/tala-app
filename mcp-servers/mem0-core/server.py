@@ -31,30 +31,38 @@ except ImportError:
     sys.stderr.write("[mem0-core] CRITICAL: 'mcp' library not found. Install with 'pip install mcp'.\n")
     sys.exit(1)
 
+# Import provider resolution.  This module NEVER prompts on stdin and NEVER
+# raises SystemExit, so it is safe to call at import time.
+from provider_resolver import (
+    resolve_inference_backend,
+    build_mem0_config_for_ollama,
+    build_mem0_config_for_vllm,
+)
+
 # Initialize FastMCP Server
 mcp = FastMCP("mem0-core")
 
-# Configuration for Mem0
-config = {
-    "vector_store": {
-        "provider": "qdrant",
-        "config": {
-            "path": os.path.join(os.getcwd(), "data", "qdrant_db"),
-        }
-    },
-    "embedder": {
-        "provider": "ollama",
-        "config": {
-            "model": "nomic-embed-text:latest",
-        }
-    },
-    "llm": {
-        "provider": "ollama",
-        "config": {
-            "model": "huihui_ai/qwen3-abliterated:8b",
-        }
-    }
-}
+# --- Startup provider health check ---
+# Runs once at import time; logs to stderr only.  Selects the active backend
+# and builds the mem0 config accordingly.  No prompts, no sys.exit.
+_active_backend, _backend_info = resolve_inference_backend()
+
+if _active_backend == "ollama":
+    _mem0_config = build_mem0_config_for_ollama(_backend_info.get("endpoint"))
+    sys.stderr.write("[mem0-core] Active provider: ollama\n")
+elif _active_backend == "embedded_vllm":
+    _mem0_config = build_mem0_config_for_vllm(
+        _backend_info["endpoint"],
+        _backend_info.get("model"),
+    )
+    sys.stderr.write(
+        f"[mem0-core] Active fallback provider: embedded_vllm "
+        f"({_backend_info['endpoint']})\n"
+    )
+else:
+    # degraded — no mem0 config; get_memory() will return None
+    _mem0_config = None
+    sys.stderr.write("[mem0-core] Active provider: degraded (no inference backend available)\n")
 
 # Ensure storage directory exists
 os.environ["MEM0_DIR"] = os.path.join(os.getcwd(), "data", "mem0_storage")
@@ -68,19 +76,22 @@ def get_memory():
     """Late-loading wrapper for Mem0 Memory."""
     global _memory_instance
     if _memory_instance is None:
+        if _mem0_config is None:
+            # Degraded mode — no provider available.
+            return None
         try:
             sys.stderr.write("[mem0-core] Late-loading Mem0 library and initializing DB...\n")
             from mem0 import Memory
-            _memory_instance = Memory.from_config(config)
+            _memory_instance = Memory.from_config(_mem0_config)
             sys.stderr.write("[mem0-core] Memory initialized successfully.\n")
         except ImportError:
             sys.stderr.write("[mem0-core] ERROR: 'mem0ai' library not found. Running in degraded mode.\n")
             return None
         except BaseException as e:
             # Catch BaseException (including SystemExit) because some embedding providers
-            # (e.g. mem0.embeddings.ollama) call sys.exit(1) on import failure rather than
-            # raising a normal Exception.  Letting SystemExit propagate crashes the MCP
-            # stdio server process; catching it here keeps the server alive in degraded mode.
+            # call sys.exit(1) on import failure rather than raising a normal Exception.
+            # Letting SystemExit propagate crashes the MCP stdio server process; catching
+            # it here keeps the server alive in degraded mode.
             sys.stderr.write(f"[mem0-core] ERROR: Failed to initialize Memory (degraded): {type(e).__name__}: {e}\n")
             return None
     return _memory_instance
@@ -101,10 +112,10 @@ def version() -> str:
 def status() -> str:
     """Returns the current internal status (no PII)."""
     return json.dumps({
-        "configured": True,
+        "configured": _mem0_config is not None,
         "backend": "qdrant",
-        "embedder": "ollama",
-        "storage_path": "[REDACTED]"
+        "active_provider": _active_backend,
+        "storage_path": "[REDACTED]",
     })
 
 def _normalize_mem0_result(r):

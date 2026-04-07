@@ -138,6 +138,11 @@ This document describes the Tala system as a collection of interacting component
 - **Purpose**: Long-term fact and preference storage.
 - **Inputs**: Interaction text.
 - **Outputs**: Retrieved facts for personalization.
+- **Provider policy** (implemented in `provider_resolver.py`):
+  1. **ollama** — used when the Python `ollama` library is importable and the Ollama HTTP service is reachable.
+  2. **embedded_vllm** — used when Ollama is unavailable; routes LLM and embedder through the vLLM OpenAI-compatible endpoint (default `http://127.0.0.1:8000`, overridable via `TALA_VLLM_ENDPOINT`).
+  3. **degraded** — active only when neither Ollama nor embedded vLLM is reachable; server stays alive and returns safe empty/error responses.
+- **Invariants**: Ollama is optional. Missing Ollama never causes an interactive prompt or `sys.exit`. No llama.cpp embedded-backend assumption remains; the embedded local target is vLLM.
 
 ## 4. Frontend (Renderer)
 
