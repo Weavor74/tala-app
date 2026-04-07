@@ -8,7 +8,8 @@
  *   - ollama          local HTTP API on port 11434
  *   - llamacpp        external llama.cpp server on configurable port
  *   - embedded_llamacpp  bundled llama.cpp managed by LocalEngineService
- *   - vllm            vLLM OpenAI-compat server on configurable port
+ *   - vllm            vLLM OpenAI-compat server on configurable port (user-configured)
+ *   - embedded_vllm   managed vLLM instance at http://127.0.0.1:8000 (started via run-vllm script)
  *   - koboldcpp       KoboldCpp on configurable port
  *   - cloud           OpenAI-compatible cloud API
  *
@@ -238,12 +239,48 @@ export async function probeEmbeddedLlamaCpp(
     };
 }
 
+/** Probe embedded vLLM server running at http://127.0.0.1:<port>/v1/models. */
+export async function probeEmbeddedVllm(
+    enginePort: number,
+    modelId: string,
+): Promise<ProviderProbeResult> {
+    const start = Date.now();
+    const endpoint = `http://127.0.0.1:${enginePort}`;
+
+    const { ok } = await probeHttpEndpoint(`${endpoint}/v1/models`, 2000);
+    const responseTimeMs = Date.now() - start;
+
+    if (ok) {
+        const liveModels = await fetchJsonModels(endpoint, '/v1/models', 'data', 2000);
+        const fallbackModelName = modelId || 'embedded-vllm-model';
+        return {
+            providerId: 'embedded_vllm',
+            reachable: true,
+            health: 'healthy',
+            status: 'ready',
+            models: liveModels.length > 0 ? liveModels : [fallbackModelName],
+            responseTimeMs,
+        };
+    }
+
+    return {
+        providerId: 'embedded_vllm',
+        reachable: false,
+        health: 'unavailable',
+        status: 'not_running',
+        models: modelId ? [modelId] : [],
+        responseTimeMs: Date.now() - start,
+        error: 'Embedded vLLM server not running. Start it with scripts/run-vllm.bat (Windows) or scripts/run-vllm.sh (Linux/macOS).',
+    };
+}
+
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 export interface ProviderRegistryConfig {
     ollama?: { endpoint?: string; enabled?: boolean };
     llamacpp?: { endpoint?: string; enabled?: boolean };
     embeddedLlamaCpp?: { port?: number; modelPath?: string; binaryPath?: string; enabled?: boolean };
+    embeddedVllm?: { port?: number; modelId?: string; enabled?: boolean };
     vllm?: { endpoint?: string; enabled?: boolean };
     koboldcpp?: { endpoint?: string; enabled?: boolean };
     cloud?: { endpoint?: string; apiKey?: string; model?: string; enabled?: boolean };
@@ -387,6 +424,21 @@ export class InferenceProviderRegistry {
             }));
         }
 
+        const embVllmCfg = this.config.embeddedVllm;
+        if (embVllmCfg?.enabled !== false) {
+            this._register(_makeDescriptor({
+                providerId: 'embedded_vllm',
+                displayName: 'Embedded vLLM',
+                providerType: 'embedded_vllm',
+                scope: 'embedded',
+                transport: 'http_openai_compat',
+                endpoint: `http://127.0.0.1:${embVllmCfg?.port ?? 8000}`,
+                priority: 28,
+                capabilities: EMBEDDED_CAPS,
+                preferredModel: embVllmCfg?.modelId,
+            }));
+        }
+
         const vllmCfg = this.config.vllm;
         if (vllmCfg?.endpoint && vllmCfg?.enabled !== false) {
             this._register(_makeDescriptor({
@@ -496,6 +548,14 @@ export class InferenceProviderRegistry {
                 result = await probeVllm(desc.endpoint);
                 result.providerId = desc.providerId;
                 break;
+            case 'embedded_vllm': {
+                const embVllmCfg = this.config.embeddedVllm ?? {};
+                const port = embVllmCfg.port ?? 8000;
+                const modelId = embVllmCfg.modelId ?? '';
+                result = await probeEmbeddedVllm(port, modelId);
+                result.providerId = desc.providerId;
+                break;
+            }
             case 'koboldcpp':
                 result = await probeKoboldCpp(desc.endpoint);
                 result.providerId = desc.providerId;
