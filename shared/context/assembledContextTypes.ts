@@ -100,7 +100,49 @@ export type ContextExclusionReason =
     | 'greeting_turn'            // Section not included for greeting/trivial turns
     | 'unknown_intent';          // Section not included for unknown intent turns
 
-// ─── Section budget result ────────────────────────────────────────────────────
+// ─── Assembly policy ──────────────────────────────────────────────────────────
+
+/**
+ * Optional context-assembly policy passed in by the caller (e.g. orchestrator
+ * or PolicyGate resolver). ContextAssembler applies these rules during the
+ * policy-filter pass — before budget enforcement — without calling any
+ * external service itself.
+ *
+ * All fields are optional. An absent or empty policy has no filtering effect.
+ *
+ * Design: this is a *data* object, not a callback. ContextAssembler remains
+ * a pure assembly layer; callers (e.g. PreInferenceOrchestrator) resolve the
+ * policy upstream and pass it here.
+ */
+export interface ContextAssemblyPolicy {
+    /**
+     * If set, only sections whose name appears in this list may be included.
+     * Sections not in the list are excluded with exclusionReason='policy_suppressed'.
+     * Mandatory sections (mandatoryInclude=true in SECTION_BUDGET_POLICIES) always
+     * pass through regardless of this list.
+     */
+    allowedSections?: ContextSectionName[];
+    /**
+     * Sections that are always excluded, regardless of content availability.
+     * Excluded with exclusionReason='policy_suppressed'.
+     * Mandatory sections cannot be blocked by this field.
+     */
+    blockedSections?: ContextSectionName[];
+    /**
+     * Map of mode → section names to exclude when that mode is active.
+     * Applied after allowedSections / blockedSections.
+     * Keys are exact mode strings (e.g. 'rp', 'assistant', 'hybrid').
+     */
+    modeExclusions?: Record<string, ContextSectionName[]>;
+    /**
+     * Evidence source class values to exclude from the evidence list.
+     * Matching evidence items are removed from AssembledContext.evidence.
+     * Example: ['graph'] would remove all graph-sourced evidence items.
+     */
+    blockedSourceClasses?: string[];
+}
+
+
 
 /**
  * Budget accounting record for one assembled section.
@@ -241,6 +283,39 @@ export interface ContextAssemblyMetadata {
     truncatedSectionCount: number;
     /** Number of sections that were dropped because the total budget was exceeded. */
     droppedSectionCount: number;
+
+    // ─── Traceability fields ────────────────────────────────────────────────
+    /**
+     * Stable identifier for this specific assembly run.
+     * Generated as a UUID per assembleContext() call.
+     * Used to correlate TelemetryBus events to a specific assembly output.
+     * Different from correlationId: correlationId links context to execution;
+     * assemblyId identifies the assembly action itself.
+     */
+    assemblyId: string;
+    /**
+     * Execution ID provided by the caller (e.g. AgentKernel turn ID).
+     * Echoed from ContextAssemblerInputs.executionId.
+     * Empty string if not provided.
+     */
+    executionId: string;
+    /**
+     * Source categories that contributed at least one included section this turn.
+     * Useful for tracing which data sources influenced the assembled context.
+     * Values are ContextSectionName strings for sections with included=true.
+     * Excludes mandatory control sections (mode_constraints, request_summary).
+     */
+    sourceCategories: ContextSectionName[];
+    /**
+     * Section names that were not included in this assembly (included=false).
+     * Includes all exclusion reasons: no_content, policy_suppressed, budget, etc.
+     */
+    excludedSections: ContextSectionName[];
+    /**
+     * Number of sections excluded by the assemblyPolicy (policy_suppressed).
+     * Distinguishes policy exclusions from natural no-content exclusions.
+     */
+    policyExcludedCount: number;
 }
 
 // ─── Assembled context ────────────────────────────────────────────────────────
@@ -382,4 +457,18 @@ export interface ContextAssemblerInputs {
      * Use this to tighten the budget for constrained models or widen it for large-context models.
      */
     totalBudgetTokensOverride?: number;
+
+    // ─── Traceability and policy ──────────────────────────────────────────
+    /**
+     * Optional execution correlation ID from the calling kernel/orchestrator.
+     * Echoed into ContextAssemblyMetadata.executionId and TelemetryBus events.
+     * If absent, metadata.executionId is set to an empty string.
+     */
+    executionId?: string;
+    /**
+     * Optional assembly policy resolved upstream (e.g. by PolicyGate or mode resolver).
+     * ContextAssembler applies this policy during the section-filter pass without
+     * calling any external service. An absent policy has no filtering effect.
+     */
+    assemblyPolicy?: ContextAssemblyPolicy;
 }

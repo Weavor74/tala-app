@@ -48,6 +48,7 @@ import type {
     AssembledContext,
     ContextAssemblerInputs,
     ContextAssemblyMetadata,
+    ContextAssemblyPolicy,
     ContextBudgetPolicy,
     ContextEvidence,
     ContextExclusionReason,
@@ -151,8 +152,8 @@ interface RawSection {
 // ─── ContextAssembler ─────────────────────────────────────────────────────────
 
 /**
- * Pure, deterministic runtime context assembler with explicit section contracts
- * and token budget enforcement.
+ * Pure, deterministic runtime context assembler with explicit section contracts,
+ * token budget enforcement, traceability metadata, and policy-filter hooks.
  *
  * Call assembleContext() exactly once per turn to produce the AssembledContext
  * boundary value for that turn. No IO, no side effects, no external calls.
@@ -161,7 +162,9 @@ export class ContextAssembler {
     /**
      * Assembles a structured AssembledContext from pre-gathered context inputs.
      *
-     * Budget enforcement is applied in two passes:
+     * Three-pass budget/filter pipeline:
+     *   Pass 0: Build raw sections from inputs.
+     *   Pass P: Apply assemblyPolicy filter (blocked/allowed sections, mode exclusions).
      *   Pass 1: Per-section budget — content exceeding maxChars is truncated or dropped.
      *   Pass 2: Total budget — non-mandatory sections over the total are dropped.
      *
@@ -171,7 +174,9 @@ export class ContextAssembler {
     public static assembleContext(inputs: ContextAssemblerInputs): AssembledContext {
         const assemblyStart = Date.now();
         const assembledAt = new Date().toISOString();
+        const assemblyId = uuidv4();
         const correlationId = uuidv4();
+        const executionId = inputs.executionId ?? '';
         const totalBudgetTokens = inputs.totalBudgetTokensOverride ?? DEFAULT_TOTAL_BUDGET_TOKENS;
         const totalBudgetChars = totalBudgetTokens * 4;
 
@@ -190,8 +195,13 @@ export class ContextAssembler {
         // ── Sort raw sections by canonical priority ────────────────────────
         const sortedRaw = ContextAssembler.sortRawSections(rawSections);
 
+        // ── Pass P: Policy filter ──────────────────────────────────────────
+        const { filteredRaw, policyExcludedCount } = inputs.assemblyPolicy
+            ? ContextAssembler.applyPolicyFilter(sortedRaw, inputs.assemblyPolicy, inputs.mode)
+            : { filteredRaw: sortedRaw, policyExcludedCount: 0 };
+
         // ── Pass 1: Per-section budget enforcement ─────────────────────────
-        const budgetedSections = sortedRaw.map(raw =>
+        const budgetedSections = filteredRaw.map(raw =>
             ContextAssembler.applyPerSectionBudget(raw),
         );
 
@@ -208,6 +218,15 @@ export class ContextAssembler {
         const totalCharCount = includedSections.reduce((sum, s) => sum + s.charCount, 0);
         const totalEstimatedTokens = estimateTokens(totalCharCount);
         const truncatedSectionCount = sectionBudgets.filter(b => b.wasTruncated).length;
+
+        // Control sections excluded from sourceCategories (they're always present)
+        const CONTROL_SECTIONS: ContextSectionName[] = ['mode_constraints', 'request_summary'];
+        const sourceCategories = includedSections
+            .map(s => s.name)
+            .filter((n): n is ContextSectionName => !CONTROL_SECTIONS.includes(n));
+        const excludedSections = finalSections
+            .filter(s => !s.included)
+            .map(s => s.name);
 
         const totalContributions =
             (inputs.approvedMemories?.length ?? 0) +
@@ -235,6 +254,11 @@ export class ContextAssembler {
             sectionBudgets,
             truncatedSectionCount,
             droppedSectionCount: droppedCount,
+            assemblyId,
+            executionId,
+            sourceCategories,
+            excludedSections,
+            policyExcludedCount,
         };
 
         return {
@@ -600,8 +624,11 @@ export class ContextAssembler {
     private static buildEvidence(inputs: ContextAssemblerInputs): ContextEvidence[] {
         const evidence: ContextEvidence[] = [];
         const memories = inputs.approvedMemories ?? [];
+        const blockedSourceClasses = inputs.assemblyPolicy?.blockedSourceClasses ?? [];
+
         for (const mem of memories) {
             const source = mem.source ?? (mem.metadata?.['source'] as string | undefined) ?? 'memory';
+            if (blockedSourceClasses.includes(source)) continue;
             evidence.push({
                 evidenceId: mem.id,
                 content: mem.text,
@@ -624,6 +651,80 @@ export class ContextAssembler {
             const bIdx = bi === -1 ? SECTION_PRIORITY_ORDER.length : bi;
             return aIdx - bIdx;
         });
+    }
+
+    // ─── Policy filter ────────────────────────────────────────────────────────
+
+    /**
+     * Pass P: Apply assemblyPolicy filtering to raw sections.
+     *
+     * Rules applied in order:
+     *   1. allowedSections — non-listed sections excluded (unless mandatory)
+     *   2. blockedSections — listed sections excluded (unless mandatory)
+     *   3. modeExclusions  — mode-matched sections excluded (unless mandatory)
+     *
+     * Mandatory sections (mandatoryInclude=true in SECTION_BUDGET_POLICIES) always
+     * pass through regardless of policy.
+     *
+     * Returns the filtered sections and the count of policy-excluded sections.
+     */
+    private static applyPolicyFilter(
+        sections: RawSection[],
+        policy: ContextAssemblyPolicy,
+        mode: string,
+    ): { filteredRaw: RawSection[]; policyExcludedCount: number } {
+        const { allowedSections, blockedSections, modeExclusions } = policy;
+        const modeBlocked = modeExclusions?.[mode] ?? [];
+
+        let policyExcludedCount = 0;
+
+        const filteredRaw = sections.map(raw => {
+            const isMandatory = SECTION_BUDGET_POLICIES[raw.name].mandatoryInclude;
+            if (isMandatory) return raw; // mandatory sections are never policy-excluded
+
+            // allowedSections: only explicitly listed sections may be included
+            if (allowedSections && allowedSections.length > 0 && !allowedSections.includes(raw.name)) {
+                policyExcludedCount++;
+                return {
+                    ...raw,
+                    included: false,
+                    rawContent: '',
+                    selectionReason: undefined,
+                    suppressionReason: `Policy: section '${raw.name}' not in allowedSections`,
+                    exclusionReason: 'policy_suppressed' as const,
+                };
+            }
+
+            // blockedSections: explicitly blocked sections
+            if (blockedSections && blockedSections.includes(raw.name)) {
+                policyExcludedCount++;
+                return {
+                    ...raw,
+                    included: false,
+                    rawContent: '',
+                    selectionReason: undefined,
+                    suppressionReason: `Policy: section '${raw.name}' is blocked`,
+                    exclusionReason: 'policy_suppressed' as const,
+                };
+            }
+
+            // modeExclusions: mode-based exclusions
+            if (modeBlocked.includes(raw.name)) {
+                policyExcludedCount++;
+                return {
+                    ...raw,
+                    included: false,
+                    rawContent: '',
+                    selectionReason: undefined,
+                    suppressionReason: `Policy: section '${raw.name}' excluded for mode '${mode}'`,
+                    exclusionReason: 'policy_suppressed' as const,
+                };
+            }
+
+            return raw;
+        });
+
+        return { filteredRaw, policyExcludedCount };
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
