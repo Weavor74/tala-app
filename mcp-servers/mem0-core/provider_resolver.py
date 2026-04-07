@@ -14,6 +14,7 @@ SystemExit.  All errors are caught and logged to stderr.
 
 import sys
 import os
+from typing import Dict, Optional, Tuple
 
 try:
     import urllib.request
@@ -56,7 +57,7 @@ def _get_vllm_endpoint() -> str:
 # HTTP probes — never raise, always return bool / (bool, str|None)
 # ---------------------------------------------------------------------------
 
-def _probe_ollama(endpoint: str | None = None, timeout: int = 3) -> bool:
+def _probe_ollama(endpoint: Optional[str] = None, timeout: int = 3) -> bool:
     """Return True if the Ollama HTTP service responds at /api/tags."""
     url = (endpoint or _get_ollama_endpoint()) + "/api/tags"
     try:
@@ -66,7 +67,7 @@ def _probe_ollama(endpoint: str | None = None, timeout: int = 3) -> bool:
         return False
 
 
-def _probe_vllm(endpoint: str | None = None, timeout: int = 3) -> tuple:
+def _probe_vllm(endpoint: Optional[str] = None, timeout: int = 3) -> Tuple[bool, Optional[str]]:
     """
     Probe the vLLM OpenAI-compatible /v1/models endpoint.
 
@@ -92,9 +93,9 @@ def _probe_vllm(endpoint: str | None = None, timeout: int = 3) -> tuple:
 # ---------------------------------------------------------------------------
 
 def resolve_inference_backend(
-    ollama_endpoint: str | None = None,
-    vllm_endpoint: str | None = None,
-) -> tuple:
+    ollama_endpoint: Optional[str] = None,
+    vllm_endpoint: Optional[str] = None,
+) -> Tuple[str, Dict]:
     """
     Determine which inference backend is available.
 
@@ -166,8 +167,13 @@ def _qdrant_vector_store() -> dict:
     }
 
 
-def build_mem0_config_for_ollama(endpoint: str | None = None) -> dict:
-    """Return a mem0 config dict that uses Ollama for LLM and embedder."""
+def build_mem0_config_for_ollama(endpoint: Optional[str] = None) -> Dict:
+    """Return a mem0 config dict that uses Ollama for LLM and embedder.
+
+    The ``endpoint`` parameter is accepted for API symmetry but is not
+    forwarded to mem0 because the Ollama provider reads the endpoint from
+    the ``OLLAMA_HOST`` environment variable at runtime.
+    """
     return {
         "vector_store": _qdrant_vector_store(),
         "embedder": {
@@ -181,7 +187,7 @@ def build_mem0_config_for_ollama(endpoint: str | None = None) -> dict:
     }
 
 
-def build_mem0_config_for_vllm(endpoint: str, model: str | None = None) -> dict:
+def build_mem0_config_for_vllm(endpoint: str, model: Optional[str] = None) -> Dict:
     """
     Return a mem0 config dict that routes LLM calls through the embedded
     vLLM OpenAI-compatible endpoint.

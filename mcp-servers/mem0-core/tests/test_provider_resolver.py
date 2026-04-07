@@ -135,7 +135,6 @@ class TestOllamaMissingVllmUnavailable(unittest.TestCase):
 
     def test_no_interactive_prompt(self):
         """stdin must never be read."""
-        original_stdin = sys.stdin
         closed_stdin = io.StringIO()
         closed_stdin.close()
         with patch("sys.stdin", closed_stdin):
