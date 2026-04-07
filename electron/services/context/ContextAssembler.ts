@@ -262,10 +262,10 @@ export class ContextAssembler {
 
     private static buildRawModeConstraintsSection(inputs: ContextAssemblerInputs): RawSection {
         const lines: string[] = [`Mode: ${inputs.mode}`];
-        if (inputs.memoryRetrievalPolicy)     lines.push(`Memory retrieval: ${inputs.memoryRetrievalPolicy}`);
-        if (inputs.memoryWritePolicy)         lines.push(`Memory write: ${inputs.memoryWritePolicy}`);
-        if (inputs.toolUsePolicy)             lines.push(`Tool use: ${inputs.toolUsePolicy}`);
-        if (inputs.docRetrievalPolicy)        lines.push(`Doc retrieval: ${inputs.docRetrievalPolicy}`);
+        if (inputs.memoryRetrievalPolicy) lines.push(`Memory retrieval: ${inputs.memoryRetrievalPolicy}`);
+        if (inputs.memoryWritePolicy) lines.push(`Memory write: ${inputs.memoryWritePolicy}`);
+        if (inputs.toolUsePolicy) lines.push(`Tool use: ${inputs.toolUsePolicy}`);
+        if (inputs.docRetrievalPolicy) lines.push(`Doc retrieval: ${inputs.docRetrievalPolicy}`);
         if (inputs.emotionalExpressionBounds) lines.push(`Emotional expression: ${inputs.emotionalExpressionBounds}`);
         return {
             name: 'mode_constraints',
