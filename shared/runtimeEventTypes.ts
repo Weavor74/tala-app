@@ -65,7 +65,12 @@ export type RuntimeEventType =
     | 'policy.rule_matched'
     | 'policy.rule_denied'
     | 'policy.default_allow'
-    | `policy.${string}`;
+    | `policy.${string}`
+    | 'context.assembly_requested'
+    | 'context.assembled'
+    | 'context.truncated'
+    | 'context.section_excluded'
+    | `context.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────
 
