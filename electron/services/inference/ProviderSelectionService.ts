@@ -121,13 +121,19 @@ export class ProviderSelectionService {
         }
         for (const d of this._getAll().filter(s => s.scope === 'local')) attempted.push(d.providerId);
 
-        // Embedded llama.cpp fallback
-        const embedded = this.registry.getProvider('embedded_llamacpp');
-        if (embedded && embedded.ready && this._capOk(embedded, requiredCapability)) {
-            const resolvedModel = this._reconcileModel(embedded, requestedModel);
-            return this._buildSuccess(embedded, 'Fallback to embedded llama.cpp', attempted.length > 0, attempted, resolvedModel);
+        // Embedded providers (scope = 'embedded'), sorted by priority.
+        // Includes embedded_vllm (priority 28) and embedded_llamacpp (priority 30).
+        const embeddedProviders = Array.from(
+            this._getAll()
+                .filter(d => d.scope === 'embedded' && d.ready && this._capOk(d, requiredCapability))
+        ).sort((a, b) => a.priority - b.priority);
+
+        if (embeddedProviders.length > 0) {
+            const chosen = embeddedProviders[0];
+            const resolvedModel = this._reconcileModel(chosen, requestedModel);
+            return this._buildSuccess(chosen, `Fallback to embedded provider '${chosen.providerId}'`, attempted.length > 0, attempted, resolvedModel);
         }
-        if (embedded) attempted.push('embedded_llamacpp');
+        for (const d of this._getAll().filter(s => s.scope === 'embedded')) attempted.push(d.providerId);
 
         if (!fallbackAllowed) {
             return this._buildFailure(attempted, 'No local or embedded provider available and fallback disabled', turnId, agentMode);

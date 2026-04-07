@@ -24,6 +24,7 @@ export type InferenceProviderType =
     | 'llamacpp'
     | 'embedded_llamacpp'
     | 'vllm'
+    | 'embedded_vllm'
     | 'koboldcpp'
     | 'cloud';
 
