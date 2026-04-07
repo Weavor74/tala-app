@@ -2232,6 +2232,10 @@ Exported standalone package from Tala.
             console.log(`[AgentService] retry loop iteration=${turn} toolResults=${toolResultsCount}`);
             const truncated = this.truncateHistory([...this.chatHistory, ...transientMessages], messageBudget);
 
+            // Tracks the tool set actually sent to the model for this iteration, so the
+            // outer catch can perform a no-tool fallback on StreamOpenTimeoutError.
+            let toolsSentThisIteration: any[] = [];
+
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
                 let toolsToSend = filteredTools; // Re-declare toolsToSend
@@ -2253,6 +2257,37 @@ Exported standalone package from Tala.
                     brainOptions.tool_choice = 'required';
                 } else if (turnObject.intent.class === 'conversation' || activeMode === 'rp') {
                     toolsToSend = [];
+                }
+
+                // --- HARD TOOL GATE ---
+                // Strip all tools whenever the turn is a greeting, capabilities explicitly
+                // block tool use, or retrieval was suppressed for a social/conversational reason.
+                // This is the authoritative enforcement point — it fires AFTER all mode-gating
+                // so it cannot be bypassed by earlier incomplete checks.
+                const capabilitiesBlockTools =
+                    turnObject.blockedCapabilities.includes('tools') ||
+                    turnObject.blockedCapabilities.includes('all');
+                const shouldStripAllTools =
+                    isGreeting ||
+                    turnObject.intent.class === 'greeting' ||
+                    capabilitiesBlockTools;
+                if (shouldStripAllTools && toolsToSend.length > 0) {
+                    console.log(
+                        `[ToolGate] stripped tools for turn=${turnId} intent=${turnObject.intent.class}` +
+                        ` isGreeting=${isGreeting} blocked=${turnObject.blockedCapabilities.length > 0 ? turnObject.blockedCapabilities.join(',') : 'none'}` +
+                        ` toolCount=${toolsToSend.length}`
+                    );
+                    telemetry.operational(
+                        'cognitive',
+                        'capability_gated',
+                        'info',
+                        `turn:${turnId}`,
+                        `[ToolGate] stripped ${toolsToSend.length} tool(s): intent=${turnObject.intent.class} isGreeting=${isGreeting}`,
+                        'success',
+                        { payload: { intent: turnObject.intent.class, isGreeting, blocked: turnObject.blockedCapabilities, toolCount: toolsToSend.length } }
+                    );
+                    toolsToSend = [];
+                    delete brainOptions.tool_choice;
                 }
 
                 // --- TOOL GATEKEEPER: apply blocked tools (Rules A, B, E) ---
@@ -2334,6 +2369,9 @@ Exported standalone package from Tala.
                     return { message: errMsg, artifact: null, suppressChatContent: false };
                 }
 
+                // Capture the final tool set so the outer catch can act on it for timeout fallback.
+                toolsSentThisIteration = toolsToSend;
+
                 const response = await this.streamWithBrain(this.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
 
@@ -2414,10 +2452,22 @@ Exported standalone package from Tala.
                 const lowerUserMsg = userMessage.toLowerCase();
                 const hasKeywordIndicatingToolUse = (intentVerbs.some(v => lowerUserMsg.includes(v)) && intentNouns.some(n => lowerUserMsg.includes(n)))
                     || (browserVerbs.some(v => lowerUserMsg.includes(v)) && (browserNouns.some(n => lowerUserMsg.includes(n)) || /https?:\/\//.test(lowerUserMsg)));
-                // Also recover when tools were sent but the model silently skipped them
-                const requiresTool = hasKeywordIndicatingToolUse || (toolsToSend.length > 0 && calls.length === 0);
+                // Also recover when tools were sent but the model silently skipped them.
+                // Do NOT set requiresTool when no tools were authorized (toolsToSend is empty):
+                // this prevents ToolRequired retries for greeting/conversational turns where
+                // the hard tool gate correctly stripped all tools.
+                const requiresTool = toolsToSend.length > 0 && (hasKeywordIndicatingToolUse || calls.length === 0);
 
-                if (requiresTool && calls.length === 0 && activeMode !== 'rp') {
+                // Guard: never fire the ToolRequired retry for greeting turns or turns where
+                // no tools were authorized — they should produce plain-content responses.
+                const toolRequiredEligible =
+                    requiresTool &&
+                    calls.length === 0 &&
+                    activeMode !== 'rp' &&
+                    !isGreeting &&
+                    turnObject.intent.class !== 'greeting';
+
+                if (toolRequiredEligible) {
                     console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${toolsToSend.length}`);
                     const envelopeSystem = `Tool call required. Critical instruction: You are in a strict execution environment. You MUST NOT narrate or explain. Output ONLY a valid JSON object matching this schema: 
 {
@@ -2728,7 +2778,48 @@ Failure to provide a tool call will result in system termination.`;
                         transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
                     }
                 }
-            } catch (e) { break; }
+            } catch (e: any) {
+                // --- STREAM OPEN TIMEOUT FALLBACK ---
+                // If Ollama stalled on stream open and we sent tools, retry once without
+                // tools so the model can still produce a plain-content response.  Only
+                // attempt the fallback on the first iteration to avoid recursion.
+                const isStreamOpenTimeout =
+                    e?.name === 'StreamOpenTimeoutError' ||
+                    (typeof e?.message === 'string' && e.message.includes('Stream open timeout'));
+                if (isStreamOpenTimeout && toolsSentThisIteration.length > 0 && turn === 1) {
+                    console.warn(
+                        `[AgentService] StreamOpenTimeoutError with tools=${toolsSentThisIteration.length}.` +
+                        ` Retrying once without tools. turn=${turnId}`
+                    );
+                    telemetry.operational(
+                        'cognitive',
+                        'inference_timeout',
+                        'warn',
+                        `turn:${turnId}`,
+                        `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
+                        'failure',
+                        { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
+                    );
+                    try {
+                        // Only attempt fallback if the user hasn't already aborted the request.
+                        if (signal.aborted) {
+                            console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
+                        } else {
+                            const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
+                            const fallbackResponse = await this.streamWithBrain(
+                                this.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
+                            );
+                            finalResponse = fallbackResponse.content || "";
+                            const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
+                            this.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
+                            console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
+                        }
+                    } catch (fallbackErr: any) {
+                        console.error(`[AgentService] StreamOpenTimeout fallback also failed turn=${turnId}:`, fallbackErr?.message);
+                    }
+                }
+                break;
+            }
         }
 
         // --- Finalize turn execution log ---
