@@ -189,6 +189,9 @@ object that describes everything known about a turn from start to finish.
 | `memoryWriteDecision` | `MemoryWriteDecision\|null` | Memory write policy and reason |
 | `auditMetadata` | `object` | turnStartedAt, correlationId, mcpServicesUsed |
 | `errorState` | `TurnErrorState\|null` | Structured error information |
+| `resolvedMemories` | `MemoryItem[]` (optional) | Approved memory items forwarded to cognitive assembly |
+| `responseMode` | `ResponseMode` (optional) | Grounding mode: `memory_grounded_soft`, `memory_grounded_strict`, or `canon_required` |
+| `canonGateDecision` | `object` (optional, lore turns only) | Canon gate outcome: `isAutobiographicalLoreRequest`, `sufficientCanonMemory`, `canonSourceTypes`, `canonGateApplied` |
 
 ## 3. Mode Routing and Capability Gating
 
@@ -223,14 +226,38 @@ When `intent=lore` and approved lore memories are present, `TalaContextRouter.pr
 |---|---|
 | Plain lore query (no precision trigger) | `memory_grounded_soft` (default) |
 | "exactly", "don't make anything up", "strictly from memory", "what specifically", "what does the memory say", "quote the memory", "just what happened" | `memory_grounded_strict` |
-| No lore memories retrieved | No mode activated |
+| Autobiographical lore query with insufficient high-trust canon memory | `canon_required` (canon gate) |
+| No lore memories retrieved (non-autobiographical query) | No mode activated |
 
 The `responseMode` value is stored on `TurnContext.responseMode` for downstream audit.
 
+### 3b-i. Canon Memory Sufficiency Gate
+
+For queries that are specifically asking for **Tala's own lived experiences** (first-person autobiographical memory requests), the router applies a canon-memory sufficiency gate after source-bucket composition.
+
+**Detection:** `TalaContextRouter.isAutobiographicalLoreRequest(query)` matches patterns such as:
+- "something that happened to you", "what happened to you when"
+- "when you were 17", "when you were young/a child"
+- "at age [N]", "at [N] years old"
+- "your childhood", "your past", "your personal history", "growing up"
+- "do you remember", "can you remember"
+- "tell me about your past/childhood/memories/experience"
+
+**Sufficiency check:** `TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved)` returns `true` only if at least one approved memory comes from a high-trust canon source: `diary`, `graph`, `core_bio`, `lore`, or `rag`.
+
+Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient** for first-person autobiographical fact claims.
+
+**When the gate fires:**
+- `responseMode` is forced to `'canon_required'`
+- `TurnContext.canonGateDecision` is populated with `{ isAutobiographicalLoreRequest, sufficientCanonMemory, canonSourceTypes, canonGateApplied }`
+- Telemetry logs: `[CanonGate] autobiographical lore request detected`, `[CanonGate] sufficientCanonMemory=false sources=... approved=N`, `[CanonGate] forcing strict no-canon response mode`, `[CanonGate] hallucination prevention active for autobiographical turn`
+- `auditLogger.info('turn_routed', ...)` includes all four gate fields
+
 ### Prompt format (lore grounded turns)
 
-`ContextAssembler.assemble()` emits two additional blocks for grounded lore turns (replacing the standard `[MEMORY CONTEXT]` block):
+`ContextAssembler.assemble()` emits blocks based on `responseMode`:
 
+**`memory_grounded_soft` / `memory_grounded_strict`** (sufficient canon memory):
 1. **`[CANON LORE MEMORIES — HIGH PRIORITY]`** — Memories formatted with per-entry source labels:
    ```
    Memory 1:
@@ -241,6 +268,12 @@ The `responseMode` value is stored on `TurnContext.responseMode` for downstream 
 
 2. **`[MEMORY GROUNDED RECALL — SOFT]`** or **`[MEMORY GROUNDED RECALL — STRICT]`** — Grounding instruction block placed immediately after the memories.
 
+**`canon_required`** (insufficient canon memory, canon gate fired):
+1. **`[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]`** _(if fallback memories exist)_ — Any fallback memories labeled as "fallback only — insufficient for autobiographical fact claims".
+2. **`[CANON GATE — NO VERIFIED AUTOBIOGRAPHICAL MEMORY]`** — Hard no-fabrication instruction. Always emitted for `canon_required` regardless of memory count. Instructs Tala to: state that no grounded memory exists, not fabricate autobiographical events, and optionally invite the user to define that canon deliberately.
+
+The `[FALLBACK CONTRACT]`, `[CANON LORE MEMORIES]`, and `[MEMORY GROUNDED RECALL]` blocks are **suppressed** when `canon_required` is active.
+
 ### Soft mode intent
 
 Tala recalls like a human: partial, emotional, impressionistic, fuzzy at the edges. She must stay anchored to what is actually present in retrieved memory. She may describe feeling, impression, atmosphere, and uncertainty. She must not invent major events, people, causes, or locations not supported by the retrieved memories.
@@ -249,12 +282,22 @@ Tala recalls like a human: partial, emotional, impressionistic, fuzzy at the edg
 
 Tala stays tightly factual. Only details supported by retrieved memories. If a detail is absent, she says she does not recall it clearly. Minimal extrapolation.
 
-**MemoryAudit log format for RAG candidates:**
+### Canon-required mode intent
+
+Tala must not fabricate a first-person autobiographical event. Allowed responses:
+- "I don't have a grounded memory from when I was 17."
+- "I don't want to invent a false memory."
+- "If you want, we can define that part of my canon deliberately."
+
+Forbidden: inventing a specific event in first person as recalled fact (e.g., "I was 17 when I got into a minor car accident...").
+
+**Audit log format for canon gate:**
 ```
-[MemoryAudit] source=rag role=rp id=rag-lore-0-<ts> score=0.850 docId=ltmf-a00-0001.md
-[TalaRouter] Candidates before filter — rag:3, mem0:7 (total=10)
-[TalaRouter] Approved memories — rag:2, mem0:1 (total=3)
-[TalaRouter] Memory-grounded response mode: memory_grounded_soft
+[CanonGate] autobiographical lore request detected
+[CanonGate] sufficientCanonMemory=false sources=explicit approved=1
+[CanonGate] forcing strict no-canon response mode
+[CanonGate] hallucination prevention active for autobiographical turn
+[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn
 ```
 
 ## 3c. Tool Gatekeeper (ToolGatekeeper)
@@ -278,7 +321,7 @@ Tala stays tightly factual. Only details supported by retrieved memories. If a d
 | Rule | Condition | Effect |
 |---|---|---|
 | **A** | `intent=lore` AND `approvedMemoryCount > 0` | `mem0_search` blocked |
-| **A** | `responseMode=memory_grounded_soft` OR `memory_grounded_strict` | `mem0_search` blocked |
+| **A** | `responseMode=memory_grounded_soft` OR `memory_grounded_strict` OR `canon_required` | `mem0_search` blocked |
 | **B** | Tool failure count ≥ 3 in 5-minute rolling window | Tool suppressed |
 | **B** | Tool marked degraded via `markToolDegraded()` | Tool suppressed |
 | **C** | Rules A fires | `directAnswerPreferred = true` |
