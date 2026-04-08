@@ -154,6 +154,19 @@ export class MemoryService {
         }
     }
 
+    /**
+     * Updates the resolved memory runtime configuration used by getHealthStatus()
+     * to evaluate extraction and embeddings provider availability.
+     *
+     * Call this from a repair handler after re-running MemoryProviderResolver so
+     * that the health evaluation reflects the freshly resolved provider state.
+     * Automatically invalidates the health cache.
+     */
+    public setResolvedMemoryConfig(config: MemoryRuntimeResolution): void {
+        this._resolvedMemoryConfig = config;
+        this._invalidateHealthCache('resolved_config_changed');
+    }
+
     /** Updates a primitive field only if the new value differs. Returns true when changed. */
     private _setIfChanged<K extends '_canonicalReady' | '_ragAvailable' | '_integrityMode'>(
         key: K,
