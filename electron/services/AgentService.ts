@@ -59,6 +59,7 @@ import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
+import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 
@@ -1585,7 +1586,7 @@ Exported standalone package from Tala.
             // attempt above succeeds or fails.
             if (this.memory) {
                 const canonicalRepo = getCanonicalMemoryRepository();
-                const memIntegrityMode = (settings.memory?.integrityMode as import('../../shared/memory/MemoryHealthStatus').MemoryIntegrityMode | undefined) ?? 'balanced';
+                const memIntegrityMode = (settings.memory?.integrityMode as MemoryIntegrityMode | undefined) ?? 'balanced';
                 this.memory.setSubsystemAvailability({
                     canonicalReady: canonicalRepo !== null,
                     ragAvailable: this.rag?.getReadyStatus?.() ?? false,

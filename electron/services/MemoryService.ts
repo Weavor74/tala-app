@@ -141,26 +141,29 @@ export class MemoryService {
         integrityMode?: MemoryIntegrityMode;
     }): void {
         let changed = false;
-        if (opts.canonicalReady !== undefined && opts.canonicalReady !== this._canonicalReady) {
-            this._canonicalReady = opts.canonicalReady;
-            changed = true;
-        }
-        if (opts.ragAvailable !== undefined && opts.ragAvailable !== this._ragAvailable) {
-            this._ragAvailable = opts.ragAvailable;
-            changed = true;
-        }
+        if (this._setIfChanged('_canonicalReady', opts.canonicalReady)) changed = true;
+        if (this._setIfChanged('_ragAvailable', opts.ragAvailable)) changed = true;
         if (opts.graphAvailable !== undefined && opts.graphAvailable !== this._graphAvailable) {
             console.log(`[MemoryService] graphProjection availability changed: ${this._graphAvailable} -> ${opts.graphAvailable}`);
             this._graphAvailable = opts.graphAvailable;
             changed = true;
         }
-        if (opts.integrityMode !== undefined && opts.integrityMode !== this._integrityMode) {
-            this._integrityMode = opts.integrityMode;
-            changed = true;
-        }
+        if (this._setIfChanged('_integrityMode', opts.integrityMode)) changed = true;
         if (changed) {
             this._invalidateHealthCache('subsystem_availability_changed');
         }
+    }
+
+    /** Updates a primitive field only if the new value differs. Returns true when changed. */
+    private _setIfChanged<K extends '_canonicalReady' | '_ragAvailable' | '_integrityMode'>(
+        key: K,
+        value: this[K] | undefined,
+    ): boolean {
+        if (value !== undefined && value !== this[key]) {
+            this[key] = value;
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -279,10 +282,13 @@ export class MemoryService {
         const modeChanged = prevMode !== undefined && prevMode !== status.mode;
 
         if (stateChanged || modeChanged) {
+            const fromState = prevState ?? status.state;
+            const fromMode = prevMode ?? status.mode;
+
             const transition: MemoryHealthTransition = {
-                fromState: prevState!,
+                fromState,
                 toState: status.state,
-                fromMode: prevMode ?? status.mode,
+                fromMode,
                 toMode: status.mode,
                 reasons: status.reasons,
                 at: status.evaluatedAt,
