@@ -16,9 +16,9 @@
  *                       restart everything.
  * 5. Canonical authority — deferred work is only replayed when canonical memory
  *                          is confirmed healthy.
- * 6. Strict-mode aware — when integrityMode is strict and memory cannot be
- *                        fully restored, the system remains blocked rather than
- *                        pretending to recover.
+ * 6. Strict-mode aware — when hardDisabled is true and state is 'disabled' (strict policy),
+ *                        the system remains blocked rather than partially recovering into a
+ *                        non-policy-compliant state, unless the failure is canonical.
  *
  * Architecture
  * ────────────

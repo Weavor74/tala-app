@@ -9,7 +9,7 @@
  *   MRE13–MRE22  — repair cycle execution (bounded, deterministic, observable)
  *   MRE23–MRE27  — cooldown and storm prevention
  *   MRE28–MRE32  — health re-evaluation and deferred work drain
- *   MRE33–MRE36  — strict-mode / hard-disable behaviour
+ *   MRE33–MRE36  — strict-mode / hard-disable behavior
  *   MRE37–MRE40  — telemetry event emission
  *
  * No DB, no Electron, no IPC.
@@ -655,19 +655,19 @@ describe('MRE: health re-evaluation and deferred work drain', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MRE33–MRE36 — Strict-mode / hard-disable behaviour
+// MRE33–MRE36 — Strict-mode / hard-disable behavior
 // ---------------------------------------------------------------------------
 
 describe('MRE: strict-mode and hard-disable handling', () => {
 
-    it('MRE33: disabled state from strict mode (non-canonical cause) returns outcome = failed', async () => {
+    it('MRE33: disabled state from strict mode (non-canonical reason) returns outcome = failed', async () => {
         const svc = makeService();
         withHealth(svc, () => disabledStrictStatus());
         const result = await svc.runRepairCycle('mem0_unavailable');
         expect(result.outcome).toBe('failed');
     });
 
-    it('MRE34: disabled state with canonical_unavailable cause is NOT blocked by strict guard', async () => {
+    it('MRE34: disabled state with canonical_unavailable reason is NOT blocked by strict guard', async () => {
         const svc = makeService();
         const strictCanonicalDown: MemoryHealthStatus = {
             ...disabledStrictStatus(),

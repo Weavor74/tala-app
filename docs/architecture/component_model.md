@@ -196,3 +196,30 @@ This document describes the Tala system as a collection of interacting component
   - `rankMemoryByAuthority(candidates[])` — deterministic 4-tier priority: `canonical > verified_derived > transient > speculative`.
   - `resolveMemoryAuthorityConflict(canonical, derived, source)` — canonical always wins; conflict logged for diagnostics.
 - **Integration**: Called by `MemoryService.add()` and by any new derived write site.
+
+## 8. Memory Integrity and Repair Layer
+
+### MemoryIntegrityPolicy
+- **Path**: `electron/services/memory/MemoryIntegrityPolicy.ts`
+- **Purpose**: Pure, stateless evaluator that classifies overall memory subsystem health from capability flags. Produces `MemoryHealthStatus` with state, capability flags, failure reasons, and enforcement directives (`hardDisabled`, `shouldTriggerRepair`).
+- **Inputs**: `canonicalReady`, `mem0Ready`, `resolvedMode`, `extractionEnabled`, `embeddingsEnabled`, `graphAvailable`, `ragAvailable`, `integrityMode`.
+- **Outputs**: `MemoryHealthStatus` — serialisable, deterministic, used by `MemoryService.getHealthStatus()`.
+
+### MemoryRepairTriggerService
+- **Path**: `electron/services/memory/MemoryRepairTriggerService.ts`
+- **Purpose**: Lightweight signal emitter. Emits `memory.repair_trigger` events via `TelemetryBus` when `MemoryHealthStatus.shouldTriggerRepair = true`. Maintains a 30s de-duplication window per failure reason to prevent event flooding.
+- **Called by**: `MemoryService.getHealthStatus()` after each evaluation.
+- **Emits**: `memory.repair_trigger` (payload: `MemoryRepairTrigger`).
+
+### MemoryRepairExecutionService
+- **Path**: `electron/services/memory/MemoryRepairExecutionService.ts`
+- **Purpose**: Bounded repair executor that consumes `memory.repair_trigger` events and attempts deterministic, serially-executed recovery actions. Stops when health is acceptable (`healthy` or `reduced`). Deferred work is drained only when canonical memory is confirmed healthy.
+- **Inputs**: Injected health status provider (`setHealthStatusProvider`), registered `RepairActionHandler` callbacks per action kind, optional deferred-work drain callback.
+- **Repair action kinds**: `reconnect_canonical`, `reinit_canonical`, `reconnect_mem0`, `re_resolve_providers`, `reconnect_graph`, `reconnect_rag`, `drain_deferred_work`, `re_evaluate_health`.
+- **Invariants**:
+  - Maximum 3 attempts per action across all cycles (attempt cap).
+  - Minimum 30s cooldown between cycles for the same failure reason.
+  - Maximum 10 repair cycles per rolling hour (storm prevention).
+  - Strict-mode hard-disable: if `hardDisabled = true` and `state = disabled` from a non-canonical reason, the cycle returns `failed` immediately rather than partially recovering.
+- **Emits**: `memory.repair_started`, `memory.repair_action_started`, `memory.repair_action_completed`, `memory.repair_completed` via `TelemetryBus`.
+- **Singleton**: `MemoryRepairExecutionService.getInstance()` with `reset()` for tests.
