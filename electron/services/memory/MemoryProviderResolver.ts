@@ -135,7 +135,7 @@ export function buildRankedCandidate(
         isRunning,
         isLocal,
         isPreferred,
-        supportsExtraction: true, // all providers support extraction unless filtered out
+        supportsExtraction: descriptor.capabilities.streaming, // text-generation (streaming) required for LLM-based extraction
         supportsEmbeddings: descriptor.capabilities.embeddings,
         typePriority: rankProviderType(descriptor.providerType),
         _descriptor: descriptor,
@@ -235,7 +235,7 @@ export class MemoryProviderResolver {
      */
     public resolveExtraction(): ResolvedMemoryBackend {
         const candidates = this._buildRankedCandidates()
-            .filter(c => c.supportsExtraction);
+            .filter(c => c.supportsExtraction && c.isAvailable);
 
         candidates.sort(compareRankedCandidates);
 
@@ -254,7 +254,7 @@ export class MemoryProviderResolver {
      */
     public resolveEmbeddings(): ResolvedMemoryBackend {
         const candidates = this._buildRankedCandidates()
-            .filter(c => c.supportsEmbeddings);
+            .filter(c => c.supportsEmbeddings && c.isAvailable);
 
         candidates.sort(compareRankedCandidates);
 
