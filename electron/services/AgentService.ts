@@ -56,10 +56,12 @@ import { telemetry } from './TelemetryService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
-import { getCanonicalMemoryRepository } from './db/initMemoryStore';
+import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
+import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
+import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 
@@ -90,6 +92,7 @@ type McpServiceLike = {
     getCapabilities?: (id: string) => Promise<McpCapabilities | null | undefined>;
     setPythonPath?: (pythonPath: string) => void;
     connect?: (config: import('../../shared/settings').McpServerConfig) => Promise<boolean>;
+    disconnect?: (id: string) => Promise<void>;
     callTool?: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<McpToolResult | null | undefined>;
     setOnRecovery?: (callback: () => void) => void;
 };
@@ -217,6 +220,23 @@ export class AgentService {
     private logViewerService: LogViewerService | null = null;
     /** Feature flag for legacy memory migration. */
     private USE_STRUCTURED_LTMF = true;
+    /** Memory repair executor — wired after igniteSoul completes. */
+    private _repairExecutor: MemoryRepairExecutionService | null = null;
+    /**
+     * Parameters captured during igniteSoul() so repair handlers can restart
+     * individual subsystems without re-running the full startup sequence.
+     */
+    private _ignitionParams: {
+        pythonPath: string;
+        ragScript: string;
+        memoryScript: string;
+        graphScript: string;
+        isolatedEnv: Record<string, string>;
+        graphEnv: Record<string, string>;
+        svcPythonMem0: string;
+        svcPythonRag: string;
+        svcPythonGraph: string;
+    } | null = null;
     /** Safety guard: Maximum number of tool iterations before force-terminating a turn. */
     private MAX_TOOL_CALLS_PER_TURN = 8;
     /** Telemetry: Detailed log of the most recent turn's tool usage and token counts. */
@@ -1561,6 +1581,18 @@ Exported standalone package from Tala.
                                     enabled: true,
                                     env: graphEnv
                                 } as any);
+                                // Capture params for use by repair handlers before updating availability
+                                this._ignitionParams = {
+                                    pythonPath,
+                                    ragScript,
+                                    memoryScript,
+                                    graphScript,
+                                    isolatedEnv,
+                                    graphEnv,
+                                    svcPythonMem0: resolveServicePython('mem0-core'),
+                                    svcPythonRag: resolveServicePython('tala-core'),
+                                    svcPythonGraph: svcPython,
+                                };
                                 // Signal that graph projection is now available
                                 if (this.memory) {
                                     this.memory.setSubsystemAvailability({ graphAvailable: true });
@@ -1576,6 +1608,25 @@ Exported standalone package from Tala.
                     }
                 })()
             ]);
+
+            // Capture ignition params for subsystems whose per-service paths are
+            // resolved inline (not inside the graph block). These are used by repair
+            // handlers that need to restart individual services. If the graph block
+            // already stored them, this is a no-op.
+            if (!this._ignitionParams) {
+                const pgDsnFallback = buildPgDsn(resolveDatabaseConfig());
+                this._ignitionParams = {
+                    pythonPath,
+                    ragScript,
+                    memoryScript,
+                    graphScript,
+                    isolatedEnv,
+                    graphEnv: { ...isolatedEnv, TALA_PG_DSN: pgDsnFallback },
+                    svcPythonMem0: resolveServicePython('mem0-core'),
+                    svcPythonRag: resolveServicePython('tala-core'),
+                    svcPythonGraph: resolveServicePython('tala-memory-graph'),
+                };
+            }
 
             this.isSoulReady = true;
 
@@ -1593,6 +1644,9 @@ Exported standalone package from Tala.
                     integrityMode: memIntegrityMode,
                 });
             }
+
+            // ── Memory Repair Executor: wire and start after all services are ready ──
+            this._wireRepairExecutor();
 
             // LTMF Migration: Archive legacy .txt files if structured mode is enabled
             if (this.USE_STRUCTURED_LTMF) {
@@ -1614,7 +1668,140 @@ Exported standalone package from Tala.
      * Gracefully shuts down all active MCP sidecars and local inference engines.
      */
     public async shutdown() {
+        if (this._repairExecutor) {
+            this._repairExecutor.stop();
+        }
         await Promise.all([this.rag.shutdown(), this.memory.shutdown(), this.inference.getLocalEngine().extinguish()]);
+    }
+
+    /**
+     * Wires the MemoryRepairExecutionService singleton with live handlers that
+     * perform real subsystem operations.  Called once at the end of igniteSoul()
+     * after all dependent services are ready.
+     *
+     * Handler mapping:
+     *  reconnect_canonical — shutdown + re-init canonical PostgreSQL store
+     *  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)
+     *  reconnect_mem0      — shutdown + re-ignite mem0 MCP server
+     *  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config
+     *  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService
+     *  reconnect_rag       — shutdown + re-ignite tala-core RAG server
+     *
+     * drain_deferred_work is intentionally not wired via setDeferredWorkDrainCallback
+     * because no real deferred-work queue exists yet.  The executor will record
+     * the action as skipped, which is the honest result in this state.
+     */
+    private _wireRepairExecutor(): void {
+        const executor = MemoryRepairExecutionService.getInstance();
+        this._repairExecutor = executor;
+
+        executor.setHealthStatusProvider(() => this.memory.getHealthStatus());
+
+        // Shared helper: teardown and reinitialize the canonical PostgreSQL store,
+        // then update MemoryService with the result.  Used by both reconnect_canonical
+        // and reinit_canonical which currently share the same recovery mechanism.
+        const restoreCanonical = async (label: string): Promise<boolean> => {
+            try {
+                await shutdownCanonicalMemory();
+                const repo = await initCanonicalMemory();
+                const success = repo !== null;
+                this.memory.setSubsystemAvailability({ canonicalReady: success });
+                return success;
+            } catch (err) {
+                console.error(`[RepairHandler] ${label} failed:`, err);
+                this.memory.setSubsystemAvailability({ canonicalReady: false });
+                return false;
+            }
+        };
+
+        // ── reconnect_canonical ───────────────────────────────────────────────
+        executor.registerRepairHandler('reconnect_canonical', () => restoreCanonical('reconnect_canonical'));
+
+        // ── reinit_canonical ─────────────────────────────────────────────────
+        executor.registerRepairHandler('reinit_canonical', () => restoreCanonical('reinit_canonical'));
+
+        // ── reconnect_mem0 ───────────────────────────────────────────────────
+        executor.registerRepairHandler('reconnect_mem0', async (): Promise<boolean> => {
+            if (!this._ignitionParams) return false;
+            try {
+                await this.memory.shutdown();
+                const resolver = new MemoryProviderResolver(this.inference.getProviderInventory());
+                const resolvedConfig: MemoryRuntimeResolution = resolver.resolve();
+                await this.memory.ignite(
+                    this._ignitionParams.svcPythonMem0,
+                    this._ignitionParams.memoryScript,
+                    this._ignitionParams.isolatedEnv,
+                    resolvedConfig,
+                );
+                const ready = this.memory.getReadyStatus();
+                this.memory.setSubsystemAvailability({ canonicalReady: getCanonicalMemoryRepository() !== null });
+                return ready;
+            } catch (err) {
+                console.error('[RepairHandler] reconnect_mem0 failed:', err);
+                return false;
+            }
+        });
+
+        // ── re_resolve_providers ─────────────────────────────────────────────
+        executor.registerRepairHandler('re_resolve_providers', async (): Promise<boolean> => {
+            try {
+                const resolver = new MemoryProviderResolver(this.inference.getProviderInventory());
+                const resolvedConfig: MemoryRuntimeResolution = resolver.resolve();
+                this.memory.setResolvedMemoryConfig(resolvedConfig);
+                return true;
+            } catch (err) {
+                console.error('[RepairHandler] re_resolve_providers failed:', err);
+                return false;
+            }
+        });
+
+        // ── reconnect_graph ──────────────────────────────────────────────────
+        executor.registerRepairHandler('reconnect_graph', async (): Promise<boolean> => {
+            if (!this._ignitionParams || !this.mcpService) return false;
+            try {
+                if (typeof this.mcpService.disconnect === 'function') {
+                    await this.mcpService.disconnect('tala-memory-graph');
+                }
+                const success = (await this.mcpService.connect?.({
+                    id: 'tala-memory-graph',
+                    name: 'Memory Graph',
+                    type: 'stdio',
+                    command: this._ignitionParams.svcPythonGraph,
+                    args: [this._ignitionParams.graphScript],
+                    enabled: true,
+                    env: this._ignitionParams.graphEnv,
+                } as any)) ?? false;
+                this.memory.setSubsystemAvailability({ graphAvailable: success });
+                return success;
+            } catch (err) {
+                console.error('[RepairHandler] reconnect_graph failed:', err);
+                this.memory.setSubsystemAvailability({ graphAvailable: false });
+                return false;
+            }
+        });
+
+        // ── reconnect_rag ────────────────────────────────────────────────────
+        executor.registerRepairHandler('reconnect_rag', async (): Promise<boolean> => {
+            if (!this._ignitionParams) return false;
+            try {
+                await this.rag.shutdown();
+                await this.rag.ignite(
+                    this._ignitionParams.svcPythonRag,
+                    this._ignitionParams.ragScript,
+                    this._ignitionParams.isolatedEnv,
+                );
+                const ready = this.rag.getReadyStatus();
+                this.memory.setSubsystemAvailability({ ragAvailable: ready });
+                return ready;
+            } catch (err) {
+                console.error('[RepairHandler] reconnect_rag failed:', err);
+                this.memory.setSubsystemAvailability({ ragAvailable: false });
+                return false;
+            }
+        });
+
+        executor.start();
+        console.log('[AgentService] MemoryRepairExecutionService started with live handlers.');
     }
 
     private async syncAstroProfiles() {
