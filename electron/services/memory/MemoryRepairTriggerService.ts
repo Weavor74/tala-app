@@ -163,6 +163,8 @@ export class MemoryRepairTriggerService {
     /**
      * Pick the single most important failure reason from the status.
      * Priority: canonical > mem0 > extraction > embeddings > graph > rag > unknown
+     * 'none' is excluded here because shouldTriggerRepair guards entry — if we
+     * reach this method there is always at least one real failure reason.
      */
     private _pickPrimaryReason(status: MemoryHealthStatus): MemoryFailureReason {
         const PRIORITY: MemoryFailureReason[] = [
@@ -175,6 +177,7 @@ export class MemoryRepairTriggerService {
             'graph_projection_unavailable',
             'rag_logging_unavailable',
             'runtime_mismatch',
+            'unknown',
         ];
         for (const r of PRIORITY) {
             if (status.reasons.includes(r)) return r;

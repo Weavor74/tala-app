@@ -515,24 +515,13 @@ describe('MemoryRepairTriggerService', () => {
     });
 
     it('MRT11: trigger log is capped at 200 entries', () => {
-        // Force 201 different reasons past de-dup by resetting between each
+        // Emit 205 triggers, bypassing de-duplication each time so every emit
+        // actually lands in the log, and verify the cap holds at 200.
         for (let i = 0; i < 205; i++) {
-            // Use unique-per-iteration details to bypass de-dup only for
-            // distinct reasons; we reset to force same-reason emissions
-            service.reset();
-            service.emitDirect('canonical_unavailable', 'critical', 'critical');
+            (service as any)._lastEmittedAt.clear();
+            service.emitDirect('canonical_unavailable', 'critical', 'critical', { iteration: i });
         }
-        // Log is capped at 200; after 205 resets+emits, the last reset+emit
-        // leaves the log with exactly 1 entry (each reset clears it).
-        // Instead test that individual sessions cap correctly:
-        service.reset();
-        // Emit 205 triggers using emitDirect with different reason-like state via reset trick
-        for (let i = 0; i < 205; i++) {
-            // patch _lastEmittedAt via direct emit with reset each time
-            (service as any)._lastEmittedAt.clear(); // bypass dedup without full reset
-            service.emitDirect('canonical_unavailable', 'critical', 'critical');
-        }
-        expect(service.getTriggerLog().length).toBeLessThanOrEqual(200);
+        expect(service.getTriggerLog().length).toBe(200);
     });
 
     it('MRT12: healthy status never triggers repair', () => {

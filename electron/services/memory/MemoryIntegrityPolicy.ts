@@ -146,12 +146,8 @@ export class MemoryIntegrityPolicy {
         }
 
         // ── Step 4: Derive runtime mode ──────────────────────────────────────
-        const mode: MemoryHealthStatus['mode'] = resolvedMode ?? (
-            extractionEnabled && embeddingsEnabled ? 'full_memory'
-                : embeddingsEnabled ? 'canonical_plus_embeddings'
-                    : canonicalReady ? 'canonical_only'
-                        : 'unknown'
-        );
+        const mode: MemoryHealthStatus['mode'] = resolvedMode
+            ?? MemoryIntegrityPolicy._inferMode(extractionEnabled, embeddingsEnabled, canonicalReady);
 
         // ── Step 5: Derive state ─────────────────────────────────────────────
         const state = MemoryIntegrityPolicy._deriveState(
@@ -187,6 +183,21 @@ export class MemoryIntegrityPolicy {
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Infer the runtime mode from capability flags when no resolvedMode is available.
+     * Called only when MemoryProviderResolver has not run yet (early startup).
+     */
+    private static _inferMode(
+        extractionEnabled: boolean,
+        embeddingsEnabled: boolean,
+        canonicalReady: boolean,
+    ): MemoryHealthStatus['mode'] {
+        if (extractionEnabled && embeddingsEnabled) return 'full_memory';
+        if (embeddingsEnabled) return 'canonical_plus_embeddings';
+        if (canonicalReady) return 'canonical_only';
+        return 'unknown';
+    }
 
     private static _deriveState(
         canonicalReady: boolean,
