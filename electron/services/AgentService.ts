@@ -1614,13 +1614,14 @@ Exported standalone package from Tala.
             // handlers that need to restart individual services. If the graph block
             // already stored them, this is a no-op.
             if (!this._ignitionParams) {
+                const pgDsnFallback = buildPgDsn(resolveDatabaseConfig());
                 this._ignitionParams = {
                     pythonPath,
                     ragScript,
                     memoryScript,
                     graphScript,
                     isolatedEnv,
-                    graphEnv: isolatedEnv,
+                    graphEnv: { ...isolatedEnv, TALA_PG_DSN: pgDsnFallback },
                     svcPythonMem0: resolveServicePython('mem0-core'),
                     svcPythonRag: resolveServicePython('tala-core'),
                     svcPythonGraph: resolveServicePython('tala-memory-graph'),
@@ -1696,8 +1697,10 @@ Exported standalone package from Tala.
 
         executor.setHealthStatusProvider(() => this.memory.getHealthStatus());
 
-        // ── reconnect_canonical ───────────────────────────────────────────────
-        executor.registerRepairHandler('reconnect_canonical', async (): Promise<boolean> => {
+        // Shared helper: teardown and reinitialize the canonical PostgreSQL store,
+        // then update MemoryService with the result.  Used by both reconnect_canonical
+        // and reinit_canonical which currently share the same recovery mechanism.
+        const restoreCanonical = async (label: string): Promise<boolean> => {
             try {
                 await shutdownCanonicalMemory();
                 const repo = await initCanonicalMemory();
@@ -1705,26 +1708,17 @@ Exported standalone package from Tala.
                 this.memory.setSubsystemAvailability({ canonicalReady: success });
                 return success;
             } catch (err) {
-                console.error('[RepairHandler] reconnect_canonical failed:', err);
+                console.error(`[RepairHandler] ${label} failed:`, err);
                 this.memory.setSubsystemAvailability({ canonicalReady: false });
                 return false;
             }
-        });
+        };
+
+        // ── reconnect_canonical ───────────────────────────────────────────────
+        executor.registerRepairHandler('reconnect_canonical', () => restoreCanonical('reconnect_canonical'));
 
         // ── reinit_canonical ─────────────────────────────────────────────────
-        executor.registerRepairHandler('reinit_canonical', async (): Promise<boolean> => {
-            try {
-                await shutdownCanonicalMemory();
-                const repo = await initCanonicalMemory();
-                const success = repo !== null;
-                this.memory.setSubsystemAvailability({ canonicalReady: success });
-                return success;
-            } catch (err) {
-                console.error('[RepairHandler] reinit_canonical failed:', err);
-                this.memory.setSubsystemAvailability({ canonicalReady: false });
-                return false;
-            }
-        });
+        executor.registerRepairHandler('reinit_canonical', () => restoreCanonical('reinit_canonical'));
 
         // ── reconnect_mem0 ───────────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_mem0', async (): Promise<boolean> => {
