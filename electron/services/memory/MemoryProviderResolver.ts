@@ -135,7 +135,7 @@ export function buildRankedCandidate(
         isRunning,
         isLocal,
         isPreferred,
-        supportsExtraction: descriptor.capabilities.streaming, // text-generation capable providers only
+        supportsExtraction: descriptor.capabilities.streaming, // text-generation (streaming) required for LLM-based extraction
         supportsEmbeddings: descriptor.capabilities.embeddings,
         typePriority: rankProviderType(descriptor.providerType),
         _descriptor: descriptor,
