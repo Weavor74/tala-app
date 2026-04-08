@@ -53,6 +53,7 @@ import { CognitiveTurnAssembler } from './cognitive/CognitiveTurnAssembler';
 import { promptProfileSelector } from './cognitive/PromptProfileSelector';
 import { cognitiveContextCompactor } from './cognitive/CognitiveContextCompactor';
 import { telemetry } from './TelemetryService';
+import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository } from './db/initMemoryStore';
@@ -1569,6 +1570,18 @@ Exported standalone package from Tala.
 
             this.isSoulReady = true;
 
+            // ── Memory Integrity: inform MemoryService of subsystem availability ──
+            // After igniteSoul completes, update the memory service with the
+            // real availability of canonical store, RAG, and graph projection.
+            if (this.memory) {
+                const canonicalRepo = getCanonicalMemoryRepository();
+                this.memory.setSubsystemAvailability({
+                    canonicalReady: canonicalRepo !== null,
+                    ragAvailable: this.rag?.getReadyStatus?.() ?? false,
+                    graphAvailable: false, // graph projection readiness tracked at MCP level; updated when client connects
+                });
+            }
+
             // LTMF Migration: Archive legacy .txt files if structured mode is enabled
             if (this.USE_STRUCTURED_LTMF) {
                 console.log('[AgentService] LTMF Migration enabled. Archiving legacy .txt memories...');
@@ -2857,6 +2870,43 @@ Failure to provide a tool call will result in system termination.`;
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
         if (finalResponse && settings.agent?.capabilities?.memory !== false) {
             const storeMemories = async () => {
+                // ── Memory Integrity Policy gate ──────────────────────────────
+                // Evaluate health before any write. If hard-disabled (critical/
+                // disabled state), skip all memory operations and emit an alert.
+                const memHealth = this.memory.getHealthStatus();
+                if (memHealth.hardDisabled) {
+                    console.warn(
+                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED — state=${memHealth.state}. ` +
+                        `Reason: ${memHealth.summary}`,
+                    );
+                    TelemetryBus.getInstance().emit({
+                        event: 'memory.capability_blocked',
+                        subsystem: 'memory',
+                        executionId: turnId,
+                        payload: {
+                            operation: 'post_turn_write',
+                            state: memHealth.state,
+                            reasons: memHealth.reasons,
+                            hardDisabled: true,
+                            turnId,
+                        },
+                    });
+                    return;
+                }
+
+                // Determine which derived systems are allowed this turn
+                const allowMem0Write = memHealth.capabilities.mem0Runtime;
+                const allowRagWrite = memHealth.capabilities.ragLogging;
+                const allowGraphWrite = memHealth.capabilities.extraction && memHealth.capabilities.graphProjection;
+
+                if (memHealth.state !== 'healthy') {
+                    console.log(
+                        `[AgentService][MemoryIntegrity] Proceeding with constrained memory writes. ` +
+                        `state=${memHealth.state} mode=${memHealth.mode} ` +
+                        `mem0=${allowMem0Write} rag=${allowRagWrite} graph=${allowGraphWrite}`,
+                    );
+                }
+
                 // P7A: Canonical write through MemoryAuthorityService MUST happen before
                 // any derived system (mem0, RAG, graph). canonical_memory_id is returned
                 // and passed downstream so derived systems can reference it.
@@ -2907,6 +2957,9 @@ Failure to provide a tool call will result in system termination.`;
 
                 try {
                     // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
+                    if (!allowMem0Write) {
+                        console.log(`[AgentService][MemoryIntegrity] Mem0 write suppressed (mem0Runtime unavailable). state=${memHealth.state}`);
+                    } else {
                     const ts = new Date().toISOString().slice(0, 16); // 2026-03-02T08:46
                     const memEntry = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
 
@@ -2929,14 +2982,19 @@ Failure to provide a tool call will result in system termination.`;
                             { payload: { turnId, memId, mode: activeMode, source: 'mem0', canonicalMemoryId } },
                         );
                     }
+                    }
                 } catch (e) {
                     console.warn('[AgentService] Mem0 post-store failed:', e);
                 }
 
                 try {
                     // 2. RAG (derived): log full turn for episodic long-term retrieval
+                    if (!allowRagWrite) {
+                        console.log(`[AgentService][MemoryIntegrity] RAG write suppressed (ragLogging unavailable). state=${memHealth.state}`);
+                    } else {
                     await this.rag.logInteraction(userMessage, finalResponse);
                     console.log('[AgentService] Logged interaction to RAG');
+                    }
                 } catch (e) {
                     console.warn('[AgentService] RAG log failed:', e);
                 }
@@ -2944,7 +3002,9 @@ Failure to provide a tool call will result in system termination.`;
                 try {
                     // 3. Memory Graph (derived): run extraction pipeline on the full exchange.
                     // process_memory handles Extract → Validate → Store internally.
-                    if (this.mcpService && typeof this.mcpService.callTool === 'function') {
+                    if (!allowGraphWrite) {
+                        console.log(`[AgentService][MemoryIntegrity] Graph write suppressed (extraction/graphProjection unavailable). state=${memHealth.state}`);
+                    } else if (this.mcpService && typeof this.mcpService.callTool === 'function') {
                         const turnText = `User: ${userMessage}\nTala: ${finalResponse.slice(0, 600)}`;
                         await this.mcpService.callTool('tala-memory-graph', 'process_memory', {
                             text: turnText,

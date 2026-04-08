@@ -7,6 +7,10 @@ import path from 'path';
 import { RuntimeFlags } from './RuntimeFlags';
 import { policyGate } from './policy/PolicyGate';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
+import { MemoryIntegrityPolicy } from './memory/MemoryIntegrityPolicy';
+import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
+import type { MemoryHealthStatus, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
+import { TelemetryBus } from './telemetry/TelemetryBus';
 
 /**
  * Association
@@ -78,12 +82,81 @@ export class MemoryService {
     private localPath: string;
     /** In-memory array of all locally stored memories, loaded from disk at startup. */
     private localMemories: MemoryItem[] = [];
+    /** Last resolved memory runtime configuration (set during ignite()). */
+    private _resolvedMemoryConfig: MemoryRuntimeResolution | null = null;
+    /** Whether the canonical Postgres store is considered ready. Updated externally. */
+    private _canonicalReady: boolean = false;
+    /** Whether the RAG interaction log is available. Updated externally. */
+    private _ragAvailable: boolean = false;
+    /** Whether the graph projection service is available. Updated externally. */
+    private _graphAvailable: boolean = false;
+    /** Policy strictness mode for memory integrity evaluation. */
+    private _integrityMode: MemoryIntegrityMode = 'balanced';
 
     /**
      * Returns true when the MCP client is connected to the mem0-core server.
      * Used by AgentService.getStartupStatus() to surface real mem0 readiness.
      */
     public getReadyStatus(): boolean { return this.client !== null; }
+
+    /**
+     * Notifies MemoryService of external subsystem availability so that
+     * getHealthStatus() can produce an accurate evaluation.
+     *
+     * Call this from AgentService after startup or whenever the state of any
+     * of these subsystems changes.
+     */
+    public setSubsystemAvailability(opts: {
+        canonicalReady?: boolean;
+        ragAvailable?: boolean;
+        graphAvailable?: boolean;
+        integrityMode?: MemoryIntegrityMode;
+    }): void {
+        if (opts.canonicalReady !== undefined) this._canonicalReady = opts.canonicalReady;
+        if (opts.ragAvailable !== undefined) this._ragAvailable = opts.ragAvailable;
+        if (opts.graphAvailable !== undefined) this._graphAvailable = opts.graphAvailable;
+        if (opts.integrityMode !== undefined) this._integrityMode = opts.integrityMode;
+    }
+
+    /**
+     * Returns a structured MemoryHealthStatus by evaluating all memory
+     * subsystem components via MemoryIntegrityPolicy.
+     *
+     * This is the single source of truth for memory runtime health.
+     * AgentService must call this before gating memory retrieval or writes.
+     */
+    public getHealthStatus(): MemoryHealthStatus {
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: this._canonicalReady,
+            mem0Ready: this.client !== null,
+            resolvedMode: this._resolvedMemoryConfig?.mode,
+            extractionEnabled: this._resolvedMemoryConfig?.extraction.enabled ?? false,
+            embeddingsEnabled: this._resolvedMemoryConfig?.embeddings.enabled ?? false,
+            graphAvailable: this._graphAvailable,
+            ragAvailable: this._ragAvailable,
+            integrityMode: this._integrityMode,
+        });
+
+        // Emit telemetry event for observability
+        TelemetryBus.getInstance().emit({
+            event: 'memory.health_evaluated',
+            subsystem: 'memory',
+            executionId: 'memory-health',
+            payload: {
+                state: status.state,
+                mode: status.mode,
+                hardDisabled: status.hardDisabled,
+                shouldTriggerRepair: status.shouldTriggerRepair,
+                reasons: status.reasons,
+                summary: status.summary,
+            },
+        });
+
+        // Trigger repair if warranted
+        MemoryRepairTriggerService.getInstance().maybeEmit(status);
+
+        return status;
+    }
 
     // --- SCORING CONSTANTS (PHASE 2) ---
     private static readonly WEIGHT_SEMANTIC = 0.35;
@@ -216,6 +289,11 @@ export class MemoryService {
             return;
         }
         console.log(`[MemoryService] Igniting embedded Mem0 server at ${scriptPath}...`);
+
+        // Store resolved config so getHealthStatus() can use it
+        if (resolvedConfig) {
+            this._resolvedMemoryConfig = resolvedConfig;
+        }
 
         // --- Inject Tala-resolved memory runtime config ---
         // Write the resolved config to a temp file and pass its path via env var so
