@@ -186,11 +186,24 @@ export class MemoryRepairTriggerService {
     }
 
     private _mapSeverity(state: MemorySubsystemState): MemoryRepairTrigger['severity'] {
+        return MemoryRepairTriggerService.severityForState(state);
+    }
+
+    /**
+     * Returns the deterministic repair-trigger severity for a given subsystem
+     * state.  The mapping is:
+     *   healthy  → no trigger (caller guards; returns 'info' as a safe fallback)
+     *   reduced  → info
+     *   degraded → warning
+     *   critical → error
+     *   disabled → critical
+     */
+    static severityForState(state: MemorySubsystemState): MemoryRepairTrigger['severity'] {
         switch (state) {
-            case 'critical':  return 'critical';
-            case 'degraded':  return 'error';
-            case 'reduced':   return 'warning';
-            case 'disabled':  return 'warning';
+            case 'critical':  return 'error';
+            case 'degraded':  return 'warning';
+            case 'reduced':   return 'info';
+            case 'disabled':  return 'critical';
             default:          return 'info';
         }
     }

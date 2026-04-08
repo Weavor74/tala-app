@@ -152,3 +152,22 @@ export type MemoryRepairTrigger = {
     emittedAt: string;
     details?: Record<string, unknown>;
 };
+
+// ---------------------------------------------------------------------------
+// MemoryHealthTransition — state-change event emitted by MemoryService
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted via TelemetryBus ('memory.health_transition') only when the
+ * memory subsystem's top-level state or resolved mode changes between
+ * successive evaluations.  Consumed by reflection dashboard, repair loops,
+ * and audit trails.
+ */
+export type MemoryHealthTransition = {
+    fromState: MemorySubsystemState;
+    toState: MemorySubsystemState;
+    fromMode: MemoryHealthStatus['mode'];
+    toMode: MemoryHealthStatus['mode'];
+    reasons: MemoryFailureReason[];
+    at: string;
+};

@@ -9,7 +9,7 @@ import { policyGate } from './policy/PolicyGate';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import { MemoryIntegrityPolicy } from './memory/MemoryIntegrityPolicy';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
-import type { MemoryHealthStatus, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
+import type { MemoryHealthStatus, MemoryHealthTransition, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 
 /**
@@ -93,6 +93,31 @@ export class MemoryService {
     /** Policy strictness mode for memory integrity evaluation. */
     private _integrityMode: MemoryIntegrityMode = 'balanced';
 
+    // ── Health-status cache (avoids redundant per-turn recomputation) ────────
+    /** Short-lived cache of the last evaluated health status. */
+    private _lastHealthStatus: MemoryHealthStatus | null = null;
+    /** Timestamp (ms) of the last cache population. */
+    private _lastHealthEvalTs: number = 0;
+    /** Maximum age of a cached status before forced recomputation. */
+    private static readonly HEALTH_STATUS_TTL_MS = 1000;
+
+    // ── Transition tracking ──────────────────────────────────────────────────
+    /** State from the previous health evaluation (undefined before first evaluation). */
+    private _lastKnownState: MemoryHealthStatus['state'] | undefined;
+    /** Mode from the previous health evaluation. */
+    private _lastKnownMode: MemoryHealthStatus['mode'] | undefined;
+
+    // ── Deferred-work backlog counters ───────────────────────────────────────
+    /** Pending extraction tasks awaiting retry when subsystem recovers. */
+    private _pendingExtractionCount: number = 0;
+    /** Pending embedding tasks awaiting retry when subsystem recovers. */
+    private _pendingEmbeddingCount: number = 0;
+    /** Pending graph-projection tasks awaiting retry when subsystem recovers. */
+    private _pendingProjectionCount: number = 0;
+
+    private static readonly MEMORY_BACKLOG_WARNING_THRESHOLD = 250;
+    private static readonly MEMORY_BACKLOG_ERROR_THRESHOLD = 1000;
+
     /**
      * Returns true when the MCP client is connected to the mem0-core server.
      * Used by AgentService.getStartupStatus() to surface real mem0 readiness.
@@ -105,6 +130,9 @@ export class MemoryService {
      *
      * Call this from AgentService after startup or whenever the state of any
      * of these subsystems changes.
+     *
+     * Invalidates the cached health status so the next call to getHealthStatus()
+     * reflects the new availability.
      */
     public setSubsystemAvailability(opts: {
         canonicalReady?: boolean;
@@ -112,20 +140,53 @@ export class MemoryService {
         graphAvailable?: boolean;
         integrityMode?: MemoryIntegrityMode;
     }): void {
-        if (opts.canonicalReady !== undefined) this._canonicalReady = opts.canonicalReady;
-        if (opts.ragAvailable !== undefined) this._ragAvailable = opts.ragAvailable;
-        if (opts.graphAvailable !== undefined) this._graphAvailable = opts.graphAvailable;
-        if (opts.integrityMode !== undefined) this._integrityMode = opts.integrityMode;
+        let changed = false;
+        if (this._setIfChanged('_canonicalReady', opts.canonicalReady)) changed = true;
+        if (this._setIfChanged('_ragAvailable', opts.ragAvailable)) changed = true;
+        if (opts.graphAvailable !== undefined && opts.graphAvailable !== this._graphAvailable) {
+            console.log(`[MemoryService] graphProjection availability changed: ${this._graphAvailable} -> ${opts.graphAvailable}`);
+            this._graphAvailable = opts.graphAvailable;
+            changed = true;
+        }
+        if (this._setIfChanged('_integrityMode', opts.integrityMode)) changed = true;
+        if (changed) {
+            this._invalidateHealthCache('subsystem_availability_changed');
+        }
+    }
+
+    /** Updates a primitive field only if the new value differs. Returns true when changed. */
+    private _setIfChanged<K extends '_canonicalReady' | '_ragAvailable' | '_integrityMode'>(
+        key: K,
+        value: this[K] | undefined,
+    ): boolean {
+        if (value !== undefined && value !== this[key]) {
+            this[key] = value;
+            return true;
+        }
+        return false;
     }
 
     /**
      * Returns a structured MemoryHealthStatus by evaluating all memory
      * subsystem components via MemoryIntegrityPolicy.
      *
+     * Results are cached for HEALTH_STATUS_TTL_MS to avoid redundant
+     * recomputation on every turn.  The cache is automatically invalidated
+     * whenever subsystem availability, integrity mode, or resolved config
+     * changes.
+     *
      * This is the single source of truth for memory runtime health.
      * AgentService must call this before gating memory retrieval or writes.
      */
     public getHealthStatus(): MemoryHealthStatus {
+        const now = Date.now();
+        if (
+            this._lastHealthStatus !== null &&
+            now - this._lastHealthEvalTs < MemoryService.HEALTH_STATUS_TTL_MS
+        ) {
+            return this._lastHealthStatus;
+        }
+
         const status = MemoryIntegrityPolicy.evaluate({
             canonicalReady: this._canonicalReady,
             mem0Ready: this.client !== null,
@@ -137,7 +198,11 @@ export class MemoryService {
             integrityMode: this._integrityMode,
         });
 
-        // Emit telemetry event for observability
+        // ── Cache the result ─────────────────────────────────────────────────
+        this._lastHealthStatus = status;
+        this._lastHealthEvalTs = now;
+
+        // ── Emit telemetry event for observability ───────────────────────────
         TelemetryBus.getInstance().emit({
             event: 'memory.health_evaluated',
             subsystem: 'memory',
@@ -152,10 +217,127 @@ export class MemoryService {
             },
         });
 
-        // Trigger repair if warranted
+        // ── Track health state transitions ────────────────────────────────────
+        this._trackTransition(status);
+
+        // ── Trigger repair if warranted ───────────────────────────────────────
         MemoryRepairTriggerService.getInstance().maybeEmit(status);
 
         return status;
+    }
+
+    /**
+     * Increments the deferred-work backlog counters for the specified work
+     * types, then evaluates whether any threshold is breached and emits a
+     * repair trigger if so.
+     *
+     * Call this from extraction/embedding/projection paths whenever a task
+     * must be deferred because the relevant subsystem is unavailable.
+     */
+    public trackDeferredWork(opts: {
+        extraction?: number;
+        embedding?: number;
+        projection?: number;
+    }): void {
+        if (opts.extraction) this._pendingExtractionCount += opts.extraction;
+        if (opts.embedding) this._pendingEmbeddingCount += opts.embedding;
+        if (opts.projection) this._pendingProjectionCount += opts.projection;
+        this._checkBacklogThresholds();
+    }
+
+    /**
+     * Resets the deferred-work backlog counters (e.g. when the subsystem
+     * recovers and deferred work has been processed).
+     */
+    public resetDeferredWork(opts: { extraction?: boolean; embedding?: boolean; projection?: boolean } = {}): void {
+        if (opts.extraction) this._pendingExtractionCount = 0;
+        if (opts.embedding) this._pendingEmbeddingCount = 0;
+        if (opts.projection) this._pendingProjectionCount = 0;
+    }
+
+    /** Returns a snapshot of the current deferred-work backlog counts. */
+    public getDeferredWorkCounts(): { extraction: number; embedding: number; projection: number } {
+        return {
+            extraction: this._pendingExtractionCount,
+            embedding: this._pendingEmbeddingCount,
+            projection: this._pendingProjectionCount,
+        };
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    private _invalidateHealthCache(reason: string): void {
+        if (this._lastHealthStatus !== null) {
+            console.log(`[MemoryService] memory health cache invalidated reason=${reason}`);
+        }
+        this._lastHealthStatus = null;
+        this._lastHealthEvalTs = 0;
+    }
+
+    private _trackTransition(status: MemoryHealthStatus): void {
+        const prevState = this._lastKnownState;
+        const prevMode = this._lastKnownMode;
+
+        const stateChanged = prevState !== undefined && prevState !== status.state;
+        const modeChanged = prevMode !== undefined && prevMode !== status.mode;
+
+        if (stateChanged || modeChanged) {
+            const fromState = prevState ?? status.state;
+            const fromMode = prevMode ?? status.mode;
+
+            const transition: MemoryHealthTransition = {
+                fromState,
+                toState: status.state,
+                fromMode,
+                toMode: status.mode,
+                reasons: status.reasons,
+                at: status.evaluatedAt,
+            };
+
+            console.log(
+                `[MemoryService] memory health transition ${transition.fromState} -> ${transition.toState}` +
+                ` mode ${transition.fromMode} -> ${transition.toMode}`,
+            );
+
+            TelemetryBus.getInstance().emit({
+                event: 'memory.health_transition',
+                subsystem: 'memory',
+                executionId: 'memory-health',
+                payload: transition as unknown as Record<string, unknown>,
+            });
+        }
+
+        this._lastKnownState = status.state;
+        this._lastKnownMode = status.mode;
+    }
+
+    private _checkBacklogThresholds(): void {
+        const repair = MemoryRepairTriggerService.getInstance();
+        const counts = {
+            pendingExtraction: this._pendingExtractionCount,
+            pendingEmbedding: this._pendingEmbeddingCount,
+            pendingProjection: this._pendingProjectionCount,
+        };
+
+        const max = Math.max(
+            this._pendingExtractionCount,
+            this._pendingEmbeddingCount,
+            this._pendingProjectionCount,
+        );
+
+        if (max >= MemoryService.MEMORY_BACKLOG_ERROR_THRESHOLD) {
+            repair.emitDirect('unknown', 'degraded', 'critical', {
+                message: 'Deferred work backlog exceeded error threshold',
+                threshold: MemoryService.MEMORY_BACKLOG_ERROR_THRESHOLD,
+                ...counts,
+            });
+        } else if (max >= MemoryService.MEMORY_BACKLOG_WARNING_THRESHOLD) {
+            repair.emitDirect('unknown', 'degraded', 'warning', {
+                message: 'Deferred work backlog exceeded warning threshold',
+                threshold: MemoryService.MEMORY_BACKLOG_WARNING_THRESHOLD,
+                ...counts,
+            });
+        }
     }
 
     // --- SCORING CONSTANTS (PHASE 2) ---
@@ -293,6 +475,7 @@ export class MemoryService {
         // Store resolved config so getHealthStatus() can use it
         if (resolvedConfig) {
             this._resolvedMemoryConfig = resolvedConfig;
+            this._invalidateHealthCache('resolved_config_changed');
         }
 
         // --- Inject Tala-resolved memory runtime config ---
