@@ -60,6 +60,10 @@ export type RuntimeEventType =
     | 'memory.health_evaluated'
     | 'memory.health_transition'
     | 'memory.repair_trigger'
+    | 'memory.repair_started'
+    | 'memory.repair_action_started'
+    | 'memory.repair_action_completed'
+    | 'memory.repair_completed'
     | 'memory.capability_blocked'
     | `memory.${string}`
     | 'validation.requested'
