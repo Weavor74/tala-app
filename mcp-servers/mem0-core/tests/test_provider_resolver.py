@@ -1,37 +1,35 @@
 """
-Tests for provider_resolver.py
+Tests for provider_resolver.py (Tala-injected config path)
 
 Test cases
 ----------
-PR01  Ollama lib missing, vLLM available → embedded_vllm, no prompt, no SystemExit
-PR02  Ollama lib missing, vLLM unavailable → degraded, no prompt, no SystemExit
-PR03  Ollama lib present, service running → ollama
-PR04  Ollama lib present, service NOT running, vLLM available → embedded_vllm
-PR05  stdout cleanliness — resolver writes nothing to stdout
-PR06  No llama.cpp assumption — embedded provider returns embedded_vllm, not llamacpp
-PR07  build_mem0_config_for_vllm returns openai providers, not ollama
-PR08  build_mem0_config_for_ollama returns ollama providers
+PR01  TALA_MEMORY_RUNTIME_CONFIG_PATH not set -> returns None (canonical_only)
+PR02  Config file missing -> returns None, no SystemExit
+PR03  Config file present, full_memory -> returns valid dict
+PR04  Config file present, canonical_plus_embeddings -> correct extraction/embed sections
+PR05  stdout cleanliness: load_tala_runtime_config never writes to stdout
+PR06  build_mem0_config_from_resolution: canonical_only -> None
+PR07  build_mem0_config_from_resolution: ollama -> ollama providers
+PR08  build_mem0_config_from_resolution: vllm -> openai provider
+PR09  build_mem0_config_from_resolution: llamacpp -> openai provider
+PR10  build_mem0_config_for_vllm returns openai providers (backward compat)
+PR11  build_mem0_config_for_ollama returns ollama providers (backward compat)
+PR12  No SystemExit on any path
+PR13  Invalid JSON in config file -> returns None gracefully
 """
 
 import sys
 import io
 import os
+import json
+import tempfile
 import importlib
-import types
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _import_resolver():
-    """Re-import provider_resolver with a clean module state."""
-    # Ensure the mem0-core directory is on the path
-    mem0_core_dir = os.path.join(
-        os.path.dirname(__file__), ".."
-    )
+    mem0_core_dir = os.path.join(os.path.dirname(__file__), "..")
     if mem0_core_dir not in sys.path:
         sys.path.insert(0, mem0_core_dir)
     import provider_resolver
@@ -39,277 +37,225 @@ def _import_resolver():
     return provider_resolver
 
 
-def _make_http_response(status: int, body: bytes) -> MagicMock:
-    resp = MagicMock()
-    resp.status = status
-    resp.read.return_value = body
-    resp.__enter__ = lambda s: s
-    resp.__exit__ = MagicMock(return_value=False)
-    return resp
+def _write_temp_config(data):
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh)
+    return path
 
 
-_VLLM_MODELS_RESPONSE = b'{"data":[{"id":"mistral-7b"}]}'
-_OLLAMA_TAGS_RESPONSE = b'{"models":[]}'
+_FULL_MEMORY = {
+    "mode": "full_memory",
+    "resolvedAt": "2024-01-01T00:00:00.000Z",
+    "extraction": {
+        "enabled": True, "providerId": "ollama", "providerType": "ollama",
+        "model": "qwen2.5:7b", "baseUrl": "http://127.0.0.1:11434", "reason": "deterministic_rank",
+    },
+    "embeddings": {
+        "enabled": True, "providerId": "ollama", "providerType": "ollama",
+        "model": "nomic-embed-text:latest", "baseUrl": "http://127.0.0.1:11434", "reason": "deterministic_rank",
+    },
+}
+
+_CANONICAL_PLUS = {
+    "mode": "canonical_plus_embeddings",
+    "resolvedAt": "2024-01-01T00:00:00.000Z",
+    "extraction": {"enabled": False, "providerId": None, "providerType": "none", "model": None, "reason": "no_provider_resolved"},
+    "embeddings": {"enabled": True, "providerId": "ollama", "providerType": "ollama", "model": "nomic-embed-text:latest", "baseUrl": "http://127.0.0.1:11434", "reason": "deterministic_rank"},
+}
+
+_CANONICAL_ONLY = {
+    "mode": "canonical_only",
+    "resolvedAt": "2024-01-01T00:00:00.000Z",
+    "extraction": {"enabled": False, "providerId": None, "providerType": "none", "model": None, "reason": "no_provider_resolved"},
+    "embeddings": {"enabled": False, "providerId": None, "providerType": "none", "model": None, "reason": "no_embedding_provider_resolved"},
+}
+
+_VLLM_FULL = {
+    "mode": "full_memory",
+    "resolvedAt": "2024-01-01T00:00:00.000Z",
+    "extraction": {"enabled": True, "providerId": "vllm", "providerType": "vllm", "model": "mistral-7b", "baseUrl": "http://127.0.0.1:8000", "reason": "deterministic_rank"},
+    "embeddings": {"enabled": True, "providerId": "vllm", "providerType": "vllm", "model": "mistral-7b", "baseUrl": "http://127.0.0.1:8000", "reason": "deterministic_rank"},
+}
+
+_LLAMACPP_FULL = {
+    "mode": "full_memory",
+    "resolvedAt": "2024-01-01T00:00:00.000Z",
+    "extraction": {"enabled": True, "providerId": "llamacpp", "providerType": "llamacpp", "model": "llama-3.1-8b", "baseUrl": "http://127.0.0.1:8080", "reason": "deterministic_rank"},
+    "embeddings": {"enabled": True, "providerId": "llamacpp", "providerType": "llamacpp", "model": "llama-3.1-8b", "baseUrl": "http://127.0.0.1:8080", "reason": "deterministic_rank"},
+}
 
 
-# ---------------------------------------------------------------------------
-# PR01 — Ollama lib missing, vLLM available
-# ---------------------------------------------------------------------------
-
-class TestOllamaMissingVllmAvailable(unittest.TestCase):
-    """PR01: No ollama package; vLLM is running → embedded_vllm."""
-
+class TestEnvVarNotSet(unittest.TestCase):
+    """PR01: TALA_MEMORY_RUNTIME_CONFIG_PATH absent -> None."""
     def setUp(self):
-        self.resolver = _import_resolver()
-
+        self.r = _import_resolver()
     def _run(self):
-        with patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", False), \
-             patch.object(self.resolver, "_probe_vllm", return_value=(True, "mistral-7b")), \
-             patch.object(self.resolver, "_probe_ollama", return_value=False):
-            backend, info = self.resolver.resolve_inference_backend()
-        return backend, info
-
-    def test_backend_is_embedded_vllm(self):
-        backend, _ = self._run()
-        self.assertEqual(backend, "embedded_vllm")
-
+        env = {k: v for k, v in os.environ.items() if k != "TALA_MEMORY_RUNTIME_CONFIG_PATH"}
+        with patch.dict(os.environ, env, clear=True):
+            return self.r.load_tala_runtime_config()
+    def test_returns_none(self):
+        self.assertIsNone(self._run())
     def test_no_system_exit(self):
-        try:
-            self._run()
-        except SystemExit:
-            self.fail("resolve_inference_backend raised SystemExit")
-
-    def test_no_stdout_output(self):
-        captured = io.StringIO()
-        with patch("sys.stdout", captured):
-            self._run()
-        self.assertEqual(captured.getvalue(), "")
-
-    def test_info_contains_endpoint(self):
-        _, info = self._run()
-        self.assertIn("endpoint", info)
-
-    def test_info_contains_model(self):
-        _, info = self._run()
-        self.assertEqual(info.get("model"), "mistral-7b")
+        try: self._run()
+        except SystemExit: self.fail("raised SystemExit")
+    def test_no_stdout(self):
+        cap = io.StringIO()
+        with patch("sys.stdout", cap): self._run()
+        self.assertEqual(cap.getvalue(), "")
 
 
-# ---------------------------------------------------------------------------
-# PR02 — Ollama lib missing, vLLM unavailable
-# ---------------------------------------------------------------------------
-
-class TestOllamaMissingVllmUnavailable(unittest.TestCase):
-    """PR02: No ollama package, vLLM unreachable → degraded."""
-
+class TestMissingFile(unittest.TestCase):
+    """PR02: path set but file missing -> None."""
     def setUp(self):
-        self.resolver = _import_resolver()
-
+        self.r = _import_resolver()
     def _run(self):
-        with patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", False), \
-             patch.object(self.resolver, "_probe_vllm", return_value=(False, None)), \
-             patch.object(self.resolver, "_probe_ollama", return_value=False):
-            backend, info = self.resolver.resolve_inference_backend()
-        return backend, info
-
-    def test_backend_is_degraded(self):
-        backend, _ = self._run()
-        self.assertEqual(backend, "degraded")
-
+        with patch.dict(os.environ, {"TALA_MEMORY_RUNTIME_CONFIG_PATH": "/no/such/file.json"}):
+            return self.r.load_tala_runtime_config()
+    def test_returns_none(self):
+        self.assertIsNone(self._run())
     def test_no_system_exit(self):
-        try:
-            self._run()
-        except SystemExit:
-            self.fail("resolve_inference_backend raised SystemExit")
-
-    def test_no_stdout_output(self):
-        captured = io.StringIO()
-        with patch("sys.stdout", captured):
-            self._run()
-        self.assertEqual(captured.getvalue(), "")
-
-    def test_stderr_contains_degraded_warning(self):
-        captured = io.StringIO()
-        with patch("sys.stderr", captured):
-            self._run()
-        self.assertIn("degraded", captured.getvalue().lower())
-
-    def test_no_interactive_prompt(self):
-        """stdin must never be read."""
-        closed_stdin = io.StringIO()
-        closed_stdin.close()
-        with patch("sys.stdin", closed_stdin):
-            try:
-                self._run()
-            except Exception:
-                pass  # Any exception other than a stdin read error is OK
+        try: self._run()
+        except SystemExit: self.fail("raised SystemExit")
 
 
-# ---------------------------------------------------------------------------
-# PR03 — Ollama lib present, service running
-# ---------------------------------------------------------------------------
-
-class TestOllamaAvailable(unittest.TestCase):
-    """PR03: ollama lib and service both available → ollama."""
-
+class TestFullMemoryFile(unittest.TestCase):
+    """PR03: valid full_memory file -> dict with correct mode."""
     def setUp(self):
-        self.resolver = _import_resolver()
-
+        self.r = _import_resolver()
+        self.p = _write_temp_config(_FULL_MEMORY)
+    def tearDown(self):
+        os.unlink(self.p)
     def _run(self):
-        with patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", True), \
-             patch.object(self.resolver, "_probe_ollama", return_value=True):
-            backend, info = self.resolver.resolve_inference_backend()
-        return backend, info
-
-    def test_backend_is_ollama(self):
-        backend, _ = self._run()
-        self.assertEqual(backend, "ollama")
-
-    def test_no_system_exit(self):
-        try:
-            self._run()
-        except SystemExit:
-            self.fail("resolve_inference_backend raised SystemExit")
-
-    def test_no_stdout_output(self):
-        captured = io.StringIO()
-        with patch("sys.stdout", captured):
-            self._run()
-        self.assertEqual(captured.getvalue(), "")
+        with patch.dict(os.environ, {"TALA_MEMORY_RUNTIME_CONFIG_PATH": self.p}):
+            return self.r.load_tala_runtime_config()
+    def test_returns_dict(self):
+        self.assertIsInstance(self._run(), dict)
+    def test_mode_full_memory(self):
+        self.assertEqual(self._run()["mode"], "full_memory")
+    def test_no_stdout(self):
+        cap = io.StringIO()
+        with patch("sys.stdout", cap): self._run()
+        self.assertEqual(cap.getvalue(), "")
 
 
-# ---------------------------------------------------------------------------
-# PR04 — Ollama lib present but service not running; vLLM available
-# ---------------------------------------------------------------------------
-
-class TestOllamaLibPresentServiceDownVllmAvailable(unittest.TestCase):
-    """PR04: ollama lib present, service down → falls back to embedded_vllm."""
-
+class TestCanonicalPlusFile(unittest.TestCase):
+    """PR04: canonical_plus_embeddings -> extraction disabled, embeddings enabled."""
     def setUp(self):
-        self.resolver = _import_resolver()
-
+        self.r = _import_resolver()
+        self.p = _write_temp_config(_CANONICAL_PLUS)
+    def tearDown(self):
+        os.unlink(self.p)
     def _run(self):
-        with patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", True), \
-             patch.object(self.resolver, "_probe_ollama", return_value=False), \
-             patch.object(self.resolver, "_probe_vllm", return_value=(True, "llama-3")):
-            backend, info = self.resolver.resolve_inference_backend()
-        return backend, info
+        with patch.dict(os.environ, {"TALA_MEMORY_RUNTIME_CONFIG_PATH": self.p}):
+            return self.r.load_tala_runtime_config()
+    def test_extraction_disabled(self):
+        self.assertFalse(self._run()["extraction"]["enabled"])
+    def test_embeddings_enabled(self):
+        self.assertTrue(self._run()["embeddings"]["enabled"])
 
-    def test_backend_is_embedded_vllm(self):
-        backend, _ = self._run()
-        self.assertEqual(backend, "embedded_vllm")
 
+class TestInvalidJsonFile(unittest.TestCase):
+    """PR13: invalid JSON -> None gracefully."""
+    def setUp(self):
+        self.r = _import_resolver()
+        fd, self.p = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("not-valid-json{{{")
+    def tearDown(self):
+        os.unlink(self.p)
+    def test_returns_none(self):
+        with patch.dict(os.environ, {"TALA_MEMORY_RUNTIME_CONFIG_PATH": self.p}):
+            result = self.r.load_tala_runtime_config()
+        self.assertIsNone(result)
     def test_no_system_exit(self):
-        try:
-            self._run()
-        except SystemExit:
-            self.fail("resolve_inference_backend raised SystemExit")
+        with patch.dict(os.environ, {"TALA_MEMORY_RUNTIME_CONFIG_PATH": self.p}):
+            try: self.r.load_tala_runtime_config()
+            except SystemExit: self.fail("raised SystemExit")
 
 
-# ---------------------------------------------------------------------------
-# PR05 — stdout cleanliness (integration-level)
-# ---------------------------------------------------------------------------
-
-class TestStdoutCleanliness(unittest.TestCase):
-    """PR05: resolver never writes to stdout under any scenario."""
-
+class TestBuildConfigCanonicalOnly(unittest.TestCase):
+    """PR06: canonical_only -> None."""
     def setUp(self):
-        self.resolver = _import_resolver()
+        self.r = _import_resolver()
+    def test_returns_none(self):
+        self.assertIsNone(self.r.build_mem0_config_from_resolution(_CANONICAL_ONLY))
 
-    def _resolve_with_scenario(self, ollama_lib, probe_ollama_ret, probe_vllm_ret):
-        captured_stdout = io.StringIO()
-        with patch("sys.stdout", captured_stdout), \
-             patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", ollama_lib), \
-             patch.object(self.resolver, "_probe_ollama", return_value=probe_ollama_ret), \
-             patch.object(self.resolver, "_probe_vllm", return_value=probe_vllm_ret):
-            self.resolver.resolve_inference_backend()
-        return captured_stdout.getvalue()
-
-    def test_ollama_available_no_stdout(self):
-        out = self._resolve_with_scenario(True, True, (True, "m"))
-        self.assertEqual(out, "")
-
-    def test_vllm_fallback_no_stdout(self):
-        out = self._resolve_with_scenario(False, False, (True, "m"))
-        self.assertEqual(out, "")
-
-    def test_degraded_no_stdout(self):
-        out = self._resolve_with_scenario(False, False, (False, None))
-        self.assertEqual(out, "")
-
-
-# ---------------------------------------------------------------------------
-# PR06 — No llama.cpp default in embedded fallback
-# ---------------------------------------------------------------------------
-
-class TestNoLlamaCppAssumption(unittest.TestCase):
-    """PR06: embedded fallback returns 'embedded_vllm', not 'llamacpp' or similar."""
-
-    def setUp(self):
-        self.resolver = _import_resolver()
-
-    def test_embedded_fallback_is_vllm_not_llamacpp(self):
-        with patch.object(self.resolver, "OLLAMA_LIB_AVAILABLE", False), \
-             patch.object(self.resolver, "_probe_vllm", return_value=(True, "some-model")), \
-             patch.object(self.resolver, "_probe_ollama", return_value=False):
-            backend, _ = self.resolver.resolve_inference_backend()
-        self.assertEqual(backend, "embedded_vllm")
-        self.assertNotIn("llama", backend)
-        self.assertNotIn("cpp", backend)
-
-
-# ---------------------------------------------------------------------------
-# PR07 — build_mem0_config_for_vllm uses openai provider
-# ---------------------------------------------------------------------------
-
-class TestBuildConfigVllm(unittest.TestCase):
-    """PR07: vLLM config uses 'openai' provider (OpenAI-compatible), not ollama."""
-
-    def setUp(self):
-        self.resolver = _import_resolver()
-
-    def test_llm_provider_is_openai(self):
-        cfg = self.resolver.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
-        self.assertEqual(cfg["llm"]["provider"], "openai")
-
-    def test_embedder_provider_is_openai(self):
-        cfg = self.resolver.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
-        self.assertEqual(cfg["embedder"]["provider"], "openai")
-
-    def test_llm_base_url_points_to_vllm(self):
-        cfg = self.resolver.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
-        self.assertIn("127.0.0.1:8000", cfg["llm"]["config"]["openai_api_base"])
-
-    def test_no_ollama_provider_in_config(self):
-        cfg = self.resolver.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
-        self.assertNotEqual(cfg["llm"]["provider"], "ollama")
-        self.assertNotEqual(cfg["embedder"]["provider"], "ollama")
-
-    def test_vector_store_is_qdrant(self):
-        cfg = self.resolver.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
-        self.assertEqual(cfg["vector_store"]["provider"], "qdrant")
-
-
-# ---------------------------------------------------------------------------
-# PR08 — build_mem0_config_for_ollama uses ollama provider
-# ---------------------------------------------------------------------------
 
 class TestBuildConfigOllama(unittest.TestCase):
-    """PR08: Ollama config correctly sets ollama provider."""
-
+    """PR07: full_memory ollama -> ollama llm and embedder."""
     def setUp(self):
-        self.resolver = _import_resolver()
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_from_resolution(_FULL_MEMORY)
+    def test_llm_provider_ollama(self):
+        self.assertEqual(self.cfg["llm"]["provider"], "ollama")
+    def test_embedder_provider_ollama(self):
+        self.assertEqual(self.cfg["embedder"]["provider"], "ollama")
+    def test_vector_store_qdrant(self):
+        self.assertEqual(self.cfg["vector_store"]["provider"], "qdrant")
 
-    def test_llm_provider_is_ollama(self):
-        cfg = self.resolver.build_mem0_config_for_ollama()
-        self.assertEqual(cfg["llm"]["provider"], "ollama")
 
-    def test_embedder_provider_is_ollama(self):
-        cfg = self.resolver.build_mem0_config_for_ollama()
-        self.assertEqual(cfg["embedder"]["provider"], "ollama")
+class TestBuildConfigVllm(unittest.TestCase):
+    """PR08: vllm resolution -> openai provider."""
+    def setUp(self):
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_from_resolution(_VLLM_FULL)
+    def test_llm_provider_openai(self):
+        self.assertEqual(self.cfg["llm"]["provider"], "openai")
+    def test_embedder_provider_openai(self):
+        self.assertEqual(self.cfg["embedder"]["provider"], "openai")
+    def test_base_url_contains_8000(self):
+        self.assertIn("8000", self.cfg["llm"]["config"]["openai_api_base"])
 
-    def test_vector_store_is_qdrant(self):
-        cfg = self.resolver.build_mem0_config_for_ollama()
-        self.assertEqual(cfg["vector_store"]["provider"], "qdrant")
+
+class TestBuildConfigLlamaCpp(unittest.TestCase):
+    """PR09: llamacpp resolution -> openai provider."""
+    def setUp(self):
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_from_resolution(_LLAMACPP_FULL)
+    def test_llm_provider_openai(self):
+        self.assertEqual(self.cfg["llm"]["provider"], "openai")
+    def test_base_url_contains_8080(self):
+        self.assertIn("8080", self.cfg["llm"]["config"]["openai_api_base"])
+
+
+class TestBackwardCompatVllmBuilder(unittest.TestCase):
+    """PR10: build_mem0_config_for_vllm returns openai providers."""
+    def setUp(self):
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_for_vllm("http://127.0.0.1:8000", "my-model")
+    def test_llm_provider_openai(self):
+        self.assertEqual(self.cfg["llm"]["provider"], "openai")
+    def test_embedder_provider_openai(self):
+        self.assertEqual(self.cfg["embedder"]["provider"], "openai")
+    def test_vector_store_qdrant(self):
+        self.assertEqual(self.cfg["vector_store"]["provider"], "qdrant")
+
+
+class TestBackwardCompatOllamaBuilder(unittest.TestCase):
+    """PR11: build_mem0_config_for_ollama returns ollama providers."""
+    def setUp(self):
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_for_ollama()
+    def test_llm_provider_ollama(self):
+        self.assertEqual(self.cfg["llm"]["provider"], "ollama")
+    def test_embedder_provider_ollama(self):
+        self.assertEqual(self.cfg["embedder"]["provider"], "ollama")
+    def test_vector_store_qdrant(self):
+        self.assertEqual(self.cfg["vector_store"]["provider"], "qdrant")
+
+
+class TestCanonicalPlusEmbeddingsConfig(unittest.TestCase):
+    """PR04b: canonical_plus_embeddings -> no llm section, embedder present."""
+    def setUp(self):
+        self.r = _import_resolver()
+        self.cfg = self.r.build_mem0_config_from_resolution(_CANONICAL_PLUS)
+    def test_cfg_is_not_none(self):
+        self.assertIsNotNone(self.cfg)
+    def test_embedder_is_present(self):
+        self.assertIn("embedder", self.cfg)
+    def test_llm_section_absent(self):
+        self.assertNotIn("llm", self.cfg)
 
 
 if __name__ == "__main__":

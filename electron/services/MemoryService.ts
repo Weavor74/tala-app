@@ -2,9 +2,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { app } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { RuntimeFlags } from './RuntimeFlags';
 import { policyGate } from './policy/PolicyGate';
+import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 
 /**
  * Association
@@ -201,14 +203,48 @@ export class MemoryService {
      *   (e.g., from the project's virtual environment: `venv/Scripts/python.exe`).
      * @param {string} scriptPath - Absolute path to the Mem0 MCP server script
      *   (e.g., `mcp-servers/mem0-core/server.py`).
+     * @param {Record<string, string>} envVars - Additional environment variables.
+     * @param {MemoryRuntimeResolution} [resolvedConfig] - Pre-resolved memory runtime
+     *   configuration from MemoryProviderResolver.  When provided, this is serialised
+     *   to a temp file and injected into mem0-core via TALA_MEMORY_RUNTIME_CONFIG_PATH,
+     *   replacing mem0-core's own startup probing logic.
      * @returns {Promise<void>}
      */
-    async ignite(pythonPath: string, scriptPath: string, envVars: Record<string, string> = {}) {
+    async ignite(pythonPath: string, scriptPath: string, envVars: Record<string, string> = {}, resolvedConfig?: MemoryRuntimeResolution) {
         if (!RuntimeFlags.ENABLE_MEM0_REMOTE) {
             console.log(`[MemoryService] Remote mem0 is DISABLED via feature flag. Skipping ignition.`);
             return;
         }
         console.log(`[MemoryService] Igniting embedded Mem0 server at ${scriptPath}...`);
+
+        // --- Inject Tala-resolved memory runtime config ---
+        // Write the resolved config to a temp file and pass its path via env var so
+        // mem0-core no longer needs to probe inference backends on its own.
+        const runtimeEnv: Record<string, string> = { ...envVars };
+        if (resolvedConfig) {
+            console.log(`[MemoryService] Resolved memory runtime mode: ${resolvedConfig.mode}`);
+            if (resolvedConfig.extraction.enabled) {
+                console.log(`[MemoryService] Extraction provider: ${resolvedConfig.extraction.providerType}${resolvedConfig.extraction.model ? ' / ' + resolvedConfig.extraction.model : ''}`);
+            } else {
+                console.log(`[MemoryService] Extraction provider: none (${resolvedConfig.extraction.reason})`);
+            }
+            if (resolvedConfig.embeddings.enabled) {
+                console.log(`[MemoryService] Embedding provider: ${resolvedConfig.embeddings.providerType}${resolvedConfig.embeddings.model ? ' / ' + resolvedConfig.embeddings.model : ''}`);
+            } else {
+                console.log(`[MemoryService] Embedding provider: none (${resolvedConfig.embeddings.reason})`);
+            }
+            console.log(`[MemoryService] Launching mem0-core with Tala-injected memory runtime config`);
+
+            try {
+                const configPath = path.join(os.tmpdir(), `tala_memory_runtime_${Date.now()}.json`);
+                fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2), 'utf-8');
+                runtimeEnv['TALA_MEMORY_RUNTIME_CONFIG_PATH'] = configPath;
+            } catch (writeErr) {
+                console.warn('[MemoryService] Failed to write memory runtime config file; mem0-core will use fallback resolution.', writeErr);
+            }
+        } else {
+            console.log(`[MemoryService] No resolved memory runtime config provided; mem0-core will resolve independently.`);
+        }
 
         const connectPromise = async () => {
             try {
@@ -221,7 +257,7 @@ export class MemoryService {
                 this.transport = new StdioClientTransport({
                     command: pythonPath,
                     args: [scriptPath],
-                    env: { ...process.env, ...envVars, PYTHONUNBUFFERED: '1' }
+                    env: { ...process.env, ...runtimeEnv, PYTHONUNBUFFERED: '1' }
                 });
 
                 const client = new Client({
