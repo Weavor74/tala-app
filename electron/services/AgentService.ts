@@ -1560,9 +1560,17 @@ Exported standalone package from Tala.
                                     enabled: true,
                                     env: graphEnv
                                 } as any);
+                                // Signal that graph projection is now available
+                                if (this.memory) {
+                                    this.memory.setSubsystemAvailability({ graphAvailable: true });
+                                }
                             }
                         } catch (error) {
                             console.error('MCP Service connection failed:', error);
+                            // Ensure graph projection is marked unavailable on failure
+                            if (this.memory) {
+                                this.memory.setSubsystemAvailability({ graphAvailable: false });
+                            }
                         }
                     }
                 })()
@@ -1572,13 +1580,16 @@ Exported standalone package from Tala.
 
             // ── Memory Integrity: inform MemoryService of subsystem availability ──
             // After igniteSoul completes, update the memory service with the
-            // real availability of canonical store, RAG, and graph projection.
+            // real availability of canonical store, RAG, integrity mode from settings.
+            // Graph projection availability is updated inline when the MCP connect
+            // attempt above succeeds or fails.
             if (this.memory) {
                 const canonicalRepo = getCanonicalMemoryRepository();
+                const memIntegrityMode = (settings.memory?.integrityMode as import('../../shared/memory/MemoryHealthStatus').MemoryIntegrityMode | undefined) ?? 'balanced';
                 this.memory.setSubsystemAvailability({
                     canonicalReady: canonicalRepo !== null,
                     ragAvailable: this.rag?.getReadyStatus?.() ?? false,
-                    graphAvailable: false, // graph projection readiness tracked at MCP level; updated when client connects
+                    integrityMode: memIntegrityMode,
                 });
             }
 

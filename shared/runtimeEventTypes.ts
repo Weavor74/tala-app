@@ -58,6 +58,7 @@ export type RuntimeEventType =
     | 'memory.write_completed'
     | 'memory.write_failed'
     | 'memory.health_evaluated'
+    | 'memory.health_transition'
     | 'memory.repair_trigger'
     | 'memory.capability_blocked'
     | `memory.${string}`

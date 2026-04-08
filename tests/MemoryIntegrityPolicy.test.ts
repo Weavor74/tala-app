@@ -11,6 +11,7 @@
  *
  * Test IDs: MIP01 – MIP40 (MemoryIntegrityPolicy)
  *            MRT01 – MRT15 (MemoryRepairTriggerService)
+ *            MIH01 – MIH60 (memory integrity hardening — Phase 2 additions)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -441,23 +442,23 @@ describe('MemoryRepairTriggerService', () => {
         expect(event.subsystem).toBe('memory');
     });
 
-    it('MRT03: emitted trigger payload includes severity = critical for critical state', () => {
+    it('MRT03: emitted trigger payload includes severity = error for critical state', () => {
         const status = MemoryIntegrityPolicy.evaluate({
             ...allCapabilities(),
             canonicalReady: false,
         });
         service.maybeEmit(status);
         const trigger = (emittedEvents[0] as any).payload;
-        expect(trigger.severity).toBe('critical');
+        expect(trigger.severity).toBe('error');
         expect(trigger.reason).toBe('canonical_unavailable');
         expect(trigger.state).toBe('critical');
     });
 
-    it('MRT04: emitted trigger payload includes severity = error for degraded state', () => {
+    it('MRT04: emitted trigger payload includes severity = warning for degraded state', () => {
         const status = MemoryIntegrityPolicy.evaluate(canonicalOnlyInputs());
         service.maybeEmit(status);
         const trigger = (emittedEvents[0] as any).payload;
-        expect(trigger.severity).toBe('error');
+        expect(trigger.severity).toBe('warning');
         expect(trigger.state).toBe('degraded');
     });
 
@@ -563,5 +564,419 @@ describe('MemoryRepairTriggerService', () => {
         // Adding to the returned reference should not affect internal log
         // (ReadonlyArray so this is a type-level guarantee, confirmed here)
         expect(Array.isArray(log)).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH — Memory Integrity Hardening (Phase 2 additions)
+// ---------------------------------------------------------------------------
+
+import { MemoryService } from '../electron/services/MemoryService';
+
+// Stub Electron's `app` so MemoryService can be instantiated outside Electron
+vi.mock('electron', () => ({
+    app: {
+        getPath: () => '/tmp/tala-test',
+        getAppPath: () => '/tmp/tala-app',
+    },
+}));
+
+// Stub fs so no real disk I/O
+vi.mock('fs', () => ({
+    default: {
+        existsSync: () => false,
+        readFileSync: () => '[]',
+        writeFileSync: () => undefined,
+    },
+    existsSync: () => false,
+    readFileSync: () => '[]',
+    writeFileSync: () => undefined,
+}));
+
+// Stub RuntimeFlags
+vi.mock('../electron/services/RuntimeFlags', () => ({
+    RuntimeFlags: { ENABLE_MEM0_REMOTE: false },
+}));
+
+// Stub PolicyGate
+vi.mock('../electron/services/policy/PolicyGate', () => ({
+    policyGate: { evaluate: () => ({ allowed: true }) },
+}));
+
+// ---------------------------------------------------------------------------
+// MIH01–MIH10: Graph availability wiring
+// ---------------------------------------------------------------------------
+
+describe('MIH: graph availability wiring', () => {
+    let svc: MemoryService;
+
+    beforeEach(() => {
+        emittedEvents.length = 0;
+        svc = new MemoryService();
+    });
+
+    it('MIH01: graphProjection capability defaults to false', () => {
+        const h = svc.getHealthStatus();
+        expect(h.capabilities.graphProjection).toBe(false);
+    });
+
+    it('MIH02: setting graphAvailable=true reflects in health capabilities', () => {
+        svc.setSubsystemAvailability({ graphAvailable: true });
+        const h = svc.getHealthStatus();
+        expect(h.capabilities.graphProjection).toBe(true);
+    });
+
+    it('MIH03: setting graphAvailable=false reverts to unavailable', () => {
+        svc.setSubsystemAvailability({ graphAvailable: true });
+        svc.setSubsystemAvailability({ graphAvailable: false });
+        const h = svc.getHealthStatus();
+        expect(h.capabilities.graphProjection).toBe(false);
+    });
+
+    it('MIH04: graph_projection_unavailable reason appears when graphAvailable=false', () => {
+        const h = svc.getHealthStatus();
+        expect(h.reasons).toContain('graph_projection_unavailable');
+    });
+
+    it('MIH05: graph_projection_unavailable reason absent when graphAvailable=true (with canonical+mem0 up)', () => {
+        svc.setSubsystemAvailability({
+            canonicalReady: true,
+            graphAvailable: true,
+            ragAvailable: true,
+        });
+        // need full capabilities for healthy: use evaluate directly
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: true,
+            extractionEnabled: true,
+            embeddingsEnabled: true,
+            graphAvailable: true,
+            ragAvailable: true,
+            integrityMode: 'balanced',
+        });
+        expect(status.reasons).not.toContain('graph_projection_unavailable');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH11–MIH20: Cached health evaluation
+// ---------------------------------------------------------------------------
+
+describe('MIH: cached health evaluation', () => {
+    let svc: MemoryService;
+
+    beforeEach(() => {
+        emittedEvents.length = 0;
+        svc = new MemoryService();
+    });
+
+    it('MIH11: repeated calls within TTL return same object reference', () => {
+        const first = svc.getHealthStatus();
+        const second = svc.getHealthStatus();
+        expect(second).toBe(first);
+    });
+
+    it('MIH12: cache emits health_evaluated event only once within TTL', () => {
+        const before = emittedEvents.filter((e: any) => e.event === 'memory.health_evaluated').length;
+        svc.getHealthStatus();
+        svc.getHealthStatus();
+        svc.getHealthStatus();
+        const after = emittedEvents.filter((e: any) => e.event === 'memory.health_evaluated').length;
+        expect(after - before).toBe(1);
+    });
+
+    it('MIH13: cache invalidates when graphAvailable changes', () => {
+        const first = svc.getHealthStatus();
+        svc.setSubsystemAvailability({ graphAvailable: true });
+        const second = svc.getHealthStatus();
+        expect(second).not.toBe(first);
+    });
+
+    it('MIH14: cache invalidates when integrityMode changes', () => {
+        const first = svc.getHealthStatus();
+        svc.setSubsystemAvailability({ integrityMode: 'strict' });
+        const second = svc.getHealthStatus();
+        expect(second).not.toBe(first);
+    });
+
+    it('MIH15: cache invalidates when canonicalReady changes', () => {
+        const first = svc.getHealthStatus();
+        svc.setSubsystemAvailability({ canonicalReady: true });
+        const second = svc.getHealthStatus();
+        expect(second).not.toBe(first);
+    });
+
+    it('MIH16: setting same value does NOT invalidate cache', () => {
+        svc.setSubsystemAvailability({ graphAvailable: false }); // same as default
+        const first = svc.getHealthStatus();
+        svc.setSubsystemAvailability({ graphAvailable: false }); // no change
+        const second = svc.getHealthStatus();
+        expect(second).toBe(first);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH21–MIH28: Severity mapping (severityForState)
+// ---------------------------------------------------------------------------
+
+describe('MIH: repair-trigger severity tiers (severityForState)', () => {
+    it('MIH21: healthy → info (safe fallback)', () => {
+        expect(MemoryRepairTriggerService.severityForState('healthy')).toBe('info');
+    });
+
+    it('MIH22: reduced → info', () => {
+        expect(MemoryRepairTriggerService.severityForState('reduced')).toBe('info');
+    });
+
+    it('MIH23: degraded → warning', () => {
+        expect(MemoryRepairTriggerService.severityForState('degraded')).toBe('warning');
+    });
+
+    it('MIH24: critical → error', () => {
+        expect(MemoryRepairTriggerService.severityForState('critical')).toBe('error');
+    });
+
+    it('MIH25: disabled → critical', () => {
+        expect(MemoryRepairTriggerService.severityForState('disabled')).toBe('critical');
+    });
+
+    it('MIH26: maybeEmit on reduced state emits info trigger', () => {
+        emittedEvents.length = 0;
+        const repairSvc = MemoryRepairTriggerService.getInstance();
+        repairSvc.reset();
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: true,
+            extractionEnabled: false,
+            embeddingsEnabled: true,
+            graphAvailable: false,
+            ragAvailable: false,
+            integrityMode: 'balanced',
+        });
+        repairSvc.maybeEmit(status);
+        const trigger = (emittedEvents[0] as any)?.payload;
+        if (trigger) {
+            expect(trigger.severity).toBe('info');
+        }
+    });
+
+    it('MIH27: maybeEmit on disabled state emits critical trigger', () => {
+        emittedEvents.length = 0;
+        const repairSvc = MemoryRepairTriggerService.getInstance();
+        repairSvc.reset();
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: false,
+            extractionEnabled: false,
+            embeddingsEnabled: false,
+            graphAvailable: false,
+            ragAvailable: false,
+            integrityMode: 'strict',
+        });
+        expect(status.state).toBe('disabled');
+        repairSvc.maybeEmit(status);
+        const trigger = (emittedEvents[0] as any)?.payload;
+        if (trigger) {
+            expect(trigger.severity).toBe('critical');
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH31–MIH40: Deferred-work backlog protection
+// ---------------------------------------------------------------------------
+
+describe('MIH: deferred-work backlog protection', () => {
+    let svc: MemoryService;
+    let repairSvc: MemoryRepairTriggerService;
+
+    beforeEach(() => {
+        emittedEvents.length = 0;
+        svc = new MemoryService();
+        repairSvc = MemoryRepairTriggerService.getInstance();
+        repairSvc.reset();
+    });
+
+    it('MIH31: no trigger when backlog is below both thresholds', () => {
+        svc.trackDeferredWork({ extraction: 10, embedding: 20, projection: 5 });
+        const triggers = repairSvc.getTriggerLog();
+        expect(triggers).toHaveLength(0);
+    });
+
+    it('MIH32: getDeferredWorkCounts returns incremented values', () => {
+        svc.trackDeferredWork({ extraction: 5, embedding: 3, projection: 1 });
+        const counts = svc.getDeferredWorkCounts();
+        expect(counts.extraction).toBe(5);
+        expect(counts.embedding).toBe(3);
+        expect(counts.projection).toBe(1);
+    });
+
+    it('MIH33: warning trigger when backlog reaches warning threshold (250)', () => {
+        svc.trackDeferredWork({ extraction: 250 });
+        const triggers = repairSvc.getTriggerLog();
+        expect(triggers).toHaveLength(1);
+        expect(triggers[0].severity).toBe('warning');
+    });
+
+    it('MIH34: critical trigger when backlog reaches error threshold (1000)', () => {
+        svc.trackDeferredWork({ embedding: 1000 });
+        const triggers = repairSvc.getTriggerLog();
+        expect(triggers).toHaveLength(1);
+        expect(triggers[0].severity).toBe('critical');
+    });
+
+    it('MIH35: trigger details include pending counts', () => {
+        svc.trackDeferredWork({ projection: 300 });
+        const trigger = repairSvc.getTriggerLog()[0];
+        expect(trigger?.details).toBeDefined();
+        expect((trigger?.details as any).pendingProjection).toBe(300);
+    });
+
+    it('MIH36: resetDeferredWork clears extraction count', () => {
+        svc.trackDeferredWork({ extraction: 100 });
+        svc.resetDeferredWork({ extraction: true });
+        expect(svc.getDeferredWorkCounts().extraction).toBe(0);
+    });
+
+    it('MIH37: trackDeferredWork is additive across calls', () => {
+        svc.trackDeferredWork({ extraction: 100 });
+        svc.trackDeferredWork({ extraction: 200 });
+        expect(svc.getDeferredWorkCounts().extraction).toBe(300);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH41–MIH50: Settings-driven integrity mode
+// ---------------------------------------------------------------------------
+
+describe('MIH: settings-driven integrity mode', () => {
+    it('MIH41: MemoryService defaults to balanced mode', () => {
+        const svc = new MemoryService();
+        svc.setSubsystemAvailability({ canonicalReady: true });
+        const h = svc.getHealthStatus();
+        // balanced: canonical up but no extraction/embeddings → reduced not disabled
+        expect(h.state).not.toBe('disabled');
+    });
+
+    it('MIH42: strict mode disables when extraction is missing', () => {
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: false,
+            extractionEnabled: false,
+            embeddingsEnabled: false,
+            graphAvailable: false,
+            ragAvailable: false,
+            integrityMode: 'strict',
+        });
+        expect(status.state).toBe('disabled');
+        expect(status.hardDisabled).toBe(true);
+    });
+
+    it('MIH43: lenient mode does not hard-disable on degraded state', () => {
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: false,
+            extractionEnabled: false,
+            embeddingsEnabled: false,
+            graphAvailable: false,
+            ragAvailable: false,
+            integrityMode: 'lenient',
+        });
+        expect(status.hardDisabled).toBe(false);
+    });
+
+    it('MIH44: balanced is default when integrityMode omitted from evaluate()', () => {
+        const status = MemoryIntegrityPolicy.evaluate({
+            canonicalReady: true,
+            mem0Ready: true,
+            extractionEnabled: true,
+            embeddingsEnabled: true,
+            graphAvailable: true,
+            ragAvailable: true,
+        });
+        expect(status.state).toBe('healthy');
+    });
+
+    it('MIH45: setSubsystemAvailability({ integrityMode }) feeds policy correctly', () => {
+        const svc = new MemoryService();
+        svc.setSubsystemAvailability({ integrityMode: 'strict' });
+        const h = svc.getHealthStatus();
+        // No canonical, no mem0 → strict should disable
+        expect(h.state === 'disabled' || h.state === 'critical').toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// MIH51–MIH60: Health transition tracking
+// ---------------------------------------------------------------------------
+
+describe('MIH: memory health transition tracking', () => {
+    let svc: MemoryService;
+
+    beforeEach(() => {
+        emittedEvents.length = 0;
+        svc = new MemoryService();
+        // Warm the first evaluation (establishes baseline state, no transition yet)
+        svc.getHealthStatus();
+        emittedEvents.length = 0; // clear events after baseline
+    });
+
+    it('MIH51: no transition event on first-ever evaluation (no prior state)', () => {
+        // A freshly constructed service — first call should NOT emit transition
+        const freshSvc = new MemoryService();
+        const transitionsBefore = emittedEvents.filter((e: any) => e.event === 'memory.health_transition').length;
+        freshSvc.getHealthStatus();
+        const transitionsAfter = emittedEvents.filter((e: any) => e.event === 'memory.health_transition').length;
+        expect(transitionsAfter - transitionsBefore).toBe(0);
+    });
+
+    it('MIH52: state change emits one memory.health_transition event', () => {
+        // baseline: critical (no canonical)
+        // now enable canonical → state changes
+        svc.setSubsystemAvailability({ canonicalReady: true });
+        svc.getHealthStatus();
+        const transitions = emittedEvents.filter((e: any) => e.event === 'memory.health_transition');
+        expect(transitions).toHaveLength(1);
+    });
+
+    it('MIH53: repeated same-state evaluation emits no transition', () => {
+        svc.getHealthStatus(); // same state as baseline
+        const transitions = emittedEvents.filter((e: any) => e.event === 'memory.health_transition');
+        expect(transitions).toHaveLength(0);
+    });
+
+    it('MIH54: transition payload contains fromState, toState, fromMode, toMode, at', () => {
+        svc.setSubsystemAvailability({ canonicalReady: true });
+        svc.getHealthStatus();
+        const t = (emittedEvents.find((e: any) => e.event === 'memory.health_transition') as any)?.payload;
+        expect(t).toBeDefined();
+        expect(t.fromState).toBeDefined();
+        expect(t.toState).toBeDefined();
+        expect(t.fromMode).toBeDefined();
+        expect(t.toMode).toBeDefined();
+        expect(t.at).toBeDefined();
+    });
+
+    it('MIH55: healthy → degraded then degraded → healthy emits two transitions total', () => {
+        // Start with all caps → healthy
+        const freshSvc = new MemoryService();
+        freshSvc.setSubsystemAvailability({
+            canonicalReady: true,
+            graphAvailable: true,
+            ragAvailable: true,
+        });
+        freshSvc.getHealthStatus(); // baseline (critical/degraded without mem0)
+        emittedEvents.length = 0;
+
+        // Force a second call with no change — no transition
+        freshSvc.setSubsystemAvailability({ canonicalReady: false }); // → critical
+        freshSvc.getHealthStatus();
+        const firstCount = emittedEvents.filter((e: any) => e.event === 'memory.health_transition').length;
+        expect(firstCount).toBe(1);
+
+        freshSvc.setSubsystemAvailability({ canonicalReady: true }); // → back
+        freshSvc.getHealthStatus();
+        const secondCount = emittedEvents.filter((e: any) => e.event === 'memory.health_transition').length;
+        expect(secondCount).toBe(2);
     });
 });

@@ -154,6 +154,9 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         logToFile: true,
         previewChars: 1200,
         maxFullInlineChars: 12000
+    },
+    memory: {
+        integrityMode: 'balanced'
     }
 };
 
