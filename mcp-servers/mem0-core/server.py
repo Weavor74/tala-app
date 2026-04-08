@@ -31,38 +31,29 @@ except ImportError:
     sys.stderr.write("[mem0-core] CRITICAL: 'mcp' library not found. Install with 'pip install mcp'.\n")
     sys.exit(1)
 
-# Import provider resolution.  This module NEVER prompts on stdin and NEVER
-# raises SystemExit, so it is safe to call at import time.
+# Import provider resolution.  This module reads the Tala-injected config and
+# NEVER probes inference endpoints directly.
 from provider_resolver import (
-    resolve_inference_backend,
-    build_mem0_config_for_ollama,
-    build_mem0_config_for_vllm,
+    load_tala_runtime_config,
+    build_mem0_config_from_resolution,
 )
 
 # Initialize FastMCP Server
 mcp = FastMCP("mem0-core")
 
-# --- Startup provider health check ---
-# Runs once at import time; logs to stderr only.  Selects the active backend
-# and builds the mem0 config accordingly.  No prompts, no sys.exit.
-_active_backend, _backend_info = resolve_inference_backend()
+# --- Load Tala-injected memory runtime config ---
+# Tala resolves providers before launching mem0-core and writes a
+# MemoryRuntimeResolution JSON file whose path is in TALA_MEMORY_RUNTIME_CONFIG_PATH.
+_tala_resolution = load_tala_runtime_config()
 
-if _active_backend == "ollama":
-    _mem0_config = build_mem0_config_for_ollama(_backend_info.get("endpoint"))
-    sys.stderr.write("[mem0-core] Active provider: ollama\n")
-elif _active_backend == "embedded_vllm":
-    _mem0_config = build_mem0_config_for_vllm(
-        _backend_info["endpoint"],
-        _backend_info.get("model"),
-    )
-    sys.stderr.write(
-        f"[mem0-core] Active fallback provider: embedded_vllm "
-        f"({_backend_info['endpoint']})\n"
-    )
+if _tala_resolution is not None:
+    _mode = _tala_resolution.get("mode", "canonical_only")
+    _mem0_config = build_mem0_config_from_resolution(_tala_resolution)
+    sys.stderr.write(f"[mem0-core] READY mode={_mode} extraction={_tala_resolution.get('extraction', {}).get('providerType', 'none')} embeddings={_tala_resolution.get('embeddings', {}).get('providerType', 'none')}\n")
 else:
-    # degraded — no mem0 config; get_memory() will return None
+    _mode = "canonical_only"
     _mem0_config = None
-    sys.stderr.write("[mem0-core] Active provider: degraded (no inference backend available)\n")
+    sys.stderr.write("[mem0-core] READY mode=canonical_only extraction=none embeddings=none\n")
 
 # Ensure storage directory exists
 os.environ["MEM0_DIR"] = os.path.join(os.getcwd(), "data", "mem0_storage")
@@ -111,10 +102,25 @@ def version() -> str:
 @mcp.tool()
 def status() -> str:
     """Returns the current internal status (no PII)."""
+    extraction = (_tala_resolution or {}).get("extraction", {})
+    embeddings = (_tala_resolution or {}).get("embeddings", {})
     return json.dumps({
+        "healthy": True,
+        "mode": _mode,
         "configured": _mem0_config is not None,
         "backend": "qdrant",
-        "active_provider": _active_backend,
+        "extraction": {
+            "enabled": extraction.get("enabled", False),
+            "providerType": extraction.get("providerType", "none"),
+            "model": extraction.get("model"),
+            "reason": extraction.get("reason"),
+        },
+        "embeddings": {
+            "enabled": embeddings.get("enabled", False),
+            "providerType": embeddings.get("providerType", "none"),
+            "model": embeddings.get("model"),
+            "reason": embeddings.get("reason"),
+        },
         "storage_path": "[REDACTED]",
     })
 

@@ -1,12 +1,14 @@
 """Provider resolution for mem0-core.
 
-Priority order
---------------
-1. ollama        — Python 'ollama' library importable AND Ollama HTTP service
-                   is reachable at the configured endpoint.
-2. embedded_vllm — vLLM HTTP service is reachable at the configured endpoint.
-3. degraded      — neither provider is available; the MCP server stays alive
-                   but returns safe empty/error responses for memory operations.
+This module reads the Tala-injected MemoryRuntimeResolution config and converts
+it into a mem0 config dict.  It never probes inference endpoints directly —
+provider discovery belongs in Tala's ProviderSelectionService / MemoryProviderResolver.
+
+Config injection
+----------------
+Tala writes a MemoryRuntimeResolution JSON file before launching mem0-core and
+passes its path via TALA_MEMORY_RUNTIME_CONFIG_PATH.  If that env var is absent
+(e.g. standalone testing), the module falls back to canonical_only mode.
 
 This module NEVER prompts on stdin, NEVER calls sys.exit, and NEVER raises
 SystemExit.  All errors are caught and logged to stderr.
@@ -14,144 +16,270 @@ SystemExit.  All errors are caught and logged to stderr.
 
 import sys
 import os
+import json as _json
 from typing import Dict, Optional, Tuple
 
-try:
-    import urllib.request
-    import urllib.error
-    import json as _json
-except ImportError:  # pragma: no cover — stdlib always present
-    pass
-
 # ---------------------------------------------------------------------------
-# Ollama Python library detection (import-time, once)
+# Tala-injected runtime config
 # ---------------------------------------------------------------------------
 
-try:
-    import ollama as _ollama_pkg  # noqa: F401
-    OLLAMA_LIB_AVAILABLE = True
-except ImportError:
-    OLLAMA_LIB_AVAILABLE = False
-
-# ---------------------------------------------------------------------------
-# Endpoint defaults (overridable via env vars)
-# ---------------------------------------------------------------------------
-
-_DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
-_DEFAULT_VLLM_ENDPOINT = "http://127.0.0.1:8000"
-
-
-def _get_ollama_endpoint() -> str:
-    return os.environ.get("OLLAMA_HOST", _DEFAULT_OLLAMA_ENDPOINT).rstrip("/")
-
-
-def _get_vllm_endpoint() -> str:
-    return (
-        os.environ.get("TALA_VLLM_ENDPOINT")
-        or os.environ.get("VLLM_BASE_URL")
-        or _DEFAULT_VLLM_ENDPOINT
-    ).rstrip("/")
-
-
-# ---------------------------------------------------------------------------
-# HTTP probes — never raise, always return bool / (bool, str|None)
-# ---------------------------------------------------------------------------
-
-def _probe_ollama(endpoint: Optional[str] = None, timeout: int = 3) -> bool:
-    """Return True if the Ollama HTTP service responds at /api/tags."""
-    url = (endpoint or _get_ollama_endpoint()) + "/api/tags"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def _probe_vllm(endpoint: Optional[str] = None, timeout: int = 3) -> Tuple[bool, Optional[str]]:
+def load_tala_runtime_config() -> Optional[Dict]:
     """
-    Probe the vLLM OpenAI-compatible /v1/models endpoint.
+    Load the MemoryRuntimeResolution JSON written by Tala before mem0-core starts.
 
-    Returns
-    -------
-    (available: bool, first_model: str | None)
+    Returns the parsed dict on success, or None if the env var is absent or the
+    file cannot be read.  Never raises.
     """
-    url = (endpoint or _get_vllm_endpoint()) + "/v1/models"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            if resp.status != 200:
-                return False, None
-            data = _json.loads(resp.read().decode())
-            models = data.get("data", [])
-            first = models[0]["id"] if models else None
-            return True, first
-    except Exception:
-        return False, None
-
-
-# ---------------------------------------------------------------------------
-# Public resolver
-# ---------------------------------------------------------------------------
-
-def resolve_inference_backend(
-    ollama_endpoint: Optional[str] = None,
-    vllm_endpoint: Optional[str] = None,
-) -> Tuple[str, Dict]:
-    """
-    Determine which inference backend is available.
-
-    Returns
-    -------
-    (backend: str, info: dict)
-
-    backend is one of:
-      "ollama"        — Ollama Python library present and service running.
-      "embedded_vllm" — vLLM service reachable at configured endpoint.
-      "degraded"      — Neither provider is available.
-
-    info contains endpoint/model metadata for the resolved backend.
-    """
-    resolved_ollama_ep = ollama_endpoint or _get_ollama_endpoint()
-    resolved_vllm_ep = vllm_endpoint or _get_vllm_endpoint()
-
-    # --- 1. Ollama ---
-    if OLLAMA_LIB_AVAILABLE:
-        if _probe_ollama(resolved_ollama_ep):
-            sys.stderr.write(
-                "[mem0-core] Provider check: ollama available\n"
-            )
-            return "ollama", {"endpoint": resolved_ollama_ep}
-        else:
-            sys.stderr.write(
-                "[mem0-core] Provider check: ollama library present but service not running\n"
-            )
-    else:
+    config_path = os.environ.get("TALA_MEMORY_RUNTIME_CONFIG_PATH", "").strip()
+    if not config_path:
         sys.stderr.write(
-            "[mem0-core] Provider check: ollama unavailable "
-            "(Python library not installed)\n"
+            "[mem0-core] TALA_MEMORY_RUNTIME_CONFIG_PATH not set; "
+            "running in canonical_only mode.\n"
         )
+        return None
 
-    # --- 2. Embedded vLLM ---
-    sys.stderr.write(
-        "[mem0-core] Ollama unavailable; attempting embedded local vLLM fallback.\n"
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+        sys.stderr.write("[mem0-core] Loaded Tala memory runtime config\n")
+        return data
+    except FileNotFoundError:
+        sys.stderr.write(
+            f"[mem0-core] Runtime config file not found: {config_path}; "
+            "running in canonical_only mode.\n"
+        )
+        return None
+    except Exception as exc:
+        sys.stderr.write(
+            f"[mem0-core] Failed to load runtime config ({type(exc).__name__}: {exc}); "
+            "running in canonical_only mode.\n"
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# mem0 config builders
+# ---------------------------------------------------------------------------
+
+_QDRANT_PATH = os.path.join(os.getcwd(), "data", "qdrant_db")
+
+def _qdrant_vector_store() -> dict:
+    return {
+        "provider": "qdrant",
+        "config": {"path": _QDRANT_PATH},
+    }
+
+
+def build_mem0_config_for_ollama(endpoint: Optional[str] = None) -> Dict:
+    """Return a mem0 config dict that uses Ollama for LLM and embedder.
+
+    The ``endpoint`` parameter is accepted for API symmetry but is not
+    forwarded to mem0 because the Ollama provider reads the endpoint from
+    the ``OLLAMA_HOST`` environment variable at runtime.
+    """
+    return {
+        "vector_store": _qdrant_vector_store(),
+        "embedder": {
+            "provider": "ollama",
+            "config": {"model": "nomic-embed-text:latest"},
+        },
+        "llm": {
+            "provider": "ollama",
+            "config": {"model": "huihui_ai/qwen3-abliterated:8b"},
+        },
+    }
+
+
+def build_mem0_config_for_vllm(endpoint: str, model: Optional[str] = None) -> Dict:
+    """
+    Return a mem0 config dict that routes LLM calls through a
+    vLLM OpenAI-compatible endpoint.
+    """
+    base_url = endpoint.rstrip("/") + "/v1"
+    llm_model = (
+        os.environ.get("TALA_VLLM_LLM_MODEL")
+        or model
+        or "default"
     )
-    vllm_available, first_model = _probe_vllm(resolved_vllm_ep)
-    if vllm_available:
-        sys.stderr.write(
-            f"[mem0-core] Provider check: embedded local vLLM available "
-            f"at {resolved_vllm_ep}\n"
-        )
-        return "embedded_vllm", {
-            "endpoint": resolved_vllm_ep,
-            "model": first_model,
+    embed_model = (
+        os.environ.get("TALA_VLLM_EMBED_MODEL")
+        or llm_model
+    )
+    return {
+        "vector_store": _qdrant_vector_store(),
+        "embedder": {
+            "provider": "openai",
+            "config": {
+                "model": embed_model,
+                "openai_api_key": "local",
+                "openai_api_base": base_url,
+            },
+        },
+        "llm": {
+            "provider": "openai",
+            "config": {
+                "model": llm_model,
+                "openai_api_key": "local",
+                "openai_api_base": base_url,
+            },
+        },
+    }
+
+
+def build_mem0_config_for_llamacpp(endpoint: str, model: Optional[str] = None) -> Dict:
+    """Return a mem0 config dict that routes through a llama.cpp OpenAI-compatible server."""
+    base_url = endpoint.rstrip("/") + "/v1"
+    llm_model = model or "local-model"
+    return {
+        "vector_store": _qdrant_vector_store(),
+        "embedder": {
+            "provider": "openai",
+            "config": {
+                "model": llm_model,
+                "openai_api_key": "local",
+                "openai_api_base": base_url,
+            },
+        },
+        "llm": {
+            "provider": "openai",
+            "config": {
+                "model": llm_model,
+                "openai_api_key": "local",
+                "openai_api_base": base_url,
+            },
+        },
+    }
+
+
+def build_mem0_config_from_resolution(resolution: Dict) -> Optional[Dict]:
+    """
+    Build a mem0 config dict from a MemoryRuntimeResolution dict injected by Tala.
+
+    Returns None when mode is canonical_only (no provider available).
+
+    The resolution shape is:
+    {
+        "extraction": { "enabled": bool, "providerType": str, "model": str|null, "baseUrl": str|null, ... },
+        "embeddings": { "enabled": bool, "providerType": str, "model": str|null, "baseUrl": str|null, ... },
+        "mode": "canonical_only" | "canonical_plus_embeddings" | "full_memory",
+        "resolvedAt": str
+    }
+    """
+    mode = resolution.get("mode", "canonical_only")
+    extraction = resolution.get("extraction", {})
+    embeddings = resolution.get("embeddings", {})
+
+    sys.stderr.write(f"[mem0-core] Mode: {mode}\n")
+
+    if mode == "canonical_only":
+        sys.stderr.write("[mem0-core] Extraction provider: none\n")
+        sys.stderr.write("[mem0-core] Embedding provider: none\n")
+        return None
+
+    # Determine extraction config (LLM side)
+    llm_config = _build_llm_section(extraction)
+
+    # Determine embedder config
+    embedder_config = _build_embedder_section(embeddings)
+
+    ext_type = extraction.get("providerType", "none")
+    ext_model = extraction.get("model") or "none"
+    emb_type = embeddings.get("providerType", "none")
+    emb_model = embeddings.get("model") or "none"
+    sys.stderr.write(f"[mem0-core] Extraction provider: {ext_type} / {ext_model}\n")
+    sys.stderr.write(f"[mem0-core] Embedding provider: {emb_type} / {emb_model}\n")
+
+    if llm_config is None and embedder_config is None:
+        return None
+
+    cfg: Dict = {"vector_store": _qdrant_vector_store()}
+    if llm_config is not None:
+        cfg["llm"] = llm_config
+    if embedder_config is not None:
+        cfg["embedder"] = embedder_config
+
+    return cfg
+
+
+def _build_llm_section(backend: Dict) -> Optional[Dict]:
+    """Build the mem0 'llm' config section from a ResolvedMemoryBackend dict."""
+    if not backend.get("enabled"):
+        return None
+
+    provider_type = backend.get("providerType", "none")
+    model = backend.get("model") or "default"
+    base_url = backend.get("baseUrl", "")
+
+    if provider_type == "ollama":
+        return {
+            "provider": "ollama",
+            "config": {"model": model},
         }
+    elif provider_type in ("vllm", "llamacpp", "openai_compatible", "other"):
+        api_base = (base_url.rstrip("/") + "/v1") if base_url else "http://127.0.0.1:8080/v1"
+        return {
+            "provider": "openai",
+            "config": {
+                "model": model,
+                "openai_api_key": "local",
+                "openai_api_base": api_base,
+            },
+        }
+    elif provider_type in ("openai", "anthropic", "gemini"):
+        cfg: Dict = {"provider": provider_type, "config": {"model": model}}
+        if base_url:
+            cfg["config"]["openai_api_base"] = base_url
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("TALA_CLOUD_API_KEY")
+        if api_key:
+            cfg["config"]["openai_api_key"] = api_key
+        return cfg
 
-    sys.stderr.write(
-        f"[mem0-core] Embedded local vLLM unavailable at {resolved_vllm_ep}; "
-        "running in degraded mode.\n"
-    )
+    return None
 
-    # --- 3. Degraded ---
-    return "degraded", {}
+
+def _build_embedder_section(backend: Dict) -> Optional[Dict]:
+    """Build the mem0 'embedder' config section from a ResolvedMemoryBackend dict."""
+    if not backend.get("enabled"):
+        return None
+
+    provider_type = backend.get("providerType", "none")
+    model = backend.get("model") or "nomic-embed-text:latest"
+    base_url = backend.get("baseUrl", "")
+    dimensions = backend.get("dimensions")
+
+    if provider_type == "ollama":
+        cfg: Dict = {
+            "provider": "ollama",
+            "config": {"model": model},
+        }
+        if dimensions:
+            cfg["config"]["embedding_dims"] = dimensions
+        return cfg
+    elif provider_type in ("vllm", "llamacpp", "openai_compatible", "other"):
+        api_base = (base_url.rstrip("/") + "/v1") if base_url else "http://127.0.0.1:8080/v1"
+        cfg = {
+            "provider": "openai",
+            "config": {
+                "model": model,
+                "openai_api_key": "local",
+                "openai_api_base": api_base,
+            },
+        }
+        if dimensions:
+            cfg["config"]["embedding_dims"] = dimensions
+        return cfg
+    elif provider_type in ("openai", "anthropic", "gemini"):
+        cfg = {"provider": provider_type, "config": {"model": model}}
+        if base_url:
+            cfg["config"]["openai_api_base"] = base_url
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("TALA_CLOUD_API_KEY")
+        if api_key:
+            cfg["config"]["openai_api_key"] = api_key
+        if dimensions:
+            cfg["config"]["embedding_dims"] = dimensions
+        return cfg
+
+    return None
 
 
 # ---------------------------------------------------------------------------

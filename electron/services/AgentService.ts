@@ -57,6 +57,7 @@ import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregato
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
+import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 
@@ -1512,7 +1513,11 @@ Exported standalone package from Tala.
                     if (this.memory) {
                         const svcPython = resolveServicePython('mem0-core');
                         console.log(`[MCP] mem0-core python=${svcPython}`);
-                        await this.memory.ignite(svcPython, memoryScript, isolatedEnv).catch(err => console.error('Memory ignition failed:', err));
+                        // Resolve memory providers from the canonical inventory before launching mem0-core
+                        // so that mem0-core does not need to probe inference backends on its own.
+                        const memoryResolver = new MemoryProviderResolver(this.inference.getProviderInventory());
+                        const resolvedMemoryConfig = memoryResolver.resolve();
+                        await this.memory.ignite(svcPython, memoryScript, isolatedEnv, resolvedMemoryConfig).catch(err => console.error('Memory ignition failed:', err));
                     }
                 })(),
                 (async () => {
