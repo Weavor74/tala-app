@@ -36,7 +36,7 @@ vi.mock('../electron/services/telemetry/TelemetryBus', () => ({
         getInstance: () => ({
             emit: (event: unknown) => {
                 emittedEvents.push(event);
-                // Deliver to all subscribers synchronously (matching real bus behaviour)
+                // Deliver to all subscribers synchronously (matching real bus behavior)
                 for (const h of busHandlers) {
                     try { h(event as Record<string, unknown>); } catch { /* ignore */ }
                 }

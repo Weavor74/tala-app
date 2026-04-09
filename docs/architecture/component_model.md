@@ -274,7 +274,7 @@ The repair learning layer sits above the existing repair execution stack and acc
   - `getHealthTransitions` — ordered health-state transition rows.
   - `countFailedCycles`, `getDegradedHours`, `getEscalationCandidateReasons` — escalation inputs.
 - **Constructed with**: shared `Pool`.
-- **Wiring** (`AgentService._wireRepairExecutor`): constructed alongside `DeferredMemoryWorkRepository` when a pool is available; injected into both `MemoryRepairExecutionService.setOutcomeRepository()` and `MemoryRepairTriggerService.setOutcomeRepository()`.
+- **Wiring** (`AgentService._wireRepairExecutor`): constructed alongside `DeferredMemoryWorkRepository` when a pool is available; injected into both `MemoryRepairExecutionService.setOutcomeRepository()` and `MemoryRepairTriggerService.setOutcomeRepository()`. Additionally, a single `TelemetryBus` subscriber is registered in `_wireRepairExecutor` to persist the remaining event types centrally: `memory.health_transition` → `health_transition`, `memory.deferred_work_drain_started` / `memory.deferred_work_drain_completed` / `memory.deferred_work_item_failed` → `deferred_replay`, and `memory.deferred_dead_lettered` → `dead_letter`. All subscriber appends are fire-and-forget so persistence failures never block repair or chat execution.
 
 ### MemoryRepairAnalyticsService
 - **Path**: `electron/services/memory/MemoryRepairAnalyticsService.ts`
