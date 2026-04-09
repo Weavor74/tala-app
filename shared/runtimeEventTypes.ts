@@ -78,6 +78,7 @@ export type RuntimeEventType =
     | 'memory.maintenance_run_skipped'
     | 'memory.maintenance_decision'
     | 'memory.maintenance_escalation'
+    | 'memory.adaptive_plan_generated'
     | `memory.${string}`
     | 'validation.requested'
     | 'validation.completed'

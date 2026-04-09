@@ -33,6 +33,7 @@ import { MemoryRepairReflectionService } from './MemoryRepairReflectionService';
 import { MemorySelfMaintenanceService } from './MemorySelfMaintenanceService';
 import { MemoryRepairTriggerService } from './MemoryRepairTriggerService';
 import { DeferredMemoryReplayService } from './DeferredMemoryReplayService';
+import { MemoryAdaptivePlanningService } from './MemoryAdaptivePlanningService';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import type { MemoryRepairOutcomeRepository } from '../db/MemoryRepairOutcomeRepository';
 import type {
@@ -44,6 +45,7 @@ import type {
     MemorySubsystemState,
     MemoryRepairTrigger,
 } from '../../../shared/memory/MemoryHealthStatus';
+import type { MemoryAdaptivePlan, MemoryAdaptiveTarget } from '../../../shared/memory/MemoryAdaptivePlan';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -67,6 +69,26 @@ const DEFAULT_CONFIG: SchedulerConfig = {
 };
 
 // ---------------------------------------------------------------------------
+// Adaptive target → failure reason mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps an MemoryAdaptiveTarget to the most representative MemoryFailureReason
+ * for that target.  Used when the adaptive plan recommends a specific target
+ * as the highest priority and we need to pass a typed reason to
+ * MemoryRepairTriggerService.emitDirect().
+ */
+const TARGET_TO_FAILURE_REASON: Record<MemoryAdaptiveTarget, string> = {
+    canonical:         'canonical_unavailable',
+    mem0:              'mem0_unavailable',
+    graph:             'graph_projection_unavailable',
+    rag:               'rag_logging_unavailable',
+    replay_extraction: 'extraction_provider_unavailable',
+    replay_embedding:  'embedding_provider_unavailable',
+    replay_graph:      'graph_projection_unavailable',
+};
+
+// ---------------------------------------------------------------------------
 // MemoryRepairSchedulerService
 // ---------------------------------------------------------------------------
 
@@ -74,6 +96,7 @@ export class MemoryRepairSchedulerService {
     private readonly analytics: MemoryRepairAnalyticsService;
     private readonly reflection: MemoryRepairReflectionService;
     private readonly selfMaintenance: MemorySelfMaintenanceService;
+    private readonly planner: MemoryAdaptivePlanningService;
     private readonly config: SchedulerConfig;
 
     private _intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -91,6 +114,7 @@ export class MemoryRepairSchedulerService {
         this.analytics = new MemoryRepairAnalyticsService(outcomeRepo);
         this.reflection = new MemoryRepairReflectionService();
         this.selfMaintenance = selfMaintenanceSvc ?? new MemorySelfMaintenanceService();
+        this.planner = new MemoryAdaptivePlanningService();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -164,7 +188,12 @@ export class MemoryRepairSchedulerService {
 
             const report = this.reflection.generateReport(summary);
 
-            const decision = this.selfMaintenance.evaluate(summary, report);
+            // Generate adaptive plan before passing to self-maintenance so it
+            // can influence escalation and subsystem-flagging decisions.
+            const plan = this.planner.generatePlan(summary);
+            this._emitAdaptivePlan(plan, reason);
+
+            const decision = this.selfMaintenance.evaluate(summary, report, plan);
 
             // Act on the decision — bounded, threshold-driven side effects
             const actionsTaken: string[] = [];
@@ -175,7 +204,7 @@ export class MemoryRepairSchedulerService {
             }
 
             if (decision.shouldTriggerRepairCycle) {
-                this._triggerRepairCycle(summary, decision.posture);
+                this._triggerRepairCycle(summary, decision.posture, plan);
                 actionsTaken.push('trigger_repair');
             }
 
@@ -266,15 +295,25 @@ export class MemoryRepairSchedulerService {
      * Request an additional repair cycle via MemoryRepairTriggerService.emitDirect().
      *
      * Only fired when recurring failures cross the threshold.  The trigger
-     * uses the most common recurring failure reason from the summary.
+     * reason is chosen from the adaptive plan's highest-priority target (if
+     * available), falling back to the most common recurring failure reason.
      */
     private _triggerRepairCycle(
         summary: ReturnType<typeof this.analytics.generateSummary> extends Promise<infer T> ? T : never,
         posture: MemoryMaintenancePosture,
+        plan?: MemoryAdaptivePlan,
     ): void {
-        // Use the most common recurring failure reason, falling back to 'unknown'
+        // Prefer the adaptive plan's top priority target → failure reason mapping
+        const planPrimaryReason: MemoryFailureReason | undefined =
+            plan && plan.priorities.length > 0
+                ? (TARGET_TO_FAILURE_REASON[plan.priorities[0].target] as MemoryFailureReason | undefined)
+                : undefined;
+
+        // Fall back to most common recurring failure reason, then 'unknown'
         const primaryReason: MemoryFailureReason =
-            (summary.recurrentFailures[0]?.reason as MemoryFailureReason | undefined) ?? 'unknown';
+            planPrimaryReason ??
+            (summary.recurrentFailures[0]?.reason as MemoryFailureReason | undefined) ??
+            'unknown';
 
         const state: MemorySubsystemState =
             posture === 'critical' ? 'critical' : 'degraded';
@@ -288,8 +327,10 @@ export class MemoryRepairSchedulerService {
             {
                 source: 'MemoryRepairSchedulerService',
                 posture,
-                recurringFailureCount: summary.recurrentFailures.length,
+                recurringFailureCount:    summary.recurrentFailures.length,
                 escalationCandidateCount: summary.escalationCandidates.length,
+                adaptivePlanTarget:       plan?.priorities[0]?.target ?? null,
+                adaptiveTopScore:         plan?.priorities[0]?.score ?? null,
             },
         );
     }
@@ -313,6 +354,31 @@ export class MemoryRepairSchedulerService {
     }
 
     // ── Telemetry emission ────────────────────────────────────────────────────
+
+    /**
+     * Emit the adaptive plan as a telemetry event for dashboard/diagnostic consumers.
+     */
+    private _emitAdaptivePlan(plan: MemoryAdaptivePlan, reason?: string): void {
+        TelemetryBus.getInstance().emit({
+            event: 'memory.adaptive_plan_generated',
+            subsystem: 'memory',
+            executionId: 'memory-scheduler',
+            payload: {
+                generatedAt:           plan.generatedAt,
+                windowHours:           plan.windowHours,
+                topTarget:             plan.priorities[0]?.target ?? null,
+                topScore:              plan.priorities[0]?.score ?? null,
+                priorityCount:         plan.priorities.length,
+                cadence:               plan.cadence.recommendation,
+                cadenceMultiplier:     plan.cadence.suggestedMultiplier,
+                escalationBias:        plan.escalation.bias,
+                unstableSubsystems:    plan.unstableSubsystems,
+                preferReplayOverRestart: plan.preferReplayOverRestart,
+                planSummary:           plan.summary,
+                requestedBy:           reason ?? 'scheduled',
+            },
+        });
+    }
 
     private _emitRunStarted(startedAt: string, reason?: string): void {
         TelemetryBus.getInstance().emit({
