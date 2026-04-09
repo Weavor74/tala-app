@@ -78,7 +78,7 @@ const DEFAULT_CONFIG: SchedulerConfig = {
  * as the highest priority and we need to pass a typed reason to
  * MemoryRepairTriggerService.emitDirect().
  */
-const TARGET_TO_FAILURE_REASON: Record<MemoryAdaptiveTarget, string> = {
+const TARGET_TO_FAILURE_REASON: Record<MemoryAdaptiveTarget, MemoryFailureReason> = {
     canonical:         'canonical_unavailable',
     mem0:              'mem0_unavailable',
     graph:             'graph_projection_unavailable',
@@ -306,7 +306,7 @@ export class MemoryRepairSchedulerService {
         // Prefer the adaptive plan's top priority target → failure reason mapping
         const planPrimaryReason: MemoryFailureReason | undefined =
             plan && plan.priorities.length > 0
-                ? (TARGET_TO_FAILURE_REASON[plan.priorities[0].target] as MemoryFailureReason | undefined)
+                ? TARGET_TO_FAILURE_REASON[plan.priorities[0].target]
                 : undefined;
 
         // Fall back to most common recurring failure reason, then 'unknown'

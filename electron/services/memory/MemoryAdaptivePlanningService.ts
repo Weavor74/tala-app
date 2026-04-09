@@ -106,7 +106,10 @@ const REPLAY_TARGETS: MemoryAdaptiveTarget[] = [
 /** Maximum allowed score for any single target. */
 const SCORE_MAX = 100;
 
-/** Max contribution from failure frequency (occurrenceCount × 10). */
+/** Score per occurrence count in the failure frequency component. */
+const SCORE_FREQUENCY_PER_OCCURRENCE = 10;
+
+/** Maximum contribution from failure frequency (occurrenceCount × SCORE_FREQUENCY_PER_OCCURRENCE). */
 const SCORE_FREQUENCY_MAX = 50;
 
 /** Bonus when target subsystem appears in an escalation candidate. */
@@ -136,21 +139,21 @@ const SCORE_REPLAY_DL_DEPTH_CAP = 30;
 /** Threshold below which action effectiveness is considered "low". */
 const EFFECTIVENESS_LOW_THRESHOLD = 0.4;
 
+/** Age threshold in ms below which a failure is considered "recent" (1 hour). */
+const RECENCY_THRESHOLD_MS = 60 * 60 * 1_000;
+
 /** Minimum executions before effectiveness scores apply. */
 const EFFECTIVENESS_MIN_EXECUTIONS = 2;
 
 /** Minimum executions before effectiveness scores apply to unstable detection. */
 const EFFECTIVENESS_UNSTABLE_MIN_EXECUTIONS = 3;
 
-/** Minimum priority score for a target to be considered an unstable subsystem. */
-const UNSTABLE_SCORE_THRESHOLD = 30;
-
 // ---------------------------------------------------------------------------
 // Cadence constants
 // ---------------------------------------------------------------------------
 
-/** Min escalation candidates to recommend tightening the cadence. */
-const CADENCE_TIGHTEN_ESCALATION_MIN = 2;
+/** Minimum priority score for a target to be considered an unstable subsystem. */
+const UNSTABLE_SCORE_THRESHOLD = 30;
 
 /** Min recurring failures to recommend tightening the cadence. */
 const CADENCE_TIGHTEN_FAILURE_MIN = 3;
@@ -158,12 +161,11 @@ const CADENCE_TIGHTEN_FAILURE_MIN = 3;
 /** Min dead-letter items (when growing) to recommend tightening. */
 const CADENCE_TIGHTEN_DL_MIN = 3;
 
+/** Min escalation candidates to recommend tightening the cadence. */
+const CADENCE_TIGHTEN_ESCALATION_MIN = 2;
+
 /** Min repair cycles required to consider relaxing (evidence floor). */
 const CADENCE_RELAX_CYCLES_MIN = 1;
-
-// ---------------------------------------------------------------------------
-// MemoryAdaptivePlanningService
-// ---------------------------------------------------------------------------
 
 export class MemoryAdaptivePlanningService {
 
@@ -233,7 +235,7 @@ export class MemoryAdaptivePlanningService {
             const target = REASON_TO_TARGET[failure.reason];
             if (!target) continue;
 
-            const frequencyScore = Math.min(SCORE_FREQUENCY_MAX, failure.occurrenceCount * 10);
+            const frequencyScore = Math.min(SCORE_FREQUENCY_MAX, failure.occurrenceCount * SCORE_FREQUENCY_PER_OCCURRENCE);
             addScore(target, frequencyScore,
                 `recurring failure '${failure.reason}' × ${failure.occurrenceCount}`,
                 { reason: failure.reason, occurrenceCount: failure.occurrenceCount, lastSeenAt: failure.lastSeenAt },
@@ -241,7 +243,7 @@ export class MemoryAdaptivePlanningService {
 
             // Recency bonus — last occurrence within 1 hour
             const ageMs = Date.now() - new Date(failure.lastSeenAt).getTime();
-            if (ageMs < 60 * 60 * 1_000) {
+            if (ageMs < RECENCY_THRESHOLD_MS) {
                 addScore(target, SCORE_RECENCY_BONUS,
                     'seen within 1 hour',
                     { lastSeenAt: failure.lastSeenAt, ageMs },

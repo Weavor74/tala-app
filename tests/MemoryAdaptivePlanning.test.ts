@@ -644,7 +644,7 @@ describe('MemoryAdaptivePlanning — Integration', () => {
             recurrentFailures: [
                 { reason: 'mem0_unavailable', subsystem: 'mem0', occurrenceCount: 4,
                   firstSeenAt: ts, lastSeenAt: ts, recoversBetweenFailures: false },
-                { reason: 'mem0_unavailable', subsystem: 'mem0', occurrenceCount: 3,
+                { reason: 'canonical_unavailable', subsystem: 'canonical', occurrenceCount: 3,
                   firstSeenAt: ts, lastSeenAt: ts, recoversBetweenFailures: false },
             ],
             escalationCandidates: [
@@ -654,12 +654,10 @@ describe('MemoryAdaptivePlanning — Integration', () => {
                 makeEscalationCandidate('repeated_cycle_failure'),
             ],
         });
-        // Need to also stub getActionOutcomeCounts to return an action outcome
-        // to produce a shouldTriggerRepairCycle=true decision path via scheduler
+        // Need to also stub countFailedCycles to produce a repair trigger
         const svc = new MemoryRepairSchedulerService(repo);
         await svc.runNow('manual');
-        // The scheduler triggers repair when shouldTriggerRepairCycle is true.
-        // We just verify the event is emitted (trigger may or may not fire depending on posture).
+        // Verify the adaptive plan event was emitted (plan-driven path exercised)
         expect(emittedEvents.some(e => e.event === 'memory.adaptive_plan_generated')).toBe(true);
     });
 
