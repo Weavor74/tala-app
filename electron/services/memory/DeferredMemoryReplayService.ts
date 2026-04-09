@@ -268,14 +268,27 @@ export class DeferredMemoryReplayService {
         if (!this._repo) return;
         try {
             await this._repo.markFailed(item.id, error);
+            const newAttemptCount = item.attemptCount + 1;
+            const isDeadLettered = newAttemptCount >= item.maxAttempts;
+
             this._emit('memory.deferred_work_item_failed', {
                 id: item.id,
                 kind: item.kind,
                 canonicalMemoryId: item.canonicalMemoryId,
-                attemptCount: item.attemptCount + 1,
+                attemptCount: newAttemptCount,
                 maxAttempts: item.maxAttempts,
                 error,
             });
+
+            if (isDeadLettered) {
+                this._emit('memory.deferred_dead_lettered', {
+                    id: item.id,
+                    kind: item.kind,
+                    canonicalMemoryId: item.canonicalMemoryId,
+                    attemptCount: newAttemptCount,
+                    error,
+                });
+            }
         } catch (err) {
             console.error('[DeferredMemoryReplayService] markFailed error:', err);
         }
