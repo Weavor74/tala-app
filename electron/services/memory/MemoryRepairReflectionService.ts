@@ -49,7 +49,7 @@ const DEFAULT_CONFIG: ReflectionConfig = {
     minExecutionsForEffectiveness: 2,
 };
 
-// Priority sort order (lower number = higher priority)
+// Priority sort order (lower number = higher priority, so 'critical' sorts first)
 const PRIORITY_ORDER: Record<MemoryRepairRecommendation['priority'], number> = {
     critical: 0,
     high: 1,

@@ -74,7 +74,10 @@ const REASON_TO_SUBSYSTEM: Record<string, string> = {
 };
 
 function subsystemForReason(reason: string): string {
-    return REASON_TO_SUBSYSTEM[reason] ?? reason;
+    // Fall back to 'unknown' for any reason not in the static map so that
+    // analytics outputs remain consistent even as new MemoryFailureReason
+    // values are added in future phases.
+    return REASON_TO_SUBSYSTEM[reason] ?? 'unknown';
 }
 
 // ---------------------------------------------------------------------------

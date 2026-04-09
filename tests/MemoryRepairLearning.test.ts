@@ -129,7 +129,7 @@ describe('MemoryRepairOutcomeRepository', () => {
         expect(pool.query).toHaveBeenCalledOnce();
         expect(typeof id).toBe('string');
         expect(id).not.toBeNull();
-        expect(id!.length).toBeGreaterThan(0);
+        expect((id as string).length).toBeGreaterThan(0);
     });
 
     // MRL02 — append passes all non-null fields
