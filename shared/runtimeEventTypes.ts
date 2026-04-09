@@ -73,6 +73,11 @@ export type RuntimeEventType =
     | 'memory.deferred_dead_lettered'
     | 'memory.repair_outcome_persisted'
     | 'memory.repair_reflection_generated'
+    | 'memory.maintenance_run_started'
+    | 'memory.maintenance_run_completed'
+    | 'memory.maintenance_run_skipped'
+    | 'memory.maintenance_decision'
+    | 'memory.maintenance_escalation'
     | `memory.${string}`
     | 'validation.requested'
     | 'validation.completed'

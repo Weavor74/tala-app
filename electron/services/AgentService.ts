@@ -64,6 +64,7 @@ import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService'
 import { DeferredMemoryReplayService } from './memory/DeferredMemoryReplayService';
 import { DeferredMemoryWorkRepository } from './db/DeferredMemoryWorkRepository';
 import { MemoryRepairOutcomeRepository } from './db/MemoryRepairOutcomeRepository';
+import { MemoryRepairSchedulerService } from './memory/MemoryRepairSchedulerService';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
@@ -226,6 +227,8 @@ export class AgentService {
     private USE_STRUCTURED_LTMF = true;
     /** Memory repair executor — wired after igniteSoul completes. */
     private _repairExecutor: MemoryRepairExecutionService | null = null;
+    /** Scheduled memory repair analytics loop — wired alongside _repairExecutor. */
+    private _repairScheduler: MemoryRepairSchedulerService | null = null;
     /**
      * Parameters captured during igniteSoul() so repair handlers can restart
      * individual subsystems without re-running the full startup sequence.
@@ -1675,6 +1678,9 @@ Exported standalone package from Tala.
         if (this._repairExecutor) {
             this._repairExecutor.stop();
         }
+        if (this._repairScheduler) {
+            this._repairScheduler.stop();
+        }
         await Promise.all([this.rag.shutdown(), this.memory.shutdown(), this.inference.getLocalEngine().extinguish()]);
     }
 
@@ -1718,6 +1724,9 @@ Exported standalone package from Tala.
                 executor.setOutcomeRepository(outcomeRepo);
                 MemoryRepairTriggerService.getInstance().setOutcomeRepository(outcomeRepo);
                 console.log('[AgentService] MemoryRepairOutcomeRepository wired.');
+
+                // Create the scheduler (started later, after all handlers are registered)
+                this._repairScheduler = new MemoryRepairSchedulerService(outcomeRepo);
 
                 // ── Repair evidence persistence subscribers ───────────────────
                 // Subscribe once to TelemetryBus and persist the remaining
@@ -1935,6 +1944,20 @@ Exported standalone package from Tala.
 
         executor.start();
         console.log('[AgentService] MemoryRepairExecutionService started with live handlers.');
+
+        // ── MemoryRepairSchedulerService ──────────────────────────────────────
+        // Start the scheduled analytics + self-maintenance loop only when the
+        // outcome repository has been successfully wired (it's created above in
+        // the pool-guarded block).  The scheduler holds a direct reference to
+        // the same outcomeRepo instance used by the executor.
+        //
+        // If the pool was unavailable (outcomeRepo was not created) the scheduler
+        // is not started and _repairScheduler remains null.  This is intentional:
+        // without persisted outcomes the analytics layer has nothing to read.
+        if (this._repairScheduler !== null) {
+            this._repairScheduler.start();
+            console.log('[AgentService] MemoryRepairSchedulerService started.');
+        }
     }
 
     private async syncAstroProfiles() {

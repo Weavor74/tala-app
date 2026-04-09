@@ -309,3 +309,40 @@ The repair learning layer sits above the existing repair execution stack and acc
 - **`MemoryRepairTriggerService`**: calls `_persistTrigger` inside `_recordTrigger()` via `setOutcomeRepository()`. Fire-and-forget; errors are caught and logged.
 - **Runtime wiring**: `AgentService._wireRepairExecutor()` constructs `MemoryRepairOutcomeRepository(pool)` when a pool is available and injects it into both services via `setOutcomeRepository()`.
 - **New telemetry events**: `memory.repair_outcome_persisted`, `memory.repair_reflection_generated` added to `RuntimeEventType` in `shared/runtimeEventTypes.ts`.
+
+---
+
+## Scheduled Memory Repair Loop
+
+The scheduled loop consumes the repair learning output on a fixed cadence and takes bounded, threshold-driven maintenance actions.  See `docs/architecture/memory_repair_scheduler.md` for full details.
+
+### MemorySelfMaintenanceService
+- **Path**: `electron/services/memory/MemorySelfMaintenanceService.ts`
+- **Purpose**: Pure, synchronous decision layer.  Consumes `MemoryRepairInsightSummary` and `MemoryRepairReflectionReport` and returns a `MemoryMaintenanceDecision` describing what actions, if any, should be taken.
+- **Inputs**: `MemoryRepairInsightSummary`, `MemoryRepairReflectionReport`, optional `SelfMaintenanceThresholds`.
+- **Output**: `MemoryMaintenanceDecision` — includes `posture`, boolean flags, and an ordered `actions[]` list.
+- **Posture levels**: `stable` → `watch` → `unstable` → `critical`.
+- **Invariants**:
+  - No side effects — does not emit telemetry, modify DB, or trigger repairs itself.
+  - Deterministic: same inputs + thresholds = same decision.
+  - Threshold-gated: no action on isolated single events unless posture is already critical.
+  - Does not change provider settings, integrity mode, or user config.
+
+### MemoryRepairSchedulerService
+- **Path**: `electron/services/memory/MemoryRepairSchedulerService.ts`
+- **Purpose**: Drives the periodic analytics → reflection → decision loop.  Acts on the decision by delegating to `MemoryRepairTriggerService`, `DeferredMemoryReplayService`, and `TelemetryBus`.
+- **Public API**: `start()`, `stop()`, `runNow(reason?)`, `getLastRun()`.
+- **Default cadence**: every 10 minutes; analysis window 24 hours.
+- **Concurrency guard**: only one run at a time; overlapping `runNow()` calls return a skipped result immediately.
+- **Actions taken** (threshold-based only):
+  - `emit_escalation` → `TelemetryBus.emit('memory.maintenance_escalation', …)`
+  - `trigger_repair` → `MemoryRepairTriggerService.emitDirect(…)`
+  - `prioritize_replay` → `DeferredMemoryReplayService.drain()`
+  - `publish_report` → `TelemetryBus.emit('memory.maintenance_decision', …)` (always)
+- **Emits**: `memory.maintenance_run_started`, `memory.maintenance_run_completed`, `memory.maintenance_run_skipped`, `memory.maintenance_decision`, `memory.maintenance_escalation`.
+- **Wiring** (`AgentService._wireRepairExecutor`): constructed when `MemoryRepairOutcomeRepository` is available; started after all repair handlers are registered; stopped in `AgentService.shutdown()`.
+
+### Shared types: MemoryMaintenanceState.ts
+- **Path**: `shared/memory/MemoryMaintenanceState.ts`
+- **Exports**: `MemoryMaintenancePosture`, `MemoryRepairScheduledRunResult`, `MemoryMaintenanceDecision`, `MemoryMaintenanceAction`.
+- **Lives in `shared/`** so the renderer (e.g. Reflection Dashboard) can import posture and run-result types without depending on Node.js-only services.
