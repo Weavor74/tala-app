@@ -65,6 +65,11 @@ export type RuntimeEventType =
     | 'memory.repair_action_completed'
     | 'memory.repair_completed'
     | 'memory.capability_blocked'
+    | 'memory.deferred_work_enqueued'
+    | 'memory.deferred_work_drain_started'
+    | 'memory.deferred_work_item_completed'
+    | 'memory.deferred_work_item_failed'
+    | 'memory.deferred_work_drain_completed'
     | `memory.${string}`
     | 'validation.requested'
     | 'validation.completed'
