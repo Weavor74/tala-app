@@ -244,6 +244,10 @@ export class MemoryService {
      * types, then evaluates whether any threshold is breached and emits a
      * repair trigger if so.
      *
+     * These counters serve as in-memory approximations for threshold checks.
+     * The persistent source of truth lives in the deferred_memory_work table
+     * via DeferredMemoryReplayService.
+     *
      * Call this from extraction/embedding/projection paths whenever a task
      * must be deferred because the relevant subsystem is unavailable.
      */

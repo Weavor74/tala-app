@@ -49,7 +49,7 @@ Singleton.  Obtain via `MemoryRepairExecutionService.getInstance()`.
 |--------|-------------|
 | `setHealthStatusProvider(provider)` | Inject `() => MemoryHealthStatus` (typically `() => memoryService.getHealthStatus()`). |
 | `registerRepairHandler(action, handler)` | Register `async () => Promise<boolean>` for a specific `RepairActionKind`.  Actions without a registered handler are skipped. |
-| `setDeferredWorkDrainCallback(cb)` | Optional.  Called after recovery when canonical is healthy to drain the deferred-work backlog. |
+| `setDeferredWorkDrainCallback(cb)` | Optional.  Called after recovery when canonical is healthy to drain the deferred-work backlog.  Accepts `() => Promise<void> \| void` — async callbacks are awaited. |
 
 ### Public API
 
@@ -143,10 +143,11 @@ repairSvc.registerRepairHandler('reconnect_canonical', async () => {
 repairSvc.registerRepairHandler('reconnect_mem0', async () => {
     // attempt mem0 MCP client reconnection; return true on success
 });
-repairSvc.setDeferredWorkDrainCallback(() => {
-    memoryService.resetDeferredWork({ extraction: true, embedding: true, projection: true });
-    // re-queue deferred work items here
-});
+// Wire the real deferred-work drain via DeferredMemoryReplayService
+const replayService = DeferredMemoryReplayService.getInstance();
+replayService.setRepository(new DeferredMemoryWorkRepository(pgPool));
+replayService.setHealthStatusProvider(() => memoryService.getHealthStatus());
+repairSvc.setDeferredWorkDrainCallback(() => replayService.drain());
 repairSvc.start(); // subscribe to memory.repair_trigger
 ```
 

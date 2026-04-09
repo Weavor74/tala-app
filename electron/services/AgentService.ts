@@ -60,6 +60,8 @@ import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMem
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
+import { DeferredMemoryReplayService } from './memory/DeferredMemoryReplayService';
+import { DeferredMemoryWorkRepository } from './db/DeferredMemoryWorkRepository';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
@@ -1687,15 +1689,29 @@ Exported standalone package from Tala.
      *  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService
      *  reconnect_rag       — shutdown + re-ignite tala-core RAG server
      *
-     * drain_deferred_work is intentionally not wired via setDeferredWorkDrainCallback
-     * because no real deferred-work queue exists yet.  The executor will record
-     * the action as skipped, which is the honest result in this state.
+     * drain_deferred_work is wired via DeferredMemoryReplayService.drain() which
+     * replays bounded batches of persisted work items when canonical is healthy.
      */
     private _wireRepairExecutor(): void {
         const executor = MemoryRepairExecutionService.getInstance();
         this._repairExecutor = executor;
 
         executor.setHealthStatusProvider(() => this.memory.getHealthStatus());
+
+        // Wire the real deferred-work drain callback
+        const repo = getCanonicalMemoryRepository();
+        if (repo) {
+            const pgRepo = repo as unknown as PostgresMemoryRepository;
+            const pool = pgRepo.getSharedPool();
+            if (pool) {
+                const deferredRepo = new DeferredMemoryWorkRepository(pool);
+                const replayService = DeferredMemoryReplayService.getInstance();
+                replayService.setRepository(deferredRepo);
+                replayService.setHealthStatusProvider(() => this.memory.getHealthStatus());
+                executor.setDeferredWorkDrainCallback(() => replayService.drain());
+                console.log('[AgentService] DeferredMemoryReplayService wired to repair executor.');
+            }
+        }
 
         // Shared helper: teardown and reinitialize the canonical PostgreSQL store,
         // then update MemoryService with the result.  Used by both reconnect_canonical
@@ -3147,6 +3163,15 @@ Failure to provide a tool call will result in system termination.`;
                             'success',
                             { payload: { turnId, canonicalMemoryId, mode: activeMode, source: 'postgres' } },
                         );
+                        // Enqueue deferred embedding if embeddings are unavailable at write time
+                        if (canonicalMemoryId && !memHealth.capabilities.embeddings) {
+                            DeferredMemoryReplayService.getInstance().enqueue({
+                                kind: 'embedding',
+                                canonicalMemoryId,
+                                turnId,
+                                payload: { contentText, mode: activeMode },
+                            }).catch(() => {});
+                        }
                     } else {
                         console.warn('[AgentService] P7A canonical write failed:', writeResult.error);
                     }
@@ -3158,6 +3183,19 @@ Failure to provide a tool call will result in system termination.`;
                     // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
                     if (!allowMem0Write) {
                         console.log(`[AgentService][MemoryIntegrity] Mem0 write suppressed (mem0Runtime unavailable). state=${memHealth.state}`);
+                        // Enqueue extraction work so it can be replayed when extraction recovers
+                        if (canonicalMemoryId && !memHealth.capabilities.extraction) {
+                            DeferredMemoryReplayService.getInstance().enqueue({
+                                kind: 'extraction',
+                                canonicalMemoryId,
+                                turnId,
+                                payload: {
+                                    userMessage: userMessage.slice(0, 500),
+                                    agentResponse: finalResponse.slice(0, 1000),
+                                    mode: activeMode,
+                                },
+                            }).catch(() => {});
+                        }
                     } else {
                     const ts = new Date().toISOString().slice(0, 16); // 2026-03-02T08:46
                     const memEntry = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
@@ -3203,6 +3241,20 @@ Failure to provide a tool call will result in system termination.`;
                     // process_memory handles Extract → Validate → Store internally.
                     if (!allowGraphWrite) {
                         console.log(`[AgentService][MemoryIntegrity] Graph write suppressed (extraction/graphProjection unavailable). state=${memHealth.state}`);
+                        // Enqueue graph_projection work so it can be replayed when graph recovers
+                        if (canonicalMemoryId) {
+                            const turnText = `User: ${userMessage.slice(0, 500)}\nTala: ${finalResponse.slice(0, 600)}`;
+                            DeferredMemoryReplayService.getInstance().enqueue({
+                                kind: 'graph_projection',
+                                canonicalMemoryId,
+                                turnId,
+                                payload: {
+                                    text: turnText,
+                                    source_ref: canonicalMemoryId,
+                                    canonical_memory_id: canonicalMemoryId,
+                                },
+                            }).catch(() => {});
+                        }
                     } else if (this.mcpService && typeof this.mcpService.callTool === 'function') {
                         const turnText = `User: ${userMessage}\nTala: ${finalResponse.slice(0, 600)}`;
                         await this.mcpService.callTool('tala-memory-graph', 'process_memory', {

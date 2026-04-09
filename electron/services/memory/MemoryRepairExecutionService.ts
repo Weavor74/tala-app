@@ -172,8 +172,10 @@ export class MemoryRepairExecutionService {
     /**
      * Optional deferred-work drain callback.
      * Called after a successful recovery cycle when canonical memory is healthy.
+     * May be async — the executor awaits it so that drain results are reflected
+     * in telemetry before the cycle completes.
      */
-    private _drainDeferredWork: (() => void) | null = null;
+    private _drainDeferredWork: (() => Promise<void> | void) | null = null;
 
     /** TelemetryBus unsubscribe handle (non-null when started). */
     private _unsub: (() => void) | null = null;
@@ -242,8 +244,9 @@ export class MemoryRepairExecutionService {
     /**
      * Register a callback invoked to drain deferred-work backlog after recovery.
      * Only called when canonical memory is confirmed healthy after a cycle.
+     * The callback may return a Promise — it will be awaited.
      */
-    setDeferredWorkDrainCallback(cb: () => void): void {
+    setDeferredWorkDrainCallback(cb: () => Promise<void> | void): void {
         this._drainDeferredWork = cb;
     }
 
@@ -358,14 +361,15 @@ export class MemoryRepairExecutionService {
 
             if (action === 'drain_deferred_work') {
                 if (this._drainDeferredWork && currentStatus.capabilities.canonical) {
+                    const drainStart = Date.now();
                     try {
-                        this._drainDeferredWork();
-                        actionsExecuted.push({ action, success: true, durationMs: 0, skipped: false });
+                        await this._drainDeferredWork();
+                        actionsExecuted.push({ action, success: true, durationMs: Date.now() - drainStart, skipped: false });
                     } catch (err) {
                         actionsExecuted.push({
                             action,
                             success: false,
-                            durationMs: 0,
+                            durationMs: Date.now() - drainStart,
                             skipped: false,
                             error: err instanceof Error ? err.message : String(err),
                         });
@@ -428,7 +432,7 @@ export class MemoryRepairExecutionService {
         if (this._isHealthAcceptable(currentStatus) && currentStatus.capabilities.canonical) {
             if (this._drainDeferredWork) {
                 try {
-                    this._drainDeferredWork();
+                    await this._drainDeferredWork();
                 } catch {
                     // drain errors are non-fatal
                 }
