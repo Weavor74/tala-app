@@ -60,8 +60,10 @@ import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMem
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
+import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
 import { DeferredMemoryReplayService } from './memory/DeferredMemoryReplayService';
 import { DeferredMemoryWorkRepository } from './db/DeferredMemoryWorkRepository';
+import { MemoryRepairOutcomeRepository } from './db/MemoryRepairOutcomeRepository';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
@@ -1710,6 +1712,12 @@ Exported standalone package from Tala.
                 replayService.setHealthStatusProvider(() => this.memory.getHealthStatus());
                 executor.setDeferredWorkDrainCallback(() => replayService.drain());
                 console.log('[AgentService] DeferredMemoryReplayService wired to repair executor.');
+
+                // Wire the repair outcome repository for learning / analytics
+                const outcomeRepo = new MemoryRepairOutcomeRepository(pool);
+                executor.setOutcomeRepository(outcomeRepo);
+                MemoryRepairTriggerService.getInstance().setOutcomeRepository(outcomeRepo);
+                console.log('[AgentService] MemoryRepairOutcomeRepository wired.');
             }
         }
 

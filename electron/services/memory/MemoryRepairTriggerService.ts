@@ -30,6 +30,7 @@ import type {
     MemoryRepairTrigger,
     MemorySubsystemState,
 } from '../../../shared/memory/MemoryHealthStatus';
+import type { MemoryRepairOutcomeRepository } from '../db/MemoryRepairOutcomeRepository';
 
 // ---------------------------------------------------------------------------
 // De-duplication window
@@ -52,6 +53,8 @@ export class MemoryRepairTriggerService {
     private readonly _lastEmittedAt = new Map<MemoryFailureReason, number>();
     /** Full log of all triggers emitted this session (capped at 200). */
     private readonly _triggerLog: MemoryRepairTrigger[] = [];
+    /** Optional persistent repository for trigger events. */
+    private _outcomeRepo: MemoryRepairOutcomeRepository | null = null;
 
     private constructor() {}
 
@@ -135,10 +138,19 @@ export class MemoryRepairTriggerService {
         return this._triggerLog;
     }
 
+    /**
+     * Provide the persistent outcome repository.
+     * When set, each emitted trigger is persisted as a 'repair_trigger' row.
+     */
+    setOutcomeRepository(repo: MemoryRepairOutcomeRepository): void {
+        this._outcomeRepo = repo;
+    }
+
     /** Resets de-duplication state and trigger log (primarily for testing). */
     reset(): void {
         this._lastEmittedAt.clear();
         this._triggerLog.length = 0;
+        this._outcomeRepo = null;
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -158,6 +170,21 @@ export class MemoryRepairTriggerService {
         if (this._triggerLog.length > 200) {
             this._triggerLog.shift();
         }
+        this._persistTrigger(trigger);
+    }
+
+    private _persistTrigger(trigger: MemoryRepairTrigger): void {
+        if (!this._outcomeRepo) return;
+        this._outcomeRepo.append({
+            eventType: 'repair_trigger',
+            severity: trigger.severity,
+            reason: trigger.reason,
+            state: trigger.state,
+            detailsJson: trigger.details ?? {},
+            occurredAt: trigger.emittedAt,
+        }).catch(err => {
+            console.error('[MemoryRepairTriggerService] persist trigger failed:', err);
+        });
     }
 
     /**
