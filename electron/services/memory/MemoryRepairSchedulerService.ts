@@ -34,6 +34,7 @@ import { MemorySelfMaintenanceService } from './MemorySelfMaintenanceService';
 import { MemoryRepairTriggerService } from './MemoryRepairTriggerService';
 import { DeferredMemoryReplayService } from './DeferredMemoryReplayService';
 import { MemoryAdaptivePlanningService } from './MemoryAdaptivePlanningService';
+import { MemoryOptimizationSuggestionService } from './MemoryOptimizationSuggestionService';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import type { MemoryRepairOutcomeRepository } from '../db/MemoryRepairOutcomeRepository';
 import type {
@@ -97,6 +98,7 @@ export class MemoryRepairSchedulerService {
     private readonly reflection: MemoryRepairReflectionService;
     private readonly selfMaintenance: MemorySelfMaintenanceService;
     private readonly planner: MemoryAdaptivePlanningService;
+    private readonly suggestionSvc: MemoryOptimizationSuggestionService;
     private readonly config: SchedulerConfig;
 
     private _intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -115,6 +117,7 @@ export class MemoryRepairSchedulerService {
         this.reflection = new MemoryRepairReflectionService();
         this.selfMaintenance = selfMaintenanceSvc ?? new MemorySelfMaintenanceService();
         this.planner = new MemoryAdaptivePlanningService();
+        this.suggestionSvc = new MemoryOptimizationSuggestionService();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -192,6 +195,10 @@ export class MemoryRepairSchedulerService {
             // can influence escalation and subsystem-flagging decisions.
             const plan = this.planner.generatePlan(summary);
             this._emitAdaptivePlan(plan, reason);
+
+            // Generate human-gated optimization suggestions (advisory only).
+            // This call is non-mutating and has no side effects beyond telemetry.
+            this.suggestionSvc.generateReport(summary, plan);
 
             const decision = this.selfMaintenance.evaluate(summary, report, plan);
 
