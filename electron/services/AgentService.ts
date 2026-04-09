@@ -1718,6 +1718,115 @@ Exported standalone package from Tala.
                 executor.setOutcomeRepository(outcomeRepo);
                 MemoryRepairTriggerService.getInstance().setOutcomeRepository(outcomeRepo);
                 console.log('[AgentService] MemoryRepairOutcomeRepository wired.');
+
+                // ── Repair evidence persistence subscribers ───────────────────
+                // Subscribe once to TelemetryBus and persist the remaining
+                // repair-evidence event types that are not covered by
+                // MemoryRepairExecutionService or MemoryRepairTriggerService.
+                //
+                // All appends are fire-and-forget — persistence failures must
+                // never block the repair or chat execution path.
+
+                const bus = TelemetryBus.getInstance();
+
+                bus.subscribe((evt) => {
+                    if (evt.event === 'memory.health_transition') {
+                        const p = evt.payload ?? {};
+                        outcomeRepo.append({
+                            eventType: 'health_transition',
+                            state: (p['toState'] as string | undefined) ?? null,
+                            mode: (p['toMode'] as string | undefined) ?? null,
+                            reason: Array.isArray(p['reasons']) && p['reasons'].length > 0
+                                ? String(p['reasons'][0])
+                                : null,
+                            detailsJson: p,
+                            occurredAt: (p['at'] as string | undefined) ?? evt.timestamp,
+                        }).then(() => {
+                            console.log('[MemoryRepairOutcomePersistence] persisted eventType=health_transition');
+                        }).catch((err) => {
+                            console.error('[MemoryRepairOutcomePersistence] append failed eventType=health_transition', err);
+                        });
+                        return;
+                    }
+
+                    if (evt.event === 'memory.deferred_work_drain_started') {
+                        const p = evt.payload ?? {};
+                        outcomeRepo.append({
+                            eventType: 'deferred_replay',
+                            subsystem: Array.isArray(p['eligibleKinds']) && p['eligibleKinds'].length === 1
+                                ? String(p['eligibleKinds'][0])
+                                : null,
+                            detailsJson: { phase: 'started', ...p },
+                            occurredAt: evt.timestamp,
+                        }).then(() => {
+                            console.log('[MemoryRepairOutcomePersistence] persisted eventType=deferred_replay phase=started');
+                        }).catch((err) => {
+                            console.error('[MemoryRepairOutcomePersistence] append failed eventType=deferred_replay phase=started', err);
+                        });
+                        return;
+                    }
+
+                    if (evt.event === 'memory.deferred_work_drain_completed') {
+                        const p = evt.payload ?? {};
+                        const completed = (p['completed'] as number | undefined) ?? 0;
+                        const failed = (p['failed'] as number | undefined) ?? 0;
+                        const outcome = failed === 0 && completed > 0
+                            ? 'recovered'
+                            : failed > 0 && completed > 0
+                                ? 'partial'
+                                : failed > 0
+                                    ? 'failed'
+                                    : 'skipped';
+                        outcomeRepo.append({
+                            eventType: 'deferred_replay',
+                            outcome,
+                            subsystem: Array.isArray(p['eligibleKinds']) && p['eligibleKinds'].length === 1
+                                ? String(p['eligibleKinds'][0])
+                                : null,
+                            detailsJson: { phase: 'completed', ...p },
+                            occurredAt: evt.timestamp,
+                        }).then(() => {
+                            console.log('[MemoryRepairOutcomePersistence] persisted eventType=deferred_replay phase=completed');
+                        }).catch((err) => {
+                            console.error('[MemoryRepairOutcomePersistence] append failed eventType=deferred_replay phase=completed', err);
+                        });
+                        return;
+                    }
+
+                    if (evt.event === 'memory.deferred_work_item_failed') {
+                        const p = evt.payload ?? {};
+                        outcomeRepo.append({
+                            eventType: 'deferred_replay',
+                            outcome: 'failed',
+                            subsystem: (p['kind'] as string | undefined) ?? null,
+                            canonicalMemoryId: (p['canonicalMemoryId'] as string | undefined) ?? null,
+                            detailsJson: { phase: 'item_failed', ...p },
+                            occurredAt: evt.timestamp,
+                        }).then(() => {
+                            console.log('[MemoryRepairOutcomePersistence] persisted eventType=deferred_replay phase=item_failed');
+                        }).catch((err) => {
+                            console.error('[MemoryRepairOutcomePersistence] append failed eventType=deferred_replay phase=item_failed', err);
+                        });
+                        return;
+                    }
+
+                    if (evt.event === 'memory.deferred_dead_lettered') {
+                        const p = evt.payload ?? {};
+                        outcomeRepo.append({
+                            eventType: 'dead_letter',
+                            subsystem: (p['kind'] as string | undefined) ?? null,
+                            canonicalMemoryId: (p['canonicalMemoryId'] as string | undefined) ?? null,
+                            reason: (p['error'] as string | undefined) ?? null,
+                            detailsJson: p,
+                            occurredAt: evt.timestamp,
+                        }).then(() => {
+                            console.log('[MemoryRepairOutcomePersistence] persisted eventType=dead_letter');
+                        }).catch((err) => {
+                            console.error('[MemoryRepairOutcomePersistence] append failed eventType=dead_letter', err);
+                        });
+                        return;
+                    }
+                });
             }
         }
 
