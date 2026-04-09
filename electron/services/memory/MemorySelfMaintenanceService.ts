@@ -33,6 +33,7 @@ import type {
     MemoryMaintenanceAction,
     MemoryMaintenancePosture,
 } from '../../../shared/memory/MemoryMaintenanceState';
+import type { MemoryAdaptivePlan } from '../../../shared/memory/MemoryAdaptivePlan';
 
 // ---------------------------------------------------------------------------
 // Thresholds
@@ -100,10 +101,16 @@ export class MemorySelfMaintenanceService {
      *
      * The method is synchronous and pure — it does not query the DB, emit
      * telemetry, or trigger any actions itself.
+     *
+     * @param plan — Optional adaptive plan from MemoryAdaptivePlanningService.
+     *               When provided, the plan's escalation bias and unstable
+     *               subsystem list influence the decision flags without
+     *               overriding core policy.
      */
     evaluate(
         summary: MemoryRepairInsightSummary,
         report: MemoryRepairReflectionReport,
+        plan?: MemoryAdaptivePlan,
     ): MemoryMaintenanceDecision {
         const actions: MemoryMaintenanceAction[] = [];
 
@@ -111,8 +118,8 @@ export class MemorySelfMaintenanceService {
 
         const shouldTriggerRepairCycle = this._shouldTriggerRepairCycle(summary, posture);
         const shouldPrioritizeReplay = this._shouldPrioritizeReplay(summary, posture);
-        const shouldEscalate = this._shouldEscalate(summary, report, posture);
-        const shouldFlagUnstableSubsystems = this._shouldFlagUnstableSubsystems(summary, posture);
+        const shouldEscalate = this._shouldEscalate(summary, report, posture, plan);
+        const shouldFlagUnstableSubsystems = this._shouldFlagUnstableSubsystems(summary, posture, plan);
 
         // Build the concrete action list in priority order
         if (shouldEscalate) {
@@ -250,8 +257,24 @@ export class MemorySelfMaintenanceService {
         summary: MemoryRepairInsightSummary,
         report: MemoryRepairReflectionReport,
         posture: MemoryMaintenancePosture,
+        plan?: MemoryAdaptivePlan,
     ): boolean {
-        if (posture === 'stable' || posture === 'watch') return false;
+        if (posture === 'stable') return false;
+
+        // At 'watch' posture: only escalate when the adaptive plan signals an
+        // accelerating pattern AND there is at least one observable signal
+        // (recurring failures, escalation candidates, or critical findings).
+        if (posture === 'watch') {
+            return (
+                plan?.escalation.bias === 'accelerate' &&
+                (
+                    summary.recurrentFailures.length > 0 ||
+                    summary.escalationCandidates.length >= this.thresholds.escalationCandidateMin ||
+                    report.hasCriticalFindings
+                )
+            );
+        }
+
         return (
             summary.escalationCandidates.length >= this.thresholds.escalationCandidateMin ||
             report.hasCriticalFindings
@@ -261,7 +284,13 @@ export class MemorySelfMaintenanceService {
     private _shouldFlagUnstableSubsystems(
         summary: MemoryRepairInsightSummary,
         posture: MemoryMaintenancePosture,
+        plan?: MemoryAdaptivePlan,
     ): boolean {
+        // When the adaptive plan has identified unstable subsystems, flag them
+        // even at 'watch' posture so that higher-level surfaces can react.
+        if (plan && plan.unstableSubsystems.length > 0 && posture !== 'stable') {
+            return true;
+        }
         if (posture === 'stable' || posture === 'watch') return false;
         // Flag subsystems as unstable when there are actions with persistently
         // low success rates (critical threshold)
