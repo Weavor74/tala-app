@@ -120,11 +120,15 @@ export class DeferredMemoryWorkRepository {
         batchSize: number,
         kinds?: DeferredMemoryWorkKind[],
     ): Promise<DeferredMemoryWorkItem[]> {
-        const kindsClause = kinds && kinds.length > 0
-            ? `AND kind = ANY($3::text[])`
-            : '';
-        const params: unknown[] = [batchSize, new Date().toISOString()];
-        if (kinds && kinds.length > 0) params.push(kinds);
+        const safeBatchSize = Math.max(1, Math.min(batchSize, 100));
+
+        let kindsClause = '';
+        const params: unknown[] = [new Date().toISOString()];
+
+        if (kinds && kinds.length > 0) {
+            params.push(kinds);
+            kindsClause = `AND kind = ANY($2::text[])`;
+        }
 
         const result = await this.pool.query<Record<string, unknown>>(
             `UPDATE deferred_memory_work
@@ -134,10 +138,10 @@ export class DeferredMemoryWorkRepository {
                  SELECT id
                  FROM   deferred_memory_work
                  WHERE  status = 'pending'
-                   AND  next_attempt_at <= $2
+                   AND  next_attempt_at <= $1
                    ${kindsClause}
                  ORDER  BY next_attempt_at
-                 LIMIT  $1
+                 LIMIT  ${safeBatchSize}
                  FOR    UPDATE SKIP LOCKED
              )
              RETURNING *`,

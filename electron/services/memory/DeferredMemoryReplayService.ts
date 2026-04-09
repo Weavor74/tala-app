@@ -52,8 +52,11 @@ export type DeferredWorkHandler = (item: DeferredMemoryWorkItem) => Promise<bool
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum items processed per drain() call. */
+/** Maximum items processed per drain() call. Callers may request less. */
 const DRAIN_BATCH_SIZE = 25;
+
+/** Hard cap on batchSize to enforce the bounded-drain invariant. */
+const DRAIN_BATCH_SIZE_MAX = 100;
 
 // ---------------------------------------------------------------------------
 // DeferredMemoryReplayService
@@ -155,6 +158,7 @@ export class DeferredMemoryReplayService {
         if (!this._repo) return;
         if (this._draining) return;
 
+        const safeBatchSize = Math.max(1, Math.min(batchSize, DRAIN_BATCH_SIZE_MAX));
         const health = this._evalHealth();
         if (!health || !health.capabilities.canonical) {
             // Canonical authority is required for safe replay
@@ -169,7 +173,7 @@ export class DeferredMemoryReplayService {
 
         this._emit('memory.deferred_work_drain_started', {
             eligibleKinds,
-            batchSize,
+            batchSize: safeBatchSize,
             healthState: health.state,
         });
 
@@ -177,15 +181,15 @@ export class DeferredMemoryReplayService {
         let failed = 0;
 
         try {
-            const items = await this._repo.claimBatch(batchSize, eligibleKinds);
+            const items = await this._repo.claimBatch(safeBatchSize, eligibleKinds);
 
             for (const item of items) {
                 const handler = this._handlers.get(item.kind);
 
                 if (!handler) {
-                    // No handler registered — leave in_progress; it will be
-                    // retried on the next drain once a handler is registered.
-                    // Mark as failed to avoid leaving items stuck in_progress.
+                    // No handler registered — fail the item immediately so it
+                    // re-enters the pending queue with exponential backoff.
+                    // It will be retried on the next drain once a handler is registered.
                     await this._failItem(item, 'no_handler_registered');
                     failed++;
                     continue;

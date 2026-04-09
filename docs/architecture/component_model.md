@@ -223,3 +223,32 @@ This document describes the Tala system as a collection of interacting component
   - Strict-mode hard-disable: if `hardDisabled = true` and `state = disabled` from a non-canonical reason, the cycle returns `failed` immediately rather than partially recovering.
 - **Emits**: `memory.repair_started`, `memory.repair_action_started`, `memory.repair_action_completed`, `memory.repair_completed` via `TelemetryBus`.
 - **Singleton**: `MemoryRepairExecutionService.getInstance()` with `reset()` for tests.
+- **Deferred work drain**: `setDeferredWorkDrainCallback(cb: () => Promise<void> | void)` accepts an async callback; the callback is awaited so telemetry from the drain is captured before the cycle completes.
+
+### DeferredMemoryWorkRepository
+- **Path**: `electron/services/db/DeferredMemoryWorkRepository.ts`
+- **Purpose**: Data-access layer for the `deferred_memory_work` Postgres table (migration 012). Provides `enqueue`, `claimBatch` (atomic UPDATE…RETURNING with FOR UPDATE SKIP LOCKED), `markCompleted`, `markFailed` (with exponential backoff and dead-letter promotion), `getStats`, and `countPending`.
+- **Work kinds**: `extraction`, `embedding`, `graph_projection`.
+- **Work statuses**: `pending`, `in_progress`, `completed`, `failed`, `dead_letter`.
+- **Constructed with**: shared `Pool` (same pool used by PostgresMemoryRepository and other DB repositories).
+
+### DeferredMemoryReplayService
+- **Path**: `electron/services/memory/DeferredMemoryReplayService.ts`
+- **Purpose**: Bounded, policy-gated replay executor for deferred memory work. Drains pending items from the persistent queue in batches, respecting capability availability from `MemoryHealthStatus`.
+- **Inputs**: Injected `DeferredMemoryWorkRepository` (`setRepository`), health status provider (`setHealthStatusProvider`), per-kind `DeferredWorkHandler` callbacks (`registerHandler`).
+- **drain() invariants**:
+  - No replay when `canonical` capability is false.
+  - Only `extraction` items replayed when `health.capabilities.extraction = true`.
+  - Only `embedding` items replayed when `health.capabilities.embeddings = true`.
+  - Only `graph_projection` items replayed when `health.capabilities.graphProjection = true`.
+  - Default batch size: 25 items. Concurrent drain calls are no-ops (guarded by `_draining` flag).
+  - Items with no registered handler are failed with `no_handler_registered` error.
+  - Handler errors are caught; failed items are retried with exponential backoff (30s × 2^attempt, capped at 1 hour) up to `maxAttempts` (default 3), then dead-lettered.
+- **Wiring** (AgentService._wireRepairExecutor):
+  - `executor.setDeferredWorkDrainCallback(() => DeferredMemoryReplayService.getInstance().drain())`.
+- **Enqueue** (AgentService.storeMemories suppressed write paths):
+  - `extraction` enqueued when `!memHealth.capabilities.extraction` during mem0 write suppression.
+  - `embedding` enqueued when `!memHealth.capabilities.embeddings` after a successful canonical write.
+  - `graph_projection` enqueued when `!allowGraphWrite` during graph write suppression.
+- **Emits**: `memory.deferred_work_enqueued`, `memory.deferred_work_drain_started`, `memory.deferred_work_item_completed`, `memory.deferred_work_item_failed`, `memory.deferred_work_drain_completed` via `TelemetryBus`.
+- **Singleton**: `DeferredMemoryReplayService.getInstance()` with `reset()` for tests.
