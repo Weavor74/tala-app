@@ -70,6 +70,8 @@ export type RuntimeEventType =
     | 'memory.deferred_work_item_completed'
     | 'memory.deferred_work_item_failed'
     | 'memory.deferred_work_drain_completed'
+    | 'memory.repair_outcome_persisted'
+    | 'memory.repair_reflection_generated'
     | `memory.${string}`
     | 'validation.requested'
     | 'validation.completed'

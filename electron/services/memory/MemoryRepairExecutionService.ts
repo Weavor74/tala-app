@@ -44,6 +44,7 @@ import type {
     MemoryRepairTrigger,
     MemorySubsystemState,
 } from '../../../shared/memory/MemoryHealthStatus';
+import type { MemoryRepairOutcomeRepository } from '../db/MemoryRepairOutcomeRepository';
 
 // ---------------------------------------------------------------------------
 // Repair action kinds
@@ -177,6 +178,9 @@ export class MemoryRepairExecutionService {
      */
     private _drainDeferredWork: (() => Promise<void> | void) | null = null;
 
+    /** Optional repository for persisting repair outcome events. */
+    private _outcomeRepo: MemoryRepairOutcomeRepository | null = null;
+
     /** TelemetryBus unsubscribe handle (non-null when started). */
     private _unsub: (() => void) | null = null;
 
@@ -248,6 +252,17 @@ export class MemoryRepairExecutionService {
      */
     setDeferredWorkDrainCallback(cb: () => Promise<void> | void): void {
         this._drainDeferredWork = cb;
+    }
+
+    /**
+     * Provide the persistent outcome repository.
+     *
+     * When set, the executor persists a repair_cycle record after each cycle
+     * and a repair_action record after each real action.  Persistence failures
+     * are non-fatal and do not interrupt the repair execution path.
+     */
+    setOutcomeRepository(repo: MemoryRepairOutcomeRepository): void {
+        this._outcomeRepo = repo;
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -421,6 +436,7 @@ export class MemoryRepairExecutionService {
             actionsRun++;
 
             this._emitActionCompleted(cycleId, action, success, durationMs, error);
+            this._persistActionOutcome(cycleId, action, initialStatus, success, durationMs, error);
 
             // Re-evaluate health after each action
             const reEval = this._evalHealth();
@@ -481,6 +497,7 @@ export class MemoryRepairExecutionService {
         this._handlers.clear();
         this._getHealthStatus = null;
         this._drainDeferredWork = null;
+        this._outcomeRepo = null;
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -613,6 +630,7 @@ export class MemoryRepairExecutionService {
         this._lastOutcome = result.outcome;
         this._activeReason = undefined;
         this._emitCycleCompleted(result);
+        this._persistCycleOutcome(result);
     }
 
     private _skippedResult(reason: string): MemoryRepairCycleResult {
@@ -696,6 +714,61 @@ export class MemoryRepairExecutionService {
                 actionsCount: result.actionsExecuted.length,
                 actionsSucceeded: result.actionsExecuted.filter(a => a.success).length,
             },
+        });
+    }
+
+    // ── Outcome persistence ───────────────────────────────────────────────────
+
+    /**
+     * Persist a repair_cycle outcome record.
+     * Fire-and-forget; persistence failures are logged but never throw.
+     */
+    private _persistCycleOutcome(result: MemoryRepairCycleResult): void {
+        if (!this._outcomeRepo) return;
+        this._outcomeRepo.append({
+            eventType: 'repair_cycle',
+            reason: result.reason,
+            outcome: result.outcome,
+            state: result.finalState,
+            cycleId: result.cycleId,
+            detailsJson: {
+                durationMs: result.durationMs,
+                actionsCount: result.actionsExecuted.length,
+                actionsSucceeded: result.actionsExecuted.filter(a => a.success).length,
+            },
+            occurredAt: new Date().toISOString(),
+        }).catch(err => {
+            console.error('[MemoryRepairExecutionService] persist cycle outcome failed:', err);
+        });
+    }
+
+    /**
+     * Persist a repair_action outcome record.
+     * Fire-and-forget; persistence failures are logged but never throw.
+     */
+    private _persistActionOutcome(
+        cycleId: string,
+        action: RepairActionKind,
+        initialStatus: MemoryHealthStatus,
+        success: boolean,
+        durationMs: number,
+        error?: string,
+    ): void {
+        if (!this._outcomeRepo) return;
+        this._outcomeRepo.append({
+            eventType: 'repair_action',
+            actionType: action,
+            outcome: success ? 'recovered' : 'failed',
+            state: initialStatus.state,
+            mode: initialStatus.mode,
+            cycleId,
+            detailsJson: {
+                durationMs,
+                ...(error !== undefined && { error }),
+            },
+            occurredAt: new Date().toISOString(),
+        }).catch(err => {
+            console.error('[MemoryRepairExecutionService] persist action outcome failed:', err);
         });
     }
 }

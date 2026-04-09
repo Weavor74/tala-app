@@ -252,3 +252,60 @@ This document describes the Tala system as a collection of interacting component
   - `graph_projection` enqueued when `!allowGraphWrite` during graph write suppression.
 - **Emits**: `memory.deferred_work_enqueued`, `memory.deferred_work_drain_started`, `memory.deferred_work_item_completed`, `memory.deferred_work_item_failed`, `memory.deferred_work_drain_completed` via `TelemetryBus`.
 - **Singleton**: `DeferredMemoryReplayService.getInstance()` with `reset()` for tests.
+
+---
+
+## Repair Learning Layer (Phase 9+)
+
+The repair learning layer sits above the existing repair execution stack and accumulates structured history of all repair events, detects recurring failure patterns, and synthesises actionable recommendations for reflection and self-maintenance systems.
+
+### MemoryRepairOutcomeRepository
+- **Path**: `electron/services/db/MemoryRepairOutcomeRepository.ts`
+- **Purpose**: Data-access layer for the `memory_repair_outcomes` Postgres table (migration 013). Persists all significant repair-related lifecycle events. Provides read methods for analytics queries.
+- **Event types stored**: `repair_trigger`, `repair_cycle`, `repair_action`, `health_transition`, `deferred_replay`, `dead_letter`.
+- **Write path**: `append(input)` — fire-and-forget, returns `null` on DB error so callers in the repair hot-path are never blocked.
+- **Read methods**:
+  - `countTriggers` / `countCycles` — aggregate counts within a time window.
+  - `getReasonCounts` — recurring failure reason aggregates.
+  - `getActionOutcomeCounts` — per-action outcome counts for effectiveness analysis.
+  - `getCycleOutcomeCounts` — cycle outcome distribution.
+  - `getReplayCounts` — deferred-replay success/failure counts.
+  - `getDeadLetterHalves` — dead-letter counts split by early/late half of window (growth detection).
+  - `getHealthTransitions` — ordered health-state transition rows.
+  - `countFailedCycles`, `getDegradedHours`, `getEscalationCandidateReasons` — escalation inputs.
+- **Constructed with**: shared `Pool`.
+- **Wiring** (`AgentService._wireRepairExecutor`): constructed alongside `DeferredMemoryWorkRepository` when a pool is available; injected into both `MemoryRepairExecutionService.setOutcomeRepository()` and `MemoryRepairTriggerService.setOutcomeRepository()`.
+
+### MemoryRepairAnalyticsService
+- **Path**: `electron/services/memory/MemoryRepairAnalyticsService.ts`
+- **Purpose**: Reads from `MemoryRepairOutcomeRepository` and produces a `MemoryRepairInsightSummary` describing patterns in the given time window. Deterministic: same data + window = same output.
+- **Inputs**: `MemoryRepairOutcomeRepository` (injected), optional `AnalyticsThresholds` override.
+- **Output**: `MemoryRepairInsightSummary` — includes `recurrentFailures`, `actionEffectiveness`, `queueBehavior`, `escalationCandidates`, `trajectories`.
+- **Invariants**:
+  - Read-only — does not write to DB or emit telemetry.
+  - All queries bounded by time window (default 24 hours).
+  - Thresholds are constants with safe defaults (`recurringFailureMinCount = 2`, `escalationReasonThreshold = 3`, `escalationFailedCyclesThreshold = 3`, `escalationDegradedHoursThreshold = 1h`).
+
+### MemoryRepairReflectionService
+- **Path**: `electron/services/memory/MemoryRepairReflectionService.ts`
+- **Purpose**: Synthesises a `MemoryRepairReflectionReport` from a `MemoryRepairInsightSummary`. Converts analytics findings into prioritised, evidence-backed `MemoryRepairRecommendation` objects for consumption by reflection dashboards and self-maintenance systems.
+- **Input**: `MemoryRepairInsightSummary` (from `MemoryRepairAnalyticsService.generateSummary()`).
+- **Output**: `MemoryRepairReflectionReport` — includes ordered `recommendations[]` and `hasCriticalFindings`.
+- **Recommendation codes**: `investigate_subsystem`, `review_repair_action`, `drain_dead_letter_queue`, `extend_analysis_window`, `escalate_to_maintenance`, `monitor_trajectory`.
+- **Invariants**:
+  - Synchronous and pure — does not query DB directly.
+  - Deterministic: same summary → same report.
+  - Max recommendations per report is configurable (default 10).
+  - Does not modify settings, provider config, or trigger repair actions. This layer observes and recommends only.
+- **Emits**: `memory.repair_reflection_generated` via `TelemetryBus`.
+
+### Shared types: MemoryRepairInsights.ts
+- **Path**: `shared/memory/MemoryRepairInsights.ts`
+- **Exports**: `MemoryRepairOutcomeRecord`, `MemoryRepairOutcomeEventType`, `MemoryRepairInsightSummary`, `MemoryRepairReflectionReport`, `MemoryRepairRecommendation`, `RecurringFailure`, `ActionEffectivenessEntry`, `QueueBehaviorSummary`, `EscalationCandidate`, `RepairTrajectory`.
+- **Lives in `shared/`** so the renderer (e.g. reflection dashboard) can import insight types without depending on Node.js-only data layer.
+
+### Persistence integration
+- **`MemoryRepairExecutionService`**: calls `_persistCycleOutcome` in `_finalizeCycle()` and `_persistActionOutcome` after each real action via `setOutcomeRepository()`. Fire-and-forget; errors are caught and logged.
+- **`MemoryRepairTriggerService`**: calls `_persistTrigger` inside `_recordTrigger()` via `setOutcomeRepository()`. Fire-and-forget; errors are caught and logged.
+- **Runtime wiring**: `AgentService._wireRepairExecutor()` constructs `MemoryRepairOutcomeRepository(pool)` when a pool is available and injects it into both services via `setOutcomeRepository()`.
+- **New telemetry events**: `memory.repair_outcome_persisted`, `memory.repair_reflection_generated` added to `RuntimeEventType` in `shared/runtimeEventTypes.ts`.
