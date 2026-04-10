@@ -84,14 +84,20 @@ export class MemoryService {
     private localMemories: MemoryItem[] = [];
     /** Last resolved memory runtime configuration (set during ignite()). */
     private _resolvedMemoryConfig: MemoryRuntimeResolution | null = null;
-    /** Whether the canonical Postgres store is considered ready. Updated externally. */
-    private _canonicalReady: boolean = false;
-    /** Whether the RAG interaction log is available. Updated externally. */
-    private _ragAvailable: boolean = false;
+    /**
+     * Mutable tracked state managed by _setIfChanged.
+     * These fields are the single source of truth for subsystem flags that
+     * participate in change-detection (canonicalReady, ragAvailable,
+     * integrityMode).  Reading or writing them via the helper keeps the
+     * logic type-safe without indexing `this` with a generic key.
+     */
+    private _trackedState = {
+        canonicalReady: false,
+        ragAvailable: false,
+        integrityMode: 'balanced' as MemoryIntegrityMode,
+    };
     /** Whether the graph projection service is available. Updated externally. */
     private _graphAvailable: boolean = false;
-    /** Policy strictness mode for memory integrity evaluation. */
-    private _integrityMode: MemoryIntegrityMode = 'balanced';
 
     // ── Health-status cache (avoids redundant per-turn recomputation) ────────
     /** Short-lived cache of the last evaluated health status. */
@@ -141,14 +147,14 @@ export class MemoryService {
         integrityMode?: MemoryIntegrityMode;
     }): void {
         let changed = false;
-        if (this._setIfChanged('_canonicalReady', opts.canonicalReady)) changed = true;
-        if (this._setIfChanged('_ragAvailable', opts.ragAvailable)) changed = true;
+        if (this._setIfChanged('canonicalReady', opts.canonicalReady)) changed = true;
+        if (this._setIfChanged('ragAvailable', opts.ragAvailable)) changed = true;
         if (opts.graphAvailable !== undefined && opts.graphAvailable !== this._graphAvailable) {
             console.log(`[MemoryService] graphProjection availability changed: ${this._graphAvailable} -> ${opts.graphAvailable}`);
             this._graphAvailable = opts.graphAvailable;
             changed = true;
         }
-        if (this._setIfChanged('_integrityMode', opts.integrityMode)) changed = true;
+        if (this._setIfChanged('integrityMode', opts.integrityMode)) changed = true;
         if (changed) {
             this._invalidateHealthCache('subsystem_availability_changed');
         }
@@ -167,13 +173,13 @@ export class MemoryService {
         this._invalidateHealthCache('resolved_config_changed');
     }
 
-    /** Updates a primitive field only if the new value differs. Returns true when changed. */
-    private _setIfChanged<K extends '_canonicalReady' | '_ragAvailable' | '_integrityMode'>(
+    /** Updates a tracked-state field only if the new value differs. Returns true when changed. */
+    private _setIfChanged<K extends keyof typeof this._trackedState>(
         key: K,
-        value: this[K] | undefined,
+        value: (typeof this._trackedState)[K] | undefined,
     ): boolean {
-        if (value !== undefined && value !== this[key]) {
-            this[key] = value;
+        if (value !== undefined && value !== this._trackedState[key]) {
+            this._trackedState[key] = value;
             return true;
         }
         return false;
@@ -201,14 +207,14 @@ export class MemoryService {
         }
 
         const status = MemoryIntegrityPolicy.evaluate({
-            canonicalReady: this._canonicalReady,
+            canonicalReady: this._trackedState.canonicalReady,
             mem0Ready: this.client !== null,
             resolvedMode: this._resolvedMemoryConfig?.mode,
             extractionEnabled: this._resolvedMemoryConfig?.extraction.enabled ?? false,
             embeddingsEnabled: this._resolvedMemoryConfig?.embeddings.enabled ?? false,
             graphAvailable: this._graphAvailable,
-            ragAvailable: this._ragAvailable,
-            integrityMode: this._integrityMode,
+            ragAvailable: this._trackedState.ragAvailable,
+            integrityMode: this._trackedState.integrityMode,
         });
 
         // ── Cache the result ─────────────────────────────────────────────────
