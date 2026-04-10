@@ -2854,12 +2854,19 @@ Exported standalone package from Tala.
 
                 // Guard: never fire the ToolRequired retry for greeting turns or turns where
                 // no tools were authorized — they should produce plain-content responses.
+                // Also never force tools when ToolGatekeeper blocked them or when grounded
+                // memory context makes a direct answer sufficient (directAnswerPreferred).
+                const toolsBlocked = gateDecision.blockedTools.length > 0;
+                const directAnswerPreferred = gateDecision.directAnswerPreferred === true;
+
                 const toolRequiredEligible =
                     requiresTool &&
                     calls.length === 0 &&
                     activeMode !== 'rp' &&
                     !isGreeting &&
-                    turnObject.intent.class !== 'greeting';
+                    turnObject.intent.class !== 'greeting' &&
+                    !toolsBlocked &&
+                    !directAnswerPreferred;
 
                 if (toolRequiredEligible) {
                     console.log(`[AgentService] retry=ToolRequired intent=${turnObject.intent.class} tools=${toolsToSend.length}`);
