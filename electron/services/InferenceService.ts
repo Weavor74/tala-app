@@ -88,6 +88,8 @@ export class InferenceService {
 
     /** Reference to the embedded llama.cpp child process, kept to prevent GC and allow cleanup. */
     private _embeddedChild: import('child_process').ChildProcess | null = null;
+    /** Reference to the embedded vLLM child process, kept to prevent GC and allow cleanup. */
+    private _embeddedVllmChild: import('child_process').ChildProcess | null = null;
 
     constructor(registryConfig?: ProviderRegistryConfig) {
         this.localInferenceManager = new LocalInferenceManager(this.localEngine);
@@ -750,6 +752,259 @@ export class InferenceService {
     }
 
     /**
+     * Canonical embedded startup path.
+     *
+     * Policy:
+     * 1. Attempt embedded_vllm first (authoritative embedded engine).
+     * 2. Optionally attempt embedded_llamacpp as a legacy fallback.
+     * 3. Return true on the first successful startup/adoption.
+     */
+    public async ensureEmbeddedProviderStarted(options: {
+        embeddedVllm?: {
+            port?: number;
+            modelId?: string;
+            startupTimeoutMs?: number;
+        };
+        embeddedLlamaCpp?: {
+            modelPath: string;
+            port?: number;
+            contextSize?: number;
+            pythonPath?: string;
+            startupTimeoutMs?: number;
+        };
+        allowLegacyLlamaCpp?: boolean;
+    } = {}): Promise<boolean> {
+        const allowLegacyLlamaCpp = options.allowLegacyLlamaCpp ?? true;
+        const vllmStarted = await this.ensureEmbeddedVllmStarted(options.embeddedVllm ?? {});
+        if (vllmStarted) return true;
+
+        if (!allowLegacyLlamaCpp || !options.embeddedLlamaCpp?.modelPath) {
+            return false;
+        }
+
+        return this.ensureEmbeddedStarted(options.embeddedLlamaCpp.modelPath, {
+            port: options.embeddedLlamaCpp.port,
+            contextSize: options.embeddedLlamaCpp.contextSize,
+            pythonPath: options.embeddedLlamaCpp.pythonPath,
+            startupTimeoutMs: options.embeddedLlamaCpp.startupTimeoutMs,
+        });
+    }
+
+    /**
+     * Ensures the embedded vLLM server is running.
+     *
+     * Launch strategy:
+     * - Adopt an already-running OpenAI-compatible server on the configured port.
+     * - Otherwise spawn scripts/run-vllm(.bat|.sh), then poll /v1/models for readiness.
+     */
+    public async ensureEmbeddedVllmStarted(options: {
+        port?: number;
+        modelId?: string;
+        startupTimeoutMs?: number;
+    } = {}): Promise<boolean> {
+        const port = options.port ?? 8000;
+        const startupTimeoutMs = options.startupTimeoutMs ?? 120_000;
+        const endpoint = `http://127.0.0.1:${port}`;
+        const modelsUrl = `${endpoint}/v1/models`;
+
+        const modelsReachable = await this._isModelsEndpointReachable(modelsUrl, 2000);
+        if (modelsReachable) {
+            telemetry.operational(
+                'local_inference',
+                'inference_started',
+                'info',
+                'InferenceService',
+                `Embedded vLLM already running on port ${port}`,
+                'success',
+                { payload: { providerId: 'embedded_vllm', port } },
+            );
+            return true;
+        }
+
+        const portOccupied = await this._isPortOccupied(port);
+        if (portOccupied) {
+            telemetry.operational(
+                'local_inference',
+                'inference_failed',
+                'error',
+                'InferenceService',
+                `Port ${port} is already in use by a non-inference service - cannot start embedded vLLM`,
+                'failure',
+                { payload: { providerId: 'embedded_vllm', port } },
+            );
+            return false;
+        }
+
+        const repoRoot = this._resolveRepoRoot();
+        const isWin = process.platform === 'win32';
+        const launcher = path.join(repoRoot, 'scripts', isWin ? 'run-vllm.bat' : 'run-vllm.sh');
+
+        if (!fs.existsSync(launcher)) {
+            telemetry.operational(
+                'local_inference',
+                'inference_failed',
+                'error',
+                'InferenceService',
+                `Embedded vLLM launcher not found: ${launcher}`,
+                'failure',
+                { payload: { providerId: 'embedded_vllm', launcher } },
+            );
+            return false;
+        }
+
+        telemetry.operational(
+            'local_inference',
+            'inference_started',
+            'info',
+            'InferenceService',
+            `Starting embedded vLLM via launcher: ${launcher}`,
+            'success',
+            { payload: { providerId: 'embedded_vllm', launcher, port, modelId: options.modelId } },
+        );
+
+        let processExited = false;
+        try {
+            const child = isWin
+                ? spawn('cmd.exe', ['/c', launcher], {
+                    cwd: repoRoot,
+                    detached: false,
+                    stdio: 'pipe',
+                    env: {
+                        ...process.env,
+                        TALA_VLLM_PORT: String(port),
+                        ...(options.modelId ? { TALA_VLLM_MODEL: options.modelId } : {}),
+                    },
+                })
+                : spawn('bash', [launcher], {
+                    cwd: repoRoot,
+                    detached: false,
+                    stdio: 'pipe',
+                    env: {
+                        ...process.env,
+                        TALA_VLLM_PORT: String(port),
+                        ...(options.modelId ? { TALA_VLLM_MODEL: options.modelId } : {}),
+                    },
+                });
+
+            this._embeddedVllmChild = child;
+
+            child.on('error', (err) => {
+                processExited = true;
+                telemetry.operational(
+                    'local_inference',
+                    'inference_failed',
+                    'error',
+                    'InferenceService',
+                    `Embedded vLLM process error: ${err.message}`,
+                    'failure',
+                    { payload: { providerId: 'embedded_vllm', port, error: err.message } },
+                );
+            });
+
+            child.on('exit', (code, signal) => {
+                processExited = true;
+                console.warn(`[EmbeddedVllm] Process exited early - code=${code} signal=${signal}`);
+            });
+
+            if (child.stdout) {
+                child.stdout.on('data', (d: Buffer) => {
+                    const line = d.toString().trim();
+                    if (line) console.log(`[EmbeddedVllm] ${line}`);
+                });
+            }
+            if (child.stderr) {
+                child.stderr.on('data', (d: Buffer) => {
+                    const line = d.toString().trim();
+                    if (line) console.log(`[EmbeddedVllm] ${line}`);
+                });
+            }
+        } catch (spawnErr) {
+            const msg = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
+            telemetry.operational(
+                'local_inference',
+                'inference_failed',
+                'error',
+                'InferenceService',
+                `Failed to spawn embedded vLLM: ${msg}`,
+                'failure',
+                { payload: { providerId: 'embedded_vllm', port, error: msg } },
+            );
+            return false;
+        }
+
+        const deadline = Date.now() + startupTimeoutMs;
+        while (Date.now() < deadline) {
+            if (processExited) {
+                telemetry.operational(
+                    'local_inference',
+                    'inference_failed',
+                    'error',
+                    'InferenceService',
+                    `Embedded vLLM process exited before becoming reachable on port ${port}`,
+                    'failure',
+                    { payload: { providerId: 'embedded_vllm', port } },
+                );
+                return false;
+            }
+            await new Promise<void>((r) => setTimeout(r, 1000));
+            if (await this._isModelsEndpointReachable(modelsUrl, 1500)) {
+                telemetry.operational(
+                    'local_inference',
+                    'inference_started',
+                    'info',
+                    'InferenceService',
+                    `Embedded vLLM ready on port ${port}`,
+                    'success',
+                    { payload: { providerId: 'embedded_vllm', port, modelId: options.modelId } },
+                );
+                return true;
+            }
+        }
+
+        telemetry.operational(
+            'local_inference',
+            'inference_failed',
+            'warn',
+            'InferenceService',
+            `Embedded vLLM startup timed out after ${startupTimeoutMs}ms`,
+            'failure',
+            { payload: { providerId: 'embedded_vllm', port, startupTimeoutMs } },
+        );
+        return false;
+    }
+
+    private _resolveRepoRoot(): string {
+        return typeof app !== 'undefined' ? app.getAppPath() : process.cwd();
+    }
+
+    private async _isModelsEndpointReachable(modelsUrl: string, timeoutMs: number): Promise<boolean> {
+        return new Promise<boolean>((resolve) => {
+            const req = http.get(modelsUrl, { timeout: timeoutMs }, (res) => {
+                res.resume();
+                resolve((res.statusCode ?? 0) < 400);
+            });
+            req.on('error', () => resolve(false));
+            req.on('timeout', () => { req.destroy(); resolve(false); });
+        });
+    }
+
+    private async _isPortOccupied(port: number): Promise<boolean> {
+        return new Promise<boolean>((resolve) => {
+            const socket = new net.Socket();
+            socket.setTimeout(500);
+            socket.once('connect', () => { socket.destroy(); resolve(true); });
+            socket.once('error', () => { socket.destroy(); resolve(false); });
+            socket.once('timeout', () => { socket.destroy(); resolve(false); });
+            try {
+                socket.connect(port, '127.0.0.1');
+            } catch {
+                socket.destroy();
+                resolve(false);
+            }
+        });
+    }
+
+    /**
      * Ensures the embedded llama.cpp inference server is running.
      *
      * Behaviour:
@@ -953,6 +1208,10 @@ export class InferenceService {
         if (this._embeddedChild && !this._embeddedChild.killed) {
             this._embeddedChild.kill();
             this._embeddedChild = null;
+        }
+        if (this._embeddedVllmChild && !this._embeddedVllmChild.killed) {
+            this._embeddedVllmChild.kill();
+            this._embeddedVllmChild = null;
         }
     }
 

@@ -1,6 +1,6 @@
 # Contract: cognitiveTurnTypes.ts
 
-**Source**: [shared/cognitiveTurnTypes.ts](../../shared/cognitiveTurnTypes.ts)
+**Source**: [shared\cognitiveTurnTypes.ts](../../shared/cognitiveTurnTypes.ts)
 
 ## Interfaces
 

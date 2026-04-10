@@ -1,6 +1,6 @@
 # Contract: inferenceProviderTypes.ts
 
-**Source**: [shared/inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
+**Source**: [shared\inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
 
 ## Interfaces
 
@@ -294,6 +294,7 @@ type InferenceProviderType =
     | 'llamacpp'
     | 'embedded_llamacpp'
     | 'vllm'
+    | 'embedded_vllm'
     | 'koboldcpp'
     | 'cloud';
 ```

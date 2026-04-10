@@ -1,6 +1,6 @@
 # Contract: crossSystemTypes.ts
 
-**Source**: [shared/crossSystemTypes.ts](../../shared/crossSystemTypes.ts)
+**Source**: [shared\crossSystemTypes.ts](../../shared/crossSystemTypes.ts)
 
 ## Interfaces
 
@@ -147,6 +147,8 @@ interface StrategyDecisionRecord {
     routedToGoalId?: string;
     /** Campaign ID this decision was routed to, if applicable. */
     routedToCampaignId?: string;
+    /** Phase 6.1: The StrategyRoutingDecision ID that processed this record, if any. */
+    routedToRoutingDecisionId?: string;
 }
 ```
 

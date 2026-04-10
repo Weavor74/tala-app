@@ -1,6 +1,6 @@
 # Contract: worldModelTypes.ts
 
-**Source**: [shared/worldModelTypes.ts](../../shared/worldModelTypes.ts)
+**Source**: [shared\worldModelTypes.ts](../../shared/worldModelTypes.ts)
 
 ## Interfaces
 

@@ -1,6 +1,6 @@
 # Contract: telemetry.ts
 
-**Source**: [shared/telemetry.ts](../../shared/telemetry.ts)
+**Source**: [shared\telemetry.ts](../../shared/telemetry.ts)
 
 ## Interfaces
 

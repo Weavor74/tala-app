@@ -1,41 +1,11 @@
 # Service: GuardrailService.ts
 
-**Source**: [electron/services/GuardrailService.ts](../../electron/services/GuardrailService.ts)
+**Source**: [electron\services\GuardrailService.ts](../../electron/services/GuardrailService.ts)
 
 ## Class: `GuardrailService`
 
 ## Overview
-GuardrailService.ts
-
- A GuardrailsAI-compatible guardrail system for Tala.
- Implements the Guard + Validator architecture from https://guardrailsai.com/
-
- ── Key Concepts ────────────────────────────────────────────────
-  • Validator  – A single check (e.g. ToxicLanguage, DetectPII).
-                 Returns PassResult or FailResult.
-                 On fail, applies an on_fail policy.
-
-  • Guard      – A named stack of Validators.
-                 Can be applied to: agent input, agent output, workflow nodes.
-                 Can be exported as a self-contained Python script using
-                 the real `guardrails-ai` SDK.
-
- ── On-Fail Policies ────────────────────────────────────────────
-  • noop       – Log the failure, pass text through unchanged.
-  • fix        – Attempt to auto-fix (redact / truncate).
-  • filter     – Remove the offending segment.
-  • refrain    – Return empty string instead of violating text.
-  • exception  – Throw a GuardrailError (blocks the pipeline).
-
- ── Built-in Validators (matching GuardrailsAI Hub) ─────────────
-  Rule-based (no ML):
-    BanList, ContainsString, EndsWith, ValidLength, RegexMatch,
-    SecretsPresent, ExcludeSQLPredicates, DetectJailbreak (rule)
-  LLM-based (uses Tala headless inference):
-    ToxicLanguage, ProfanityFree, DetectPII, BiasCheck,
-    CompetitorCheck, NSFWText, RestrictToTopic, QARelevance,
-    LogicCheck, PromptInjection, CustomLLM
-/
+GuardrailService.ts A GuardrailsAI-compatible guardrail system for Tala. Implements the Guard + Validator architecture from https://guardrailsai.com/ ── Key Concepts ────────────────────────────────────────────────  • Validator  – A single check (e.g. ToxicLanguage, DetectPII).                 Returns PassResult or FailResult.                 On fail, applies an on_fail policy.  • Guard      – A named stack of Validators.                 Can be applied to: agent input, agent output, workflow nodes.                 Can be exported as a self-contained Python script using                 the real `guardrails-ai` SDK. ── On-Fail Policies ────────────────────────────────────────────  • noop       – Log the failure, pass text through unchanged.  • fix        – Attempt to auto-fix (redact / truncate).  • filter     – Remove the offending segment.  • refrain    – Return empty string instead of violating text.  • exception  – Throw a GuardrailError (blocks the pipeline). ── Built-in Validators (matching GuardrailsAI Hub) ─────────────  Rule-based (no ML):    BanList, ContainsString, EndsWith, ValidLength, RegexMatch,    SecretsPresent, ExcludeSQLPredicates, DetectJailbreak (rule)  LLM-based (uses Tala headless inference):    ToxicLanguage, ProfanityFree, DetectPII, BiasCheck,    CompetitorCheck, NSFWText, RestrictToTopic, QARelevance,    LogicCheck, PromptInjection, CustomLLM/
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -310,14 +280,7 @@ const BAN_LIST_DEFAULT = ['kill', 'destroy', 'hack'];
 // ═══════════════════════════════════════════════════════════════
 // GuardrailService
 // ═══════════════════════════════════════════════════════════════
-/**
- A Guardrails-compatible safety and validation service for Tala.
- 
- This service implements the Guard + Validator architecture, allowing the system to:
- - Validate agent inputs for prompt injection or jailbreak attempts.
- - Validate agent outputs for toxicity, bias, PII leakage, or logical consistency.
- - Apply corrective policies (fix, filter, refrain) on validation failure.
- - Export guard definitions into standalone Python scripts compatible with the `guardrails-ai` SDK.
+/** A Guardrails-compatible safety and validation service for Tala.  This service implements the Guard + Validator architecture, allowing the system to: - Validate agent inputs for prompt injection or jailbreak attempts. - Validate agent outputs for toxicity, bias, PII leakage, or logical consistency. - Apply corrective policies (fix, filter, refrain) on validation failure. - Export guard definitions into standalone Python scripts compatible with the `guardrails-ai` SDK.
 
 ### Methods
 
@@ -355,35 +318,14 @@ const BAN_LIST_DEFAULT = ['kill', 'destroy', 'hack'];
 
 ---
 #### `validate`
-Run a guard against a value.
-
- @param guardId  ID of the guard to apply.
- @param value    Text to validate.
- @param target   'input' or 'output' (only validators matching target or 'both' run).
-/
+Run a guard against a value. @param guardId  ID of the guard to apply. @param value    Text to validate. @param target   'input' or 'output' (only validators matching target or 'both' run)./
 
 **Arguments**: `guardId: string, value: string, target: 'input' | 'output'`
 **Returns**: `Promise<ValidationResult>`
 
 ---
 #### `validateWithGuard`
-Executes a specific guard stack against a text value.
- 
- The validation process:
- 1. Filters validators based on the `target` (input or output).
- 2. Iterates through the validator stack.
- 3. For each failure, applies the specific `on_fail` policy:
-    - `noop`: Passive logging.
-    - `fix`: Modifies the text (e.g., redaction).
-    - `filter`: Removes the violating segment.
-    - `refrain`: Returns an empty string.
-    - `exception`: Immediately halts the pipeline.
- 
- @param guard - The guard definition to apply.
- @param value - The text to validate.
- @param target - The context of the validation ('input' or 'output').
- @returns A comprehensive result object with pass/fail status and audit logs.
-/
+Executes a specific guard stack against a text value.  The validation process: 1. Filters validators based on the `target` (input or output). 2. Iterates through the validator stack. 3. For each failure, applies the specific `on_fail` policy:    - `noop`: Passive logging.    - `fix`: Modifies the text (e.g., redaction).    - `filter`: Removes the violating segment.    - `refrain`: Returns an empty string.    - `exception`: Immediately halts the pipeline.  @param guard - The guard definition to apply. @param value - The text to validate. @param target - The context of the validation ('input' or 'output'). @returns A comprehensive result object with pass/fail status and audit logs./
 
 **Arguments**: `guard: GuardDefinition, value: string, target: 'input' | 'output'`
 **Returns**: `Promise<ValidationResult>`
@@ -400,9 +342,7 @@ Executes a specific guard stack against a text value.
 
 ---
 #### `exportToPython`
-Exports a guard definition as a standalone Python script using the
- real `guardrails-ai` SDK and Hub validators.
-/
+Exports a guard definition as a standalone Python script using the real `guardrails-ai` SDK and Hub validators./
 
 **Arguments**: `guardId: string`
 **Returns**: `string`

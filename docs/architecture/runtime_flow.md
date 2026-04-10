@@ -434,13 +434,14 @@ AgentService.loadBrainConfig()
   → InferenceService.selectProvider(request)         [deterministic selection + fallback policy]
     → InferenceProviderRegistry.getInventory()       [read current provider state]
     → ProviderSelectionService.select()              [apply selection rules]
-      → 1. user-selected provider if ready
-      → 2. best available local provider (by priority)
-      → 3. embedded llama.cpp
-      → 4. cloud provider
-      → 5. InferenceFailureResult if no viable provider
+      → 1. request-selected provider if ready
+      → 2. registry-selected provider if ready
+      → 3. explicit local-first waterfall (`ollama` → `vllm` → `llamacpp` → `koboldcpp`)
+      → 4. embedded waterfall (`embedded_vllm` → `embedded_llamacpp`)
+      → 5. cloud provider (only after local/embedded exhaustion in `auto`, or directly in `cloud-only`)
+      → 6. InferenceFailureResult if no viable provider
   → InferenceSelectionResult                         [selected provider + fallback chain]
-  → configure OllamaBrain / CloudBrain               [brain wired to selected provider endpoint]
+  → configure OllamaBrain / CloudBrain              [brain wired to selected provider endpoint]
 ```
 
 ### Provider Detection Flow
@@ -690,3 +691,6 @@ AutonomousRunOrchestrator.runCycleOnce()
 - **Audit trail**: `EscalationAuditTracker` records every assessment, escalation request/decision, strategy selection, and decomposition event.
 
 See `docs/architecture/phase5_1_escalation_decomposition.md` for the full Phase 5.1 architecture reference.
+
+
+

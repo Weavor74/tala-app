@@ -6,7 +6,7 @@
  *
  * Provider scopes:
  *   local     — external process on the host (Ollama, vLLM, koboldcpp, external llama.cpp)
- *   embedded  — bundled binary managed by LocalEngineService
+ *   embedded  — embedded engines managed by InferenceService (embedded_vllm authoritative; embedded_llamacpp legacy optional)
  *   cloud     — remote API endpoint
  *
  * See docs/architecture/phase3_inference_integration.md for the selection policy
@@ -366,3 +366,4 @@ export interface StreamInferenceResult {
      */
     toolCalls?: CanonicalToolCall[];
 }
+

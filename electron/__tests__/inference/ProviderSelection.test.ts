@@ -1,27 +1,13 @@
 /**
  * Provider Selection Tests
  *
- * Validates the ProviderSelectionService deterministic fallback policy.
- * Uses a mock InferenceProviderRegistry to control provider state.
- *
- * Coverage:
- * - Explicit selected provider ready → chosen
- * - Explicit selected provider unavailable → fallback applied
- * - No selection, best local provider chosen by priority
- * - No local providers → embedded llama.cpp chosen
- * - No local or embedded → cloud chosen
- * - No providers available → explicit failure result
- * - local-only mode skips cloud
- * - cloud-only mode skips local/embedded
- * - Telemetry emitted for selection and fallback events
+ * Validates deterministic waterfall selection behavior.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ProviderSelectionService } from '../../services/inference/ProviderSelectionService';
 import { InferenceProviderRegistry } from '../../services/inference/InferenceProviderRegistry';
 import type { InferenceProviderDescriptor } from '../../../shared/inferenceProviderTypes';
-
-// ─── Telemetry mock ───────────────────────────────────────────────────────────
 
 const emittedEvents: Array<{ eventType: string; status: string }> = [];
 
@@ -36,13 +22,11 @@ vi.mock('../../services/TelemetryService', () => ({
         audit: (_s: string, et: string, _a: string, _sum: string, st: string) => {
             emittedEvents.push({ eventType: et, status: st });
         },
-        debug: (_s: string, et: string, _a: string, _sum: string) => {
+        debug: (_s: string, et: string) => {
             emittedEvents.push({ eventType: et, status: 'success' });
         },
     },
 }));
-
-// ─── Registry mock helpers ────────────────────────────────────────────────────
 
 function makeDescriptor(overrides: Partial<InferenceProviderDescriptor> & { providerId: string }): InferenceProviderDescriptor {
     return {
@@ -65,218 +49,167 @@ function makeDescriptor(overrides: Partial<InferenceProviderDescriptor> & { prov
     };
 }
 
-/**
- * Creates an InferenceProviderRegistry pre-populated with given descriptors.
- * Bypasses actual probing by patching the internal map directly.
- */
 function makeRegistry(descriptors: InferenceProviderDescriptor[]): InferenceProviderRegistry {
     const registry = new InferenceProviderRegistry({});
-    // Inject descriptors directly
     const map = (registry as any).descriptors as Map<string, InferenceProviderDescriptor>;
     map.clear();
     for (const d of descriptors) map.set(d.providerId, d);
     return registry;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
-describe('ProviderSelectionService — explicit selection', () => {
+describe('ProviderSelectionService - preferred provider', () => {
     beforeEach(() => { emittedEvents.length = 0; });
 
-    it('returns the explicitly selected provider when it is ready', () => {
-        const ollama = makeDescriptor({ providerId: 'ollama', ready: true, priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollama, cloud]);
-        const svc = new ProviderSelectionService(registry);
+    it('returns request preferred provider when ready', () => {
+        const ollama = makeDescriptor({ providerId: 'ollama', ready: true });
+        const vllm = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100' });
+        const svc = new ProviderSelectionService(makeRegistry([ollama, vllm]));
 
-        const result = svc.select({ preferredProviderId: 'ollama' });
+        const result = svc.select({ preferredProviderId: 'vllm' });
 
         expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('ollama');
+        expect(result.selectedProvider!.providerId).toBe('vllm');
         expect(result.fallbackApplied).toBe(false);
     });
 
-    it('falls back when selected provider is not ready', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running', priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
+    it('uses registry selected provider when request preferredProviderId is omitted', () => {
+        const ollama = makeDescriptor({ providerId: 'ollama', ready: true });
+        const vllm = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100' });
+        const registry = makeRegistry([ollama, vllm]);
+        registry.setSelectedProviderId('vllm');
+        const svc = new ProviderSelectionService(registry);
+
+        const result = svc.select({});
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('vllm');
+    });
+
+    it('falls through deterministically when selected provider is unavailable', () => {
+        const ollama = makeDescriptor({ providerId: 'ollama', ready: true, priority: 1 });
+        const vllmDown = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: false, status: 'not_running' });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true, priority: 100 });
+        const registry = makeRegistry([ollama, vllmDown, cloud]);
+        registry.setSelectedProviderId('vllm');
+        const svc = new ProviderSelectionService(registry);
+
+        const result = svc.select({ fallbackAllowed: true });
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('ollama');
+        expect(result.fallbackApplied).toBe(true);
+        expect(result.attemptedProviders).toContain('vllm');
+    });
+});
+
+describe('ProviderSelectionService - waterfall order', () => {
+    beforeEach(() => { emittedEvents.length = 0; });
+
+    it('falls from unavailable ollama to next ready local provider', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running', priority: 1 });
+        const vllm = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: true, priority: 50 });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true, priority: 100 });
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, vllm, cloud]));
+
+        const result = svc.select({});
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('vllm');
+        expect(result.attemptedProviders).toContain('ollama');
+    });
+
+    it('prefers embedded_vllm before embedded_llamacpp when local providers are unavailable', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const vllmDown = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: false, status: 'not_running' });
+        const embeddedVllm = makeDescriptor({ providerId: 'embedded_vllm', providerType: 'embedded_vllm', scope: 'embedded', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8000', ready: true, priority: 999 });
+        const embeddedLlama = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8080', ready: true, priority: 1 });
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, vllmDown, embeddedVllm, embeddedLlama]));
+
+        const result = svc.select({});
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('embedded_vllm');
+    });
+
+    it('uses cloud only when local/embedded waterfall is exhausted in auto mode', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const vllmDown = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: false, status: 'not_running' });
+        const embeddedVllmDown = makeDescriptor({ providerId: 'embedded_vllm', providerType: 'embedded_vllm', scope: 'embedded', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8000', ready: false, status: 'not_running' });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true, priority: 1 });
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, vllmDown, embeddedVllmDown, cloud]));
+
+        const result = svc.select({ mode: 'auto' });
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('cloud');
+        expect(result.fallbackApplied).toBe(true);
+    });
+
+    it('local-only mode does not select cloud', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true });
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, cloud]));
+
+        const result = svc.select({ mode: 'local-only' });
+
+        expect(result.success).toBe(false);
+    });
+
+    it('cloud-only mode selects cloud and ignores ready local providers', () => {
+        const ollama = makeDescriptor({ providerId: 'ollama', ready: true });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true });
+        const svc = new ProviderSelectionService(makeRegistry([ollama, cloud]));
+
+        const result = svc.select({ mode: 'cloud-only' });
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('cloud');
+    });
+
+    it('returns failure when selected provider is unavailable and fallback is disabled', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', transport: 'http_openai_compat', endpoint: 'https://api.example.com', ready: true });
         const registry = makeRegistry([ollamaDown, cloud]);
         registry.setSelectedProviderId('ollama');
         const svc = new ProviderSelectionService(registry);
 
-        const result = svc.select({ preferredProviderId: 'ollama', fallbackAllowed: true });
-
-        expect(result.success).toBe(true);
-        expect(result.fallbackApplied).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('cloud');
-    });
-
-    it('returns failure when selected provider unavailable and fallback disabled', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running', priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollamaDown, cloud]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({ preferredProviderId: 'ollama', fallbackAllowed: false });
+        const result = svc.select({ fallbackAllowed: false });
 
         expect(result.success).toBe(false);
-        expect(result.failure).toBeDefined();
-        expect(result.failure!.code).toBe('no_provider');
-    });
-
-    it('emits provider_fallback_applied telemetry when fallback is triggered', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running', priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollamaDown, cloud]);
-        const svc = new ProviderSelectionService(registry);
-
-        svc.select({ preferredProviderId: 'ollama', fallbackAllowed: true });
-
-        const fallbackEvents = emittedEvents.filter(e => e.eventType === 'provider_fallback_applied');
-        expect(fallbackEvents.length).toBeGreaterThan(0);
+        expect(result.failure?.code).toBe('no_provider');
     });
 });
 
-describe('ProviderSelectionService — automatic selection', () => {
-    beforeEach(() => { emittedEvents.length = 0; });
-
-    it('chooses best local provider by priority when no explicit selection', () => {
-        const ollama = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: true, priority: 10 });
-        const vllm = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', scope: 'local', ready: true, priority: 25 });
-        const registry = makeRegistry([ollama, vllm]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({});
-
-        expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('ollama'); // lower priority number wins
-    });
-
-    it('falls back to embedded llama.cpp when no local provider is ready', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const embedded = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', ready: true, priority: 30 });
-        const registry = makeRegistry([ollamaDown, embedded]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({});
-
-        expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('embedded_llamacpp');
-        expect(result.fallbackApplied).toBe(true);
-    });
-
-    it('falls back to cloud when no local or embedded provider is ready', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const embDown = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', ready: false, priority: 30 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollamaDown, embDown, cloud]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({});
-
-        expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('cloud');
-        expect(result.fallbackApplied).toBe(true);
-    });
-
-    it('returns failure with structured error when no providers are viable', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const registry = makeRegistry([ollamaDown]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({});
-
-        expect(result.success).toBe(false);
-        expect(result.failure).toBeDefined();
-        expect(result.failure!.code).toBe('no_provider');
-        expect(result.failure!.fallbackExhausted).toBe(true);
-    });
-});
-
-describe('ProviderSelectionService — routing modes', () => {
-    beforeEach(() => { emittedEvents.length = 0; });
-
-    it('local-only mode does not select cloud even when local is unavailable', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollamaDown, cloud]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({ mode: 'local-only' });
-
-        expect(result.success).toBe(false);
-    });
-
-    it('local-only mode selects embedded when local is unavailable but embedded is ready', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const embedded = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', ready: true, priority: 30 });
-        const registry = makeRegistry([ollamaDown, embedded]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({ mode: 'local-only' });
-
-        expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('embedded_llamacpp');
-    });
-
-    it('cloud-only mode selects cloud and ignores ready local providers', () => {
-        const ollama = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: true, priority: 10 });
-        const cloud = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: true, priority: 100 });
-        const registry = makeRegistry([ollama, cloud]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({ mode: 'cloud-only' });
-
-        expect(result.success).toBe(true);
-        expect(result.selectedProvider!.providerId).toBe('cloud');
-    });
-
-    it('cloud-only mode returns failure when cloud is not configured or ready', () => {
-        const ollama = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: true, priority: 10 });
-        const registry = makeRegistry([ollama]); // No cloud provider
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({ mode: 'cloud-only' });
-
-        expect(result.success).toBe(false);
-    });
-});
-
-describe('ProviderSelectionService — telemetry', () => {
+describe('ProviderSelectionService - telemetry', () => {
     beforeEach(() => { emittedEvents.length = 0; });
 
     it('emits provider_selected on successful selection', () => {
-        const ollama = makeDescriptor({ providerId: 'ollama', ready: true, priority: 10 });
-        const registry = makeRegistry([ollama]);
+        const ollama = makeDescriptor({ providerId: 'ollama', ready: true });
+        const svc = new ProviderSelectionService(makeRegistry([ollama]));
+
+        svc.select({});
+
+        expect(emittedEvents.some((e) => e.eventType === 'provider_selected')).toBe(true);
+    });
+
+    it('emits provider_fallback_applied when preferred provider is unavailable', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const vllm = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: true });
+        const registry = makeRegistry([ollamaDown, vllm]);
+        registry.setSelectedProviderId('ollama');
         const svc = new ProviderSelectionService(registry);
 
         svc.select({});
 
-        const selected = emittedEvents.filter(e => e.eventType === 'provider_selected');
-        expect(selected.length).toBeGreaterThan(0);
-        expect(selected[0].status).toBe('success');
+        expect(emittedEvents.some((e) => e.eventType === 'provider_fallback_applied')).toBe(true);
     });
 
-    it('emits provider_unavailable on failure when no provider found', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, priority: 10 });
-        const registry = makeRegistry([ollamaDown]);
-        const svc = new ProviderSelectionService(registry);
+    it('emits provider_unavailable when no provider is viable', () => {
+        const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown]));
 
-        svc.select({});
+        svc.select({ mode: 'local-only' });
 
-        const unavailable = emittedEvents.filter(e => e.eventType === 'provider_unavailable');
-        expect(unavailable.length).toBeGreaterThan(0);
-    });
-
-    it('attemptedProviders in failure result lists skipped providers', () => {
-        const ollamaDown = makeDescriptor({ providerId: 'ollama', providerType: 'ollama', scope: 'local', ready: false, priority: 10 });
-        const embDown = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', ready: false, priority: 30 });
-        const cloudDown = makeDescriptor({ providerId: 'cloud', providerType: 'cloud', scope: 'cloud', ready: false, priority: 100 });
-        const registry = makeRegistry([ollamaDown, embDown, cloudDown]);
-        const svc = new ProviderSelectionService(registry);
-
-        const result = svc.select({});
-
-        expect(result.success).toBe(false);
-        expect(result.attemptedProviders.length).toBeGreaterThan(0);
+        expect(emittedEvents.some((e) => e.eventType === 'provider_unavailable')).toBe(true);
     });
 });

@@ -1,6 +1,6 @@
 # Contract: autonomyTypes.ts
 
-**Source**: [shared/autonomyTypes.ts](../../shared/autonomyTypes.ts)
+**Source**: [shared\autonomyTypes.ts](../../shared/autonomyTypes.ts)
 
 ## Interfaces
 
@@ -230,6 +230,25 @@ interface AutonomousRun {
     decompositionPlanId?: string;
     /** Step index executed (0-based) when running under a decomposition plan. */
     decompositionStepIndex?: number;
+    // ── Runtime Execution Vocabulary (shared/runtime) ──
+    /**
+     * Canonical execution identifier for cross-seam correlation.
+     * Maps to `runId` — set at run creation so all telemetry, StateStore entries,
+     * and external observers share a single stable identifier.
+     * `runId` is preserved for backward compatibility.
+     */
+    executionId?: string;
+    /**
+     * Canonical execution type from the shared runtime vocabulary.
+     * Always `'autonomy_task'` for autonomous runs.
+     * Enables cross-seam correlation with AgentKernel and IPC execution records.
+     */
+    runtimeExecutionType?: RuntimeExecutionType;
+    /**
+     * Canonical execution origin from the shared runtime vocabulary.
+     * Always `'autonomy_engine'` for internally-initiated autonomous runs.
+     */
+    runtimeExecutionOrigin?: RuntimeExecutionOrigin;
 }
 ```
 
@@ -388,6 +407,8 @@ interface AutonomyDashboardState {
     escalationState?: import('./escalationTypes').EscalationDashboardState;
     // ── Phase 5.5: Repair Campaign state (optional — present when campaign layer is active) ──
     campaignState?: import('./repairCampaignTypes').CampaignDashboardState;
+    // ── Phase 6.1: Strategy Routing state (optional — present when routing layer is active) ──
+    strategyRoutingState?: import('./strategyRoutingTypes').StrategyRoutingDashboardState;
 }
 ```
 
@@ -402,6 +423,7 @@ type GoalSource =
     | 'recurring_reflection_goal'   // goal already in GoalService that recurs
     | 'weak_coverage_signal'        // low test coverage signal from self-model
     | 'unresolved_backlog_item'     // old, unactioned improvement in backlog
+    | 'strategy_routing'            // Phase 6.1: routed from a cross-system strategy decision
     | 'user_seeded';
 ```
 

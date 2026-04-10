@@ -1298,7 +1298,6 @@ Exported standalone package from Tala.
         try {
             const settings = loadSettings(this.settingsPath);
 
-            // ── Step 1: Reconfigure registry from current settings ──────────────
             const inferenceSettings = settings.inference ?? {};
             const activeModeStr: string = (inferenceSettings.mode as string) ?? 'auto';
             const routingMode: 'auto' | 'local-only' | 'cloud-only' =
@@ -1306,7 +1305,6 @@ Exported standalone package from Tala.
                     : activeModeStr === 'cloud-only' ? 'cloud-only'
                         : 'auto';
 
-            // Build registry config from settings instances
             const registryConfig: import('./inference/InferenceProviderRegistry').ProviderRegistryConfig = {};
             const instances: any[] = inferenceSettings.instances ?? [];
 
@@ -1314,16 +1312,23 @@ Exported standalone package from Tala.
                 if (inst.engine === 'ollama') {
                     registryConfig.ollama = { endpoint: inst.endpoint ?? 'http://127.0.0.1:11434', enabled: true };
                 } else if (inst.engine === 'vllm') {
-                    registryConfig.vllm = { endpoint: inst.endpoint, enabled: true };
+                    if (inst.endpoint) {
+                        registryConfig.vllm = { endpoint: inst.endpoint, enabled: true };
+                    }
+                } else if (inst.engine === 'llamacpp' && inst.source === 'local' && inst.endpoint) {
+                    registryConfig.llamacpp = { endpoint: inst.endpoint, enabled: true };
                 } else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'custom'].includes(inst.engine) && inst.source !== 'local') {
                     registryConfig.cloud = { endpoint: inst.endpoint, apiKey: inst.apiKey, model: inst.model, enabled: true };
                 }
-                // Note: external llamacpp (source !== 'local') is handled above via cloud path.
-                // Embedded llamacpp is always registered below from localEngine settings.
             }
 
-            // ── Always register the embedded llama.cpp provider ─────────────────
-            // Resolve model path: prefer localEngine.modelPath, then scan models/ directory
+            const embeddedVllmPort = inferenceSettings?.embeddedVllm?.port ?? 8000;
+            registryConfig.embeddedVllm = {
+                port: embeddedVllmPort,
+                modelId: inferenceSettings?.embeddedVllm?.modelId,
+                enabled: true,
+            };
+
             const embeddedModelPath = this._resolveEmbeddedModelPath(inferenceSettings);
             registryConfig.embeddedLlamaCpp = {
                 port: inferenceSettings?.localEngine?.options?.port ?? 8080,
@@ -1333,28 +1338,14 @@ Exported standalone package from Tala.
             };
 
             this.inference.reconfigureRegistry(registryConfig);
-            await this.inference.refreshProviders(); // Ensure inventory is fresh AFTER registry is configured
+            await this.inference.refreshProviders();
 
-            // ── Step 2: Determine preferred provider and model from settings ───
-            const { preferredProviderId, preferredModelId } = (() => {
-                if (inferenceSettings.activeLocalId) {
-                    const active = instances.find((i: any) => i.id === inferenceSettings.activeLocalId);
-                    if (active) {
-                        let providerId: string | undefined;
-                        if (active.engine === 'ollama') providerId = 'ollama';
-                        else if (active.engine === 'llamacpp' && active.source === 'local') providerId = 'embedded_llamacpp';
-                        else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(active.engine)) providerId = 'cloud';
-                        return { preferredProviderId: providerId, preferredModelId: active.model };
-                    }
-                }
-                return { preferredProviderId: undefined, preferredModelId: undefined };
-            })();
+            const { preferredProviderId, preferredModelId } = this._resolvePreferredProviderFromSettings(inferenceSettings, instances);
 
             if (preferredProviderId) {
                 this.inference.setSelectedProvider(preferredProviderId);
             }
 
-            // ── Step 3: Select provider via canonical policy ────────────────────
             let selection = this.inference.selectProvider({
                 preferredProviderId,
                 preferredModelId,
@@ -1364,27 +1355,31 @@ Exported standalone package from Tala.
                 agentMode: 'system',
             });
 
-            // ── Step 4: Auto-start embedded when no viable local/external provider ──
-            // Per design: embedded is the guaranteed local baseline when no external
-            // local engine is running, regardless of internet or cloud provider status.
             if (!selection.success || !selection.selectedProvider) {
-                if (embeddedModelPath) {
-                    console.log('[AgentService] No viable provider found — attempting to start embedded llama.cpp...');
-                    const started = await this.inference.ensureEmbeddedStarted(embeddedModelPath, {
+                console.log('[AgentService] No viable provider found - attempting embedded recovery (embedded_vllm first)...');
+                const started = await this.inference.ensureEmbeddedProviderStarted({
+                    embeddedVllm: {
+                        port: embeddedVllmPort,
+                        modelId: inferenceSettings?.embeddedVllm?.modelId ?? preferredModelId,
+                    },
+                    embeddedLlamaCpp: embeddedModelPath ? {
+                        modelPath: embeddedModelPath,
                         port: inferenceSettings?.localEngine?.options?.port ?? 8080,
                         contextSize: inferenceSettings?.localEngine?.options?.contextSize ?? 4096,
-                    });
+                    } : undefined,
+                    allowLegacyLlamaCpp: !!embeddedModelPath,
+                });
 
-                    if (started) {
-                        // Re-probe to mark embedded as ready, then re-select
-                        await this.inference.refreshProviders();
-                        selection = this.inference.selectProvider({
-                            mode: routingMode,
-                            fallbackAllowed: true,
-                            turnId: 'brain-config-retry',
-                            agentMode: 'system',
-                        });
-                    }
+                if (started) {
+                    await this.inference.refreshProviders();
+                    selection = this.inference.selectProvider({
+                        preferredProviderId,
+                        preferredModelId,
+                        mode: routingMode,
+                        fallbackAllowed: true,
+                        turnId: 'brain-config-retry',
+                        agentMode: 'system',
+                    });
                 }
 
                 if (!selection.success || !selection.selectedProvider) {
@@ -1395,7 +1390,6 @@ Exported standalone package from Tala.
 
             const chosen = selection.selectedProvider;
 
-            // ── Step 5: Configure brain based on selected provider ──────────────
             if (chosen.scope === 'cloud' || chosen.providerType === 'cloud') {
                 const cloudInst = instances.find((i: any) =>
                     ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(i.engine) && i.source !== 'local'
@@ -1412,14 +1406,12 @@ Exported standalone package from Tala.
                 this.brain = ollama;
                 this.brainIsReady = true;
             } else if (chosen.providerType === 'embedded_llamacpp') {
-                // Embedded llama.cpp exposes an OpenAI-compatible API (/v1/chat/completions).
-                // Use CloudBrain (OpenAI-compat), NOT OllamaBrain (which hits /api/chat).
                 const modelName = selection.resolvedModel ?? chosen.preferredModel ?? path.basename(embeddedModelPath ?? 'embedded-model');
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: modelName });
                 this.brainIsReady = true;
-                console.log(`[AgentService] Bound embedded llama.cpp brain → endpoint=${chosen.endpoint} model=${modelName}`);
+                console.log(`[AgentService] Bound embedded llama.cpp brain -> endpoint=${chosen.endpoint} model=${modelName}`);
             } else {
-                // vllm, koboldcpp, external llamacpp — use OpenAI-compatible endpoint via CloudBrain
+                // vllm, embedded_vllm, koboldcpp, external llamacpp use OpenAI-compatible endpoint via CloudBrain.
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: selection.resolvedModel ?? chosen.preferredModel ?? '' });
                 this.brainIsReady = true;
             }
@@ -1428,10 +1420,57 @@ Exported standalone package from Tala.
         }
     }
 
-    /**
-     * Resolves the absolute path to the embedded GGUF model file.
-     * Checks localEngine.modelPath, then scans the models/ directory.
-     */
+    private _resolvePreferredProviderFromSettings(inferenceSettings: any, instances: any[]): { preferredProviderId?: string; preferredModelId?: string } {
+        const activeLocalId = inferenceSettings?.activeLocalId;
+        if (!activeLocalId) {
+            return { preferredProviderId: undefined, preferredModelId: undefined };
+        }
+
+        const active = instances.find((i: any) => i.id === activeLocalId);
+        if (!active) {
+            return { preferredProviderId: undefined, preferredModelId: undefined };
+        }
+
+        return {
+            preferredProviderId: this._mapInstanceToProviderId(active, inferenceSettings),
+            preferredModelId: active.model,
+        };
+    }
+
+    private _mapInstanceToProviderId(instance: any, inferenceSettings: any): string | undefined {
+        if (!instance) return undefined;
+
+        if (instance.engine === 'ollama') return 'ollama';
+
+        if (instance.engine === 'vllm') {
+            const idLower = String(instance.id ?? '').toLowerCase();
+            const sourceLower = String(instance.source ?? '').toLowerCase();
+            const embeddedPort = inferenceSettings?.embeddedVllm?.port ?? 8000;
+            const endpoint = String(instance.endpoint ?? '');
+            const embeddedHostPrefix = `http://127.0.0.1:${embeddedPort}`;
+            if (sourceLower === 'embedded' || idLower.includes('embedded') || endpoint.startsWith(embeddedHostPrefix)) {
+                return 'embedded_vllm';
+            }
+            return 'vllm';
+        }
+
+        if (instance.engine === 'llamacpp') {
+            if (instance.source !== 'local') return 'cloud';
+            const idLower = String(instance.id ?? '').toLowerCase();
+            if (idLower.includes('embedded') || idLower.includes('builtin')) {
+                return 'embedded_llamacpp';
+            }
+            if (instance.endpoint) return 'llamacpp';
+            return 'embedded_llamacpp';
+        }
+
+        if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'custom'].includes(instance.engine)) {
+            return 'cloud';
+        }
+
+        return undefined;
+    }
+
     private _resolveEmbeddedModelPath(inferenceSettings: any): string | undefined {
         const roots = [
             typeof app !== 'undefined' ? app.getAppPath() : undefined,
@@ -2389,8 +2428,7 @@ Exported standalone package from Tala.
         // --- PHASE 3A: MODEL-AWARE COMPACTION ---
         // Select provider/model and run CognitiveContextCompactor before prompt assembly.
         // This ensures tiny/small models receive compressed packets within budget.
-        const providerSelection = this.inference.selectProvider({ 
-            preferredProviderId: activeInstance?.id,
+        const providerSelection = this.inference.selectProvider({
             preferredModelId: activeInstance?.model,
             fallbackAllowed: true, 
             turnId,
@@ -4520,3 +4558,4 @@ Failure to provide a tool call will result in system termination.`;
         };
     }
 }
+

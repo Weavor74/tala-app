@@ -1,15 +1,11 @@
 # Service: DocumentationChunker.ts
 
-**Source**: [electron/services/DocumentationChunker.ts](../../electron/services/DocumentationChunker.ts)
+**Source**: [electron\services\DocumentationChunker.ts](../../electron/services/DocumentationChunker.ts)
 
 ## Class: `DocumentationChunker`
 
 ## Overview
-DocChunk - A discrete fragment of documentation.
- 
- Chunks are the unit of retrieval for the intelligence layer. 
- They represent a single section (heading + content) from a markdown file.
-/
+DocChunk - A discrete fragment of documentation.  Chunks are the unit of retrieval for the intelligence layer.  They represent a single section (heading + content) from a markdown file./
 export interface DocChunk {
     /** Unique identifier for the chunk (e.g., 'path_to_file#heading'). */
     id: string;
@@ -25,11 +21,7 @@ export interface DocChunk {
     range: { start: number; end: number };
 }
 
-/**
- DocumentationChunker - Markdown Decomposition Utility
- 
- Splits markdown documentation into structured chunks based on heading levels.
- Each chunk retains its hierarchy and source coordinates for precise retrieval.
+/** DocumentationChunker - Markdown Decomposition Utility  Splits markdown documentation into structured chunks based on heading levels. Each chunk retains its hierarchy and source coordinates for precise retrieval.
 
 ### Methods
 

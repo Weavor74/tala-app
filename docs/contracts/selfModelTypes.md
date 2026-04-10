@@ -1,6 +1,6 @@
 # Contract: selfModelTypes.ts
 
-**Source**: [shared/selfModelTypes.ts](../../shared/selfModelTypes.ts)
+**Source**: [shared\selfModelTypes.ts](../../shared/selfModelTypes.ts)
 
 ## Interfaces
 

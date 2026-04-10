@@ -4,12 +4,10 @@
  * Implements the deterministic provider selection and fallback policy.
  *
  * Selection order:
- *   1. User-selected provider if explicitly set and ready
- *   2. If selected provider is unavailable → apply fallback (emit telemetry)
- *   3. If no selection → best available local provider (by priority)
- *   4. If no local provider → embedded llama.cpp if available
- *   5. If embedded unavailable → configured cloud provider
- *   6. If nothing viable → explicit InferenceFailureResult
+ *   1. Preferred provider (request-level or registry-selected) if ready
+ *   2. Deterministic waterfall over remaining providers
+ *   3. Local + embedded providers before cloud in auto mode
+ *   4. Explicit failure when no provider is viable
  *
  * Design principles:
  *   - Selection is deterministic and fully auditable.
@@ -30,9 +28,19 @@ import { telemetry } from '../TelemetryService';
 export class ProviderSelectionService {
     constructor(private registry: InferenceProviderRegistry) { }
 
+    private static readonly WATERFALL_ORDER: ReadonlyArray<string> = [
+        'ollama',
+        'vllm',
+        'llamacpp',
+        'koboldcpp',
+        'embedded_vllm',
+        'embedded_llamacpp',
+        'cloud',
+    ];
+
     /**
      * Selects the best available provider according to the deterministic policy.
-     * Always returns a result — success=false when no provider is viable.
+     * Always returns a result; success=false when no provider is viable.
      */
     public select(req: InferenceSelectionRequest = {}): InferenceSelectionResult {
         const {
@@ -45,34 +53,55 @@ export class ProviderSelectionService {
         } = req;
 
         const attempted: string[] = [];
+        const storedSelectedProviderId = this.registry.getSelectedProviderId();
+        const effectivePreferredProviderId = preferredProviderId ?? storedSelectedProviderId;
 
-        // ── Step 1: cloud-only mode ─────────────────────────────────────────
         if (mode === 'cloud-only') {
-            return this._selectCloud(attempted, fallbackAllowed, turnId, agentMode, requiredCapability);
+            return this._selectCloud(
+                attempted,
+                fallbackAllowed,
+                turnId,
+                agentMode,
+                requiredCapability,
+                req.preferredModelId,
+                effectivePreferredProviderId,
+            );
         }
 
-        // ── Step 2: explicit user selection ────────────────────────────────
-        if (preferredProviderId) {
-            attempted.push(preferredProviderId);
-            const preferred = this.registry.getProvider(preferredProviderId);
-            if (preferred && preferred.ready && this._capOk(preferred, requiredCapability)) {
+        const candidates = this._buildWaterfallCandidates(mode, requiredCapability, effectivePreferredProviderId);
+        if (candidates.length === 0) {
+            return this._buildFailure(attempted, 'No providers available for current routing policy', turnId, agentMode);
+        }
+
+        if (effectivePreferredProviderId) {
+            const preferred = candidates.find((c) => c.providerId === effectivePreferredProviderId);
+            if (preferred && preferred.ready) {
                 const resolvedModel = this._reconcileModel(preferred, req.preferredModelId);
-                return this._buildSuccess(preferred, `User-selected provider '${preferredProviderId}' is ready`, false, attempted, resolvedModel);
+                return this._buildSuccess(
+                    preferred,
+                    preferredProviderId
+                        ? `Request-selected provider '${effectivePreferredProviderId}' is ready`
+                        : `Stored selected provider '${effectivePreferredProviderId}' is ready`,
+                    false,
+                    attempted,
+                    resolvedModel,
+                );
             }
+
+            attempted.push(effectivePreferredProviderId);
 
             if (!fallbackAllowed) {
                 return this._buildFailure(
                     attempted,
-                    `Selected provider '${preferredProviderId}' is unavailable and fallback is disabled`,
+                    `Selected provider '${effectivePreferredProviderId}' is unavailable and fallback is disabled`,
                     turnId,
                     agentMode,
                 );
             }
 
-            // Emit fallback telemetry
             const reason = preferred
-                ? `Provider '${preferredProviderId}' not ready (status: ${preferred.status})`
-                : `Provider '${preferredProviderId}' not found in registry`;
+                ? `Provider '${effectivePreferredProviderId}' not ready (status: ${preferred.status})`
+                : `Provider '${effectivePreferredProviderId}' not found or filtered by routing policy`;
 
             telemetry.audit(
                 'local_inference',
@@ -80,66 +109,33 @@ export class ProviderSelectionService {
                 'InferenceProviderSelectionService',
                 `Fallback triggered: ${reason}`,
                 'partial',
-                { turnId, mode: agentMode, payload: { preferredProviderId, reason, attempted } }
+                {
+                    turnId,
+                    mode: agentMode,
+                    payload: { preferredProviderId: effectivePreferredProviderId, reason, attempted },
+                },
             );
         }
 
-        // ── Step 3: local-only mode ─────────────────────────────────────────
-        if (mode === 'local-only') {
-            return this._selectLocalOrEmbedded(attempted, fallbackAllowed, turnId, agentMode, requiredCapability);
+        for (const candidate of candidates) {
+            if (effectivePreferredProviderId && candidate.providerId === effectivePreferredProviderId) {
+                continue;
+            }
+            if (!candidate.ready) {
+                attempted.push(candidate.providerId);
+                continue;
+            }
+            const resolvedModel = this._reconcileModel(candidate, req.preferredModelId);
+            return this._buildSuccess(
+                candidate,
+                `Waterfall selected ready provider '${candidate.providerId}'`,
+                attempted.length > 0,
+                attempted,
+                resolvedModel,
+            );
         }
 
-        // ── Step 4: auto — prefer local/embedded before cloud ───────────────
-        const localResult = this._selectLocalOrEmbedded(attempted, true, turnId, agentMode, requiredCapability, req.preferredModelId);
-        if (localResult.success) return localResult;
-
-        return this._selectCloud(attempted, fallbackAllowed, turnId, agentMode, requiredCapability, req.preferredModelId);
-    }
-
-    // ------------------------------------------------------------------
-    // Private helpers
-    // ------------------------------------------------------------------
-
-    private _selectLocalOrEmbedded(
-        attempted: string[],
-        fallbackAllowed: boolean,
-        turnId: string,
-        agentMode: string,
-        requiredCapability?: keyof import('../../../shared/inferenceProviderTypes').InferenceProviderCapabilities,
-        requestedModel?: string,
-    ): InferenceSelectionResult {
-        // Local providers (scope = 'local'), sorted by priority
-        const localProviders = Array.from(
-            this._getAll()
-                .filter(d => d.scope === 'local' && d.ready && this._capOk(d, requiredCapability))
-        ).sort((a, b) => a.priority - b.priority);
-
-        if (localProviders.length > 0) {
-            const chosen = localProviders[0];
-            const resolvedModel = this._reconcileModel(chosen, requestedModel);
-            return this._buildSuccess(chosen, `Best available local provider '${chosen.providerId}'`, attempted.length > 0, attempted, resolvedModel);
-        }
-        for (const d of this._getAll().filter(s => s.scope === 'local')) attempted.push(d.providerId);
-
-        // Embedded providers (scope = 'embedded'), sorted by priority.
-        // Includes embedded_vllm (priority 28) and embedded_llamacpp (priority 30).
-        const embeddedProviders = Array.from(
-            this._getAll()
-                .filter(d => d.scope === 'embedded' && d.ready && this._capOk(d, requiredCapability))
-        ).sort((a, b) => a.priority - b.priority);
-
-        if (embeddedProviders.length > 0) {
-            const chosen = embeddedProviders[0];
-            const resolvedModel = this._reconcileModel(chosen, requestedModel);
-            return this._buildSuccess(chosen, `Fallback to embedded provider '${chosen.providerId}'`, attempted.length > 0, attempted, resolvedModel);
-        }
-        for (const d of this._getAll().filter(s => s.scope === 'embedded')) attempted.push(d.providerId);
-
-        if (!fallbackAllowed) {
-            return this._buildFailure(attempted, 'No local or embedded provider available and fallback disabled', turnId, agentMode);
-        }
-
-        return this._buildFailure(attempted, 'No local or embedded provider available', turnId, agentMode);
+        return this._buildFailure(attempted, 'No viable inference provider available', turnId, agentMode);
     }
 
     private _selectCloud(
@@ -149,15 +145,53 @@ export class ProviderSelectionService {
         agentMode: string,
         requiredCapability?: keyof import('../../../shared/inferenceProviderTypes').InferenceProviderCapabilities,
         requestedModel?: string,
+        preferredProviderId?: string,
     ): InferenceSelectionResult {
-        const cloud = this.registry.getProvider('cloud');
-        if (cloud && cloud.ready && this._capOk(cloud, requiredCapability)) {
+        const candidates = this._buildWaterfallCandidates('cloud-only', requiredCapability, preferredProviderId);
+        const cloud = candidates.find((c) => c.providerId === 'cloud');
+        if (cloud && cloud.ready) {
             const resolvedModel = this._reconcileModel(cloud, requestedModel);
             return this._buildSuccess(cloud, 'Fallback to cloud provider', attempted.length > 0, attempted, resolvedModel);
         }
         if (cloud) attempted.push('cloud');
 
         return this._buildFailure(attempted, 'No viable inference provider available', turnId, agentMode);
+    }
+
+    private _buildWaterfallCandidates(
+        mode: 'auto' | 'local-only' | 'cloud-only',
+        requiredCapability?: keyof import('../../../shared/inferenceProviderTypes').InferenceProviderCapabilities,
+        preferredProviderId?: string,
+    ): InferenceProviderDescriptor[] {
+        const allowedScopes = mode === 'cloud-only'
+            ? new Set(['cloud'])
+            : mode === 'local-only'
+                ? new Set(['local', 'embedded'])
+                : new Set(['local', 'embedded', 'cloud']);
+
+        const all = this._getAll().filter((d) => {
+            if (!allowedScopes.has(d.scope)) return false;
+            return this._capOk(d, requiredCapability);
+        });
+
+        const rank = (providerId: string): number => {
+            const idx = ProviderSelectionService.WATERFALL_ORDER.indexOf(providerId);
+            return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
+        };
+
+        all.sort((a, b) => {
+            const ra = rank(a.providerId);
+            const rb = rank(b.providerId);
+            if (ra !== rb) return ra - rb;
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            return a.providerId.localeCompare(b.providerId);
+        });
+
+        if (!preferredProviderId) return all;
+
+        const preferred = all.find((d) => d.providerId === preferredProviderId);
+        if (!preferred) return all;
+        return [preferred, ...all.filter((d) => d.providerId !== preferredProviderId)];
     }
 
     private _getAll(): InferenceProviderDescriptor[] {
@@ -184,7 +218,7 @@ export class ProviderSelectionService {
             'provider_selected',
             'info',
             'InferenceProviderSelectionService',
-            `Provider selected: ${provider.displayName} — ${reason}`,
+            `Provider selected: ${provider.displayName} - ${reason}`,
             'success',
             { payload: { providerId: provider.providerId, providerType: provider.providerType, fallbackApplied, reason, attemptedProviders: attempted } }
         );
@@ -245,21 +279,16 @@ export class ProviderSelectionService {
         if (!requestedModel && provider.preferredModel) return provider.preferredModel;
         if (!requestedModel) return provider.models[0];
 
-        // 1. Exact match
         if (provider.models.includes(requestedModel)) return requestedModel;
 
-        // 2. Tag fuzzy match (requested 'llama3' -> match 'llama3:latest')
         const tagMatch = provider.models.find(m => m === `${requestedModel}:latest`);
         if (tagMatch) return tagMatch;
 
-        // 3. Prefix match (requested 'llama3' -> match 'llama3.1:latest')
         const prefixMatch = provider.models.find(m => m.startsWith(`${requestedModel}:`) || m.startsWith(`${requestedModel}.`));
         if (prefixMatch) return prefixMatch;
 
-        // 4. Default to first available if inventory exists
         if (provider.models.length > 0) return provider.models[0];
 
-        // 5. Fallback to selection request or descriptor preference
         return requestedModel || provider.preferredModel;
     }
 }

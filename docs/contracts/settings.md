@@ -1,6 +1,6 @@
 # Contract: settings.ts
 
-**Source**: [shared/settings.ts](../../shared/settings.ts)
+**Source**: [shared\settings.ts](../../shared/settings.ts)
 
 ## Interfaces
 
@@ -283,6 +283,7 @@ interface AppSettings {
     system: SystemConfig;
     mcpServers: McpServerConfig[];
     guardrails: GuardrailConfig[];
+    guardrailPolicy?: GuardrailPolicyConfig;
     search: SearchConfig;
     workflows: WorkflowConfig;
     notebooks: Notebook[];

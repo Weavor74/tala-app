@@ -1,6 +1,6 @@
 # MCP Server: tala-core
 
-**Source**: [mcp-servers/tala-core/server.py](../../mcp-servers/tala-core/server.py)
+**Source**: [mcp-servers\tala-core\server.py](../../mcp-servers/tala-core/server.py)
 
 ### Tool: `get_emotional_state`
 

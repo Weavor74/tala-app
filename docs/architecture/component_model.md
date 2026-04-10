@@ -85,7 +85,7 @@ This document describes the Tala system as a collection of interacting component
 ### InferenceProviderRegistry
 - **Path**: `electron/services/inference/InferenceProviderRegistry.ts`
 - **Purpose**: Source of truth for all known inference providers and their runtime status. Runs provider probes and maintains the provider inventory.
-- **Provider types**: `ollama`, `llamacpp`, `embedded_llamacpp`, `vllm`, `koboldcpp`, `cloud`.
+- **Provider types**: `ollama`, `vllm`, `llamacpp`, `koboldcpp`, `embedded_vllm`, `embedded_llamacpp`, `cloud`.
 - **Probe behaviour**: Failed probes for one provider never block other providers. All probe events emit structured telemetry.
 - **Outputs**: `InferenceProviderInventory` (descriptor list, selected provider ID, last refreshed).
 
@@ -93,12 +93,12 @@ This document describes the Tala system as a collection of interacting component
 - **Path**: `electron/services/inference/ProviderSelectionService.ts`
 - **Purpose**: Deterministic provider selection and fallback policy.
 - **Selection order**:
-  1. User-selected provider if ready
-  2. Fallback (with telemetry) if selected provider is unavailable
-  3. Best available local provider by priority
-  4. Embedded llama.cpp
-  5. Cloud provider
-  6. Explicit failure — no silent unknown-provider selection
+  1. Request-selected provider if ready
+  2. Registry-selected provider if ready
+  3. Local-first waterfall (`ollama` -> `vllm` -> `llamacpp` -> `koboldcpp`)
+  4. Embedded waterfall (`embedded_vllm` -> `embedded_llamacpp`)
+  5. Cloud provider (after local/embedded exhaustion in `auto`, or directly in `cloud-only`)
+  6. Explicit failure - no silent unknown-provider selection
 - **Outputs**: `InferenceSelectionResult` (selected provider, reason, fallbackApplied, attemptedProviders).
 
 ### LocalInferenceManager
@@ -378,4 +378,7 @@ The operator review surface provides a unified read-focused view of the full mem
 - **Access**: Engineering sub-tab **🧠 Memory Health** in the Reflection Dashboard.
 - **Controls**: Manual refresh button; "Run Analysis Now" button (human-triggered, maps to `memory:runMaintenanceNow`).
 - **Invariants**: No auto-apply controls; suggestions clearly labeled advisory; no settings changed.
+
+
+
 
