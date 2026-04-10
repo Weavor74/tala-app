@@ -55,4 +55,66 @@ describe('AgentService canon_required autobiographical prompt enforcement', () =
 
         expect(result).toBe(normal);
     });
+
+    it('streamed narrative output is replaced at finalize stage', () => {
+        const finalResponse = 'I remember the summer air and the old neighborhood streets.';
+        const transientMessages = [{ role: 'assistant', content: finalResponse }];
+
+        const out = (AgentService as any).applyCanonRequiredAutobioFinalizeOverride(
+            finalResponse,
+            transientMessages,
+            true,
+        );
+
+        expect(out.enforced).toBe(true);
+        expect(out.replacedAtStage).toBe('finalize');
+        expect(out.originalContentLength).toBe(finalResponse.length);
+        expect(out.finalResponse).toBe("I don't have a recorded memory from that time.");
+        expect(out.transientMessages[0].content).toBe("I don't have a recorded memory from that time.");
+    });
+
+    it('plain finalize path narrative is replaced', () => {
+        const finalResponse = 'When I was younger, I would walk by the river every evening.';
+        const transientMessages = [{ role: 'assistant', content: finalResponse }];
+
+        const out = (AgentService as any).applyCanonRequiredAutobioFinalizeOverride(
+            finalResponse,
+            transientMessages,
+            true,
+        );
+
+        expect(out.finalResponse).toBe("I don't have a recorded memory from that time.");
+    });
+
+    it('retry path narrative is replaced at finalize stage', () => {
+        const finalResponse = 'I can still picture that event clearly from my youth.';
+        const transientMessages = [
+            { role: 'assistant', content: 'tool envelope retry output' },
+            { role: 'assistant', content: finalResponse },
+        ];
+
+        const out = (AgentService as any).applyCanonRequiredAutobioFinalizeOverride(
+            finalResponse,
+            transientMessages,
+            true,
+        );
+
+        expect(out.finalResponse).toBe("I don't have a recorded memory from that time.");
+        expect(out.transientMessages.every((m: any) => m.content === "I don't have a recorded memory from that time.")).toBe(true);
+    });
+
+    it('RP mode is not replaced at finalize stage', () => {
+        const finalResponse = 'In character narrative remains allowed in RP mode.';
+        const transientMessages = [{ role: 'assistant', content: finalResponse }];
+
+        const out = (AgentService as any).applyCanonRequiredAutobioFinalizeOverride(
+            finalResponse,
+            transientMessages,
+            false,
+        );
+
+        expect(out.enforced).toBe(false);
+        expect(out.finalResponse).toBe(finalResponse);
+        expect(out.transientMessages[0].content).toBe(finalResponse);
+    });
 });

@@ -278,7 +278,7 @@ Violation of this rule is considered a system failure.`;
     private static shouldApplyCanonRequiredAutobioOverride(turnObject: any, activeMode: string): boolean {
         return activeMode !== 'rp'
             && turnObject?.responseMode === 'canon_required'
-            && turnObject?.canonGateDecision?.isAutobiographicalLoreRequest === true;
+            && turnObject?.canonGateDecision?.isAutobiographicalLoreRequest !== false;
     }
 
     private static applyCanonRequiredAutobioDirective(systemPrompt: string): string {
@@ -290,6 +290,43 @@ Violation of this rule is considered a system failure.`;
             return content;
         }
         return AgentService.CANON_REQUIRED_AUTOBIO_FALLBACK_RESPONSE;
+    }
+
+    private static applyCanonRequiredAutobioFinalizeOverride(
+        finalResponse: string,
+        transientMessages: ChatMessage[],
+        enforceCanonRequiredAutobioOverride: boolean,
+    ): {
+            finalResponse: string;
+            transientMessages: ChatMessage[];
+            enforced: boolean;
+            originalContentLength: number;
+            replacedAtStage: 'finalize';
+        } {
+        const originalContentLength = finalResponse.length;
+        if (!enforceCanonRequiredAutobioOverride) {
+            return {
+                finalResponse,
+                transientMessages,
+                enforced: false,
+                originalContentLength,
+                replacedAtStage: 'finalize',
+            };
+        }
+
+        const fallback = AgentService.CANON_REQUIRED_AUTOBIO_FALLBACK_RESPONSE;
+        const rewrittenMessages = transientMessages.map((msg) => {
+            if (msg.role !== 'assistant') return msg;
+            return { ...msg, content: fallback };
+        });
+
+        return {
+            finalResponse: fallback,
+            transientMessages: rewrittenMessages,
+            enforced: true,
+            originalContentLength,
+            replacedAtStage: 'finalize',
+        };
     }
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
@@ -3345,6 +3382,41 @@ Failure to provide a tool call will result in system termination.`;
             if (this.executionLogHistory.length > 25) {
                 this.executionLogHistory.shift();
             }
+        }
+
+        // Final authoritative outbound guard: last-stage replacement before memory writes,
+        // artifact routing, chat history persistence, and UI return payload.
+        const finalizeOverride = AgentService.applyCanonRequiredAutobioFinalizeOverride(
+            finalResponse,
+            transientMessages,
+            enforceCanonRequiredAutobioOverride,
+        );
+        finalResponse = finalizeOverride.finalResponse;
+        transientMessages.splice(0, transientMessages.length, ...finalizeOverride.transientMessages);
+        if (finalizeOverride.enforced) {
+            console.log(
+                `[AgentService] canon_required_fallback_enforced=true ` +
+                `originalContentLength=${finalizeOverride.originalContentLength} ` +
+                `replacedAtStage=${finalizeOverride.replacedAtStage} turnId=${turnId}`
+            );
+            telemetry.operational(
+                'cognitive',
+                'canon_required_fallback_enforced',
+                'warn',
+                `turn:${turnId}`,
+                'Canon-required autobiographical fallback enforced on final outbound response.',
+                'success',
+                {
+                    payload: {
+                        turnId,
+                        canon_required_fallback_enforced: true,
+                        originalContentLength: finalizeOverride.originalContentLength,
+                        replacedAtStage: finalizeOverride.replacedAtStage,
+                        mode: activeMode,
+                        intent: turnObject.intent.class,
+                    },
+                },
+            );
         }
 
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---

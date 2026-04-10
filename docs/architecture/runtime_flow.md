@@ -278,6 +278,19 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
 4. **Deterministic output fallback (non-RP autobiographical turns only)** — `AgentService` normalizes assistant prose to:
    - `"I don't have a recorded memory from that time."`
    This is a final-response guard against autobiographical narrative hallucination in `canon_required` mode.
+5. **Authoritative finalize-stage override** — after stream/retry/timeout paths complete, `AgentService.chat()` applies a last outbound replacement before:
+   - post-turn memory writes
+   - artifact routing
+   - chat history persistence
+   - returned `AgentTurnOutput` to UI
+   This guarantees user-visible and persisted response content is the fixed fallback string for eligible turns.
+6. **Finalize enforcement telemetry/logging** — when replacement is applied:
+   - log line includes `canon_required_fallback_enforced=true`, `originalContentLength=<n>`, `replacedAtStage=finalize`
+   - telemetry event: `canon_required_fallback_enforced` with payload fields:
+     - `canon_required_fallback_enforced`
+     - `originalContentLength`
+     - `replacedAtStage`
+     - `mode`, `intent`, `turnId`
 
 The `[FALLBACK CONTRACT]`, `[CANON LORE MEMORIES]`, and `[MEMORY GROUNDED RECALL]` blocks are **suppressed** when `canon_required` is active.
 
