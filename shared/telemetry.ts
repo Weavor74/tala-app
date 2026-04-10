@@ -156,6 +156,7 @@ export type TelemetryEventType =
     | 'live_compaction_applied'
     | 'post_turn_memory_write'
     | 'post_turn_reflection_signal'
+    | 'canon_required_fallback_enforced'
     // Phase 3C — Cognitive Behavior Validation + Small-Model Tuning
     | 'token_budget_computed'
     | 'memory_ranking_applied'
