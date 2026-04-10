@@ -9,7 +9,7 @@
         "id": "ollama-local",
         "alias": "Ollama (Local)",
         "source": "local",
-        "engine": "ollama",
+        "engine": "vllm",
         "endpoint": "http://127.0.0.1:11434",
         "priority": 0,
         "params": {
@@ -27,7 +27,7 @@
             "huihui_ai/qwen3-abliterated:8b"
           ]
         },
-        "model": "huihui_ai/qwen3-abliterated:8b"
+        "model": "huihui_ai/qwen3-abliterated:1.7b"
       },
       {
         "id": "2cj970pmu",
@@ -203,10 +203,8 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "-m",
-        "astro_emotion_engine.mcp_server"
+        "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
       ],
-      "cwd": "mcp-servers/astro-engine",
       "enabled": true
     },
     {
@@ -283,7 +281,7 @@
         "id": "google",
         "name": "Brave",
         "type": "google",
-        "enabled": true,
+        "enabled": false,
         "endpoint": "https://api.search.brave.com/res/v1/web/search",
         "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ"
       },
@@ -312,7 +310,7 @@
     "maxProposalsPerDay": 5
   },
   "agentModes": {
-    "activeMode": "rp",
+    "activeMode": "hybrid",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,
@@ -355,5 +353,35 @@
     "logToFile": true,
     "previewChars": 1200,
     "maxFullInlineChars": 12000
+  },
+  "guardrailPolicy": {
+    "version": 1,
+    "activeProfileId": "balanced",
+    "profiles": [
+      {
+        "id": "permissive",
+        "name": "Permissive",
+        "description": "Minimal restrictions — allows most actions. Suitable for trusted development environments.",
+        "ruleIds": [],
+        "readonly": true
+      },
+      {
+        "id": "balanced",
+        "name": "Balanced",
+        "description": "Moderate guardrails — blocks high-risk actions, warns on medium-risk actions.",
+        "ruleIds": [],
+        "readonly": true
+      },
+      {
+        "id": "locked_down",
+        "name": "Locked Down",
+        "description": "Strict restrictions — requires validation for most side-effectful actions.",
+        "ruleIds": [],
+        "readonly": true
+      }
+    ],
+    "rules": [],
+    "validatorBindings": [],
+    "updatedAt": "2026-04-08T00:08:13.574Z"
   }
 }
