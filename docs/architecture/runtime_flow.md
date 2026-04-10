@@ -271,6 +271,13 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
 **`canon_required`** (insufficient canon memory, canon gate fired):
 1. **`[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]`** _(if fallback memories exist)_ — Any fallback memories labeled as "fallback only — insufficient for autobiographical fact claims".
 2. **`[CANON GATE — NO VERIFIED AUTOBIOGRAPHICAL MEMORY]`** — Hard no-fabrication instruction. Always emitted for `canon_required` regardless of memory count. Instructs Tala to: state that no grounded memory exists, not fabricate autobiographical events, and optionally invite the user to define that canon deliberately.
+3. **AgentService prompt-level override (non-RP autobiographical turns only)** — `AgentService.chat()` appends a top-level system constraint block when `responseMode='canon_required'` and `canonGateDecision.isAutobiographicalLoreRequest=true`:
+   - "You MUST NOT invent, fabricate, or simulate personal memories."
+   - "If you do not have verified autobiographical memory ... explicitly state that you do not have a memory."
+   - "Violation of this rule is considered a system failure."
+4. **Deterministic output fallback (non-RP autobiographical turns only)** — `AgentService` normalizes assistant prose to:
+   - `"I don't have a recorded memory from that time."`
+   This is a final-response guard against autobiographical narrative hallucination in `canon_required` mode.
 
 The `[FALLBACK CONTRACT]`, `[CANON LORE MEMORIES]`, and `[MEMORY GROUNDED RECALL]` blocks are **suppressed** when `canon_required` is active.
 
@@ -288,6 +295,8 @@ Tala must not fabricate a first-person autobiographical event. Allowed responses
 - "I don't have a grounded memory from when I was 17."
 - "I don't want to invent a false memory."
 - "If you want, we can define that part of my canon deliberately."
+- For non-RP autobiographical `canon_required` turns, runtime fallback may enforce:
+  - "I don't have a recorded memory from that time."
 
 Forbidden: inventing a specific event in first person as recalled fact (e.g., "I was 17 when I got into a minor car accident...").
 

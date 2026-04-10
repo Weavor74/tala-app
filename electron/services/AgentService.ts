@@ -157,6 +157,20 @@ type TurnExecutionLog = {
  * - **Self-Evolutuon**: Interfaces with ReflectionService for self-improvement goals.
  */
 export class AgentService {
+    private static readonly CANON_REQUIRED_AUTOBIO_SYSTEM_DIRECTIVE = `You are Tala. You are being asked about your own past.
+
+CRITICAL RULE:
+You MUST NOT invent, fabricate, or simulate personal memories.
+
+If you do not have verified autobiographical memory for the requested time:
+- You must explicitly state that you do not have a memory.
+- You may optionally describe the absence of memory.
+- You must NOT generate a story, scenario, or imagined event.
+
+Violation of this rule is considered a system failure.`;
+
+    private static readonly CANON_REQUIRED_AUTOBIO_FALLBACK_RESPONSE = "I don't have a recorded memory from that time.";
+
     /** The active inference engine implementation (Ollama, Cloud, etc.). */
     private brain: IBrain;
     /** True only when loadBrainConfig() has successfully bound a real provider. */
@@ -260,6 +274,23 @@ export class AgentService {
     private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
     /** Optional diagnostics aggregator — records cognitive context after each turn. */
     private diagnosticsAggregator: RuntimeDiagnosticsAggregator | null = null;
+
+    private static shouldApplyCanonRequiredAutobioOverride(turnObject: any, activeMode: string): boolean {
+        return activeMode !== 'rp'
+            && turnObject?.responseMode === 'canon_required'
+            && turnObject?.canonGateDecision?.isAutobiographicalLoreRequest === true;
+    }
+
+    private static applyCanonRequiredAutobioDirective(systemPrompt: string): string {
+        return `${systemPrompt}\n\n[CANON REQUIRED AUTOBIOGRAPHICAL CONSTRAINT]\n${AgentService.CANON_REQUIRED_AUTOBIO_SYSTEM_DIRECTIVE}`;
+    }
+
+    private static enforceCanonRequiredAutobioFallbackReply(content: string, enforceCanonRequiredAutobioOverride: boolean): string {
+        if (!enforceCanonRequiredAutobioOverride) {
+            return content;
+        }
+        return AgentService.CANON_REQUIRED_AUTOBIO_FALLBACK_RESPONSE;
+    }
 
     constructor(terminal?: TerminalService, functions?: FunctionService, mcp?: McpServiceLike, inference?: InferenceService, userProfile?: UserProfileService) {
         this.brain = new OllamaBrain();
@@ -2476,7 +2507,7 @@ Exported standalone package from Tala.
         }
 
         // --- DYNAMIC PROMPT ASSEMBLY via COMPACT BUILDER ---
-        const systemPrompt = CompactPromptBuilder.build({
+        let systemPrompt = CompactPromptBuilder.build({
             systemPromptBase: activeProfile.systemPrompt,
             activeProfileId: activeProfileId,
             isSmallLocalModel: !!isSmallLocalModel,
@@ -2490,6 +2521,11 @@ Exported standalone package from Tala.
             compactPacket,
             notebookGrounded: notebookActive,
         });
+
+        const enforceCanonRequiredAutobioOverride = AgentService.shouldApplyCanonRequiredAutobioOverride(turnObject, activeMode);
+        if (enforceCanonRequiredAutobioOverride) {
+            systemPrompt = AgentService.applyCanonRequiredAutobioDirective(systemPrompt);
+        }
 
         // --- PHASE 3A: RECORD COGNITIVE CONTEXT IN DIAGNOSTICS ---
         try {
@@ -2859,7 +2895,13 @@ Exported standalone package from Tala.
                     cumulativeUsage.total_tokens += responseUsage.total_tokens;
                 }
 
-                const assistantMsg: ChatMessage = { role: 'assistant', content: response.content || "" };
+                const assistantMsg: ChatMessage = {
+                    role: 'assistant',
+                    content: AgentService.enforceCanonRequiredAutobioFallbackReply(
+                        response.content || "",
+                        enforceCanonRequiredAutobioOverride,
+                    ),
+                };
 
                 // Tools-Only suppression for coding turns in Assistant mode
                 const responseToolCalls = response.toolCalls;
@@ -3015,7 +3057,10 @@ Failure to provide a tool call will result in system termination.`;
                         // Retry produced tool calls — update assistantMsg to use the retry
                         // response's content so the committed message is internally consistent
                         // (content and tool_calls come from the same inference call).
-                        assistantMsg.content = retryResponse.content || "";
+                        assistantMsg.content = AgentService.enforceCanonRequiredAutobioFallbackReply(
+                            retryResponse.content || "",
+                            enforceCanonRequiredAutobioOverride,
+                        );
                     }
                 }
 
@@ -3053,13 +3098,22 @@ Failure to provide a tool call will result in system termination.`;
                             // Prepend an incomplete notice to the model's response so the caller
                             // can surface the reason to the user.
                             const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
-                            finalResponse = `${incompleteNote}\n\n${response.content || ''}`.trim();
+                            finalResponse = `${incompleteNote}\n\n${AgentService.enforceCanonRequiredAutobioFallbackReply(
+                                response.content || '',
+                                enforceCanonRequiredAutobioOverride,
+                            )}`.trim();
                         } else {
                             console.log(`[AgentService] finalizing browser task complete=true hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
-                            finalResponse = response.content || "";
+                            finalResponse = AgentService.enforceCanonRequiredAutobioFallbackReply(
+                                response.content || "",
+                                enforceCanonRequiredAutobioOverride,
+                            );
                         }
                     } else {
-                        finalResponse = response.content || "";
+                        finalResponse = AgentService.enforceCanonRequiredAutobioFallbackReply(
+                            response.content || "",
+                            enforceCanonRequiredAutobioOverride,
+                        );
                     }
                     this.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
@@ -3264,7 +3318,10 @@ Failure to provide a tool call will result in system termination.`;
                             const fallbackResponse = await this.streamWithBrain(
                                 this.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
                             );
-                            finalResponse = fallbackResponse.content || "";
+                            finalResponse = AgentService.enforceCanonRequiredAutobioFallbackReply(
+                                fallbackResponse.content || "",
+                                enforceCanonRequiredAutobioOverride,
+                            );
                             const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
                             this.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                             console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
