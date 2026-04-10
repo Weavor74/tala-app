@@ -558,8 +558,14 @@ streamWithBrain()
   3. calls = (activeMode === 'rp') ? [] : responseToolCalls
   
   4. ToolRequired recovery retry
-       triggers when: hasKeywordIndicatingToolUse || (toolsToSend.length > 0 && calls.length === 0)
-       AND:           calls.length === 0 && activeMode !== 'rp'
+       triggers when ALL of the following are true:
+         • toolsToSend.length > 0 (tools were authorized for this turn)
+         • hasKeywordIndicatingToolUse || calls.length === 0
+         • calls.length === 0
+         • activeMode !== 'rp'
+         • turn is not a greeting
+         • gateDecision.blockedTools.length === 0  ← skip if ToolGatekeeper blocked tools
+         • !gateDecision.directAnswerPreferred      ← skip if grounded memory is sufficient
        • sends retryResponse with envelope prompt + filteredTools
        • populates calls from retryResponse.toolCalls
        • falls back to brace-depth JSON envelope extraction from retryResponse.content
@@ -589,6 +595,8 @@ streamWithBrain()
 | Coding turns always hard-fail if no tool calls produced | Coding intent check in step 4 retry failure path |
 | Non-coding retry failures return the original prose response | Non-coding intents fall through to step 5 after a failed retry |
 | assistantMsg context is consistent with its tool_calls | When retry provides calls, assistantMsg.content is sourced from retryResponse |
+| ToolRequired retry never fires when ToolGatekeeper blocked tools | `gateDecision.blockedTools.length === 0` guard in `toolRequiredEligible` |
+| ToolRequired retry never fires when memory grounding is sufficient | `!gateDecision.directAnswerPreferred` guard in `toolRequiredEligible` |
 
 ### hasKeywordIndicatingToolUse patterns
 
