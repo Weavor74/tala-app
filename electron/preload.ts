@@ -215,6 +215,11 @@ contextBridge.exposeInMainWorld('tala', {
     /** Prunes memory items. */
     pruneMemory: (ttlDays: number, maxItems: number) => ipcRenderer.invoke('memory-prune', ttlDays, maxItems),
 
+    /** Returns the current MemoryOperatorReviewModel for the operator review panel. Read-only. */
+    getMemoryOperatorReviewModel: () => ipcRenderer.invoke('memory:getOperatorReviewModel'),
+    /** Triggers an immediate memory maintenance analytics run. Human-gated. */
+    runMemoryMaintenanceNow: () => ipcRenderer.invoke('memory:runMaintenanceNow'),
+
     // ─── File Operations ─────────────────────────────────────────
     /** Lists contents of a directory. */
     listDirectory: (path: string) => ipcRenderer.invoke('list-directory', path),

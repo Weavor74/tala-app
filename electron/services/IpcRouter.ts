@@ -598,6 +598,29 @@ export class IpcRouter {
     ipcMain.handle('delete-memory', async (_e, id) => agent.deleteMemory(id));
     ipcMain.handle('update-memory', async (_e, { id, text }) => agent.updateMemory(id, text));
 
+    // ── Memory Operator Review Surface ───────────────────────────────────────
+
+    /**
+     * Returns the current MemoryOperatorReviewModel for the operator review
+     * panel in the Reflection Dashboard.
+     *
+     * Read-only — safe to call repeatedly. Returns a bounded advisory-only
+     * snapshot; no settings or configurations are changed.
+     */
+    ipcMain.handle('memory:getOperatorReviewModel', async () => {
+      return agent.getMemoryOperatorReviewModel();
+    });
+
+    /**
+     * Triggers an immediate memory maintenance analytics run.
+     *
+     * Human-gated — does not change any settings or configurations.
+     * Returns the run result or null if the scheduler is not available.
+     */
+    ipcMain.handle('memory:runMaintenanceNow', async () => {
+      return agent.runMemoryMaintenanceNow();
+    });
+
     // ═══════════════════════════════════════════════════════════════════════
     // IPC HANDLERS — MCP
     // ═══════════════════════════════════════════════════════════════════════

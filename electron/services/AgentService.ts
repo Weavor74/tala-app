@@ -65,6 +65,8 @@ import { DeferredMemoryReplayService } from './memory/DeferredMemoryReplayServic
 import { DeferredMemoryWorkRepository } from './db/DeferredMemoryWorkRepository';
 import { MemoryRepairOutcomeRepository } from './db/MemoryRepairOutcomeRepository';
 import { MemoryRepairSchedulerService } from './memory/MemoryRepairSchedulerService';
+import { MemoryOperatorReviewService } from './memory/MemoryOperatorReviewService';
+import type { MemoryOperatorReviewModel } from '../../shared/memory/MemoryOperatorReviewModel';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
@@ -229,6 +231,8 @@ export class AgentService {
     private _repairExecutor: MemoryRepairExecutionService | null = null;
     /** Scheduled memory repair analytics loop — wired alongside _repairExecutor. */
     private _repairScheduler: MemoryRepairSchedulerService | null = null;
+    /** Operator review surface aggregator — wired alongside _repairScheduler. */
+    private _operatorReviewSvc: MemoryOperatorReviewService | null = null;
     /**
      * Parameters captured during igniteSoul() so repair handlers can restart
      * individual subsystems without re-running the full startup sequence.
@@ -1727,6 +1731,9 @@ Exported standalone package from Tala.
 
                 // Create the scheduler (started later, after all handlers are registered)
                 this._repairScheduler = new MemoryRepairSchedulerService(outcomeRepo);
+
+                // Wire operator review aggregator
+                this._operatorReviewSvc = new MemoryOperatorReviewService(this.memory, this._repairScheduler);
 
                 // ── Repair evidence persistence subscribers ───────────────────
                 // Subscribe once to TelemetryBus and persist the remaining
@@ -4187,6 +4194,35 @@ Failure to provide a tool call will result in system termination.`;
     public async deleteFile(p: string) { return this.rag.deleteFile(p); }
     public async scanAndIngest() { return this.ingestion.scanAndIngest(); }
     public async listIndexedFiles() { return this.rag.listIndexedFiles(); }
+
+    /**
+     * Assemble and return the current MemoryOperatorReviewModel for the
+     * operator review surface in the Reflection Dashboard.
+     *
+     * Read-only and safe to call repeatedly.  Returns a bounded, advisory-only
+     * snapshot; no settings or configurations are changed.
+     */
+    public async getMemoryOperatorReviewModel(): Promise<MemoryOperatorReviewModel> {
+        if (!this._operatorReviewSvc) {
+            // Fallback when the DB pool was not available at startup
+            this._operatorReviewSvc = new MemoryOperatorReviewService(this.memory, null);
+        }
+        return this._operatorReviewSvc.getModel();
+    }
+
+    /**
+     * Trigger an immediate memory maintenance analytics run (manual refresh).
+     *
+     * Equivalent to a human-requested scheduler tick — does not change any
+     * settings or configurations.  Safe to call from the operator review panel.
+     *
+     * Returns the run result, or null if the scheduler is not available.
+     */
+    public async runMemoryMaintenanceNow(): Promise<import('../../shared/memory/MemoryMaintenanceState').MemoryRepairScheduledRunResult | null> {
+        if (!this._repairScheduler) return null;
+        console.log('[MemoryOperatorReview] maintenance run requested by operator');
+        return this._repairScheduler.runNow('operator_manual');
+    }
 
     public async rewindChat(index: number) {
         if (index >= 0 && index < this.chatHistory.length) {

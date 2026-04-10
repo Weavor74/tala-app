@@ -47,6 +47,8 @@ import type {
     MemoryRepairTrigger,
 } from '../../../shared/memory/MemoryHealthStatus';
 import type { MemoryAdaptivePlan, MemoryAdaptiveTarget } from '../../../shared/memory/MemoryAdaptivePlan';
+import type { MemoryRepairInsightSummary, MemoryRepairReflectionReport } from '../../../shared/memory/MemoryRepairInsights';
+import type { MemoryOptimizationSuggestionReport } from '../../../shared/memory/MemoryOptimizationSuggestion';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -106,6 +108,16 @@ export class MemoryRepairSchedulerService {
     private _running = false;
     /** The result of the most recently completed (or skipped) run. */
     private _lastRun: MemoryRepairScheduledRunResult | null = null;
+    /** Ring buffer of the last 5 completed (or skipped) runs for operator review. */
+    private _recentRuns: MemoryRepairScheduledRunResult[] = [];
+    /** Latest insight summary from the last successful analytics pass. */
+    private _latestInsightSummary: MemoryRepairInsightSummary | null = null;
+    /** Latest reflection report from the last successful analytics pass. */
+    private _latestReflectionReport: MemoryRepairReflectionReport | null = null;
+    /** Latest adaptive plan from the last successful analytics pass. */
+    private _latestAdaptivePlan: MemoryAdaptivePlan | null = null;
+    /** Latest optimization suggestion report from the last successful analytics pass. */
+    private _latestSuggestionReport: MemoryOptimizationSuggestionReport | null = null;
 
     constructor(
         private readonly outcomeRepo: MemoryRepairOutcomeRepository,
@@ -198,7 +210,13 @@ export class MemoryRepairSchedulerService {
 
             // Generate human-gated optimization suggestions (advisory only).
             // This call is non-mutating and has no side effects beyond telemetry.
-            this.suggestionSvc.generateReport(summary, plan);
+            const suggestionReport = this.suggestionSvc.generateReport(summary, plan);
+
+            // Cache for operator review surface.
+            this._latestInsightSummary = summary;
+            this._latestReflectionReport = report;
+            this._latestAdaptivePlan = plan;
+            this._latestSuggestionReport = suggestionReport;
 
             const decision = this.selfMaintenance.evaluate(summary, report, plan);
 
@@ -235,6 +253,7 @@ export class MemoryRepairSchedulerService {
 
             this._emitRunCompleted(result, decision, reason);
             this._lastRun = result;
+            this._pushRecentRun(result);
             return result;
         } catch (err) {
             console.error('[MemoryRepairSchedulerService] run error:', err);
@@ -251,6 +270,7 @@ export class MemoryRepairSchedulerService {
                 reason: `run_error: ${err instanceof Error ? err.message : String(err)}`,
             };
             this._lastRun = errorResult;
+            this._pushRecentRun(errorResult);
             return errorResult;
         } finally {
             this._running = false;
@@ -265,7 +285,61 @@ export class MemoryRepairSchedulerService {
         return this._lastRun;
     }
 
+    /**
+     * Returns the last N completed (or skipped) run results in chronological
+     * order (oldest first), bounded to the most recent 5.
+     * Used by the operator review surface.
+     */
+    getRecentRuns(): MemoryRepairScheduledRunResult[] {
+        return [...this._recentRuns];
+    }
+
+    /**
+     * Returns the most recent MemoryRepairInsightSummary, or null if no
+     * successful analytics run has completed yet.
+     */
+    getLatestInsightSummary(): MemoryRepairInsightSummary | null {
+        return this._latestInsightSummary;
+    }
+
+    /**
+     * Returns the most recent MemoryRepairReflectionReport, or null if no
+     * successful analytics run has completed yet.
+     */
+    getLatestReflectionReport(): MemoryRepairReflectionReport | null {
+        return this._latestReflectionReport;
+    }
+
+    /**
+     * Returns the most recent MemoryAdaptivePlan, or null if no successful
+     * analytics run has completed yet.
+     */
+    getLatestAdaptivePlan(): MemoryAdaptivePlan | null {
+        return this._latestAdaptivePlan;
+    }
+
+    /**
+     * Returns the most recent MemoryOptimizationSuggestionReport, or null if
+     * no successful analytics run has completed yet.
+     */
+    getLatestSuggestionReport(): MemoryOptimizationSuggestionReport | null {
+        return this._latestSuggestionReport;
+    }
+
     // ── Bounded action helpers ────────────────────────────────────────────────
+
+    // ── Ring-buffer helper ────────────────────────────────────────────────────
+
+    /**
+     * Append a run result to the recent-runs ring buffer (max 5 entries).
+     * Oldest entry is dropped when the buffer is full.
+     */
+    private _pushRecentRun(run: MemoryRepairScheduledRunResult): void {
+        this._recentRuns.push(run);
+        if (this._recentRuns.length > 5) {
+            this._recentRuns.shift();
+        }
+    }
 
     /**
      * Emit a repair escalation signal via TelemetryBus.
