@@ -231,12 +231,14 @@ describe('MemoryOperatorReviewService', () => {
 
     // ── MOR-02: adaptive plan is included and ordered correctly ───────────────
 
-    it('MOR-02 adaptive plan is included and top priorities are ordered by score desc', async () => {
+    it('MOR-02 adaptive plan is included and top priorities are preserved in plan order (not re-sorted)', async () => {
+        // Priorities are intentionally out of score order to verify the service
+        // does NOT re-sort them — the planner is authoritative on ordering.
         const plan = makeAdaptivePlan({
             priorities: [
-                { target: 'mem0', score: 60, reason: 'recurring failures', evidence: {} },
-                { target: 'canonical', score: 90, reason: 'repeated unavailability', evidence: {} },
                 { target: 'graph', score: 30, reason: 'occasional failures', evidence: {} },
+                { target: 'canonical', score: 90, reason: 'repeated unavailability', evidence: {} },
+                { target: 'mem0', score: 60, reason: 'recurring failures', evidence: {} },
             ],
             escalation: { bias: 'accelerate', reason: 'pattern worsening', evidence: {} },
             cadence: { recommendation: 'tighten', suggestedMultiplier: 0.5, reason: 'tighten', evidence: {} },
@@ -253,8 +255,10 @@ describe('MemoryOperatorReviewService', () => {
         expect(model.adaptivePlan!.escalationBias).toBe('accelerate');
         expect(model.adaptivePlan!.cadenceRecommendationMinutes).toBe(5); // 10 * 0.5
         const scores = model.adaptivePlan!.topPriorities.map(p => p.score);
-        // priorities slice preserves plan order — plan is already sorted by service
-        expect(scores).toEqual([60, 90, 30]); // service does not re-sort — uses plan order from planner
+        // Service preserves plan order (not re-sorted by score) — planner is authoritative
+        expect(scores).toEqual([30, 90, 60]);
+        // Verify the targets also preserve order
+        expect(model.adaptivePlan!.topPriorities.map(p => p.target)).toEqual(['graph', 'canonical', 'mem0']);
     });
 
     // ── MOR-03: suggestions capped and sorted deterministically ──────────────
