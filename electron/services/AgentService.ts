@@ -1653,13 +1653,13 @@ Exported standalone package from Tala.
                 // Surface structured DB diagnostics from the preflight check.
                 if (dbHealth) {
                     if (!dbHealth.reachable) {
-                        console.error(`[MemoryService] Postgres unreachable: ${dbHealth.error ?? 'unknown error'}`);
+                        console.error(`[DBHealth] Postgres unreachable: ${dbHealth.error ?? 'unknown error'}`);
                     } else {
                         if (!dbHealth.pgvectorInstalled) {
-                            console.warn('[MemoryService] pgvector not installed — vector search will be unavailable');
+                            console.warn('[DBHealth] pgvector not installed — vector search will be unavailable');
                         }
                         if (!dbHealth.migrationsApplied) {
-                            console.warn('[MemoryService] schema_migrations not found — schema may not be initialized');
+                            console.warn('[DBHealth] schema_migrations not found — schema may not be initialized');
                         }
                     }
                 }

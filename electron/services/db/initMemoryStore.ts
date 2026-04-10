@@ -133,6 +133,11 @@ export async function initCanonicalMemory(
     // ── Step 2a: Preflight DB health check ──────────────────────────────
     // Run after pool creation so we can reuse the same connection, but before
     // migrations so the caller receives structured diagnostics on any gap.
+    // maxRetries=1: the pool just connected successfully inside initialize(),
+    // so a single probe is sufficient here. Retry policy for the broader
+    // connection cycle is owned by DatabaseBootstrapCoordinator, not this check.
+    // _lastDbHealth is set here — before runMigrations() — so it is always
+    // available to callers even if a subsequent migration failure throws.
     const healthSvc = new DbHealthService(repo.getSharedPool(), { maxRetries: 1 });
     const health = await healthSvc.check();
     _lastDbHealth = health;
@@ -194,9 +199,12 @@ export function getEmbeddingsRepository(): EmbeddingsRepository | null {
 /**
  * Get the result of the most recent DB preflight health check.
  *
- * Returns `null` if `initCanonicalMemory()` has not been called yet.
- * Available after `initCanonicalMemory()` resolves (even on failure paths
- * that fall through to degraded mode).
+ * Returns `null` if `initCanonicalMemory()` has not been called yet, or if
+ * `shutdownCanonicalMemory()` has been called since the last init.
+ *
+ * The result is set *before* migrations run inside `initCanonicalMemory()`,
+ * so it is always populated after `initialize()` succeeds — even when a
+ * subsequent migration error causes `initCanonicalMemory()` to throw.
  */
 export function getLastDbHealth(): CanonicalDbHealth | null {
   return _lastDbHealth;
