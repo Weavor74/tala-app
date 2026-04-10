@@ -110,6 +110,35 @@ Every tool execution (planned and actual) is recorded in a `TurnExecutionLog`:
 
 ---
 
+## Autobiographical Memory Authority
+
+For autobiographical/lore turns, runtime now enforces strict memory authority:
+
+- `TalaContextRouter` uses `responseMode=memory_grounded_strict` when autobiographical memory is sufficient.
+- `memory_grounded_soft` is no longer emitted by the router for lore turns.
+- `canon_required` is forced when autobiographical memory is weak or unavailable.
+
+### Canon sufficiency gate
+
+Autobiographical freeform recall is blocked when any of these are true:
+
+- Fewer than 2 qualified canon memories are approved.
+- Canon candidates do not meet minimum semantic score.
+- Canon candidates do not meet minimum confidence score.
+- Memory subsystem health is degraded (`degraded`, `critical`, or `disabled`).
+
+Qualified canon sources remain: `rag`, `diary`, `graph`, `core_bio`, `lore`.
+
+### ToolGatekeeper behavior
+
+When `responseMode=canon_required`:
+
+- All tools are blocked for the turn (prevents exploratory generation drift).
+- `directAnswerPreferred` remains `false`.
+- The prompt path is forced to the canon fallback template ("no grounded memory available").
+
+---
+
 ## Verification Scripts
 
 ```bash

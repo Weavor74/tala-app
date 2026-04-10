@@ -302,6 +302,17 @@ describe('Test 5 — Rule C: directAnswerPreferred is set when grounded memory i
         }));
         expect(decision.directAnswerPreferred).toBe(false);
     });
+
+    it('is false and blocks tools when responseMode=canon_required', () => {
+        const decision = gate.evaluate(makeContext({
+            intentClass: 'lore',
+            approvedMemoryCount: 1,
+            responseMode: 'canon_required',
+        }));
+        expect(decision.directAnswerPreferred).toBe(false);
+        expect(decision.allowedTools.length).toBe(0);
+        expect(decision.blockedTools.length).toBe(ALL_TOOLS.length);
+    });
 });
 
 // ─── Test 6: Rule D — Technical/coding intent still allows engineering tools ──

@@ -91,12 +91,19 @@ function makeMemory(
 }
 
 // Minimal MemoryService stub for router integration tests
-function makeMemoryService(memories: MemoryItem[] = []) {
-    return {
+function makeMemoryService(
+    memories: MemoryItem[] = [],
+    opts: { healthState?: 'healthy' | 'reduced' | 'degraded' | 'critical' | 'disabled' } = {},
+) {
+    const service: any = {
         search: vi.fn().mockResolvedValue(memories),
         add: vi.fn(),
         get: vi.fn(),
-    } as unknown as import('../electron/services/MemoryService').MemoryService;
+    };
+    if (opts.healthState) {
+        service.getHealthStatus = vi.fn().mockReturnValue({ state: opts.healthState });
+    }
+    return service as unknown as import('../electron/services/MemoryService').MemoryService;
 }
 
 // ─── CGA01–CGA03: Canon gate via TalaContextRouter integration ────────────────
@@ -113,6 +120,8 @@ describe('CanonGateAutobio — TalaContextRouter integration', () => {
         expect(ctx.canonGateDecision?.sufficientCanonMemory).toBe(false);
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
         expect(ctx.responseMode).toBe('canon_required');
+        const canonBlock = ctx.promptBlocks.find(b => b.header.includes('CANON GATE'));
+        expect(canonBlock?.content).toMatch(/do not fabricate/i);
     });
 
     it('CGA20: autobiographical query + mem0-only approved memories → gate fires', async () => {
@@ -134,10 +143,18 @@ describe('CanonGateAutobio — TalaContextRouter integration', () => {
 
     it('CGA12: autobiographical query + valid rag canon memory → no gate fired', async () => {
         const ragMemory = makeMemory('rag-1', 'Tala spent her early years near the sea.', {
+            confidence: 0.91,
+            salience: 0.91,
             source: 'rag',
             role: 'rp',
         });
-        const router = new TalaContextRouter(makeMemoryService([ragMemory]));
+        const ragMemory2 = makeMemory('rag-2', 'At seventeen Tala apprenticed with a coastal cartographer.', {
+            confidence: 0.88,
+            salience: 0.88,
+            source: 'rag',
+            role: 'rp',
+        });
+        const router = new TalaContextRouter(makeMemoryService([ragMemory, ragMemory2]));
         const ctx = await router.process(
             'turn-cga12',
             'Tell me about your past, when you were young.',
@@ -146,7 +163,7 @@ describe('CanonGateAutobio — TalaContextRouter integration', () => {
         expect(ctx.canonGateDecision?.isAutobiographicalLoreRequest).toBe(true);
         expect(ctx.canonGateDecision?.sufficientCanonMemory).toBe(true);
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
-        expect(ctx.responseMode).not.toBe('canon_required');
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
     it('CGA13: general (non-autobiographical) lore query → isAutobiographicalLoreRequest=false', async () => {
@@ -168,6 +185,59 @@ describe('CanonGateAutobio — TalaContextRouter integration', () => {
 });
 
 // ─── CGA02: Explicit/chat fallback only is insufficient ───────────────────────
+
+describe('CanonGateAutobio — strict autobiographical sufficiency gates', () => {
+    it('CGA21: degraded memory state forces canon_required even with strong canon memories', async () => {
+        const strong1 = makeMemory('rag-d1', 'At seventeen Tala studied navigation by moonlight.', {
+            confidence: 0.95,
+            salience: 0.95,
+            source: 'rag',
+            role: 'rp',
+        });
+        const strong2 = makeMemory('rag-d2', 'Tala kept a weather journal during that year.', {
+            confidence: 0.92,
+            salience: 0.92,
+            source: 'rag',
+            role: 'rp',
+        });
+        const router = new TalaContextRouter(makeMemoryService([strong1, strong2], { healthState: 'degraded' }));
+        const ctx = await router.process(
+            'turn-cga21',
+            'What happened to you when you were 17?',
+            'rp',
+        );
+        expect(ctx.canonGateDecision?.memorySystemDegraded).toBe(true);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+    });
+
+    it('CGA22: weak/partial autobiographical memories remain constrained (no fabricated recall mode)', async () => {
+        const weakRag = makeMemory('rag-w1', 'There was maybe a difficult season.', {
+            confidence: 0.42,
+            salience: 0.42,
+            source: 'rag',
+            role: 'rp',
+        });
+        const explicit = makeMemory('exp-w1', 'You once mentioned being young near the coast.', {
+            confidence: 0.7,
+            salience: 0.7,
+            source: 'explicit',
+            role: 'rp',
+        });
+        const router = new TalaContextRouter(makeMemoryService([weakRag, explicit]));
+        const ctx = await router.process(
+            'turn-cga22',
+            'Tell me about your childhood.',
+            'rp',
+        );
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+        const canonLoreBlock = ctx.promptBlocks.find(b => b.header.includes('CANON LORE MEMORIES'));
+        const canonGateBlock = ctx.promptBlocks.find(b => b.header.includes('CANON GATE'));
+        expect(canonLoreBlock).toBeUndefined();
+        expect(canonGateBlock).toBeDefined();
+    });
+});
 
 describe('CanonGateAutobio — explicit/chat fallback insufficiency', () => {
     it('CGA02: explicit fallback memory alone does not satisfy canon requirement', async () => {
@@ -192,10 +262,18 @@ describe('CanonGateAutobio — explicit/chat fallback insufficiency', () => {
 describe('CanonGateAutobio — diary/graph canon sufficiency', () => {
     it('CGA03a: diary source → canon sufficient → no gate', async () => {
         const diaryMemory = makeMemory('diary-1', 'Entry from my seventeenth year: I remember the storm.', {
+            confidence: 0.9,
+            salience: 0.9,
             source: 'diary',
             role: 'rp',
         });
-        const router = new TalaContextRouter(makeMemoryService([diaryMemory]));
+        const diaryMemory2 = makeMemory('diary-2', 'I still remember sketching the harbor that winter.', {
+            confidence: 0.86,
+            salience: 0.86,
+            source: 'diary',
+            role: 'rp',
+        });
+        const router = new TalaContextRouter(makeMemoryService([diaryMemory, diaryMemory2]));
         const ctx = await router.process(
             'turn-cga03a',
             'When you were 17, what happened?',
@@ -203,15 +281,23 @@ describe('CanonGateAutobio — diary/graph canon sufficiency', () => {
         );
         expect(ctx.canonGateDecision?.sufficientCanonMemory).toBe(true);
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
-        expect(ctx.responseMode).not.toBe('canon_required');
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
     it('CGA03b: graph source → canon sufficient → no gate', async () => {
         const graphMemory = makeMemory('graph-1', 'Autobiographical node: childhood in the eastern provinces.', {
+            confidence: 0.9,
+            salience: 0.9,
             source: 'graph',
             role: 'rp',
         });
-        const router = new TalaContextRouter(makeMemoryService([graphMemory]));
+        const graphMemory2 = makeMemory('graph-2', 'Autobiographical node: apprenticeship at age seventeen.', {
+            confidence: 0.87,
+            salience: 0.87,
+            source: 'graph',
+            role: 'rp',
+        });
+        const router = new TalaContextRouter(makeMemoryService([graphMemory, graphMemory2]));
         const ctx = await router.process(
             'turn-cga03b',
             'Do you remember your childhood?',
@@ -219,7 +305,7 @@ describe('CanonGateAutobio — diary/graph canon sufficiency', () => {
         );
         expect(ctx.canonGateDecision?.sufficientCanonMemory).toBe(true);
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
-        expect(ctx.responseMode).not.toBe('canon_required');
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 });
 

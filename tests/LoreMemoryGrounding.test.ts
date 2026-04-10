@@ -307,9 +307,9 @@ describe('LoreMemoryGrounding — TalaContextRouter strict trigger detection', (
         );
     });
 
-    it('activates memory_grounded_soft for a plain lore query', async () => {
+    it('activates memory_grounded_strict for a plain lore query', async () => {
         const ctx = await router.process('turn-1', 'can you tell me something about when you were 17?', 'rp');
-        expect(ctx.responseMode).toBe('memory_grounded_soft');
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
     it('activates memory_grounded_strict when query contains "exactly"', async () => {

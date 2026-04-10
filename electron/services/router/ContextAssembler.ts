@@ -196,6 +196,18 @@ export interface TurnContext {
         canonSourceTypes: string[];
         /** Whether the canon gate fired and forced responseMode=canon_required. */
         canonGateApplied: boolean;
+        /** Number of canon memories that passed semantic + confidence gates. */
+        qualifiedCanonCount?: number;
+        /** Minimum canon memory count required for autobiographical grounding. */
+        minRequiredCanonCount?: number;
+        /** Minimum semantic score required for autobiographical grounding. */
+        minSemanticScore?: number;
+        /** Minimum confidence score required for autobiographical grounding. */
+        minConfidenceScore?: number;
+        /** Memory subsystem health state at gate time. */
+        memorySystemState?: string;
+        /** Whether memory subsystem state blocked autobiographical freeform generation. */
+        memorySystemDegraded?: boolean;
     };
 }
 

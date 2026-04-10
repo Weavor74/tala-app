@@ -62,6 +62,18 @@ export class TalaContextRouter {
     ]);
 
     /**
+     * Minimum number of high-confidence canon memories required before
+     * autobiographical recall is allowed.
+     */
+    private static readonly AUTOBIO_MIN_CANON_APPROVED_COUNT = 2;
+
+    /** Minimum semantic score required for autobiographical memory use. */
+    private static readonly AUTOBIO_MIN_SEMANTIC_SCORE = 0.55;
+
+    /** Minimum confidence score required for autobiographical memory use. */
+    private static readonly AUTOBIO_MIN_CONFIDENCE_SCORE = 0.65;
+
+    /**
      * Patterns that indicate a short follow-up query referencing a prior lore turn.
      * These are matched in addition to IntentClassifier to handle underspecified
      * replies like "you don't remember?" that may not fire the main lore patterns.
@@ -69,21 +81,6 @@ export class TalaContextRouter {
     private static readonly LORE_FOLLOWUP_PATTERNS = [
         /\b(so\s+you\s+(don'?t|do\s+not)|you\s+(don'?t|do\s+not))\s+(have|remember|recall|know)/i,
         /\b(what\s+about\s+(that|then|it)|and\s+that|but\s+that)\b/i,
-    ];
-
-    /**
-     * Phrases that signal the user wants strict factual fidelity and minimal
-     * extrapolation.  When any of these appear in a lore-intent query that has
-     * approved memories, the response mode is escalated to `memory_grounded_strict`.
-     */
-    private static readonly STRICT_GROUNDING_PATTERNS = [
-        /\bexactly\b/i,
-        /\bjust\s+what\s+happened\b/i,
-        /\bdon'?t\s+make\s+(anything|it)\s+up\b/i,
-        /\bstrictly\s+from\s+memory\b/i,
-        /\bwhat\s+specifically\b/i,
-        /\bwhat\s+does\s+the\s+memory\s+say\b/i,
-        /\bquote\s+the\s+memory\b/i,
     ];
 
     /**
@@ -142,7 +139,55 @@ export class TalaContextRouter {
      * basis for first-person autobiographical fact claims.
      */
     private static hasSufficientCanonMemoryForAutobio(resolved: MemoryItem[]): boolean {
-        return resolved.some(m => TalaContextRouter.LORE_CANON_SOURCES.has(m.metadata?.source ?? ''));
+        const qualifiedCanonCount = TalaContextRouter.countQualifiedCanonAutobioMemories(resolved);
+        return qualifiedCanonCount >= TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
+    }
+
+    /**
+     * Returns the semantic score used by autobiographical confidence gates.
+     */
+    private static getAutobioSemanticScore(item: MemoryItem): number {
+        const semanticFromMetadata = typeof item.metadata?.semantic_similarity === 'number'
+            ? item.metadata.semantic_similarity
+            : undefined;
+        const raw =
+            (typeof item.score === 'number' ? item.score : undefined)
+            ?? (typeof item.compositeScore === 'number' ? item.compositeScore : undefined)
+            ?? semanticFromMetadata
+            ?? 0;
+        if (!Number.isFinite(raw)) return 0;
+        return Math.max(0, Math.min(1, raw));
+    }
+
+    /**
+     * Returns the confidence score used by autobiographical confidence gates.
+     */
+    private static getAutobioConfidenceScore(item: MemoryItem): number {
+        const raw =
+            (typeof item.confidence === 'number' ? item.confidence : undefined)
+            ?? (typeof item.metadata?.confidence === 'number' ? item.metadata.confidence : undefined)
+            ?? 0;
+        if (!Number.isFinite(raw)) return 0;
+        return Math.max(0, Math.min(1, raw));
+    }
+
+    /**
+     * True only for canon memories that pass both semantic and confidence gates.
+     */
+    private static isQualifiedCanonAutobioMemory(item: MemoryItem): boolean {
+        const source = item.metadata?.source ?? '';
+        if (!TalaContextRouter.LORE_CANON_SOURCES.has(source)) return false;
+        const semantic = TalaContextRouter.getAutobioSemanticScore(item);
+        const confidence = TalaContextRouter.getAutobioConfidenceScore(item);
+        return (
+            semantic >= TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE &&
+            confidence >= TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE
+        );
+    }
+
+    /** Count canon autobiographical memories that pass strict confidence gates. */
+    private static countQualifiedCanonAutobioMemories(resolved: MemoryItem[]): number {
+        return resolved.filter(m => TalaContextRouter.isQualifiedCanonAutobioMemory(m)).length;
     }
 
     /**
@@ -193,6 +238,26 @@ export class TalaContextRouter {
             console.log(`[TalaRouter] Lore follow-up detected — carrying over autobiographical retrieval context`);
         }
 
+        const isAutobiographicalLoreRequest =
+            intent.class === 'lore' && TalaContextRouter.isAutobiographicalLoreRequest(query);
+        let memorySystemState = 'unknown';
+        let memorySystemDegraded = false;
+        if (isAutobiographicalLoreRequest && typeof (this.memoryService as any).getHealthStatus === 'function') {
+            try {
+                const health = (this.memoryService as any).getHealthStatus?.();
+                memorySystemState = health?.state ?? 'unknown';
+                memorySystemDegraded =
+                    memorySystemState === 'degraded' ||
+                    memorySystemState === 'critical' ||
+                    memorySystemState === 'disabled';
+                if (memorySystemDegraded) {
+                    console.log(`[CanonGate] memory subsystem degraded for autobiographical turn state=${memorySystemState}`);
+                }
+            } catch {
+                console.warn('[CanonGate] failed to read memory health status; treating as unknown');
+            }
+        }
+
         const isGreetingOnly = intent.class === 'greeting';
         const retrievalSuppressed = isGreetingOnly; // Gating logic
 
@@ -224,13 +289,26 @@ export class TalaContextRouter {
             //
             //     Requires ragService to be injected (wired in AgentService).
             if (intent.class === 'lore' && this.ragService) {
-                const ragResults = await this.ragService.searchStructured(query, {
+                let ragResults = await this.ragService.searchStructured(query, {
                     limit: TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT,
                     // No category filter — fetch top-k canon lore by semantic similarity.
                     // A category filter (e.g. {category:'roleplay'}) can silently reduce
                     // results to 1 when most LTMF documents carry different metadata.
                     // Semantic relevance alone is the correct gate for lore retrieval.
                 });
+                if (isAutobiographicalLoreRequest && ragResults.length > 0) {
+                    const before = ragResults.length;
+                    ragResults = ragResults.filter(
+                        (r) => (r.score ?? 0) >= TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
+                    );
+                    const rejected = before - ragResults.length;
+                    if (rejected > 0) {
+                        console.log(
+                            `[CanonGate] rejected ${rejected} low-semantic RAG autobiographical candidate(s) threshold=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE}`,
+                        );
+                    }
+                }
+
                 if (ragResults.length > 0) {
                     console.log(`[TalaRouter] Lore intent — injecting ${ragResults.length} RAG/LTMF candidates`);
                     const now = Date.now();
@@ -362,20 +440,22 @@ export class TalaContextRouter {
         //
         //    When the gate fires, responseMode is forced to 'canon_required' regardless
         //    of approved memory count — even partial fallback-only sets are insufficient.
-        let isAutobiographicalLoreRequest = false;
         let sufficientCanonMemory = true;
         let canonGateApplied = false;
         let canonSourceTypes: string[] = [];
+        let qualifiedCanonCount = 0;
 
         if (intent.class === 'lore') {
-            isAutobiographicalLoreRequest = TalaContextRouter.isAutobiographicalLoreRequest(query);
             if (isAutobiographicalLoreRequest) {
                 console.log('[CanonGate] autobiographical lore request detected');
                 canonSourceTypes = [...new Set(resolved.map(m => m.metadata?.source ?? 'unknown'))];
-                sufficientCanonMemory = TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved);
+                qualifiedCanonCount = TalaContextRouter.countQualifiedCanonAutobioMemories(resolved);
+                sufficientCanonMemory =
+                    !memorySystemDegraded &&
+                    TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved);
                 if (!sufficientCanonMemory) {
                     console.log(
-                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length}`
+                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length} qualifiedCanon=${qualifiedCanonCount} minCanon=${TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT} minSemantic=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE} minConfidence=${TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE} memoryState=${memorySystemState}`
                     );
                     console.log('[CanonGate] forcing strict no-canon response mode');
                     console.log('[CanonGate] hallucination prevention active for autobiographical turn');
@@ -394,8 +474,7 @@ export class TalaContextRouter {
         // Canon gate fired:  'canon_required' — autobiographical request with no high-trust
         //   canon memory; Tala must not fabricate first-person events.
         //
-        // Lore intent (sufficient canon):  'memory_grounded_strict' when the user's query
-        //   contains explicit precision-demanding phrases; otherwise 'memory_grounded_soft'.
+        // Lore intent (sufficient canon): always 'memory_grounded_strict'.
         let responseMode: ResponseMode | undefined;
         if (notebookActive) {
             responseMode = 'memory_grounded_strict';
@@ -404,8 +483,7 @@ export class TalaContextRouter {
             responseMode = 'canon_required';
             console.log(`[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn`);
         } else if (intent.class === 'lore' && resolved.length > 0) {
-            const isStrictGrounding = TalaContextRouter.STRICT_GROUNDING_PATTERNS.some(p => p.test(query));
-            responseMode = isStrictGrounding ? 'memory_grounded_strict' : 'memory_grounded_soft';
+            responseMode = 'memory_grounded_strict';
             console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
         }
 
@@ -485,6 +563,12 @@ export class TalaContextRouter {
                     sufficientCanonMemory,
                     canonSourceTypes,
                     canonGateApplied,
+                    qualifiedCanonCount,
+                    minRequiredCanonCount: TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT,
+                    minSemanticScore: TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
+                    minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
+                    memorySystemState,
+                    memorySystemDegraded,
                 },
             } : {}),
         };
@@ -506,6 +590,12 @@ export class TalaContextRouter {
             sufficientCanonMemory,
             canonSourceTypes,
             canonGateApplied,
+            qualifiedCanonCount,
+            minRequiredCanonCount: TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT,
+            minSemanticScore: TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
+            minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
+            memorySystemState,
+            memorySystemDegraded,
             correlationId
         });
 

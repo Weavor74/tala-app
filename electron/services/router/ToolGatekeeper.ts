@@ -217,8 +217,22 @@ export class ToolGatekeeper {
         const isMemoryGrounded =
             responseMode === 'memory_grounded_soft' ||
             responseMode === 'memory_grounded_strict';
+        const isCanonRequired = responseMode === 'canon_required';
         const isLoreWithMemory =
             intentClass === 'lore' && approvedMemoryCount > 0;
+
+        if (isCanonRequired) {
+            for (const toolName of candidateToolNames) {
+                blockedSet.add(toolName);
+            }
+            gatingReasons.push(
+                `ruleA:all tools blocked - canon_required autobiographical turn ` +
+                `(intent=${intentClass} approvedMemories=${approvedMemoryCount})`
+            );
+            gatingReasons.push(
+                'ruleA:fallback response required - insufficient autobiographical memory confidence/authority'
+            );
+        }
 
         if (isLoreWithMemory || isMemoryGrounded) {
             blockedSet.add('mem0_search');
@@ -231,10 +245,12 @@ export class ToolGatekeeper {
             // ── Rule Group C: Direct-answer preference ─────────────────────
             // Grounded memory is already available; the model should synthesize
             // from that context rather than launching exploratory tool calls.
-            directAnswerPreferred = true;
-            gatingReasons.push(
-                'ruleC:directAnswerPreferred=true — grounded memory context is sufficient'
-            );
+            if (!isCanonRequired) {
+                directAnswerPreferred = true;
+                gatingReasons.push(
+                    'ruleC:directAnswerPreferred=true - grounded memory context is sufficient'
+                );
+            }
         }
 
         // ── Rule Group B: Degraded tool suppression ────────────────────────
@@ -253,7 +269,7 @@ export class ToolGatekeeper {
         // ── Rule Group D: Intent-based requiresToolUse flag ────────────────
         // For coding and browser intents the model is expected to produce at
         // least one tool call; signal this to the caller.
-        if (intentClass === 'coding' || isBrowserTask) {
+        if (!isCanonRequired && (intentClass === 'coding' || isBrowserTask)) {
             requiresToolUse = true;
         }
 
