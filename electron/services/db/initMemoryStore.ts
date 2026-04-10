@@ -23,6 +23,8 @@ import { DatabaseBootstrapCoordinator } from './DatabaseBootstrapCoordinator';
 import { ResearchRepository } from './ResearchRepository';
 import { ContentRepository } from './ContentRepository';
 import { EmbeddingsRepository } from './EmbeddingsRepository';
+import { DbHealthService } from './DbHealthService';
+import type { CanonicalDbHealth } from './DbHealthService';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
 import type { DatabaseBootstrapConfig } from '../../../shared/dbBootstrapConfig';
 import type { MemoryRepository } from '../../../shared/memory/MemoryRepository';
@@ -44,6 +46,12 @@ let _embeddingsRepository: EmbeddingsRepository | null = null;
  * Kept alive so shutdown() can stop the native runtime when the app exits.
  */
 let _coordinator: DatabaseBootstrapCoordinator | null = null;
+
+/**
+ * Result of the most recent DB preflight health check.
+ * Set during initCanonicalMemory() after the pool is created.
+ */
+let _lastDbHealth: CanonicalDbHealth | null = null;
 
 export interface InitMemoryStoreOptions {
   /**
@@ -122,6 +130,18 @@ export async function initCanonicalMemory(
   try {
     await repo.initialize();
 
+    // ── Step 2a: Preflight DB health check ──────────────────────────────
+    // Run after pool creation so we can reuse the same connection, but before
+    // migrations so the caller receives structured diagnostics on any gap.
+    // maxRetries=1: the pool just connected successfully inside initialize(),
+    // so a single probe is sufficient here. Retry policy for the broader
+    // connection cycle is owned by DatabaseBootstrapCoordinator, not this check.
+    // _lastDbHealth is set here — before runMigrations() — so it is always
+    // available to callers even if a subsequent migration failure throws.
+    const healthSvc = new DbHealthService(repo.getSharedPool(), { maxRetries: 1 });
+    const health = await healthSvc.check();
+    _lastDbHealth = health;
+
     if (!options.skipMigrations) {
       await repo.runMigrations();
     }
@@ -177,6 +197,20 @@ export function getEmbeddingsRepository(): EmbeddingsRepository | null {
 }
 
 /**
+ * Get the result of the most recent DB preflight health check.
+ *
+ * Returns `null` if `initCanonicalMemory()` has not been called yet, or if
+ * `shutdownCanonicalMemory()` has been called since the last init.
+ *
+ * The result is set *before* migrations run inside `initCanonicalMemory()`,
+ * so it is always populated after `initialize()` succeeds — even when a
+ * subsequent migration error causes `initCanonicalMemory()` to throw.
+ */
+export function getLastDbHealth(): CanonicalDbHealth | null {
+  return _lastDbHealth;
+}
+
+/**
  * Shut down the canonical memory store and any managed runtime.
  *
  * Closes the database connection pool and, if the Tala-managed native
@@ -189,6 +223,7 @@ export async function shutdownCanonicalMemory(): Promise<void> {
     _researchRepository = null;
     _contentRepository = null;
     _embeddingsRepository = null;
+    _lastDbHealth = null;
     console.log('[initCanonicalMemory] Canonical memory store shut down.');
   }
 

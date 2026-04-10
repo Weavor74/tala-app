@@ -56,7 +56,7 @@ import { telemetry } from './TelemetryService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
-import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory } from './db/initMemoryStore';
+import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory, getLastDbHealth } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
@@ -1648,6 +1648,22 @@ Exported standalone package from Tala.
             // attempt above succeeds or fails.
             if (this.memory) {
                 const canonicalRepo = getCanonicalMemoryRepository();
+                const dbHealth = getLastDbHealth();
+
+                // Surface structured DB diagnostics from the preflight check.
+                if (dbHealth) {
+                    if (!dbHealth.reachable) {
+                        console.error(`[DBHealth] Postgres unreachable: ${dbHealth.error ?? 'unknown error'}`);
+                    } else {
+                        if (!dbHealth.pgvectorInstalled) {
+                            console.warn('[DBHealth] pgvector not installed — vector search will be unavailable');
+                        }
+                        if (!dbHealth.migrationsApplied) {
+                            console.warn('[DBHealth] schema_migrations not found — schema may not be initialized');
+                        }
+                    }
+                }
+
                 const memIntegrityMode = (settings.memory?.integrityMode as MemoryIntegrityMode | undefined) ?? 'balanced';
                 this.memory.setSubsystemAvailability({
                     canonicalReady: canonicalRepo !== null,
