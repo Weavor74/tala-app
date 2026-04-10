@@ -331,9 +331,10 @@ The scheduled loop consumes the repair learning output on a fixed cadence and ta
 ### MemoryRepairSchedulerService
 - **Path**: `electron/services/memory/MemoryRepairSchedulerService.ts`
 - **Purpose**: Drives the periodic analytics → reflection → decision loop.  Acts on the decision by delegating to `MemoryRepairTriggerService`, `DeferredMemoryReplayService`, and `TelemetryBus`.
-- **Public API**: `start()`, `stop()`, `runNow(reason?)`, `getLastRun()`.
+- **Public API**: `start()`, `stop()`, `runNow(reason?)`, `getLastRun()`, `getRecentRuns()`, `getLatestInsightSummary()`, `getLatestReflectionReport()`, `getLatestAdaptivePlan()`, `getLatestSuggestionReport()`.
 - **Default cadence**: every 10 minutes; analysis window 24 hours.
 - **Concurrency guard**: only one run at a time; overlapping `runNow()` calls return a skipped result immediately.
+- **Caching** (added for operator review surface): latest `MemoryRepairInsightSummary`, `MemoryRepairReflectionReport`, `MemoryAdaptivePlan`, `MemoryOptimizationSuggestionReport`, and a ring buffer of the last 5 run results are cached after each successful run.
 - **Actions taken** (threshold-based only):
   - `emit_escalation` → `TelemetryBus.emit('memory.maintenance_escalation', …)`
   - `trigger_repair` → `MemoryRepairTriggerService.emitDirect(…)`
@@ -346,3 +347,35 @@ The scheduled loop consumes the repair learning output on a fixed cadence and ta
 - **Path**: `shared/memory/MemoryMaintenanceState.ts`
 - **Exports**: `MemoryMaintenancePosture`, `MemoryRepairScheduledRunResult`, `MemoryMaintenanceDecision`, `MemoryMaintenanceAction`.
 - **Lives in `shared/`** so the renderer (e.g. Reflection Dashboard) can import posture and run-result types without depending on Node.js-only services.
+
+---
+
+## Memory Operator Review Surface
+
+The operator review surface provides a unified read-focused view of the full memory maintenance intelligence stack for human operators.  See `docs/architecture/memory_operator_review_surface.md` for full details.
+
+### MemoryOperatorReviewService
+- **Path**: `electron/services/memory/MemoryOperatorReviewService.ts`
+- **Purpose**: Aggregates cached outputs from `MemoryRepairSchedulerService` and current state from `MemoryService` into a single `MemoryOperatorReviewModel`.
+- **Inputs**: `MemoryService` (health status, deferred work counts), `MemoryRepairSchedulerService | null` (latest analytics, plan, suggestions, recent runs).
+- **Output**: `MemoryOperatorReviewModel` — bounded, serialisable, advisory-only payload.
+- **Public API**: `getModel(): Promise<MemoryOperatorReviewModel>`.
+- **Invariants**: Read-only; no re-computation of analytics; safe to call repeatedly; degrades gracefully when no scheduler run has completed.
+- **Wiring**: Constructed in `AgentService._wireRepairExecutor()` alongside `MemoryRepairSchedulerService`.  Falls back to null scheduler when the DB pool is unavailable.
+
+### Shared types: MemoryOperatorReviewModel.ts
+- **Path**: `shared/memory/MemoryOperatorReviewModel.ts`
+- **Exports**: `MemoryOperatorReviewModel`, `OperatorReviewPosture`, `OperatorReviewHealth`, `OperatorReviewSummary`, `OperatorReviewAdaptivePlan`, `OperatorReviewOptimizationSuggestions`, `OperatorReviewQueues`, `OperatorReviewRecentRepair`, `OperatorReviewRecentCycle`, `OperatorReviewActionEffectiveness`.
+- **Lives in `shared/`** so the renderer can import types without depending on Node.js-only services.
+
+### IPC Surface
+- `memory:getOperatorReviewModel` — read-only; returns the current `MemoryOperatorReviewModel`.
+- `memory:runMaintenanceNow` — human-gated trigger for an immediate analytics run; returns the run result.
+
+### MemoryOperatorReviewPanel
+- **Path**: `src/renderer/components/MemoryOperatorReviewPanel.tsx`
+- **Purpose**: Operator-facing UI panel with 7 sections: Current Posture, Key Findings, Adaptive Plan, Optimization Suggestions (advisory), Queue / Deferred Work, Recent Repair Activity, Notes.
+- **Access**: Engineering sub-tab **🧠 Memory Health** in the Reflection Dashboard.
+- **Controls**: Manual refresh button; "Run Analysis Now" button (human-triggered, maps to `memory:runMaintenanceNow`).
+- **Invariants**: No auto-apply controls; suggestions clearly labeled advisory; no settings changed.
+
