@@ -29,7 +29,6 @@ const StrategyRoutingDashboardPanel: React.FC<StrategyRoutingDashboardPanelProps
         blockedDecisions,
         deferredDecisions,
         humanReviewItems,
-        activeRoutedActions,
         recentOutcomes,
         kpis,
     } = state;

@@ -369,7 +369,7 @@ const MemoryOperatorReviewPanel: React.FC = () => {
                                 <div style={{ fontSize: 11, color: '#475569', marginBottom: 8 }}>
                                     Showing top {model.optimizationSuggestions.topSuggestions.length} of {model.optimizationSuggestions.totalSuggestions} suggestion{model.optimizationSuggestions.totalSuggestions !== 1 ? 's' : ''}.
                                 </div>
-                                {model.optimizationSuggestions.topSuggestions.map((s, i) => (
+                                {model.optimizationSuggestions.topSuggestions.map((s) => (
                                     <div key={s.id} style={{
                                         background: '#0f172a', border: '1px solid #1e293b',
                                         borderRadius: 8, padding: '12px 16px', marginBottom: 8,

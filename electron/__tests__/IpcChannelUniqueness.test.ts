@@ -20,10 +20,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-// @ts-ignore
-import fs from 'fs';
-// @ts-ignore
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // All files that are permitted to call ipcMain.handle().
 // This list is intentionally explicit — additions require a conscious decision.
@@ -35,7 +34,7 @@ const IPC_REGISTRATION_FILES = [
     'electron/services/selfModel/SelfModelAppService.ts',
 ];
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** Extract all ipcMain.handle channel names from a source file. */
 function extractChannels(filePath: string): string[] {

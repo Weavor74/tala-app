@@ -32,6 +32,7 @@ vi.mock('fs', async () => {
         existsSync: vi.fn((p: string) => {
             // Simulate a TALA-like workspace with specific directories present.
             if (typeof p !== 'string') return false;
+            const normalized = p.replace(/\\/g, '/');
             const simulated = [
                 '/workspace',
                 '/workspace/.git',
@@ -42,7 +43,7 @@ vi.mock('fs', async () => {
                 '/workspace/tests',
                 '/workspace/scripts',
             ];
-            return simulated.some((s) => p === s || p.startsWith(s + '/') || p === s);
+            return simulated.some((s) => normalized === s || normalized.startsWith(s + '/'));
         }),
     };
 });

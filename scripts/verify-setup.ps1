@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-TALA Bootstrap Verification / Health Check — Windows PowerShell
+TALA Bootstrap Verification / Health Check --- Windows PowerShell
 
 .DESCRIPTION
 Validates that all prerequisites for running TALA are present.
@@ -9,7 +9,7 @@ critical check fails.
 
 .NOTES
 Usage: pwsh scripts\verify-setup.ps1
-Safe to run from any directory — paths resolve from this script's location.
+Safe to run from any directory --- paths resolve from this script's location.
 #>
 
 # Resolve repo root from this script's location (scripts\ -> repo root)
@@ -47,7 +47,7 @@ $PkgJson = Join-Path $RepoRoot "package.json"
 if (Test-Path $PkgJson) {
     Pass "package.json found at $RepoRoot"
 } else {
-    Fail "package.json not found — repo root may be wrong (got $RepoRoot)"
+    Fail "package.json not found --- repo root may be wrong (got $RepoRoot)"
 }
 
 # -------------------------------------------------------
@@ -58,7 +58,7 @@ try {
     $nodeVer = node --version 2>&1
     Pass "node $nodeVer"
 } catch {
-    Fail "Node.js not found in PATH — install from https://nodejs.org/"
+    Fail "Node.js not found in PATH --- install from https://nodejs.org/"
 }
 
 try {
@@ -76,7 +76,7 @@ $NodeModules = Join-Path $RepoRoot "node_modules"
 if (Test-Path $NodeModules) {
     Pass "node_modules present"
 } else {
-    Fail "node_modules not found — run: .\bootstrap.ps1"
+    Fail "node_modules not found --- run: .\bootstrap.ps1"
 }
 
 # -------------------------------------------------------
@@ -91,7 +91,7 @@ try {
         Fail "Python 3 required, found: $pyVer"
     }
 } catch {
-    Fail "Python not found in PATH — install from https://python.org/"
+    Fail "Python not found in PATH --- install from https://python.org/"
 }
 
 # -------------------------------------------------------
@@ -112,13 +112,13 @@ foreach ($Mod in $PythonModules) {
     $ReqFile   = Join-Path $ModPath "requirements.txt"
 
     if (-not (Test-Path $ModPath)) {
-        Warn "$Mod — directory not found (optional)"
+        Warn "$Mod --- directory not found (optional)"
     } elseif (-not (Test-Path $ReqFile)) {
-        Warn "$Mod — no requirements.txt"
+        Warn "$Mod --- no requirements.txt"
     } elseif (Test-Path $VenvPy) {
         Pass "$Mod venv ready"
     } else {
-        Fail "$Mod venv missing — run: .\bootstrap.ps1"
+        Fail "$Mod venv missing --- run: .\bootstrap.ps1"
     }
 }
 
@@ -158,7 +158,7 @@ if (Test-Path $ModelsDir) {
 if ($GgufModel) {
     Pass "GGUF model: $($GgufModel.Name)"
 } else {
-    Warn "No .gguf model found in models\ — run .\bootstrap.ps1 to download one"
+    Warn "No .gguf model found in models\ --- run .\bootstrap.ps1 to download one"
 }
 
 # Check local-inference launch script
@@ -195,7 +195,7 @@ Write-Host "[8] PostgreSQL" -ForegroundColor Yellow
 
 # Skip checks when caller supplies an external connection string
 if ($env:TALA_DB_CONNECTION_STRING) {
-    Pass "TALA_DB_CONNECTION_STRING is set — external DB in use, skipping local checks"
+    Pass "TALA_DB_CONNECTION_STRING is set --- external DB in use, skipping local checks"
 } else {
     $DbHost = if ($env:TALA_DB_HOST) { $env:TALA_DB_HOST } else { "localhost" }
     $DbPort = if ($env:TALA_DB_PORT) { $env:TALA_DB_PORT } else { "5432" }
@@ -229,14 +229,14 @@ if ($env:TALA_DB_CONNECTION_STRING) {
             if ($PsqlExe) { break }
         }
         if ($PsqlExe) { Pass "psql found: $PsqlExe" }
-        else           { Fail  "psql not found — run: .\bootstrap.ps1" }
+        else           { Fail  "psql not found --- run: .\bootstrap.ps1" }
     }
 
     # --- Windows service ---
     $pgSvc = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($pgSvc) {
         if ($pgSvc.Status -eq 'Running') { Pass  "PostgreSQL service '$($pgSvc.Name)' is Running" }
-        else                              { Fail  "PostgreSQL service '$($pgSvc.Name)' is $($pgSvc.Status) — run: Start-Service '$($pgSvc.Name)'" }
+        else                              { Fail  "PostgreSQL service '$($pgSvc.Name)' is $($pgSvc.Status) --- run: Start-Service '$($pgSvc.Name)'" }
     } else {
         Warn "No PostgreSQL Windows service detected (may be a portable install)"
     }
@@ -248,7 +248,7 @@ if ($env:TALA_DB_CONNECTION_STRING) {
         $reached = $conn.AsyncWaitHandle.WaitOne(3000)
         $tcp.Close()
         if ($reached) { Pass  "PostgreSQL reachable at ${DbHost}:${DbPort}" }
-        else           { Fail  "PostgreSQL not reachable at ${DbHost}:${DbPort} — ensure service is running" }
+        else           { Fail  "PostgreSQL not reachable at ${DbHost}:${DbPort} --- ensure service is running" }
     } catch {
         Fail "PostgreSQL TCP check failed: $_"
         $reached = $false
@@ -267,9 +267,9 @@ if ($env:TALA_DB_CONNECTION_STRING) {
         if ($roleCode -eq 0 -and ($roleOut -join "").Trim() -eq "1") {
             Pass "PostgreSQL role '$DbUser' exists"
         } elseif ($roleCode -ne 0) {
-            Warn "Could not query pg_roles (psql exit $roleCode) — check superuser password (TALA_PG_SUPERPASSWORD)"
+            Warn "Could not query pg_roles (psql exit $roleCode) --- check superuser password (TALA_PG_SUPERPASSWORD)"
         } else {
-            Fail "PostgreSQL role '$DbUser' not found — run: .\bootstrap.ps1"
+            Fail "PostgreSQL role '$DbUser' not found --- run: .\bootstrap.ps1"
         }
 
         # tala database
@@ -285,7 +285,7 @@ if ($env:TALA_DB_CONNECTION_STRING) {
         } elseif ($dbCode -ne 0) {
             Warn "Could not query pg_database (psql exit $dbCode)"
         } else {
-            Fail "PostgreSQL database '$DbName' not found — run: .\bootstrap.ps1"
+            Fail "PostgreSQL database '$DbName' not found --- run: .\bootstrap.ps1"
         }
 
         # pgvector
@@ -296,12 +296,13 @@ if ($env:TALA_DB_CONNECTION_STRING) {
         $vecCode = $LASTEXITCODE
         $env:PGPASSWORD = $null
 
-        if ($vecCode -eq 0 -and ($vecOut -join "").Trim() -eq "vector") {
+        $vecName = ($vecOut -join '').Trim()
+        if ($vecCode -eq 0 -and $vecName -eq 'vector') {
             Pass "pgvector extension enabled in '$DbName'"
         } elseif ($vecCode -ne 0) {
             Warn "Could not query pg_extension in '$DbName' (psql exit $vecCode)"
         } else {
-            Warn "pgvector extension not yet enabled in '$DbName' — run: .\bootstrap.ps1"
+            Warn "pgvector extension not yet enabled in '$DbName' - run: .\bootstrap.ps1"
         }
     }
 }
@@ -321,3 +322,4 @@ if ($FailCount -gt 0) {
     Write-Host "[OK] Environment looks ready." -ForegroundColor Green
     exit 0
 }
+

@@ -30,7 +30,6 @@ import {
     makeDefaultGuardrailPolicyConfig,
     VALIDATOR_PROVIDER_REGISTRY,
     type GuardrailPolicyConfig,
-    type GuardrailProfile,
     type GuardrailRule,
     type ValidatorBinding,
     type GuardrailAction,
