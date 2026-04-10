@@ -208,7 +208,7 @@ Mode is enforced centrally by `TalaContextRouter.process()`, not scattered acros
 
 For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRouter.process()` applies a canon-first retrieval policy:
 
-1. **RAG/LTMF** (`RagService.searchStructured()`, filter `category=roleplay`) — canonical lore, up to 5 results. Converted to `MemoryItem` with `source=rag`, `role=rp`, `type=lore`.
+1. **RAG/LTMF** (`RagService.searchStructured()`) — canonical lore, up to 5 results. For autobiographical age queries, Tala applies structured filters (`age`, `source_type=ltmf`, `memory_type=autobiographical`, `canon=true`) so canon retrieval does not depend on natural-language dates inside memory text.
 2. **mem0 / local conversational memory** (`MemoryService.search()`) — fallback, 10 results.
 3. RAG candidates are **prepended** to the candidate list before `MemoryFilter` so they enter the same deduplication and ranking pipeline.
 4. `MemoryFilter.resolveContradictions()` applies lore source ranking: `diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)`, ensuring canon lore outranks recent chat snippets regardless of composite score.
@@ -239,11 +239,12 @@ For queries that are specifically asking for **Tala's own lived experiences** (f
 - "something that happened to you", "what happened to you when"
 - "when you were 17", "when you were young/a child"
 - "at age [N]", "at [N] years old"
+- "at seventeen", "during your seventeenth year"
 - "your childhood", "your past", "your personal history", "growing up"
 - "do you remember", "can you remember"
 - "tell me about your past/childhood/memories/experience"
 
-**Sufficiency check:** `TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved)` returns `true` only if at least one approved memory comes from a high-trust canon source: `diary`, `graph`, `core_bio`, `lore`, or `rag`.
+**Sufficiency check:** `TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved)` returns `true` only when at least **two** approved canon memories pass both quality thresholds (`semantic >= 0.55`, `confidence >= 0.65`) from high-trust sources: `diary`, `graph`, `core_bio`, `lore`, or `rag`.
 
 Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient** for first-person autobiographical fact claims.
 

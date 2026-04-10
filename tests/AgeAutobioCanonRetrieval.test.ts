@@ -1,0 +1,145 @@
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+    app: { getPath: () => '/tmp/tala-test' },
+}));
+
+vi.mock('../electron/services/TelemetryService', () => ({
+    telemetry: {
+        operational: vi.fn(),
+        event: vi.fn(),
+        emit: vi.fn(),
+    },
+}));
+
+vi.mock('../electron/services/AuditLogger', () => ({
+    auditLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import type { MemoryItem } from '../electron/services/MemoryService';
+import { TalaContextRouter } from '../electron/services/router/TalaContextRouter';
+
+function makeExplicitMemory(id: string, text: string): MemoryItem {
+    const now = Date.now();
+    return {
+        id,
+        text,
+        metadata: {
+            source: 'explicit',
+            role: 'core',
+            type: 'session',
+            confidence: 0.95,
+            salience: 0.95,
+        },
+        score: 0.95,
+        compositeScore: 0.95,
+        timestamp: now,
+        salience: 0.95,
+        confidence: 0.95,
+        created_at: now,
+        last_accessed_at: null,
+        last_reinforced_at: null,
+        access_count: 0,
+        associations: [],
+        status: 'active',
+    };
+}
+
+function makeAge17RagHit(text: string, sequence: number) {
+    return {
+        text,
+        score: 0.86,
+        docId: `LTMF-A17-00${sequence}.md`,
+        metadata: {
+            age: 17,
+            source_type: 'ltmf',
+            memory_type: 'autobiographical',
+            canon: true,
+            age_sequence: sequence,
+        },
+    };
+}
+
+describe('LTMF autobiographical age retrieval', () => {
+    it('maps age-query phrasings to age=17 structured canon filters', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const queries = [
+            'when you were 17, what changed for you?',
+            'what happened at 17?',
+            'tell me about during your seventeenth year',
+        ];
+
+        for (const query of queries) {
+            await router.process(`turn-${query}`, query, 'rp');
+            const call = ragService.searchStructured.mock.calls[ragService.searchStructured.mock.calls.length - 1];
+            expect(call[1]?.filter).toEqual({
+                age: 17,
+                source_type: 'ltmf',
+                memory_type: 'autobiographical',
+                canon: true,
+            });
+        }
+    });
+
+    it('age-17 autobiographical query retrieves canon LTMF age=17 memories even without date text', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-1', 'You once mentioned a difficult year.')]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('The pressure started rising that year.', 1),
+                makeAge17RagHit('I learned to trust systems over promises.', 2),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-age17', 'tell me what happened when you were 17', 'rp');
+
+        const age17Canon = ctx.resolvedMemories?.filter(
+            m => m.metadata?.source === 'rag' && m.metadata?.age === 17,
+        ) ?? [];
+        expect(age17Canon.length).toBeGreaterThanOrEqual(2);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+    });
+
+    it('canon LTMF age matches outrank explicit chat memories for autobiographical age queries', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([
+                makeExplicitMemory('exp-hi', 'Hey good morning!'),
+                makeExplicitMemory('exp-hi-2', 'Last week we chatted about weather.'),
+            ]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('I began working longer maintenance shifts.', 3),
+                makeAge17RagHit('I kept a private notebook after each shift.', 4),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-rank', 'at 17 what happened to you?', 'rp');
+        const sources = (ctx.resolvedMemories ?? []).map(m => m.metadata?.source);
+        expect(sources[0]).toBe('rag');
+        const ragCount = (ctx.resolvedMemories ?? []).filter(m => m.metadata?.source === 'rag').length;
+        const explicitCount = (ctx.resolvedMemories ?? []).filter(m => m.metadata?.source === 'explicit').length;
+        expect(ragCount).toBeGreaterThan(explicitCount);
+    });
+
+    it('falls back safely to canon_required when no age-matched canon memory exists', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-only', 'You once sounded uncertain about your past.')]),
+        };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-fallback', 'can you tell me what happened when you were 17?', 'rp');
+
+        expect(ctx.responseMode).toBe('canon_required');
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect((ctx.resolvedMemories ?? []).some(m => m.metadata?.source === 'explicit')).toBe(true);
+    });
+});

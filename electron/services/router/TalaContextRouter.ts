@@ -98,6 +98,10 @@ export class TalaContextRouter {
         /\bwhen\s+you\s+were\s+(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
         // "at age [N]" or "at [N] years old"
         /\bat\s+(age\s+)?\d+(\s+years?\s*old)?\b/i,
+        // "at seventeen" / "at fifteen"
+        /\bat\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/i,
+        // "during your seventeenth year"
+        /\bduring\s+your\s+([a-z-]+|\d{1,2}(st|nd|rd|th))\s+year\b/i,
         // Personal life-period phrases
         /\b(your\s+(childhood|upbringing|early\s+life|younger\s+years?)|growing\s+up|back\s+when\s+you\s+were)\b/i,
         // "your past" / "your personal history" / "your life story"
@@ -109,6 +113,18 @@ export class TalaContextRouter {
         // "what happened to you when"
         /\bwhat\s+happened\s+to\s+you\s+when\b/i,
     ];
+
+    private static readonly AGE_CARDINAL_WORDS: Record<string, number> = {
+        one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+        eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+        eighteen: 18, nineteen: 19, twenty: 20,
+    };
+
+    private static readonly AGE_ORDINAL_WORDS: Record<string, number> = {
+        first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+        eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15, sixteenth: 16, seventeenth: 17,
+        eighteenth: 18, nineteenth: 19, twentieth: 20,
+    };
 
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
     private lastLoreQueryTs: number = 0;
@@ -128,6 +144,48 @@ export class TalaContextRouter {
      */
     private static isAutobiographicalLoreRequest(query: string): boolean {
         return TalaContextRouter.AUTOBIO_LORE_PATTERNS.some(p => p.test(query));
+    }
+
+    private static normalizePotentialAge(raw: string | undefined): number | undefined {
+        if (!raw) return undefined;
+        const t = raw.trim().toLowerCase();
+        const digitMatch = t.match(/^\d{1,2}$/);
+        if (digitMatch) {
+            const n = Number(digitMatch[0]);
+            return Number.isFinite(n) && n >= 0 && n <= 130 ? n : undefined;
+        }
+        const ordinalDigitMatch = t.match(/^(\d{1,2})(st|nd|rd|th)$/);
+        if (ordinalDigitMatch) {
+            const n = Number(ordinalDigitMatch[1]);
+            return Number.isFinite(n) && n >= 0 && n <= 130 ? n : undefined;
+        }
+        if (t in TalaContextRouter.AGE_CARDINAL_WORDS) return TalaContextRouter.AGE_CARDINAL_WORDS[t];
+        if (t in TalaContextRouter.AGE_ORDINAL_WORDS) return TalaContextRouter.AGE_ORDINAL_WORDS[t];
+        return undefined;
+    }
+
+    /**
+     * Extracts autobiographical age hints from common user phrasings.
+     * Examples:
+     * - "when you were 17"
+     * - "at 17"
+     * - "during your seventeenth year"
+     */
+    private static extractAutobiographicalAgeHint(query: string): number | undefined {
+        const text = query.toLowerCase();
+        const patterns: RegExp[] = [
+            /\bwhen\s+you\s+were\s+(\d{1,2}|[a-z-]+)\b/i,
+            /\bat\s+(?:age\s+)?(\d{1,2}|[a-z-]+)(?:\s+years?\s*old)?\b/i,
+            /\bduring\s+your\s+(\d{1,2}(?:st|nd|rd|th)|[a-z-]+)\s+year\b/i,
+        ];
+
+        for (const pattern of patterns) {
+            const m = text.match(pattern);
+            if (!m) continue;
+            const age = TalaContextRouter.normalizePotentialAge(m[1]);
+            if (age !== undefined) return age;
+        }
+        return undefined;
     }
 
     /**
@@ -240,6 +298,8 @@ export class TalaContextRouter {
 
         const isAutobiographicalLoreRequest =
             intent.class === 'lore' && TalaContextRouter.isAutobiographicalLoreRequest(query);
+        const autobiographicalAgeHint =
+            isAutobiographicalLoreRequest ? TalaContextRouter.extractAutobiographicalAgeHint(query) : undefined;
         let memorySystemState = 'unknown';
         let memorySystemDegraded = false;
         if (isAutobiographicalLoreRequest && typeof (this.memoryService as any).getHealthStatus === 'function') {
@@ -289,13 +349,21 @@ export class TalaContextRouter {
             //
             //     Requires ragService to be injected (wired in AgentService).
             if (intent.class === 'lore' && this.ragService) {
-                let ragResults = await this.ragService.searchStructured(query, {
+                const ragOptions: { limit: number; filter?: Record<string, unknown> } = {
                     limit: TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT,
-                    // No category filter — fetch top-k canon lore by semantic similarity.
-                    // A category filter (e.g. {category:'roleplay'}) can silently reduce
-                    // results to 1 when most LTMF documents carry different metadata.
-                    // Semantic relevance alone is the correct gate for lore retrieval.
-                });
+                };
+                if (isAutobiographicalLoreRequest && autobiographicalAgeHint !== undefined) {
+                    ragOptions.filter = {
+                        age: autobiographicalAgeHint,
+                        source_type: 'ltmf',
+                        memory_type: 'autobiographical',
+                        canon: true,
+                    };
+                    console.log(
+                        `[TalaRouter] Autobiographical age query detected - applying structured canon filter age=${autobiographicalAgeHint}`,
+                    );
+                }
+                let ragResults = await this.ragService.searchStructured(query, ragOptions);
                 if (isAutobiographicalLoreRequest && ragResults.length > 0) {
                     const before = ragResults.length;
                     ragResults = ragResults.filter(
@@ -314,6 +382,17 @@ export class TalaContextRouter {
                     const now = Date.now();
                     const ragMemoryItems: MemoryItem[] = ragResults.map((r, idx) => {
                         const score = r.score ?? 0.5;
+                        const sourceMetadata =
+                            r.metadata && typeof r.metadata === 'object'
+                                ? r.metadata as Record<string, unknown>
+                                : {};
+                        const rawAge = sourceMetadata.age;
+                        const parsedAge =
+                            typeof rawAge === 'number'
+                                ? rawAge
+                                : (typeof rawAge === 'string' ? Number(rawAge) : undefined);
+                        const age = Number.isFinite(parsedAge as number) ? Number(parsedAge) : undefined;
+                        const sequence = sourceMetadata.age_sequence ?? sourceMetadata.sequence ?? sourceMetadata.order;
                         return {
                             id: `rag-lore-${idx}-${now}`,
                             text: r.text,
@@ -325,6 +404,13 @@ export class TalaContextRouter {
                                 confidence: score,
                                 salience: score,
                                 docId: r.docId,
+                                source_type: sourceMetadata.source_type ?? 'ltmf',
+                                memory_type: sourceMetadata.memory_type ?? 'autobiographical',
+                                canon: sourceMetadata.canon ?? true,
+                                age,
+                                age_sequence: sequence,
+                                age_query_match:
+                                    autobiographicalAgeHint !== undefined && age === autobiographicalAgeHint,
                             },
                             score,
                             compositeScore: score,

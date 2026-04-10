@@ -316,12 +316,12 @@ describe('LoreRetrievalPriority — RAG injection count', () => {
         expect(ragMemories.length).toBeLessThanOrEqual(5);
     });
 
-    it('searchStructured is called without a category filter for lore intent', async () => {
+    it('searchStructured is called without a category filter for non-age lore intent', async () => {
         const mockMemoryService = { search: vi.fn().mockResolvedValue([]) };
         const mockRagService = { searchStructured: vi.fn().mockResolvedValue([]) };
 
         const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
-        await router.process('turn-filter', 'tell me about when you were 17', 'rp');
+        await router.process('turn-filter', 'tell me about your past', 'rp');
 
         expect(mockRagService.searchStructured).toHaveBeenCalledTimes(1);
         const callArgs = mockRagService.searchStructured.mock.calls[0][1];

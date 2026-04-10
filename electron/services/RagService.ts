@@ -129,8 +129,8 @@ export class RagService {
      */
     async searchStructured(
         query: string,
-        options?: { limit?: number; filter?: Record<string, string> }
-    ): Promise<Array<{ text: string; score: number; docId?: string }>> {
+        options?: { limit?: number; filter?: Record<string, unknown> }
+    ): Promise<Array<{ text: string; score: number; docId?: string; metadata?: Record<string, unknown> }>> {
         if (!this.isReady || !this.client) {
             console.warn('[RagService] SearchStructured skipped: Service not ready');
             return [];
@@ -162,16 +162,31 @@ export class RagService {
                 if (raw && 'text' in raw) {
                     try {
                         const parsed = JSON.parse(raw.text ?? '') as
-                            | Array<{ text: string; score?: number; doc_id?: string }>
-                            | { text: string; score?: number; doc_id?: string };
+                            | Array<{ text?: string; score?: number; doc_id?: string; metadata?: Record<string, unknown> }>
+                            | { text?: string; score?: number; doc_id?: string; metadata?: Record<string, unknown> };
+                        const normalizeResult = (
+                            item: { text?: string; score?: number; doc_id?: string; metadata?: Record<string, unknown> },
+                        ): { text: string; score: number; docId?: string; metadata?: Record<string, unknown> } => {
+                            const metadata =
+                                item.metadata && typeof item.metadata === 'object'
+                                    ? item.metadata
+                                    : undefined;
+                            const text =
+                                item.text
+                                ?? (typeof metadata?.text === 'string' ? metadata.text : '')
+                                ?? '';
+                            const docIdFromMetadata = typeof metadata?.id === 'string' ? metadata.id : undefined;
+                            return {
+                                text,
+                                score: item.score ?? 0.5,
+                                docId: item.doc_id ?? docIdFromMetadata,
+                                metadata,
+                            };
+                        };
                         if (Array.isArray(parsed)) {
-                            return parsed.map(r => ({
-                                text: r.text,
-                                score: r.score ?? 0.5,
-                                docId: r.doc_id,
-                            }));
+                            return parsed.map(normalizeResult);
                         } else if (typeof parsed === 'object' && parsed !== null && 'text' in parsed) {
-                            return [{ text: parsed.text, score: parsed.score ?? 0.5, docId: parsed.doc_id }];
+                            return [normalizeResult(parsed)];
                         }
                     } catch {
                         // Non-JSON single text block — wrap as one result at moderate score

@@ -237,6 +237,98 @@ def search_memory(query: str, limit: int = 3, filter_json: Optional[Any] = None)
         sys.stderr.write(f"Search Error: {e}\n")
         return []
 
+
+def _safe_int(raw: Any) -> Optional[int]:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    m = re.search(r'\b(\d{1,3})\b', s)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _parse_age_from_text(raw: Any) -> Optional[int]:
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        age = int(raw)
+        return age if 0 <= age <= 130 else None
+    text = str(raw).lower()
+    # "age 17", "when you were 17", "at 17", "17 years old"
+    m = re.search(r'(?:age\s*[:\-]?\s*|when\s+you\s+were\s+|at\s+)?(\d{1,2})(?:\s*(?:years?\s*old|yo))?\b', text)
+    if m:
+        age = int(m.group(1))
+        return age if 0 <= age <= 130 else None
+    return None
+
+
+def _extract_ltmf_age(metadata_from_file: Dict[str, Any], file_path: str, content_for_indexing: str) -> Optional[int]:
+    candidates = [
+        metadata_from_file.get('age'),
+        metadata_from_file.get('life_stage'),
+        metadata_from_file.get('age_life_stage'),
+        metadata_from_file.get('age_year'),
+    ]
+    for c in candidates:
+        age = _parse_age_from_text(c)
+        if age is not None:
+            return age
+
+    # File patterns: "...age_17..." or "LTMF-A17-....md"
+    file_name = os.path.basename(file_path).lower()
+    m_file_age = re.search(r'age[_\-\s]?(\d{1,2})', file_name)
+    if m_file_age:
+        age = int(m_file_age.group(1))
+        if 0 <= age <= 130:
+            return age
+
+    m_ltmf_id = re.search(r'ltmf-a(\d{2})', file_name)
+    if m_ltmf_id:
+        age = int(m_ltmf_id.group(1))
+        if 0 <= age <= 130:
+            return age
+
+    # Body pattern fallback: "Age / Life Stage: 17"
+    m_content_age = re.search(r'age\s*/\s*life\s*stage\s*:\s*([^\n\r]+)', content_for_indexing, re.IGNORECASE)
+    if m_content_age:
+        age = _parse_age_from_text(m_content_age.group(1))
+        if age is not None:
+            return age
+
+    return None
+
+
+def _extract_age_sequence(metadata_from_file: Dict[str, Any], document_id: str, source_file_name: str, chunk_index: int) -> Optional[int]:
+    for key in ('age_sequence', 'sequence', 'order', 'memory_index'):
+        seq = _safe_int(metadata_from_file.get(key))
+        if seq is not None and seq >= 0:
+            return seq
+
+    # Document IDs often encode "A17-0042" where the second group is sequence.
+    m_doc = re.search(r'a\d{2}-(\d{1,6})', document_id.lower())
+    if m_doc:
+        return int(m_doc.group(1))
+
+    # Filename fallback: "memory_07"
+    m_file = re.search(r'memory[_\-\s]?(\d{1,4})', source_file_name.lower())
+    if m_file:
+        return int(m_file.group(1))
+
+    # Preserve deterministic ordering even when no explicit sequence exists.
+    return chunk_index
+
 @mcp.tool()
 def ingest_file(file_path: str, category: str = "general") -> str:
     """Ingests a file into memory with a specific category. Supports LTMF Markdown with YAML frontmatter."""
@@ -285,6 +377,13 @@ def ingest_file(file_path: str, category: str = "general") -> str:
         
         import uuid
         document_id = metadata_from_file.get('id') or str(uuid.uuid4())
+        source_file_name = os.path.basename(file_path)
+        is_ltmf = bool(frontmatter_match) and (
+            'ltmf' in source_file_name.lower()
+            or str(document_id).lower().startswith('ltmf-')
+            or category.lower() == 'roleplay'
+        )
+        extracted_age = _extract_ltmf_age(metadata_from_file, file_path, content_for_indexing) if is_ltmf else None
         
         chunk_texts = [f"Source: {os.path.basename(file_path)}\n\n{c}" for c in chunks if len(c) > 20]
         if not chunk_texts: return "No valid chunks extracted."
@@ -320,6 +419,22 @@ def ingest_file(file_path: str, category: str = "general") -> str:
             for field in standard_fields:
                 if field in metadata_from_file:
                     chunk_metadata[field] = metadata_from_file[field]
+
+            if is_ltmf:
+                # Canonical autobiographical metadata for age-based retrieval.
+                chunk_metadata["source_type"] = "ltmf"
+                chunk_metadata["memory_type"] = "autobiographical"
+                chunk_metadata["canon"] = True
+
+                if extracted_age is not None:
+                    chunk_metadata["age"] = extracted_age
+
+                chunk_metadata["age_sequence"] = _extract_age_sequence(
+                    metadata_from_file=metadata_from_file,
+                    document_id=str(document_id),
+                    source_file_name=source_file_name,
+                    chunk_index=i,
+                )
 
             metadatas.append(chunk_metadata)
             
