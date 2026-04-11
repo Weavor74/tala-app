@@ -1,14 +1,20 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { LogLifecycleService } from '../LogLifecycleService';
 
 export class LogInspectionService {
     private logsRoot: string;
+    private lifecycle: LogLifecycleService;
 
     constructor(rootPath: string) {
         const dataRoot = path.basename(rootPath) === 'data'
             ? rootPath
             : path.join(rootPath, 'data');
         this.logsRoot = path.join(dataRoot, 'logs');
+        this.lifecycle = new LogLifecycleService(this.logsRoot, {
+            recentReadMaxBytes: 5 * 1024 * 1024,
+            recentReadMaxLines: 5000,
+        });
     }
 
     public listAvailableLogs(): string[] {
@@ -18,16 +24,22 @@ export class LogInspectionService {
 
     public async readRecentLogWindow(logFilename: string, linesCount: number = 200): Promise<string[]> {
         const targetPath = path.join(this.logsRoot, logFilename);
-        if (!fs.existsSync(targetPath)) return [];
-
-        try {
-            const content = await fs.promises.readFile(targetPath, 'utf8');
-            const lines = content.split('\n').filter(l => l.trim() !== '');
-            return lines.slice(-linesCount);
-        } catch (error) {
-            console.error(`Failed to read log ${logFilename}:`, error);
+        const recent = this.lifecycle.readRecentWindowFromPath(targetPath, { maxLines: linesCount });
+        if (recent.skippedMissing) {
+            console.log(`[LogInspection] source=${logFilename} skipped_missing=true`);
             return [];
         }
+        let parseErrors = 0;
+        for (const line of recent.lines) {
+            if (!line.trim().startsWith('{')) continue;
+            try {
+                JSON.parse(line);
+            } catch {
+                parseErrors++;
+            }
+        }
+        console.log(`[LogInspection] source=${logFilename} mode=tail maxBytes=${recent.bytesRead} lines=${recent.lines.length} parseErrors=${parseErrors}`);
+        return recent.lines;
     }
 
     public async searchLogs(query: string, linesCount: number = 500): Promise<string[]> {
@@ -46,12 +58,14 @@ export class LogInspectionService {
         // Collects recent errors and audit history
         const errors = await this.readRecentLogWindow('runtime-errors.jsonl', 100);
         const audits = await this.readRecentLogWindow('audit-log.jsonl', 100);
+        const prompts = await this.readRecentLogWindow('prompt-audit.jsonl', 100);
 
         // Simple timestamp filtering can be added here parsing the JSON structure
 
         return {
             errors: errors.slice(-50), // Last 50 errors
             recentAudits: audits.slice(-50),
+            recentPromptAudits: prompts.slice(-50),
             availableChannels: this.listAvailableLogs()
         };
     }

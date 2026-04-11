@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { resolveLogsPath } from './PathResolver';
+import { LogLifecycleService } from './LogLifecycleService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -144,6 +145,7 @@ export class PromptAuditService {
     private config: PromptAuditConfig;
     private logPath: string | null = null;
     private logDirReady = false;
+    private lifecycle: LogLifecycleService | null = null;
 
     constructor(config?: Partial<PromptAuditConfig>) {
         this.config = { ...DEFAULT_PROMPT_AUDIT_CONFIG, ...(config || {}) };
@@ -165,8 +167,10 @@ export class PromptAuditService {
             if (!fs.existsSync(logDir)) {
                 fs.mkdirSync(logDir, { recursive: true });
             }
+            this.lifecycle = new LogLifecycleService(logDir);
             this.logPath = path.join(logDir, 'prompt-audit.jsonl');
             this.logDirReady = true;
+            this.lifecycle.rotateOversizedOnStartup('prompt-audit.jsonl');
             console.log(`[PromptAudit] file logging enabled=true`);
             console.log(`[PromptAudit] output path=${this.logPath}`);
         } catch (e: any) {
@@ -345,7 +349,11 @@ export class PromptAuditService {
                 }
             }
 
-            fs.appendFileSync(this.logPath!, JSON.stringify(record) + '\n', 'utf-8');
+            if (this.lifecycle) {
+                this.lifecycle.appendJsonl('prompt-audit.jsonl', record);
+            } else {
+                fs.appendFileSync(this.logPath!, JSON.stringify(record) + '\n', 'utf-8');
+            }
             // console.log(`[PromptAudit] append success`);
         } catch (e: any) {
             console.warn(`[PromptAudit] append failed: ${e.message}`);

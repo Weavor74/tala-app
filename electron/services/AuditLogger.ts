@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { redact } from './log_redact';
 import { v4 as uuidv4 } from 'uuid';
 import { resolveLogsPath } from './PathResolver';
+import { LogLifecycleService } from './LogLifecycleService';
 
 /**
  * AuditLogger
@@ -33,7 +34,7 @@ class AuditLogger {
     private runId: string;
     private activeCorrelationId: string | null = null;
     private activeSessionId: string | null = null;
-    private maxSize = 10 * 1024 * 1024; // 10MB rotation
+    private lifecycle: LogLifecycleService | null = null;
 
     constructor() {
         // Run ID is stable for this app session
@@ -46,6 +47,8 @@ class AuditLogger {
             this.logPath = path.join(this.logDir, 'audit-log.jsonl');
             console.log(`[AuditLogger] Initialized at: ${this.logPath}`);
             this.ensureDirectory();
+            this.lifecycle = new LogLifecycleService(this.logDir);
+            this.lifecycle.rotateOversizedOnStartup('audit-log.jsonl');
         } catch (e) {
             // Fallback for immediate initialization contexts
             this.logDir = '';
@@ -150,15 +153,13 @@ class AuditLogger {
                     this.logDir = resolveLogsPath();
                     this.logPath = path.join(this.logDir, 'audit-log.jsonl');
                     this.ensureDirectory();
+                    this.lifecycle = new LogLifecycleService(this.logDir);
                 }
 
-                // Append to log and check for rotation
-                fs.appendFileSync(this.logPath, line);
-
-                // Check size for rotation
-                const stats = fs.statSync(this.logPath);
-                if (stats.size > this.maxSize) {
-                    this.rotate();
+                if (this.lifecycle) {
+                    this.lifecycle.appendLine('audit-log.jsonl', line);
+                } else {
+                    fs.appendFileSync(this.logPath, line);
                 }
             } catch (err) {
                 console.error(`[AuditLogger][ERROR] Record: ${event} - Log Write Fail:`, err);

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { resolveLogsPath } from './PathResolver';
+import { LogLifecycleService } from './LogLifecycleService';
 import type {
     LogViewerEntry,
     LogSourceInfo,
@@ -52,11 +53,13 @@ export interface ArchiveResult {
  */
 export class LogViewerService {
     private logsDir: string;
+    private lifecycle: LogLifecycleService;
     private mcpStatus: 'online' | 'degraded' | 'offline' | 'unknown' = 'unknown';
 
     constructor() {
         // Centralized log path resolution - app-root/data/logs by default.
         this.logsDir = resolveLogsPath();
+        this.lifecycle = new LogLifecycleService(this.logsDir);
         if (!fs.existsSync(this.logsDir)) {
             try {
                 fs.mkdirSync(this.logsDir, { recursive: true });
@@ -64,6 +67,8 @@ export class LogViewerService {
                 console.error(`[LogViewerService] CRITICAL: Failed to create logs directory at ${this.logsDir}`, e);
             }
         }
+        ['audit-log.jsonl', 'prompt-audit.jsonl', 'runtime-errors.jsonl', 'performance-metrics.jsonl']
+            .forEach((fileName) => this.lifecycle.rotateOversizedOnStartup(fileName));
         this.emitDiagnostics();
     }
 
@@ -92,15 +97,13 @@ export class LogViewerService {
     private appendJsonl(fileName: string, record: any, diagnosticTag: string): void {
         try {
             if (!this.logsDir) return;
-            const filePath = path.join(this.logsDir, fileName);
 
             // Ensure parent exists
             if (!fs.existsSync(this.logsDir)) {
                 fs.mkdirSync(this.logsDir, { recursive: true });
             }
 
-            const line = JSON.stringify(record) + '\n';
-            fs.appendFileSync(filePath, line, 'utf-8');
+            this.lifecycle.appendJsonl(fileName, record);
 
             // Mandatory success diagnostic for proof of writer functionality
             console.log(`[${diagnosticTag}] append success: ${fileName}`);

@@ -15,7 +15,7 @@ Phase 2 Trustworthiness Hardening added a canonical telemetry schema and a unifi
 ### 2.1. Canonical Telemetry (TelemetryService) — Phase 2
 **Source**: `electron/services/TelemetryService.ts`  
 **Schema**: `shared/telemetry.ts`  
-**Output**: Written through `AuditLogger` to `%USERDATA%/logs/audit-log.jsonl`
+**Output**: Written through `AuditLogger` to `<app-root>/data/logs/audit-log.jsonl`
 
 Every significant runtime action emits a `CanonicalTelemetryEvent` with:
 - `timestamp`, `eventId`, `turnId`, `sessionId`, `correlationId`
@@ -34,7 +34,7 @@ Turn reconstruction is supported via `TelemetryService.reconstructTurn()`, which
 assembles a `TurnReconstruction` from a sequence of events.
 
 ### 2.2. System Audit (AuditLogger)
-**Path**: `%USERDATA%/logs/audit-log.jsonl`  
+**Path**: `<app-root>/data/logs/audit-log.jsonl`  
 Records high-level application events:
 - Service initialization and lifecycle status.
 - Tool registration and execution success/fail.
@@ -43,7 +43,7 @@ Records high-level application events:
 - **Security Control**: All log entries are scrubbed by `log_redact.ts`.
 
 ### 2.3. Prompt Audit (PromptAuditService)
-**Path**: `%USERDATA%/prompts/`  
+**Path**: `<app-root>/data/logs/prompt-audit.jsonl`  
 Records the full conversation flow for every inference turn:
 - **Input**: Full system prompt, context windows, and user message.
 - **Output**: Raw LLM response before UI rendering.
@@ -70,9 +70,10 @@ Enforced via `log_redact.ts` applied to all `AuditLogger` writes, including thos
 from `TelemetryService`.
 
 ## 4. Archive and Cleanup
-- **Rotation**: Logs rotate when file exceeds 10MB (AuditLogger) or daily (PromptAuditService).
-- **Cleanup**: Handled by the `ReflectionService` cleanup routines or manual user action.
-- **Audit Artifacts**: Managed by `PromptAuditService` with a sliding window retention policy.
+- **Storage root**: Tala-owned logs are managed under `<app-root>/data/logs/`.
+- **Rotation**: Size-based rotation is centralized in `electron/services/LogLifecycleService.ts` (default 100MB active file threshold).
+- **Retention**: Rotated files are pruned automatically (default keep newest 5 rotated files per base log).
+- **Bounded inspection**: Reflection log inspection uses tail-window reads (default last 5MB / bounded line count) and does not load full log files into memory.
 
 ## 5. Phase 2 Event Categories
 See `docs/architecture/phase2_trustworthiness_hardening.md` for the full list of

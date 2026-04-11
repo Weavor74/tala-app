@@ -21,6 +21,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { resolveLogsPath } from './PathResolver';
+import { getDefaultLogLifecycle } from './LogLifecycleService';
 
 // ─────────────────────────────────────────────────────────────────────
 // TYPES & INTERFACES
@@ -74,6 +75,7 @@ export type AuditEventType =
 const AUDIT_LOG_DIR = resolveLogsPath();
 const AUDIT_LOG_PATH = path.join(AUDIT_LOG_DIR, 'audit-log.jsonl');
 const SECRET_KEY = process.env.TALA_AUDIT_SECRET || 'default-dev-key';
+const auditLifecycle = getDefaultLogLifecycle();
 
 // ─────────────────────────────────────────────────────────────────────
 // CORE LOGIC
@@ -136,17 +138,14 @@ export function logAuditEvent(event: AuditEvent): void {
   const line = JSON.stringify(event);
 
   // 3. Append to log file (synchronous for safety)
-  try {
-    if (!fs.existsSync(AUDIT_LOG_DIR)) {
-      fs.mkdirSync(AUDIT_LOG_DIR, { recursive: true });
+    try {
+        if (!fs.existsSync(AUDIT_LOG_DIR)) {
+            fs.mkdirSync(AUDIT_LOG_DIR, { recursive: true });
+        }
+        auditLifecycle.appendLine('audit-log.jsonl', `${line}\n`);
+    } catch (err) {
+        console.error('[AUDIT LOGGER] Failed to write event:', err);
     }
-    if (!fs.existsSync(AUDIT_LOG_PATH)) {
-      fs.writeFileSync(AUDIT_LOG_PATH, '');
-    }
-    fs.appendFileSync(AUDIT_LOG_PATH, `${line}\n`);
-  } catch (err) {
-    console.error('[AUDIT LOGGER] Failed to write event:', err);
-  }
 }
 
 /**
