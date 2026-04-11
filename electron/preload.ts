@@ -170,6 +170,10 @@ contextBridge.exposeInMainWorld('tala', {
     login: (provider: string) => ipcRenderer.invoke('login', provider),
     /** Scans for locally-available inference providers (Ollama, LlamaCPP, etc.). */
     scanLocalProviders: () => ipcRenderer.invoke('scan-local-providers'),
+    /** Returns the latest runtime inference provider inventory. */
+    inferenceListProviders: () => ipcRenderer.invoke('inference:listProviders'),
+    /** Forces a live re-probe of inference providers and returns fresh inventory. */
+    inferenceRefreshProviders: () => ipcRenderer.invoke('inference:refreshProviders'),
     /** Scans for running local models (Ollama, LM Studio). */
     scanLocalModels: () => ipcRenderer.invoke('scan-local-models'),
     /** Installs a local inference engine by ID (downloads binaries). */

@@ -584,7 +584,15 @@ export class InferenceProviderRegistry {
         desc.status = result.status;
         desc.lastProbed = new Date().toISOString();
         desc.lastProbeError = result.error;
-        if (result.models.length > 0) desc.models = result.models;
+        // Runtime-discovered model inventory is authoritative.
+        // Always replace the previous list so removed/unreachable models do not linger.
+        desc.models = Array.isArray(result.models) ? [...result.models] : [];
+
+        console.log(
+            `[ModelDiscovery] provider=${desc.providerId} reachable=${result.reachable}` +
+            ` models=${desc.models.length}` +
+            `${result.error ? ` error=${result.error}` : ''}`
+        );
 
         if (result.reachable && result.status === 'ready') {
             telemetry.operational(

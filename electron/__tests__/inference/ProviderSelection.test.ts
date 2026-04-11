@@ -213,3 +213,23 @@ describe('ProviderSelectionService - telemetry', () => {
         expect(emittedEvents.some((e) => e.eventType === 'provider_unavailable')).toBe(true);
     });
 });
+
+describe('ProviderSelectionService - model validation', () => {
+    beforeEach(() => { emittedEvents.length = 0; });
+
+    it('does not treat preferredModelId as available when missing from live inventory', () => {
+        const ollama = makeDescriptor({
+            providerId: 'ollama',
+            ready: true,
+            models: ['a:latest', 'c:latest'],
+            preferredModel: 'legacy:b',
+        });
+        const svc = new ProviderSelectionService(makeRegistry([ollama]));
+
+        const result = svc.select({ preferredProviderId: 'ollama', preferredModelId: 'legacy:b' });
+
+        expect(result.success).toBe(true);
+        expect(result.selectedProvider!.providerId).toBe('ollama');
+        expect(result.resolvedModel).toBe('a:latest');
+    });
+});

@@ -914,7 +914,14 @@ export class IpcRouter {
     // ═══════════════════════════════════════════════════════════════════════
 
     ipcMain.handle('scan-local-providers', async () => {
-      return await inferenceService.scanLocal();
+      const inventory = await inferenceService.refreshProviders('settings-scan-local', 'settings');
+      return inventory.providers
+        .filter((p) => p.scope !== 'cloud' && p.detected)
+        .map((p) => ({
+          engine: p.providerType === 'embedded_llamacpp' ? 'llamacpp' : p.providerType,
+          endpoint: p.endpoint,
+          models: Array.isArray(p.models) ? p.models : [],
+        }));
     });
 
     ipcMain.handle('scan-local-models', async () => {

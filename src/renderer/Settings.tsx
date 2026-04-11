@@ -391,6 +391,107 @@ export const Settings = () => {
         }
     };
 
+    const refreshInferenceRuntimeModels = async (opts: { silent?: boolean } = {}) => {
+        const api = (window as any).tala;
+        if (!api) {
+            if (!opts.silent) setStatus('Error: API bridge missing.');
+            return;
+        }
+
+        if (!opts.silent) {
+            setStatus('Refreshing live provider/model availability...');
+        }
+
+        const normalizeFromInventory = (inventory: any): Array<{ engine: string; endpoint: string; models: string[]; detected: boolean }> => {
+            const providers = Array.isArray(inventory?.providers) ? inventory.providers : [];
+            return providers
+                .filter((p: any) => p.scope !== 'cloud')
+                .map((p: any) => ({
+                    engine: p.providerType === 'embedded_llamacpp' ? 'llamacpp' : (p.providerType === 'embedded_vllm' ? 'vllm' : p.providerType),
+                    endpoint: p.endpoint || '',
+                    models: Array.isArray(p.models) ? p.models : [],
+                    detected: !!p.detected,
+                }));
+        };
+
+        const normalizeFromScan = (scanList: any[]): Array<{ engine: string; endpoint: string; models: string[]; detected: boolean }> => {
+            return (Array.isArray(scanList) ? scanList : []).map((p: any) => ({
+                engine: p.engine,
+                endpoint: p.endpoint || '',
+                models: Array.isArray(p.models) ? p.models : [],
+                detected: true,
+            }));
+        };
+
+        try {
+            let liveProviders: Array<{ engine: string; endpoint: string; models: string[]; detected: boolean }> = [];
+            if (api.inferenceRefreshProviders) {
+                const inventory = await api.inferenceRefreshProviders();
+                liveProviders = normalizeFromInventory(inventory);
+            } else if (api.scanLocalProviders) {
+                const scan = await api.scanLocalProviders();
+                liveProviders = normalizeFromScan(scan);
+            }
+
+            const localEngines = new Set(['ollama', 'llamacpp', 'vllm']);
+            const keyOf = (engine: string, endpoint: string) => `${engine}|${endpoint || ''}`.toLowerCase();
+            const liveByKey = new Map(liveProviders.map((p) => [keyOf(p.engine, p.endpoint), p]));
+
+            let invalidSelectionCount = 0;
+            let staleListClearedCount = 0;
+
+            const nextInstances = settings.inference.instances.map((inst: any) => {
+                if (inst.source !== 'local' || !localEngines.has(inst.engine)) {
+                    return inst;
+                }
+
+                const live = liveByKey.get(keyOf(inst.engine, inst.endpoint || ''));
+                const liveModels = live?.detected ? (live.models || []) : [];
+                const prevModels = Array.isArray(inst.params?.knownModels) ? inst.params.knownModels : [];
+                const selectedModelValid = !!inst.model && liveModels.includes(inst.model);
+
+                if (prevModels.join('|') !== liveModels.join('|')) {
+                    staleListClearedCount++;
+                }
+                if (inst.model && !selectedModelValid) {
+                    invalidSelectionCount++;
+                }
+
+                return {
+                    ...inst,
+                    params: {
+                        ...(inst.params || {}),
+                        knownModels: liveModels,
+                        selectedModelValid,
+                    },
+                };
+            });
+
+            update('inference', 'instances', nextInstances);
+
+            if (!opts.silent) {
+                setStatus(
+                    `Live refresh complete. Providers=${liveProviders.length} ` +
+                    `modelListsUpdated=${staleListClearedCount} invalidSelections=${invalidSelectionCount}`
+                );
+            }
+        } catch (e: any) {
+            if (!opts.silent) {
+                setStatus(`Live refresh failed: ${e?.message || String(e)}`);
+            }
+        } finally {
+            if (!opts.silent) {
+                setTimeout(() => setStatus(''), 3500);
+            }
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'inference') {
+            refreshInferenceRuntimeModels({ silent: true });
+        }
+    }, [activeTab]);
+
     return (
         <div style={containerStyle}>
             <div style={headerStyle}>
@@ -887,31 +988,11 @@ export const Settings = () => {
                             <div style={{ display: 'flex', gap: 10 }}>
                                 <button
                                     onClick={async () => {
-                                        setStatus('Scanning for local models...');
-                                        // @ts-ignore
-                                        if (window.tala && window.tala.scanLocalModels) {
-                                            // @ts-ignore
-                                            const found = await window.tala.scanLocalModels();
-                                            if (found && found.length > 0) {
-                                                const currentIds = settings.inference.instances.map(i => i.id);
-                                                // Simple dedup by ID
-                                                const newInstances = found.filter((f: any) => !currentIds.includes(f.id));
-
-                                                if (newInstances.length > 0) {
-                                                    update('inference', 'instances', [...settings.inference.instances, ...newInstances]);
-                                                    setStatus(`Found ${newInstances.length} new local providers.`);
-                                                } else {
-                                                    setStatus('No new providers found (already added).');
-                                                }
-                                            } else {
-                                                setStatus('No local providers found.');
-                                            }
-                                        }
-                                        setTimeout(() => setStatus(''), 3000);
+                                        await refreshInferenceRuntimeModels();
                                     }}
                                     style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}
                                 >
-                                    SCAN LOCAL
+                                    REFRESH LIVE MODELS
                                 </button>
                                 <button
                                     onClick={() => {
@@ -1411,6 +1492,9 @@ export const Settings = () => {
                                                             update('inference', 'instances', list);
                                                         }}
                                                     >
+                                                        {inst.model && !inst.params.knownModels.includes(inst.model) && (
+                                                            <option value={inst.model} disabled>{`${inst.model} (Unavailable)`}</option>
+                                                        )}
                                                         {inst.params.knownModels.map((m: string) => (
                                                             <option key={m} value={m}>{m}</option>
                                                         ))}
@@ -1507,53 +1591,11 @@ export const Settings = () => {
                         <div style={{ marginTop: 20, textAlign: 'center' }}>
                             <button
                                 onClick={async () => {
-                                    setStatus('Scanning Local Ports (11434, 8080, 1234)...');
-                                    const api = (window as any).tala;
-                                    if (api && api.scanLocalProviders) {
-                                        const found = await api.scanLocalProviders();
-                                        if (found && found.length > 0) {
-                                            const newInstances = [...settings.inference.instances];
-                                            let addedCount = 0;
-
-                                            found.forEach((p: any) => {
-                                                // Check if already exists by endpoint AND engine
-                                                const exists = newInstances.find(i => i.endpoint === p.endpoint && i.engine === p.engine);
-                                                if (exists) {
-                                                    // Update known models
-                                                    if (!exists.params) exists.params = {};
-                                                    exists.params.knownModels = p.models;
-                                                    // Default to first model if current is empty or invalid
-                                                    if (!exists.model || !p.models.includes(exists.model)) {
-                                                        exists.model = p.models[0];
-                                                    }
-                                                } else {
-                                                    // Add new
-                                                    newInstances.push({
-                                                        id: Math.random().toString(36).substr(2, 9),
-                                                        alias: `${p.engine.toUpperCase()} (Auto)`,
-                                                        source: 'local',
-                                                        engine: p.engine,
-                                                        endpoint: p.endpoint,
-                                                        model: p.models[0] || 'default',
-                                                        priority: newInstances.length + 1,
-                                                        params: { knownModels: p.models }
-                                                    });
-                                                    addedCount++;
-                                                }
-                                            });
-
-                                            update('inference', 'instances', newInstances);
-                                            setStatus(`Scan Complete. Updated ${found.length} providers. Added ${addedCount} new.`);
-                                        } else {
-                                            setStatus('Scan Complete. No local providers found active.');
-                                        }
-                                    } else {
-                                        setStatus('Error: Scan API not available.');
-                                    }
+                                    await refreshInferenceRuntimeModels();
                                 }}
                                 style={{ background: 'transparent', color: '#007acc', border: '1px dashed #007acc', padding: '8px 16px', fontSize: 11, cursor: 'pointer', opacity: 0.7 }}
                             >
-                                ⟳ SCAN FOR LOCAL ENGINES
+                                ⟳ REFRESH LIVE LOCAL ENGINES
                             </button>
                         </div>
                     </div>

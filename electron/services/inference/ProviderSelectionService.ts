@@ -276,19 +276,33 @@ export class ProviderSelectionService {
      * 5. Else return requestedModel as-is (best effort).
      */
     private _reconcileModel(provider: InferenceProviderDescriptor, requestedModel?: string): string | undefined {
-        if (!requestedModel && provider.preferredModel) return provider.preferredModel;
-        if (!requestedModel) return provider.models[0];
+        const availableModels = Array.isArray(provider.models) ? provider.models : [];
+        const hasLiveInventory = availableModels.length > 0;
 
-        if (provider.models.includes(requestedModel)) return requestedModel;
+        if (!requestedModel) {
+            if (!hasLiveInventory) return provider.preferredModel;
+            if (provider.preferredModel && availableModels.includes(provider.preferredModel)) {
+                return provider.preferredModel;
+            }
+            return availableModels[0];
+        }
 
-        const tagMatch = provider.models.find(m => m === `${requestedModel}:latest`);
+        if (availableModels.includes(requestedModel)) return requestedModel;
+
+        const tagMatch = availableModels.find(m => m === `${requestedModel}:latest`);
         if (tagMatch) return tagMatch;
 
-        const prefixMatch = provider.models.find(m => m.startsWith(`${requestedModel}:`) || m.startsWith(`${requestedModel}.`));
+        const prefixMatch = availableModels.find(m => m.startsWith(`${requestedModel}:`) || m.startsWith(`${requestedModel}.`));
         if (prefixMatch) return prefixMatch;
 
-        if (provider.models.length > 0) return provider.models[0];
+        if (hasLiveInventory) {
+            console.log(
+                `[ModelSelection] preferred=${requestedModel} valid=false provider=${provider.providerId}`
+            );
+            return availableModels[0];
+        }
 
+        // No live inventory to validate against (e.g. provider does not enumerate models).
         return requestedModel || provider.preferredModel;
     }
 }

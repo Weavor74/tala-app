@@ -150,6 +150,53 @@ describe('InferenceProviderRegistry — Ollama detection', () => {
         expect(ollama!.ready).toBe(false);
         expect(ollama!.status).toBe('not_running');
         expect(ollama!.health).toBe('unavailable');
+        expect(ollama!.models).toEqual([]);
+    });
+
+    it('replaces Ollama model inventory on each refresh and removes deleted models', async () => {
+        setHttpResponse('/api/tags', {
+            status: 200,
+            body: JSON.stringify({ models: [{ name: 'a:latest' }, { name: 'b:latest' }, { name: 'c:latest' }] }),
+        });
+
+        const registry = new InferenceProviderRegistry({
+            ollama: { endpoint: 'http://127.0.0.1:11434', enabled: true },
+        });
+
+        await registry.refresh();
+        let ollama = registry.getInventory().providers.find(p => p.providerId === 'ollama');
+        expect(ollama!.models).toEqual(['a:latest', 'b:latest', 'c:latest']);
+
+        setHttpResponse('/api/tags', {
+            status: 200,
+            body: JSON.stringify({ models: [{ name: 'a:latest' }, { name: 'c:latest' }] }),
+        });
+
+        await registry.refresh();
+        ollama = registry.getInventory().providers.find(p => p.providerId === 'ollama');
+        expect(ollama!.models).toEqual(['a:latest', 'c:latest']);
+        expect(ollama!.models).not.toContain('b:latest');
+    });
+
+    it('clears Ollama models after a reachable->unreachable transition', async () => {
+        setHttpResponse('/api/tags', {
+            status: 200,
+            body: JSON.stringify({ models: [{ name: 'llama3:latest' }] }),
+        });
+
+        const registry = new InferenceProviderRegistry({
+            ollama: { endpoint: 'http://127.0.0.1:11434', enabled: true },
+        });
+
+        await registry.refresh();
+        let ollama = registry.getInventory().providers.find(p => p.providerId === 'ollama');
+        expect(ollama!.models).toEqual(['llama3:latest']);
+
+        clearHttpResponses();
+        await registry.refresh();
+        ollama = registry.getInventory().providers.find(p => p.providerId === 'ollama');
+        expect(ollama!.ready).toBe(false);
+        expect(ollama!.models).toEqual([]);
     });
 
     it('emits provider_detected telemetry when Ollama is healthy', async () => {

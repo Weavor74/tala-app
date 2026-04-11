@@ -1236,7 +1236,7 @@ export class InferenceService {
             found.push({
                 engine: 'llamacpp',
                 endpoint: `http://127.0.0.1:${localStatus.port}`,
-                models: models.length > 0 ? models : ['tala-built-in'],
+                models,
             });
         }
 
@@ -1246,7 +1246,7 @@ export class InferenceService {
             found.push({
                 engine: 'ollama',
                 endpoint: 'http://127.0.0.1:11434',
-                models: models.length > 0 ? models : ['llama3:latest'],
+                models,
             });
         }
 
@@ -1256,7 +1256,7 @@ export class InferenceService {
             found.push({
                 engine: 'llamacpp',
                 endpoint: 'http://127.0.0.1:8080',
-                models: models.length > 0 ? models : ['gpt-3.5-turbo'],
+                models,
             });
         }
 
@@ -1266,7 +1266,7 @@ export class InferenceService {
             found.push({
                 engine: 'vllm',
                 endpoint: 'http://127.0.0.1:1234',
-                models: models.length > 0 ? models : ['local-model'],
+                models,
             });
         }
 
