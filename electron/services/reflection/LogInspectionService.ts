@@ -68,6 +68,7 @@ export class LogInspectionService {
 
     public async readRecentLogWindow(logFilename: string, linesCount: number = 200): Promise<string[]> {
         const targetPath = path.join(this.logsRoot, logFilename);
+        console.log(`[LogInspection] read_recent file=${logFilename} maxLines=${linesCount}`);
         const recent = this.lifecycle.readRecentWindowFromPath(targetPath, { maxLines: linesCount });
         if (recent.skippedMissing) {
             console.log(`[LogInspection] source=${logFilename} skipped_missing=true`);
@@ -193,6 +194,10 @@ export class LogInspectionService {
             }
             return cluster;
         });
+
+        if (!clusters.length) {
+            console.log('[IssueCluster] key=none family=none count=0');
+        }
 
         return clusters.sort((a, b) => {
             const severityWeight = this.severityToWeight(b.computedSeverity) - this.severityToWeight(a.computedSeverity);

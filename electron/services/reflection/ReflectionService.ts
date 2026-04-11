@@ -471,6 +471,7 @@ export class ReflectionService {
                 durationMs: Date.now() - collectionStartedAt,
                 issueId: issue?.issueId,
                 clusters: issue?.issueClusterKey ? 1 : 0,
+                candidates: issue ? 1 : 0,
                 clusterKey: issue?.issueClusterKey,
                 family: issue?.issueFamily,
                 eventCount: issue?.issueEventCount ?? 0
@@ -724,22 +725,17 @@ export class ReflectionService {
             return { accepted: false, runId, reason: 'active_run', message: 'A reflection run is already active.' };
         }
 
-        const enqueued = await this.queue.enqueue({
-            type: 'manual_scan',
-            source: 'user',
-            priority: 'medium',
-            triggerMode: activeMode,
-            requestedBy: 'user'
-        });
-        if (!enqueued) {
-            this.traceStage(runId, 'cycle_abort', { reason: 'enqueue_rejected' });
-            return { accepted: false, runId, reason: 'enqueue_rejected', message: 'Manual reflection was not enqueued (already running or queued).' };
+        this.traceStage(runId, 'trigger_received', { source, accepted: true, mode: 'direct_manual_execution' });
+        const runResult = await this.triggerReflection(activeMode, { runId, triggerSource: source });
+        if (runResult.success) {
+            return { accepted: true, runId, message: `Manual reflection run ${runId} completed.` };
         }
-
-        const acceptedRunId = enqueued.queueItemId;
-        this.traceStage(acceptedRunId, 'trigger_received', { source, accepted: true, queueItemId: acceptedRunId });
-        await this.scheduler.tickNow();
-        return { accepted: true, runId: acceptedRunId, message: `Manual reflection run ${acceptedRunId} accepted.` };
+        return {
+            accepted: true,
+            runId,
+            reason: 'no_candidates',
+            message: runResult.message || `Manual reflection run ${runId} completed with no candidates.`,
+        };
     }
 
     /**

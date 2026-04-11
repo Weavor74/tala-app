@@ -78,6 +78,8 @@ export class SelfImprovementService {
 
         if (topCluster) {
             console.log(`[CandidateScreening] clusterKey=${topCluster.clusterKey} accepted=${severity !== 'low'} severity=${severity}`);
+        } else {
+            console.log('[CandidateScreening] clusterKey=none accepted=false reason=no_clusters_detected');
         }
 
         return issue;
