@@ -262,6 +262,70 @@ describe('LoreMemoryGrounding — canon memory format', () => {
         expect(canonBlock?.metadata?.memory_ids).toContain('rag-2');
         expect(canonBlock?.metadata?.count).toBe(2);
     });
+
+    it('injects mandatory autobiographical grounding and age-labeled memory block for structured matches', () => {
+        const structuredMemory = makeMemory(
+            'rag-structured-1',
+            'At 17 I repaired the outer relay under storm load.',
+            { source: 'rag' },
+        );
+        structuredMemory.metadata = {
+            ...structuredMemory.metadata,
+            structured_autobio_age_match: true,
+            age: 17,
+        } as any;
+
+        const result = ContextAssembler.assemble(
+            [structuredMemory],
+            'rp',
+            'lore',
+            false,
+            undefined,
+            'memory_grounded_strict',
+        );
+
+        const mandatoryIdx = result.blocks.findIndex(
+            b => b.header === '[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]',
+        );
+        const ageIdx = result.blocks.findIndex(
+            b => b.header === '[AUTOBIOGRAPHICAL MEMORY - AGE 17]',
+        );
+        const canonIdx = result.blocks.findIndex(
+            b => b.header.includes('CANON LORE MEMORIES'),
+        );
+        const strictIdx = result.blocks.findIndex(
+            b => b.header.includes('MEMORY GROUNDED RECALL') && b.header.includes('STRICT'),
+        );
+
+        expect(mandatoryIdx).toBeGreaterThanOrEqual(0);
+        expect(ageIdx).toBeGreaterThanOrEqual(0);
+        expect(canonIdx).toBeGreaterThanOrEqual(0);
+        expect(strictIdx).toBeGreaterThanOrEqual(0);
+        expect(mandatoryIdx).toBeLessThan(ageIdx);
+        expect(ageIdx).toBeLessThan(canonIdx);
+        expect(canonIdx).toBeLessThan(strictIdx);
+
+        const mandatoryBlock = result.blocks[mandatoryIdx];
+        const ageBlock = result.blocks[ageIdx];
+        expect(mandatoryBlock?.content).toMatch(/must answer using the provided autobiographical memory/i);
+        expect(mandatoryBlock?.content).toMatch(/do not generalize or invent/i);
+        expect(ageBlock?.content).toContain('At 17 I repaired the outer relay under storm load.');
+    });
+
+    it('keeps legacy lore format unchanged when no structured autobiographical match exists', () => {
+        const memories = [makeMemory('rag-plain-1', 'A plain lore memory.', { source: 'rag' })];
+        const result = ContextAssembler.assemble(memories, 'rp', 'lore', false, undefined, 'memory_grounded_soft');
+        const mandatoryBlock = result.blocks.find(
+            b => b.header === '[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]',
+        );
+        const ageBlock = result.blocks.find(
+            b => b.header.startsWith('[AUTOBIOGRAPHICAL MEMORY - AGE'),
+        );
+        const canonBlock = result.blocks.find(b => b.header.includes('CANON LORE MEMORIES'));
+        expect(mandatoryBlock).toBeUndefined();
+        expect(ageBlock).toBeUndefined();
+        expect(canonBlock).toBeDefined();
+    });
 });
 
 // ─── 6. Standard memory context still used for non-lore turns ─────────────────

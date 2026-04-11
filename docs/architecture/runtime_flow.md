@@ -275,7 +275,9 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
 `ContextAssembler.assemble()` emits blocks based on `responseMode`:
 
 **`memory_grounded_soft` / `memory_grounded_strict`** (sufficient canon memory):
-1. **`[CANON LORE MEMORIES — HIGH PRIORITY]`** — Memories formatted with per-entry source labels:
+1. **`[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]`** _(structured age-matched autobiographical canon only)_ — System directive: "You must answer using the provided autobiographical memory. Do not generalize or invent."
+2. **`[AUTOBIOGRAPHICAL MEMORY - AGE X]`** _(structured age-matched autobiographical canon only)_ — Prominent age-scoped autobiographical memory block placed before generic canon lore formatting.
+3. **`[CANON LORE MEMORIES — HIGH PRIORITY]`** — Memories formatted with per-entry source labels:
    ```
    Memory 1:
    Source: LTMF
@@ -283,7 +285,7 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
    ```
    Source label mapping: `rag` → `LTMF`, `core_bio` → `core_biographical`, `mem0` → `autobiographical`, etc.
 
-2. **`[MEMORY GROUNDED RECALL — SOFT]`** or **`[MEMORY GROUNDED RECALL — STRICT]`** — Grounding instruction block placed immediately after the memories.
+4. **`[MEMORY GROUNDED RECALL — SOFT]`** or **`[MEMORY GROUNDED RECALL — STRICT]`** — Grounding instruction block placed immediately after the memories.
 
 **`canon_required`** (insufficient canon memory, canon gate fired):
 1. **`[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]`** _(if fallback memories exist)_ — Any fallback memories labeled as "fallback only — insufficient for autobiographical fact claims".
