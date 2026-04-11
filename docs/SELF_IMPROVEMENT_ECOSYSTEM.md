@@ -42,6 +42,20 @@ Scheduler decisions are also explicit in `electron/services/reflection/Reflectio
 - Prefix: `[ReflectionScheduler] tick`
 - Includes whether a tick launched work or stayed idle and why (`reason`)
 
+## 5.1 Candidate Quality: Clustering + Frequency Escalation
+`electron/services/reflection/LogInspectionService.ts` now normalizes bounded recent log windows into deterministic issue families, then aggregates repeated events into cluster candidates before `SelfImprovementService` emits a `ReflectionIssue`.
+
+Key behavior:
+- Stable clustering key (`clusterKey`) from normalized source + issue family + component + error code
+- Volatile identifier normalization (timestamps/UUIDs/paths/high-cardinality numbers) to avoid over-splitting
+- Bounded representative evidence (sample cap) instead of raw full-line dumps
+- Deterministic severity escalation by repetition + persistence:
+  - repeated occurrences in short window
+  - high-frequency short-window bursts
+  - consecutive-run persistence via `data/reflection/issue-cluster-history.jsonl`
+  - multi-source breadth
+- Escalation reasons are preserved in issue metadata and trace logs (`[IssueCluster]`, `[SeverityEscalation]`, `[CandidateScreening]`)
+
 ## 6. Manual Single-Run Trigger (Debug)
 `ReflectionAppService` now exposes `reflection:runNow` (wired in `electron/preload.ts` as `window.api.reflection.runReflectionNow`) for forcing one immediate reflection cycle using the same queue/scheduler/service pipeline used in normal operation.
 

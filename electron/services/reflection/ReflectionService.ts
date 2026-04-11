@@ -469,16 +469,36 @@ export class ReflectionService {
             this.traceStage(runId, 'candidate_collection', {
                 count: issue ? 1 : 0,
                 durationMs: Date.now() - collectionStartedAt,
-                issueId: issue?.issueId
+                issueId: issue?.issueId,
+                clusters: issue?.issueClusterKey ? 1 : 0,
+                clusterKey: issue?.issueClusterKey,
+                family: issue?.issueFamily,
+                eventCount: issue?.issueEventCount ?? 0
             });
             if (issue.severity === 'low') {
                 this.scheduler.updateActivityPhase('completed', { lastOutcome: 'success', lastSummary: 'No severe anomalies detected.' });
-                this.traceStage(runId, 'candidate_screening', { accepted: 0, rejected: 1, reason: 'severity_low' });
+                this.traceStage(runId, 'candidate_screening', {
+                    accepted: 0,
+                    rejected: 1,
+                    reason: 'severity_low',
+                    clusterKey: issue?.issueClusterKey,
+                    family: issue?.issueFamily,
+                    eventCount: issue?.issueEventCount ?? 0,
+                    escalationReasons: issue?.issueEscalationReasons ?? [],
+                });
                 this.traceStage(runId, 'cycle_abort', { reason: 'no_candidates' });
                 return { success: false, message: 'No severe anomalies detected in current logs.' };
             }
 
-            this.traceStage(runId, 'candidate_screening', { accepted: 1, rejected: 0, severity: issue.severity });
+            this.traceStage(runId, 'candidate_screening', {
+                accepted: 1,
+                rejected: 0,
+                severity: issue.severity,
+                clusterKey: issue?.issueClusterKey,
+                family: issue?.issueFamily,
+                eventCount: issue?.issueEventCount ?? 0,
+                escalationReasons: issue?.issueEscalationReasons ?? [],
+            });
             this.traceStage(runId, 'reflection_context_build', { success: true, inputs: 1, issueId: issue.issueId });
             this.scheduler.updateActivityPhase('reflecting', { currentIssueId: issue.issueId });
 
@@ -598,10 +618,26 @@ export class ReflectionService {
         try {
             // STEP 1: Scan for issues related to the goal context
             const issue = await this.selfImprovement.scanIssue('goal_execution', 'engineering');
-            this.traceStage(runId, 'candidate_collection', { count: 1, issueId: issue.issueId, source: 'goal' });
+            this.traceStage(runId, 'candidate_collection', {
+                count: 1,
+                issueId: issue.issueId,
+                source: 'goal',
+                clusters: issue?.issueClusterKey ? 1 : 0,
+                clusterKey: issue?.issueClusterKey,
+                family: issue?.issueFamily,
+                eventCount: issue?.issueEventCount ?? 0,
+            });
             issue.title = `Goal Execution: ${goal.title}`;
             issue.symptoms.push(`Driven by Goal: ${goal.description}`);
-            this.traceStage(runId, 'candidate_screening', { accepted: 1, rejected: 0, severity: issue.severity });
+            this.traceStage(runId, 'candidate_screening', {
+                accepted: 1,
+                rejected: 0,
+                severity: issue.severity,
+                clusterKey: issue?.issueClusterKey,
+                family: issue?.issueFamily,
+                eventCount: issue?.issueEventCount ?? 0,
+                escalationReasons: issue?.issueEscalationReasons ?? [],
+            });
 
             await this.goals.linkIssueToGoal(goalId, issue.issueId);
             this.traceStage(runId, 'reflection_context_build', { success: true, inputs: 1, issueId: issue.issueId, goalId });

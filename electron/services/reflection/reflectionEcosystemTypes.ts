@@ -58,6 +58,13 @@ export interface ReflectionIssue {
     status: ReflectionIssueStatus;
     requestedBy: string;
     source: string;
+    issueClusterKey?: string;
+    issueFamily?: string;
+    issueEventCount?: number;
+    issueFirstSeenAt?: string;
+    issueLastSeenAt?: string;
+    issueEscalationReasons?: string[];
+    issuePriorRunCount?: number;
 }
 
 export interface ReflectionHypothesis {
