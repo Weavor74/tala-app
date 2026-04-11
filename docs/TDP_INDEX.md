@@ -135,6 +135,7 @@
 
 ## development
 
+- [One-Time Autobiographical Canon Import](development/autobio_canon_one_time_import.md)
 - [Self-Maintenance Reflections](development/self_maintenance_reflections.md)
 - [Tala Self-Maintenance Orchestrator](development/self_maintenance.md)
 
