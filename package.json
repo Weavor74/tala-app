@@ -30,6 +30,7 @@
     "memory:heal": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=apply-safe",
     "memory:purge": "npx tsx scripts/maintenance/purge_memory_state.ts",
     "memory:purge:dry": "npx tsx scripts/maintenance/purge_memory_state.ts --dry-run",
+    "memory:purge:verify": "npx tsx scripts/maintenance/verify_memory_purge_state.ts",
     "memory:up": "node scripts/memory-cmd.js up",
     "memory:down": "node scripts/memory-cmd.js down",
     "memory:logs": "node scripts/memory-cmd.js logs",
