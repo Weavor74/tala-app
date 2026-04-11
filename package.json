@@ -36,7 +36,7 @@
     "memory:logs": "node scripts/memory-cmd.js logs",
     "memory:reset": "node scripts/memory-cmd.js down --reset && node scripts/memory-cmd.js up",
     "memory:import:autobio-canon": "npx tsx scripts/migrations/oneTimeAutobioCanonImport.ts",
-    "memory:ltmf:enrich": "npx tsx scripts/maintenance/enrich_ltmf_frontmatter.ts",
+    "memory:ltmf:enrich": "npx tsx scripts/maintenance/enrich_memory_frontmatter.ts",
     "dev:with-memory": "npm run memory:up && npm run dev",
     "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",
     "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts",
@@ -160,3 +160,4 @@
     "wait-on": "^9.0.3"
   }
 }
+

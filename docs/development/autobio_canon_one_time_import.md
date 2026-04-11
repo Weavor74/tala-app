@@ -1,4 +1,4 @@
-# One-Time Autobiographical Canon Import
+﻿# One-Time Autobiographical Canon Import
 
 ## Purpose
 
@@ -103,14 +103,17 @@ Use this repo-local script to enrich raw LTMF corpus files in place with event i
 
 Entrypoint:
 
-- `scripts/maintenance/enrich_ltmf_frontmatter.ts`
+- `scripts/maintenance/enrich_memory_frontmatter.ts`
 - npm alias: `npm run memory:ltmf:enrich -- --root "D:\temp" --dry-run`
 
 Supported source file extensions (default):
 
 - `.md`
 - `.markdown`
-- `.txt`
+
+Optional source extension:
+
+- `.txt` only when `--include-txt` is provided
 
 Behavior:
 
@@ -127,6 +130,7 @@ CLI options:
 - `--root "<path>"` target root directory
 - `--dry-run` compute and report changes without writing
 - `--force` regenerate/overwrite the target enrichment fields
+- `--include-txt` allow `.txt` files in addition to Markdown
 - `--include-ext .md,.txt` override extension filter
 
 Generated fields:
@@ -149,3 +153,11 @@ Heuristic source signals:
 - `Environmental / Situational Triggers`
 - `Long-Term Impact Hooks`
 - file stem/path tokens as deterministic fallback
+
+Validation gates (skip-write on failure):
+
+- canonical names wrapped in parentheses or machine-style labels are rejected
+- aliases must be short recall phrases (3-5 items)
+- tags must be compact concepts (4-8 items, max 3 words each)
+- embedding hint must be one sentence in the required format and cannot include section-label fragments
+
