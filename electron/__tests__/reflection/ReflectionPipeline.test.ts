@@ -132,4 +132,65 @@ describe('ReflectionPipeline End-to-End', () => {
         const updatedGoal = await (service as any).goals.getGoal(goal.goalId);
         expect(updatedGoal.linkedIssueIds).toContain('test_iss_123'); // From our mock
     });
+
+    it('manual trigger runNow accepted when enabled and no active run', async () => {
+        const result = await (service as any).runManualReflectionNow('engineering', 'manual');
+        expect(result.accepted).toBe(true);
+        expect(result.runId).toMatch(/^rq_/);
+    });
+
+    it('manual trigger runNow rejected when scheduler reports active run', async () => {
+        const scheduler = (service as any).scheduler;
+        vi.spyOn(scheduler, 'getSchedulerState').mockReturnValue({
+            enabled: true,
+            isRunning: true,
+            activeQueueItemId: 'rq_busy',
+            queueDepth: 1,
+            queuedGoals: 0,
+            consecutiveFailures: 0,
+            maxConcurrentJobs: 1
+        });
+        const result = await (service as any).runManualReflectionNow('engineering', 'manual');
+        expect(result.accepted).toBe(false);
+        expect(result.reason).toBe('active_run');
+    });
+
+    it('emits reflection stage logs for successful run and persistence', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+        await service.triggerReflection('engineering', { runId: 'run_success', triggerSource: 'manual' });
+        const output = logSpy.mock.calls.map(c => String(c[0])).join('\n');
+        expect(output).toContain('[ReflectionTrace]');
+        expect(output).toContain('stage=\"candidate_collection\"');
+        expect(output).toContain('stage=\"proposal_generation\"');
+        expect(output).toContain('stage=\"proposal_persistence\"');
+        expect(output).toContain('recordsCreated=1');
+        expect(output).toContain('stage=\"cycle_complete\"');
+        logSpy.mockRestore();
+    });
+
+    it('emits cycle_error trace stage when analysis fails', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+        (service as any).reflection.analyzeIssue = vi.fn().mockRejectedValue(new Error('analysis failed'));
+        const result = await service.triggerReflection('engineering', { runId: 'run_error', triggerSource: 'manual' });
+        expect(result.success).toBe(false);
+        const output = logSpy.mock.calls.map(c => String(c[0])).join('\n');
+        expect(output).toContain('stage=\"cycle_error\"');
+        expect(output).toContain('error=\"analysis failed\"');
+        logSpy.mockRestore();
+    });
+
+    it('logs explicit abort reason when no candidates are accepted', async () => {
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+        (service as any).selfImprovement.scanIssue = vi.fn().mockResolvedValue({
+            issueId: 'test_iss_low',
+            title: 'No issues',
+            severity: 'low'
+        });
+        const result = await service.triggerReflection('engineering', { runId: 'run_abort', triggerSource: 'manual' });
+        expect(result.success).toBe(false);
+        const output = logSpy.mock.calls.map(c => String(c[0])).join('\n');
+        expect(output).toContain('stage=\"cycle_abort\"');
+        expect(output).toContain('reason=\"no_candidates\"');
+        logSpy.mockRestore();
+    });
 });

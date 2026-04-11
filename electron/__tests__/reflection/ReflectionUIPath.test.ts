@@ -36,6 +36,8 @@ describe('ReflectionAppService (Facade)', () => {
 
         mockReflectionService = {
             getDashboardState: vi.fn().mockResolvedValue({ totalReflections: 1 }),
+            triggerReflectionManually: vi.fn().mockResolvedValue({ success: true, runId: 'rq_1', message: 'ok' }),
+            runManualReflectionNow: vi.fn().mockResolvedValue({ accepted: true, runId: 'rq_1', message: 'ok' }),
             getGoalsService: () => mockGoals,
             getQueueService: () => mockQueue,
             getScheduler: () => mockScheduler,
@@ -48,7 +50,16 @@ describe('ReflectionAppService (Facade)', () => {
     it('registers all IPC routes on instantiation', () => {
         expect(ipcMain.handle).toHaveBeenCalledWith('reflection:getDashboardState', expect.any(Function));
         expect(ipcMain.handle).toHaveBeenCalledWith('reflection:trigger', expect.any(Function));
+        expect(ipcMain.handle).toHaveBeenCalledWith('reflection:runNow', expect.any(Function));
         expect(ipcMain.handle).toHaveBeenCalledWith('reflection:createGoal', expect.any(Function));
+    });
+
+    it('routes runNow to manual reflection run path', async () => {
+        const handler = (ipcMain.handle as any).mock.calls.find((c: any) => c[0] === 'reflection:runNow')[1];
+        const result = await handler({} as any, 'engineering');
+        expect(mockReflectionService.runManualReflectionNow).toHaveBeenCalledWith('engineering', 'manual');
+        expect(result.accepted).toBe(true);
+        expect(result.runId).toBe('rq_1');
     });
 
     it('routes getDashboardState correctly and logs telemetry', async () => {

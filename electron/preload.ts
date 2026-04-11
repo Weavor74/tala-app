@@ -460,6 +460,7 @@ contextBridge.exposeInMainWorld('tala', {
     // ─── Reflection System ───────────────────────────────────────
     getDashboardState: (activeMode?: string) => ipcRenderer.invoke('reflection:getDashboardState', activeMode),
     triggerReflection: (activeMode?: string) => ipcRenderer.invoke('reflection:trigger', activeMode),
+    runReflectionNow: (activeMode?: string) => ipcRenderer.invoke('reflection:runNow', activeMode),
     listIssues: () => ipcRenderer.invoke('reflection:listIssues'),
     listGoals: () => ipcRenderer.invoke('reflection:listGoals'),
     createGoal: (goalDef: any) => ipcRenderer.invoke('reflection:createGoal', goalDef),

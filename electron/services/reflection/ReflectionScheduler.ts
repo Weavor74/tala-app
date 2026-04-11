@@ -42,6 +42,11 @@ export class ReflectionScheduler {
     private timer: NodeJS.Timeout | null = null;
     private isTicking: boolean = false;
 
+    private logTick(fields: Record<string, unknown>) {
+        const payload = Object.entries(fields).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ');
+        console.log(`[ReflectionScheduler] tick ${payload}`);
+    }
+
     constructor(
         queue: ReflectionQueueService,
         goalService: GoalService,
@@ -145,7 +150,22 @@ export class ReflectionScheduler {
 
     // Process the loop safely
     private async tick(): Promise<{ success: boolean; message: string; issueId?: string }> {
+        if (!this.config.enabled) {
+            this.logTick({
+                enabled: this.config.enabled,
+                activeRun: this.pipelineActivity.isActive || this.isTicking,
+                triggerable: false,
+                reason: 'scheduler_disabled'
+            });
+            return { success: false, message: 'Scheduler is disabled' };
+        }
         if (this.isTicking || this.pipelineActivity.isActive) {
+            this.logTick({
+                enabled: this.config.enabled,
+                activeRun: this.pipelineActivity.isActive || this.isTicking,
+                triggerable: false,
+                reason: 'active_run'
+            });
             return { success: false, message: 'Pipeline is currently active' };
         }
 
@@ -158,10 +178,33 @@ export class ReflectionScheduler {
 
             const next = await this.queue.getNextRunnable();
             if (next) {
+                this.logTick({
+                    enabled: this.config.enabled,
+                    activeRun: false,
+                    triggerable: true,
+                    reason: 'queue_item_available',
+                    runId: next.queueItemId
+                });
                 result = await this.processQueueItem(next.queueItemId);
+            } else {
+                const queuedCount = (await this.queue.listQueued()).length;
+                this.logTick({
+                    enabled: this.config.enabled,
+                    activeRun: false,
+                    triggerable: false,
+                    reason: 'no_runnable_items',
+                    queueDepth: queuedCount
+                });
             }
         } catch (e: any) {
             console.error(`[ReflectionScheduler] Tick threw error:`, e);
+            this.logTick({
+                enabled: this.config.enabled,
+                activeRun: false,
+                triggerable: false,
+                reason: 'tick_error',
+                error: e?.message || 'unknown_error'
+            });
             result = { success: false, message: `Tick error: ${e.message}` };
         } finally {
             this.isTicking = false;

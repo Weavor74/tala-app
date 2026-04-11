@@ -76,6 +76,7 @@ export class ReflectionService {
 
     // Temporary memory storage for the UI (Proposals -> CandidatePatches) until UI is fully upgraded to new schemas
     private activePatches: Map<string, CandidatePatch> = new Map();
+    private readonly activeTraceRuns: Set<string> = new Set();
 
     constructor(userDataDir: string, settingsPath: string, rootDir: string = process.cwd()) {
         this.settingsPath = settingsPath;
@@ -132,6 +133,33 @@ export class ReflectionService {
         this.heartbeat.on('tick', async () => {
             await this.scheduler.tickNow();
         });
+    }
+
+    private traceStage(
+        runId: string,
+        stage:
+            | 'trigger_received'
+            | 'preconditions_check'
+            | 'candidate_collection'
+            | 'candidate_screening'
+            | 'reflection_context_build'
+            | 'proposal_generation'
+            | 'proposal_validation'
+            | 'proposal_persistence'
+            | 'proposal_promotion'
+            | 'ready_state'
+            | 'cycle_complete'
+            | 'cycle_abort'
+            | 'cycle_error',
+        fields: Record<string, unknown> = {}
+    ) {
+        const payload = {
+            runId,
+            stage,
+            timestamp: new Date().toISOString(),
+            ...fields
+        };
+        console.log(`[ReflectionTrace] ${Object.entries(payload).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}`);
     }
 
     public start() {
@@ -392,29 +420,72 @@ export class ReflectionService {
         }
     }
 
-    public async triggerReflection(activeMode: string = 'engineering'): Promise<{ success: boolean; message: string; issueId?: string }> {
+    public async triggerReflection(
+        activeMode: string = 'engineering',
+        options?: { runId?: string; triggerSource?: 'manual' | 'scheduler' | 'startup' | 'goal' | string }
+    ): Promise<{ success: boolean; message: string; issueId?: string }> {
+        const runId = options?.runId ?? `refl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const triggerSource = options?.triggerSource ?? 'manual';
+        const startedAt = Date.now();
+        this.traceStage(runId, 'trigger_received', { source: triggerSource, activeMode });
         console.log('[ReflectionService] ── Manual Reflection Triggered ──');
 
         if (!this.capabilityGating.isActionAllowed('reflection_write', activeMode, false)) {
+            this.traceStage(runId, 'preconditions_check', {
+                enabled: this.isEnabled,
+                activeRun: this.activeTraceRuns.has(runId),
+                capabilityAllowed: false,
+                schedulerRunning: this.getScheduler().getSchedulerState().isRunning
+            });
+            this.traceStage(runId, 'cycle_abort', { reason: 'capability_denied' });
             return { success: false, message: `Capability Denied: Active mode '${activeMode}' lacks reflection_write privileges.` };
         }
 
         try {
+            this.activeTraceRuns.add(runId);
+            this.traceStage(runId, 'preconditions_check', {
+                enabled: this.isEnabled,
+                activeRun: true,
+                memoryReady: Boolean(this.selfImprovement),
+                journalReady: Boolean(this.journal),
+                providerReady: true,
+                schedulerRunning: this.getScheduler().getSchedulerState().isRunning
+            });
             this.scheduler.updateActivityPhase('observing');
 
+            const collectionStartedAt = Date.now();
             const issue = await this.selfImprovement.scanIssue('operator', activeMode);
+            this.traceStage(runId, 'candidate_collection', {
+                count: issue ? 1 : 0,
+                durationMs: Date.now() - collectionStartedAt,
+                issueId: issue?.issueId
+            });
             if (issue.severity === 'low') {
                 this.scheduler.updateActivityPhase('completed', { lastOutcome: 'success', lastSummary: 'No severe anomalies detected.' });
+                this.traceStage(runId, 'candidate_screening', { accepted: 0, rejected: 1, reason: 'severity_low' });
+                this.traceStage(runId, 'cycle_abort', { reason: 'no_candidates' });
                 return { success: false, message: 'No severe anomalies detected in current logs.' };
             }
 
+            this.traceStage(runId, 'candidate_screening', { accepted: 1, rejected: 0, severity: issue.severity });
+            this.traceStage(runId, 'reflection_context_build', { success: true, inputs: 1, issueId: issue.issueId });
             this.scheduler.updateActivityPhase('reflecting', { currentIssueId: issue.issueId });
 
+            const proposalStartedAt = Date.now();
             const analyzed = await this.reflection.analyzeIssue(issue);
+            this.traceStage(runId, 'proposal_generation', {
+                count: analyzed?.selectedHypothesis ? 1 : 0,
+                durationMs: Date.now() - proposalStartedAt
+            });
+            this.traceStage(runId, 'proposal_validation', {
+                count: analyzed?.selectedHypothesis ? 1 : 0,
+                success: Boolean(analyzed?.selectedHypothesis)
+            });
             console.log(`[ReflectionService] Analyzed issue root cause hypothesis: ${analyzed.selectedHypothesis}`);
 
             this.scheduler.updateActivityPhase('journaling');
 
+            const persistStartedAt = Date.now();
             await this.journal.writeEntry({
                 issueId: issue.issueId,
                 eventType: 'hypothesis_selected',
@@ -423,36 +494,84 @@ export class ReflectionService {
                 tags: ['orchestration', 'manual_scan'],
                 confidence: 0.90
             });
+            this.traceStage(runId, 'proposal_persistence', {
+                success: true,
+                recordsCreated: 1,
+                destination: 'reflection-journal.jsonl',
+                durationMs: Date.now() - persistStartedAt
+            });
+            this.traceStage(runId, 'ready_state', {
+                proposalsReady: analyzed?.selectedHypothesis ? 1 : 0,
+                promoted: 0
+            });
+            this.traceStage(runId, 'proposal_promotion', {
+                count: 0,
+                skipped: true,
+                reason: 'manual_reflection_stops_before_promotion'
+            });
 
             this.scheduler.updateActivityPhase('completed', { lastOutcome: 'success', lastSummary: 'Manual reflection complete' });
+            this.traceStage(runId, 'cycle_complete', {
+                durationMs: Date.now() - startedAt,
+                issueId: issue.issueId
+            });
 
             // For now, in a non-autonomous environment, we stop at issue identification to allow manual review / patching.
             return { success: true, message: `Analyzed issue: ${analyzed.selectedHypothesis || 'Potential system anomaly found.'}`, issueId: issue.issueId };
         } catch (error: any) {
             console.error('[ReflectionService] Error in manual reflection trigger:', error);
             this.scheduler.updateActivityPhase('failed', { lastOutcome: 'failed', lastError: error.message });
+            this.traceStage(runId, 'cycle_error', {
+                error: error?.message || 'unknown_error',
+                stack: error?.stack
+            });
             return { success: false, message: `Failed: ${error.message}` };
+        } finally {
+            this.activeTraceRuns.delete(runId);
         }
     }
 
     private async executeQueueItem(queueItemId: string): Promise<{ success: boolean; message: string; issueId?: string }> {
+        const runId = queueItemId;
         const queueItems = await this.queue.listAll();
+        this.traceStage(runId, 'trigger_received', {
+            source: 'scheduler',
+            queueItemId,
+            queuedCount: queueItems.length
+        });
         const item = queueItems.find(i => i.queueItemId === queueItemId);
-        if (!item) return { success: false, message: 'Queue item not found' };
+        if (!item) {
+            this.traceStage(runId, 'cycle_abort', { reason: 'queue_item_not_found' });
+            return { success: false, message: 'Queue item not found' };
+        }
 
         if (item.type === 'goal' && item.goalId) {
-            return await this.executeGoal(item.goalId);
+            return await this.executeGoal(item.goalId, runId);
         } else if (item.type === 'manual_scan') {
-            const res = await this.triggerReflection('engineering');
+            const res = await this.triggerReflection('engineering', { runId, triggerSource: 'scheduler' });
             return { success: res.success, message: res.message, issueId: res.issueId };
         }
 
+        this.traceStage(runId, 'cycle_abort', { reason: `unsupported_queue_item_type:${item.type}` });
         return { success: false, message: `Unsupported queue item type: ${item.type}` };
     }
 
-    private async executeGoal(goalId: string): Promise<{ success: boolean; message: string; issueId?: string }> {
+    private async executeGoal(goalId: string, runId: string = `goal_${Date.now()}`): Promise<{ success: boolean; message: string; issueId?: string }> {
         const goal = await this.goals.getGoal(goalId);
-        if (!goal) return { success: false, message: 'Goal not found' };
+        if (!goal) {
+            this.traceStage(runId, 'cycle_abort', { reason: 'goal_not_found', goalId });
+            return { success: false, message: 'Goal not found' };
+        }
+
+        const startedAt = Date.now();
+        this.activeTraceRuns.add(runId);
+        this.traceStage(runId, 'preconditions_check', {
+            enabled: this.isEnabled,
+            activeRun: true,
+            goalId,
+            memoryReady: Boolean(this.selfImprovement),
+            journalReady: Boolean(this.journal)
+        });
 
         this.scheduler.updateActivityPhase('observing', { currentGoalId: goalId });
         await this.goals.updateGoalStatus(goalId, 'analyzing');
@@ -460,15 +579,20 @@ export class ReflectionService {
         try {
             // STEP 1: Scan for issues related to the goal context
             const issue = await this.selfImprovement.scanIssue('goal_execution', 'engineering');
+            this.traceStage(runId, 'candidate_collection', { count: 1, issueId: issue.issueId, source: 'goal' });
             issue.title = `Goal Execution: ${goal.title}`;
             issue.symptoms.push(`Driven by Goal: ${goal.description}`);
+            this.traceStage(runId, 'candidate_screening', { accepted: 1, rejected: 0, severity: issue.severity });
 
             await this.goals.linkIssueToGoal(goalId, issue.issueId);
+            this.traceStage(runId, 'reflection_context_build', { success: true, inputs: 1, issueId: issue.issueId, goalId });
 
             this.scheduler.updateActivityPhase('reflecting', { currentIssueId: issue.issueId });
 
             // STEP 2: Analyze the issue to formulate a hypothesis
             const analyzed = await this.reflection.analyzeIssue(issue);
+            this.traceStage(runId, 'proposal_generation', { count: analyzed?.selectedHypothesis ? 1 : 0, issueId: issue.issueId });
+            this.traceStage(runId, 'proposal_validation', { count: analyzed?.selectedHypothesis ? 1 : 0, success: Boolean(analyzed?.selectedHypothesis) });
             console.log(`[ReflectionService] Goal ${goalId} analysis hypothesis: ${analyzed.selectedHypothesis}`);
 
             // STEP 3: Complete execution
@@ -483,35 +607,79 @@ export class ReflectionService {
                 tags: ['orchestration', 'goal_driver'],
                 confidence: 0.95
             });
+            this.traceStage(runId, 'proposal_persistence', {
+                success: true,
+                recordsCreated: 1,
+                destination: 'reflection-journal.jsonl',
+                goalId
+            });
+            this.traceStage(runId, 'ready_state', { proposalsReady: analyzed?.selectedHypothesis ? 1 : 0, goalId });
+            this.traceStage(runId, 'proposal_promotion', { count: 0, skipped: true, reason: 'goal_pipeline_stops_at_hypothesis' });
+            this.traceStage(runId, 'cycle_complete', { durationMs: Date.now() - startedAt, issueId: issue.issueId, goalId });
 
             return { success: true, message: `Successfully executed goal pipeline for: ${goal.title}`, issueId: issue.issueId };
 
         } catch (e: any) {
             await this.goals.updateGoalStatus(goalId, 'failed');
+            this.traceStage(runId, 'cycle_error', { error: e?.message || 'unknown_error', goalId, stack: e?.stack });
             return { success: false, message: `Goal execution failed: ${e.message}` };
+        } finally {
+            this.activeTraceRuns.delete(runId);
         }
     }
 
     public async triggerReflectionManually(activeMode?: string): Promise<any> {
-        // First check if there is a goal we can process instead of just scanning blindly
-        const queuedItems = await this.queue.listQueued();
-        const goals = queuedItems.filter(i => i.type === 'goal');
+        const result = await this.runManualReflectionNow(activeMode || 'engineering', 'manual');
+        return {
+            success: result.accepted,
+            message: result.message,
+            runId: result.runId,
+            reason: result.reason
+        };
+    }
 
-        if (goals.length > 0) {
-            return await this.scheduler.tickNow();
+    public async runManualReflectionNow(
+        activeMode: string = 'engineering',
+        source: 'manual' | 'startup' | 'scheduler' = 'manual'
+    ): Promise<{ accepted: boolean; runId: string; reason?: string; message: string }> {
+        const runId = `rq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const schedulerState = this.scheduler.getSchedulerState();
+        const preconditions = {
+            enabled: this.isEnabled,
+            activeRun: schedulerState.isRunning || Boolean(schedulerState.activeQueueItemId),
+            memoryReady: Boolean(this.selfImprovement),
+            journalReady: Boolean(this.journal),
+            providerReady: true,
+            schedulerState: schedulerState.isRunning ? 'running' : 'idle'
+        };
+        this.traceStage(runId, 'trigger_received', { source, activeMode });
+        this.traceStage(runId, 'preconditions_check', preconditions);
+
+        if (!this.isEnabled) {
+            this.traceStage(runId, 'cycle_abort', { reason: 'reflection_disabled' });
+            return { accepted: false, runId, reason: 'reflection_disabled', message: 'Reflection system is disabled.' };
+        }
+        if (preconditions.activeRun) {
+            this.traceStage(runId, 'cycle_abort', { reason: 'active_run' });
+            return { accepted: false, runId, reason: 'active_run', message: 'A reflection run is already active.' };
         }
 
-        const added = await this.queue.enqueue({
+        const enqueued = await this.queue.enqueue({
             type: 'manual_scan',
             source: 'user',
             priority: 'medium',
             triggerMode: activeMode,
             requestedBy: 'user'
         });
-        if (added) {
-            return await this.scheduler.tickNow();
+        if (!enqueued) {
+            this.traceStage(runId, 'cycle_abort', { reason: 'enqueue_rejected' });
+            return { accepted: false, runId, reason: 'enqueue_rejected', message: 'Manual reflection was not enqueued (already running or queued).' };
         }
-        return { success: false, message: 'Failed to enqueue or already running.' };
+
+        const acceptedRunId = enqueued.queueItemId;
+        this.traceStage(acceptedRunId, 'trigger_received', { source, accepted: true, queueItemId: acceptedRunId });
+        await this.scheduler.tickNow();
+        return { accepted: true, runId: acceptedRunId, message: `Manual reflection run ${acceptedRunId} accepted.` };
     }
 
     /**

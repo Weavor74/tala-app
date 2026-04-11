@@ -31,3 +31,22 @@ All major status changes append highly structured `jsonl` entries ensuring all a
 
 ## 4. Reversal and Safety
 Any change promoted via this ecosystem generates an Archive Manifest. The `RollbackService` consumes these manifests to revert live states securely without relying on external Git workflows.
+
+## 5. Reflection Trace Observability (Debug)
+For local verification, the reflection path now emits structured stage logs from the live orchestration path in `electron/services/reflection/ReflectionService.ts`:
+- Prefix: `[ReflectionTrace]`
+- Core fields: `runId`, `stage`, `timestamp`, plus stage-specific counts/reasons/errors
+- Stages include: `trigger_received`, `preconditions_check`, `candidate_collection`, `candidate_screening`, `reflection_context_build`, `proposal_generation`, `proposal_validation`, `proposal_persistence`, `proposal_promotion`, `ready_state`, `cycle_complete`, `cycle_abort`, `cycle_error`
+
+Scheduler decisions are also explicit in `electron/services/reflection/ReflectionScheduler.ts`:
+- Prefix: `[ReflectionScheduler] tick`
+- Includes whether a tick launched work or stayed idle and why (`reason`)
+
+## 6. Manual Single-Run Trigger (Debug)
+`ReflectionAppService` now exposes `reflection:runNow` (wired in `electron/preload.ts` as `window.api.reflection.runReflectionNow`) for forcing one immediate reflection cycle using the same queue/scheduler/service pipeline used in normal operation.
+
+Behavior:
+- Returns `{ accepted, runId, reason?, message }`
+- Rejects when reflection is disabled or another run is active
+- Dev-safe gate: disabled in production unless `TALA_REFLECTION_MANUAL=1`
+- If no candidates exist, expected outcome is an explicit traced abort (`reason=no_candidates`)

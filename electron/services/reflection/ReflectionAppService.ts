@@ -21,6 +21,10 @@ export class ReflectionAppService {
         this.registerIpcHandlers();
     }
 
+    private isManualReflectionTriggerAllowed(): boolean {
+        return process.env.NODE_ENV !== 'production' || process.env.TALA_REFLECTION_MANUAL === '1';
+    }
+
     private logIpc(method: string, args?: any) {
         console.log(`[ReflectionAppService] 🟢 IPC Invoke: ${method}`, args ? args : '');
     }
@@ -57,6 +61,20 @@ export class ReflectionAppService {
 
         ipcMain.handle('reflection:trigger', (_, activeMode?: string) =>
             this.executeWithTelemetry('triggerReflection', () => this.reflectionService.triggerReflectionManually(activeMode))
+        );
+
+        ipcMain.handle('reflection:runNow', (_, activeMode?: string) =>
+            this.executeWithTelemetry('runNow', async () => {
+                if (!this.isManualReflectionTriggerAllowed()) {
+                    return {
+                        accepted: false,
+                        runId: '',
+                        reason: 'manual_trigger_disabled',
+                        message: 'Manual reflection trigger is disabled in production builds.'
+                    };
+                }
+                return this.reflectionService.runManualReflectionNow(activeMode || 'engineering', 'manual');
+            })
         );
 
         ipcMain.handle('reflection:listGoals', () =>
