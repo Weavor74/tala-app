@@ -45,6 +45,19 @@ function makeExplicitMemory(id: string, text: string): MemoryItem {
     };
 }
 
+function makeMemoryService(
+    memories: MemoryItem[] = [],
+    opts: { healthState?: 'healthy' | 'reduced' | 'degraded' | 'critical' | 'disabled' } = {},
+) {
+    const service: any = {
+        search: vi.fn().mockResolvedValue(memories),
+    };
+    if (opts.healthState) {
+        service.getHealthStatus = vi.fn().mockReturnValue({ state: opts.healthState });
+    }
+    return service;
+}
+
 function makeAge17RagHit(
     text: string,
     sequence: number,
@@ -236,7 +249,7 @@ describe('LTMF autobiographical age retrieval', () => {
     });
 
     it('structured age match with low confidence is accepted by CanonGate', async () => {
-        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const memoryService = makeMemoryService([]);
         const ragService = {
             searchStructured: vi.fn().mockResolvedValue([
                 makeAge17RagHit('At 17, this canon event occurred.', 7, { score: 0.05 }),
@@ -247,6 +260,66 @@ describe('LTMF autobiographical age retrieval', () => {
         const ctx = await router.process('turn-structured-low-confidence', 'when you were 17, what happened?', 'rp');
         expect(ctx.canonGateDecision?.qualifiedCanonCount).toBe(1);
         expect(ctx.canonGateDecision?.minRequiredCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
+    it('degraded state + structured age match passes CanonGate', async () => {
+        const memoryService = makeMemoryService([], { healthState: 'degraded' });
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('At 17, this canon event occurred.', 8, { score: 0.05 }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-degraded-structured', 'when you were 17 what happened?', 'rp');
+        expect(ctx.canonGateDecision?.memorySystemDegraded).toBe(true);
+        expect(ctx.canonGateDecision?.qualifiedCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.minRequiredCanonCount).toBe(1);
+        expect((ctx.canonGateDecision as any)?.degradedStructuredBypassApplied).toBe(true);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
+    it('degraded state + no structured match still falls back', async () => {
+        const memoryService = makeMemoryService([], { healthState: 'degraded' });
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                {
+                    text: 'A high score but non-structured lore candidate',
+                    score: 0.9,
+                    docId: 'LTMF-A17-9000.md',
+                    metadata: {
+                        age: 17,
+                        source_type: 'notes',
+                        memory_type: 'autobiographical',
+                        canon: false,
+                    },
+                },
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-degraded-no-match', 'when you were 17 what happened?', 'rp');
+        expect(ctx.canonGateDecision?.memorySystemDegraded).toBe(true);
+        expect((ctx.canonGateDecision as any)?.degradedStructuredBypassApplied).toBe(false);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+    });
+
+    it('normal state remains unaffected for structured age matches', async () => {
+        const memoryService = makeMemoryService([], { healthState: 'healthy' });
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('At 17, this canon event occurred.', 9, { score: 0.05 }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-healthy-structured', 'when you were 17 what happened?', 'rp');
+        expect(ctx.canonGateDecision?.memorySystemDegraded).toBe(false);
+        expect((ctx.canonGateDecision as any)?.degradedStructuredBypassApplied).toBe(false);
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
         expect(ctx.responseMode).toBe('memory_grounded_strict');
     });

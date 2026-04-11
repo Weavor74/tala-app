@@ -208,6 +208,8 @@ export interface TurnContext {
         memorySystemState?: string;
         /** Whether memory subsystem state blocked autobiographical freeform generation. */
         memorySystemDegraded?: boolean;
+        /** Whether degraded-state strictness was bypassed due to structured age-matched canon memory. */
+        degradedStructuredBypassApplied?: boolean;
     };
 }
 

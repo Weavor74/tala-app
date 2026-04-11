@@ -640,6 +640,7 @@ export class TalaContextRouter {
         let canonSourceTypes: string[] = [];
         let qualifiedCanonCount = 0;
         let minRequiredCanonCount = TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
+        let degradedStructuredBypassApplied = false;
 
         if (intent.class === 'lore') {
             if (isAutobiographicalLoreRequest) {
@@ -650,12 +651,22 @@ export class TalaContextRouter {
                     TalaContextRouter.hasStructuredAutobioAgeMatch(resolved);
                 minRequiredCanonCount = hasStructuredAgeMatch ? 1 : TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
                 qualifiedCanonCount = TalaContextRouter.countQualifiedCanonAutobioMemories(resolved);
-                sufficientCanonMemory =
-                    !memorySystemDegraded &&
+                const sufficientByCount =
                     TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved, minRequiredCanonCount);
+                degradedStructuredBypassApplied =
+                    memorySystemDegraded &&
+                    hasStructuredAgeMatch &&
+                    qualifiedCanonCount >= 1;
+                sufficientCanonMemory =
+                    sufficientByCount &&
+                    (!memorySystemDegraded || degradedStructuredBypassApplied);
+
+                if (degradedStructuredBypassApplied) {
+                    console.log('[CanonGate] degraded state override active for structured autobiographical age match');
+                }
                 if (!sufficientCanonMemory) {
                     console.log(
-                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length} qualifiedCanon=${qualifiedCanonCount} minCanon=${minRequiredCanonCount} minSemantic=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE} minConfidence=${TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE} memoryState=${memorySystemState}`
+                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length} qualifiedCanon=${qualifiedCanonCount} minCanon=${minRequiredCanonCount} minSemantic=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE} minConfidence=${TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE} memoryState=${memorySystemState} degradedStructuredBypass=${degradedStructuredBypassApplied}`
                     );
                     console.log('[CanonGate] forcing strict no-canon response mode');
                     console.log('[CanonGate] hallucination prevention active for autobiographical turn');
@@ -769,6 +780,7 @@ export class TalaContextRouter {
                     minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
                     memorySystemState,
                     memorySystemDegraded,
+                    degradedStructuredBypassApplied,
                 },
             } : {}),
         };
@@ -796,6 +808,7 @@ export class TalaContextRouter {
             minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
             memorySystemState,
             memorySystemDegraded,
+            degradedStructuredBypassApplied,
             correlationId
         });
 
