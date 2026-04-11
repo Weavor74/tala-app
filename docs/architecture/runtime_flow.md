@@ -218,6 +218,25 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 8. Age extraction for structured autobiographical filters is tolerant to imperfect phrasing (`your 17`, `you're 17`, `ur 17`, `when u were 17`) and may use standalone age numbers in range `8..33` when autobiographical context terms are present.
    The parser also normalizes common fused missing-space variants (for example `aboutwhen you were 17`) before autobiographical age extraction.
 9. Structured autobiographical age matches also bypass the autobiographical confidence threshold (`0.65`) by being treated as confidence-qualified canon hits; non-structured canon candidates still require the standard confidence gate.
+
+### 3b. Live Prompt Serialization Guard (AgentService -> CloudBrain)
+
+To prevent silent loss of lore/autobiographical grounding between context assembly and provider dispatch, the runtime now logs a preflight serialization guard in both services:
+
+1. `AgentService` logs `[PromptSerializationGuard]` at two points:
+   - `phase=assembled` immediately after `CompactPromptBuilder.build(...)`
+   - `phase=pre_dispatch` immediately before `streamWithBrain(...)`
+2. Both guard logs report:
+   - `intent`, `responseMode`, `hasMemories`
+   - number of priority memory blocks found in `memoryContext` vs final `systemPrompt`
+   - explicit warning when expected lore blocks are missing
+3. `CloudBrain.streamResponse()` logs a system prompt summary before request dispatch:
+   - total prompt chars
+   - detected priority lore/autobiographical block labels
+   - a focused excerpt around the first priority block
+4. `CloudBrain` compares priority block labels from the incoming `systemPrompt` against serialized payload system content and emits a warning if any are missing.
+
+This instrumentation is intended for production diagnosis of lore-grounding regressions where retrieval succeeds but model-visible payload content is suspected to be incomplete.
 10. Degraded memory-state handling remains strict by default, but autobiographical age queries can pass in degraded mode when at least one `structured_autobio_age_match=true` canon memory is present. Without that structured canon match, degraded mode still forces `canon_required`.
 
 ### 3a-i. Canon Metadata Persistence and Legacy Backfill

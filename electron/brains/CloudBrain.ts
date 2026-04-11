@@ -53,6 +53,8 @@ export class CloudBrain implements IBrain {
     public id: string = 'cloud-generic';
     /** The API configuration (endpoint, key, model). */
     private config: CloudBrainConfig;
+    private static readonly PRIORITY_MEMORY_BLOCK_PATTERN =
+        /\[(AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY|AUTOBIOGRAPHICAL MEMORY - AGE [^\]]+|CANON LORE MEMORIES[^\]]*|MEMORY GROUNDED RECALL[^\]]*|CANON GATE [^\]]*)\]/gi;
 
     /**
      * Creates a new CloudBrain instance with the given API configuration.
@@ -66,6 +68,31 @@ export class CloudBrain implements IBrain {
     public configure(baseUrl: string, model: string): void {
         this.config.endpoint = baseUrl;
         this.config.model = model;
+    }
+
+    private collectPriorityMemoryBlocks(text: string): string[] {
+        if (!text?.trim()) return [];
+        const matches = text.match(CloudBrain.PRIORITY_MEMORY_BLOCK_PATTERN) || [];
+        return Array.from(new Set(matches.map(m => m.trim())));
+    }
+
+    private summarizeSystemPromptForLogging(systemPrompt: string): {
+        chars: number;
+        priorityBlocks: string[];
+        priorityExcerpt: string;
+        headPreview: string;
+    } {
+        const priorityBlocks = this.collectPriorityMemoryBlocks(systemPrompt);
+        const markerIndex = priorityBlocks.length > 0 ? systemPrompt.indexOf(priorityBlocks[0]) : -1;
+        const excerptStart = markerIndex >= 0 ? Math.max(0, markerIndex - 140) : 0;
+        const excerptEnd = markerIndex >= 0 ? Math.min(systemPrompt.length, markerIndex + 420) : Math.min(systemPrompt.length, 320);
+
+        return {
+            chars: systemPrompt.length,
+            priorityBlocks,
+            priorityExcerpt: systemPrompt.slice(excerptStart, excerptEnd),
+            headPreview: systemPrompt.slice(0, 220),
+        };
     }
 
     /**
@@ -356,10 +383,39 @@ export class CloudBrain implements IBrain {
                 stream: true
             };
 
+            const payloadSystemContent = typeof payload.messages?.[0]?.content === 'string'
+                ? payload.messages[0].content
+                : '';
+            const promptLogSummary = this.summarizeSystemPromptForLogging(systemPrompt);
+            const payloadBlocks = this.collectPriorityMemoryBlocks(payloadSystemContent);
+            const missingPayloadBlocks = promptLogSummary.priorityBlocks.filter(b => !payloadBlocks.includes(b));
+
+            console.log(
+                `[CloudBrain] System prompt summary: chars=${promptLogSummary.chars} priorityBlocks=${promptLogSummary.priorityBlocks.length}`
+            );
+            if (promptLogSummary.priorityBlocks.length > 0) {
+                console.log(`[CloudBrain] System prompt priority blocks: ${JSON.stringify(promptLogSummary.priorityBlocks)}`);
+                console.log(`[CloudBrain] System prompt priority excerpt: ${promptLogSummary.priorityExcerpt}`);
+            }
+            if (missingPayloadBlocks.length > 0) {
+                console.warn(`[CloudBrain] Payload serialization missing priority memory blocks: ${JSON.stringify(missingPayloadBlocks)}`);
+            }
+
             // DEBUG: Log the full outgoing payload (excluding images for brevity)
             console.log(`[CloudBrain] FULL PAYLOAD:`, JSON.stringify({
                 ...payload,
-                messages: payload.messages.map((m: any) => ({ ...m, content: typeof m.content === 'string' ? m.content.substring(0, 100) + '...' : 'MULTIMODAL' }))
+                messages: payload.messages.map((m: any, idx: number) => {
+                    if (idx === 0 && typeof m.content === 'string') {
+                        return {
+                            role: m.role,
+                            content_head: promptLogSummary.headPreview,
+                            content_chars: promptLogSummary.chars,
+                            priority_memory_blocks: promptLogSummary.priorityBlocks,
+                            priority_memory_excerpt: promptLogSummary.priorityExcerpt,
+                        };
+                    }
+                    return { ...m, content: typeof m.content === 'string' ? m.content.substring(0, 100) + '...' : 'MULTIMODAL' };
+                })
             }, null, 2));
 
             if (tools && tools.length > 0) {

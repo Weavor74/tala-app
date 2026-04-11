@@ -170,6 +170,8 @@ If you do not have verified autobiographical memory for the requested time:
 Violation of this rule is considered a system failure.`;
 
     private static readonly CANON_REQUIRED_AUTOBIO_FALLBACK_RESPONSE = "I don't have a recorded memory from that time.";
+    private static readonly PRIORITY_MEMORY_BLOCK_PATTERN =
+        /\[(AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY|AUTOBIOGRAPHICAL MEMORY - AGE [^\]]+|CANON LORE MEMORIES[^\]]*|MEMORY GROUNDED RECALL[^\]]*|CANON GATE [^\]]*)\]/gi;
 
     /** The active inference engine implementation (Ollama, Cloud, etc.). */
     private brain: IBrain;
@@ -279,6 +281,57 @@ Violation of this rule is considered a system failure.`;
         return activeMode !== 'rp'
             && turnObject?.responseMode === 'canon_required'
             && turnObject?.canonGateDecision?.isAutobiographicalLoreRequest !== false;
+    }
+
+    private static collectPriorityMemoryBlocks(text: string): string[] {
+        if (!text?.trim()) return [];
+        const matches = text.match(AgentService.PRIORITY_MEMORY_BLOCK_PATTERN) || [];
+        return Array.from(new Set(matches.map(m => m.trim())));
+    }
+
+    private static shouldExpectPriorityMemoryBlocks(turnObject: any, hasMemories: boolean, memoryContext: string): boolean {
+        if (!memoryContext?.trim()) return false;
+        if (turnObject?.intent?.class === 'lore') return true;
+        if (typeof turnObject?.responseMode === 'string' && turnObject.responseMode.length > 0) return true;
+        if (hasMemories) return true;
+        const inMemoryContext = AgentService.collectPriorityMemoryBlocks(memoryContext);
+        return inMemoryContext.length > 0;
+    }
+
+    private static logPriorityMemorySerializationGuard(
+        phase: 'assembled' | 'pre_dispatch',
+        turnId: string,
+        turnObject: any,
+        hasMemories: boolean,
+        memoryContext: string,
+        systemPrompt: string,
+    ): void {
+        const contextBlocks = AgentService.collectPriorityMemoryBlocks(memoryContext);
+        const promptBlocks = AgentService.collectPriorityMemoryBlocks(systemPrompt);
+        const missingBlocks = contextBlocks.filter(block => !promptBlocks.includes(block));
+        const shouldExpect = AgentService.shouldExpectPriorityMemoryBlocks(turnObject, hasMemories, memoryContext);
+        const responseMode = typeof turnObject?.responseMode === 'string' ? turnObject.responseMode : 'none';
+        const intent = turnObject?.intent?.class || 'unknown';
+
+        console.log(
+            `[PromptSerializationGuard] phase=${phase} turnId=${turnId} intent=${intent} responseMode=${responseMode} hasMemories=${hasMemories} memoryBlocks=${contextBlocks.length} promptBlocks=${promptBlocks.length} expected=${shouldExpect} systemPromptChars=${systemPrompt.length}`
+        );
+
+        if (promptBlocks.length > 0) {
+            console.log(
+                `[PromptSerializationGuard] phase=${phase} turnId=${turnId} promptPriorityBlocks=${JSON.stringify(promptBlocks)}`
+            );
+        }
+
+        if (shouldExpect && promptBlocks.length === 0) {
+            console.warn(
+                `[PromptSerializationGuard] phase=${phase} turnId=${turnId} expected priority memory blocks in system prompt but found none.`
+            );
+        } else if (missingBlocks.length > 0) {
+            console.warn(
+                `[PromptSerializationGuard] phase=${phase} turnId=${turnId} missing priority memory blocks from system prompt: ${JSON.stringify(missingBlocks)}`
+            );
+        }
     }
 
     private static applyCanonRequiredAutobioDirective(systemPrompt: string): string {
@@ -2563,6 +2616,14 @@ Exported standalone package from Tala.
         if (enforceCanonRequiredAutobioOverride) {
             systemPrompt = AgentService.applyCanonRequiredAutobioDirective(systemPrompt);
         }
+        AgentService.logPriorityMemorySerializationGuard(
+            'assembled',
+            turnId,
+            turnObject,
+            hasMemories,
+            memoryContext,
+            systemPrompt,
+        );
 
         // --- PHASE 3A: RECORD COGNITIVE CONTEXT IN DIAGNOSTICS ---
         try {
@@ -2899,6 +2960,14 @@ Exported standalone package from Tala.
                 // Capture the final tool set so the outer catch can act on it for timeout fallback.
                 toolsSentThisIteration = toolsToSend;
 
+                AgentService.logPriorityMemorySerializationGuard(
+                    'pre_dispatch',
+                    executionLog.turnId,
+                    turnObject,
+                    hasMemories,
+                    memoryContext,
+                    systemPrompt,
+                );
                 const response = await this.streamWithBrain(this.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
                 const requestLatency = Date.now() - requestStart;
 

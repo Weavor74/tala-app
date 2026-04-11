@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { CloudBrain } from '../electron/brains/CloudBrain';
 import { CompactPromptBuilder } from '../electron/services/plan/CompactPromptBuilder';
@@ -12,7 +12,7 @@ describe('Prompt payload memory injection', () => {
         server = null;
     });
 
-    it('first turn structured autobiographical match includes age memory block in outgoing payload', async () => {
+    async function sendAndCapturePayload(systemPrompt: string, userText: string) {
         let receivedPayload: any = null;
 
         server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -31,21 +31,32 @@ describe('Prompt payload memory injection', () => {
         const address = server.address();
         const port = typeof address === 'object' && address ? address.port : 0;
 
-        const systemPrompt = CompactPromptBuilder.build({
+        const brain = new CloudBrain({
+            endpoint: `http://127.0.0.1:${port}`,
+            apiKey: 'test-key',
+            model: 'gpt-4o',
+        });
+
+        await brain.streamResponse(
+            [{ role: 'user', content: userText } as any],
+            systemPrompt,
+            () => { /* no-op */ },
+            undefined,
+            [],
+            { max_tokens: 64 },
+        );
+
+        return receivedPayload;
+    }
+
+    function buildSystemPrompt(memoryContext: string): string {
+        return CompactPromptBuilder.build({
             systemPromptBase: 'You are Tala.',
             activeProfileId: 'tala',
             isSmallLocalModel: true,
             isEngineeringMode: true,
             hasMemories: true,
-            memoryContext: [
-                '[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]',
-                'You must answer using the provided autobiographical memory. Do not generalize or invent.',
-                '',
-                '[AUTOBIOGRAPHICAL MEMORY - AGE 17]',
-                'Memory 1:',
-                'Source: LTMF',
-                'Content: At 17 I repaired the storm relay with my dad.',
-            ].join('\n'),
+            memoryContext,
             goalsAndReflections: '',
             dynamicContext: '[EMOTIONAL STATE]: neutral',
             toolSigs: '[NO TOOLS AVAILABLE IN RP MODE]',
@@ -79,27 +90,74 @@ describe('Prompt payload memory injection', () => {
             } as any,
             notebookGrounded: false,
         });
+    }
 
-        const brain = new CloudBrain({
-            endpoint: `http://127.0.0.1:${port}`,
-            apiKey: 'test-key',
-            model: 'gpt-4o',
-        });
-
-        await brain.streamResponse(
-            [{ role: 'user', content: 'Tell me about when you were 17' } as any],
-            systemPrompt,
-            () => { /* no-op */ },
-            undefined,
-            [],
-            { max_tokens: 64 },
-        );
+    it.each([
+        {
+            name: 'first-turn age recall',
+            userText: 'Tell me about when you were 17',
+            memoryContext: [
+                '[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]',
+                'You must answer using the provided autobiographical memory. Do not generalize or invent.',
+                '',
+                '[AUTOBIOGRAPHICAL MEMORY - AGE 17]',
+                'Memory 1:',
+                'Source: LTMF',
+                'Content: At 17 I repaired the storm relay with my dad.',
+            ].join('\n'),
+            expected: [
+                '[AUTOBIOGRAPHICAL MEMORY - AGE 17]',
+                'At 17 I repaired the storm relay with my dad.',
+            ],
+        },
+        {
+            name: 'named-event lore recall',
+            userText: 'Was there an event called Delayed Ping?',
+            memoryContext: [
+                '[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]',
+                'Ground strictly in canon autobiographical memory.',
+                '',
+                '[CANON LORE MEMORIES - HIGH PRIORITY]',
+                'Memory 1:',
+                'Source: LTMF',
+                'Content: Delayed Ping was the event where Tala missed the first uplink and rebuilt trust with a full handoff log.',
+            ].join('\n'),
+            expected: [
+                '[CANON LORE MEMORIES - HIGH PRIORITY]',
+                'Delayed Ping was the event where Tala missed the first uplink',
+            ],
+        },
+        {
+            name: 'follow-up lore recall',
+            userText: "So you don't remember?",
+            memoryContext: [
+                '[MEMORY GROUNDED RECALL - STRICT MODE]',
+                'Use only retrieved autobiographical memory for this follow-up response.',
+                '',
+                '[CANON LORE MEMORIES - HIGH PRIORITY]',
+                'Memory 1:',
+                'Source: LTMF',
+                'Content: Tala later explained the Delayed Ping incident as the turning point for strict communication discipline.',
+            ].join('\n'),
+            expected: [
+                '[MEMORY GROUNDED RECALL - STRICT MODE]',
+                'turning point for strict communication discipline',
+            ],
+        },
+    ])('serializes priority lore blocks into CloudBrain payload for $name', async ({ userText, memoryContext, expected }) => {
+        const systemPrompt = buildSystemPrompt(memoryContext);
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { /* mute test logs */ });
+        const receivedPayload = await sendAndCapturePayload(systemPrompt, userText);
+        const loggedText = logSpy.mock.calls.map(args => args.map(String).join(' ')).join('\n');
+        logSpy.mockRestore();
 
         expect(receivedPayload).toBeTruthy();
         expect(Array.isArray(receivedPayload.messages)).toBe(true);
         const systemMessage = receivedPayload.messages.find((m: any) => m.role === 'system');
-        expect(systemMessage?.content).toContain('[AUTOBIOGRAPHICAL MEMORY - AGE 17]');
-        expect(systemMessage?.content).toContain('At 17 I repaired the storm relay with my dad.');
+        for (const expectedToken of expected) {
+            expect(systemMessage?.content).toContain(expectedToken);
+        }
+        expect(loggedText).toContain('[CloudBrain] System prompt priority blocks:');
+        expect(loggedText).toContain(expected[0]);
     });
 });
-
