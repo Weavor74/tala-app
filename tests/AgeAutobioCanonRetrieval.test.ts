@@ -235,6 +235,22 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
+    it('structured age match with low confidence is accepted by CanonGate', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('At 17, this canon event occurred.', 7, { score: 0.05 }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-structured-low-confidence', 'when you were 17, what happened?', 'rp');
+        expect(ctx.canonGateDecision?.qualifiedCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.minRequiredCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
     it('non-age autobiographical lore queries still enforce standard semantic thresholds', async () => {
         const memoryService = {
             search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-low', 'A fallback conversational snippet.')]),

@@ -249,6 +249,12 @@ export class TalaContextRouter {
      * Returns the confidence score used by autobiographical confidence gates.
      */
     private static getAutobioConfidenceScore(item: MemoryItem): number {
+        if (item.metadata?.structured_autobio_age_match === true) {
+            // Structured autobiographical age matches are metadata-exact canon hits.
+            // Treat as high-confidence so embedding confidence variance does not
+            // incorrectly force canon fallback on valid age recall.
+            return 1;
+        }
         const raw =
             (typeof item.confidence === 'number' ? item.confidence : undefined)
             ?? (typeof item.metadata?.confidence === 'number' ? item.metadata.confidence : undefined)
