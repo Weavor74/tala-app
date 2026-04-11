@@ -57,14 +57,13 @@ describe('CompactPromptBuilder structured autobiographical memory preservation',
         expect(prompt).toContain('At 17 I rebuilt the relay.');
     });
 
-    it('retains compact continuity/task path when no priority memory block exists', () => {
+    it('keeps assembled memory context present even when compact supplements are available', () => {
         const prompt = CompactPromptBuilder.build(makeContext({
             memoryContext: '[MEMORY CONTEXT]\nA general memory summary.',
         }));
 
+        expect(prompt).toContain('[MEMORY CONTEXT]\nA general memory summary.');
         expect(prompt).toContain('[CONTINUITY] compact continuity');
         expect(prompt).toContain('[TASK] compact task');
-        expect(prompt).not.toContain('[MEMORY CONTEXT]\nA general memory summary.');
     });
 });
-

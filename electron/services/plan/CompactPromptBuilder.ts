@@ -43,9 +43,25 @@ export class CompactPromptBuilder {
     private static readonly PRIORITY_MEMORY_BLOCK_PATTERN =
         /\[(AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY|AUTOBIOGRAPHICAL MEMORY - AGE [^\]]+|CANON LORE MEMORIES|MEMORY GROUNDED RECALL|CANON GATE - NO VERIFIED AUTOBIOGRAPHICAL MEMORY)\]/i;
 
-    private static shouldPreferRawMemoryContext(context: PromptContext): boolean {
-        if (!context.hasMemories || !context.memoryContext) return false;
-        return this.PRIORITY_MEMORY_BLOCK_PATTERN.test(context.memoryContext);
+    private static getAssembledMemoryContext(context: PromptContext): string {
+        if (!context.hasMemories || !context.memoryContext?.trim()) return '';
+        return context.memoryContext.trim();
+    }
+
+    private static shouldIncludeCompactMemorySupplement(context: PromptContext): boolean {
+        if (!context.compactPacket) return false;
+        const raw = this.getAssembledMemoryContext(context);
+        if (!raw) return false;
+        return !this.PRIORITY_MEMORY_BLOCK_PATTERN.test(raw);
+    }
+
+    private static getCompactMemorySupplement(context: PromptContext): string {
+        if (!context.compactPacket || !this.shouldIncludeCompactMemorySupplement(context)) return '';
+        const supplement = [context.compactPacket.continuityBlock, context.compactPacket.currentTaskBlock]
+            .filter(Boolean)
+            .join('\n\n')
+            .trim();
+        return supplement;
     }
 
     public static build(context: PromptContext): string {
@@ -106,6 +122,11 @@ export class CompactPromptBuilder {
         const cognitiveSections = packet.assembledSections.filter(s => s.trim().length > 0);
         if (cognitiveSections.length > 0) {
             prompt += cognitiveSections.join('\n\n') + '\n\n';
+        }
+
+        const assembledMemory = this.getAssembledMemoryContext(context);
+        if (assembledMemory) {
+            prompt += `${assembledMemory}\n\n`;
         }
 
         // Append tool signatures if available
@@ -178,15 +199,12 @@ export class CompactPromptBuilder {
         const effectiveDynamic = context.compactPacket
             ? (context.compactPacket.emotionalBiasBlock || context.dynamicContext)
             : context.dynamicContext;
-        const preferRawMemoryContext = this.shouldPreferRawMemoryContext(context);
-        const effectiveMemory = (context.compactPacket && !preferRawMemoryContext)
-            ? [context.compactPacket.continuityBlock, context.compactPacket.currentTaskBlock]
-                .filter(Boolean)
-                .join('\n\n')
-            : context.memoryContext;
-        const hasEffectiveMemory = (context.compactPacket && !preferRawMemoryContext)
-            ? !!(context.compactPacket.continuityBlock || context.compactPacket.currentTaskBlock)
-            : context.hasMemories;
+        const assembledMemory = this.getAssembledMemoryContext(context);
+        const compactMemorySupplement = this.getCompactMemorySupplement(context);
+        const effectiveMemory = [assembledMemory, compactMemorySupplement]
+            .filter(Boolean)
+            .join('\n\n');
+        const hasEffectiveMemory = effectiveMemory.length > 0;
 
         let systemPromptTemplate = (context.isSmallLocalModel ? repetitionSafety + "\n\n" : "")
             + context.systemPromptBase
