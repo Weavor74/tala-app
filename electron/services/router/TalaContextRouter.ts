@@ -97,6 +97,48 @@ export class TalaContextRouter {
     private static readonly LORE_CANON_SOURCES = new Set([
         'rag', 'diary', 'graph', 'core_bio', 'lore',
     ]);
+    private static readonly AUTOBIO_ALLOWED_CANON_SOURCE_TYPES = new Set([
+        'ltmf',
+        'diary',
+        'graph',
+        'core_bio',
+        'lore',
+        'autobiographical_diary',
+        'verified_lore',
+        'verified_lore_file',
+        'lore_file',
+        'canon_lore',
+    ]);
+    private static readonly AUTOBIO_ALLOWED_MEMORY_TYPES = new Set([
+        'autobiographical',
+        'autobio',
+        'diary',
+        'lore',
+        'canon_lore',
+    ]);
+    private static readonly INTERACTION_TRANSCRIPT_SOURCE_TYPES = new Set([
+        'interaction',
+        'interaction_log',
+        'interaction_transcript',
+        'conversation',
+        'conversation_log',
+        'chat',
+        'chat_log',
+        'transcript',
+    ]);
+    private static readonly INTERACTION_TRANSCRIPT_MEMORY_TYPES = new Set([
+        'interaction',
+        'interaction_log',
+        'interaction_transcript',
+        'conversation',
+        'conversation_log',
+        'chat',
+        'chat_history',
+        'assistant_reply',
+        'assistant_response',
+        'user_message',
+        'session',
+    ]);
 
     /**
      * Minimum number of high-confidence canon memories required before
@@ -576,6 +618,58 @@ export class TalaContextRouter {
         return undefined;
     }
 
+    private static normalizeMetadataToken(value: unknown): string {
+        return typeof value === 'string' ? value.trim().toLowerCase() : '';
+    }
+
+    private static isInteractionTranscriptCandidate(item: MemoryItem): boolean {
+        const metadata = (item.metadata && typeof item.metadata === 'object')
+            ? item.metadata as Record<string, unknown>
+            : {};
+        const source = TalaContextRouter.normalizeMetadataToken(metadata.source);
+        const sourceType = TalaContextRouter.normalizeMetadataToken(metadata.source_type);
+        const memoryType = TalaContextRouter.normalizeMetadataToken(metadata.memory_type);
+        const role = TalaContextRouter.normalizeMetadataToken(metadata.role);
+
+        if (source === 'conversation' || source === 'chat' || source === 'mem0' || source === 'explicit') return true;
+        if (sourceType && TalaContextRouter.INTERACTION_TRANSCRIPT_SOURCE_TYPES.has(sourceType)) return true;
+        if (memoryType && TalaContextRouter.INTERACTION_TRANSCRIPT_MEMORY_TYPES.has(memoryType)) return true;
+        if (role === 'assistant' || role === 'user') return true;
+
+        const text = (item.text || '').toLowerCase();
+        if ((/^user:\s+/i.test(text) || /^tala:\s+/i.test(text)) && /(?:\n|$)/.test(text)) return true;
+        return false;
+    }
+
+    private static isApprovedAutobioCanonCandidate(item: MemoryItem): boolean {
+        const metadata = (item.metadata && typeof item.metadata === 'object')
+            ? item.metadata as Record<string, unknown>
+            : {};
+        const source = TalaContextRouter.normalizeMetadataToken(metadata.source);
+        const sourceType = TalaContextRouter.normalizeMetadataToken(metadata.source_type);
+        const memoryType = TalaContextRouter.normalizeMetadataToken(metadata.memory_type);
+        const canon = TalaContextRouter.parseBoolean(metadata.canon);
+
+        if (!TalaContextRouter.LORE_CANON_SOURCES.has(source)) return false;
+        if (TalaContextRouter.isInteractionTranscriptCandidate(item)) return false;
+
+        // Strictest checks for RAG-injected lore files.
+        if (source === 'rag') {
+            if (sourceType && !TalaContextRouter.AUTOBIO_ALLOWED_CANON_SOURCE_TYPES.has(sourceType)) return false;
+            if (memoryType && !TalaContextRouter.AUTOBIO_ALLOWED_MEMORY_TYPES.has(memoryType)) return false;
+            if (canon === false) return false;
+            return true;
+        }
+
+        // Trusted internal canon stores (diary/graph/core_bio/lore) remain valid even
+        // when source_type/memory_type metadata is absent, as long as they are not transcript-like.
+        if (sourceType && !TalaContextRouter.AUTOBIO_ALLOWED_CANON_SOURCE_TYPES.has(sourceType)) return false;
+        if (memoryType && !TalaContextRouter.AUTOBIO_ALLOWED_MEMORY_TYPES.has(memoryType)) return false;
+        if (canon === false) return false;
+
+        return true;
+    }
+
     /**
      * True only for structured age-query canon matches:
      * age + source_type=ltmf + memory_type=autobiographical + canon=true.
@@ -931,6 +1025,26 @@ export class TalaContextRouter {
                     resolved = [...primary, ...fallback];
                 }
                 // else: no canon lore â€” fallback bucket passes through unchanged (all resolved items kept)
+            }
+
+            // 5b. Autobiographical contamination guard:
+            //     For autobiographical lore recall, keep only approved canon sources and
+            //     reject interaction transcripts / prior chat turns from lore grounding.
+            if (intent.class === 'lore' && isAutobiographicalLoreRequest && resolved.length > 0) {
+                const rejectedInteraction = resolved.filter(TalaContextRouter.isInteractionTranscriptCandidate);
+                if (rejectedInteraction.length > 0) {
+                    console.log(
+                        `[TalaRouter] Rejected interaction transcript candidates from autobiographical lore grounding: ${rejectedInteraction.length}`
+                    );
+                }
+                const canonOnly = resolved.filter(TalaContextRouter.isApprovedAutobioCanonCandidate);
+                const rejectedNonCanon = resolved.length - canonOnly.length;
+                if (rejectedNonCanon > 0) {
+                    console.log(
+                        `[TalaRouter] Autobiographical lore canon filter applied accepted=${canonOnly.length} rejected=${rejectedNonCanon}`
+                    );
+                }
+                resolved = canonOnly;
             }
             if (shouldReuseLoreThread) {
                 const hasCanonAfterResolution = resolved.some(m => TalaContextRouter.LORE_CANON_SOURCES.has(m.metadata?.source ?? ''));

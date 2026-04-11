@@ -400,7 +400,7 @@ describe('LoreRetrievalPriority — canon-first composition', () => {
 // ─── 8. Fallback behavior (Part 3) ────────────────────────────────────────────
 
 describe('LoreRetrievalPriority — fallback when no lore exists', () => {
-    it('explicit/chat memories are used when no RAG/lore candidates exist', async () => {
+    it('explicit/chat memories remain available when no RAG/lore candidates exist for non-autobiographical lore', async () => {
         const chatOnly = [
             makeMemory('chat-a', 'User prefers tea over coffee', { source: 'explicit', role: 'core', type: 'preference' }),
             makeMemory('chat-b', 'User timezone is UTC+1', { source: 'mem0', role: 'core', type: 'fact' }),
@@ -411,7 +411,7 @@ describe('LoreRetrievalPriority — fallback when no lore exists', () => {
         const mockRagService = { searchStructured: vi.fn().mockResolvedValue([]) };
 
         const router = new TalaContextRouter(mockMemoryService as any, mockRagService as any);
-        const ctx = await router.process('turn-fallback', 'what do you remember about me?', 'rp');
+        const ctx = await router.process('turn-fallback', 'tell me about world war 2', 'rp');
 
         // Fallback memories must be present
         expect((ctx.resolvedMemories?.length ?? 0)).toBeGreaterThan(0);

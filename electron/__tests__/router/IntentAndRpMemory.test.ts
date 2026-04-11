@@ -188,8 +188,8 @@ describe('RP mode — RouterFilter allows safe core memories', () => {
         router = new TalaContextRouter(memory as any);
     });
 
-    it('approves core mem0 memory in RP mode for autobiographical query', async () => {
-        // Inject a core memory with mem0 source — should pass RP filter
+    it('blocks core mem0 memory for autobiographical query (canon contamination guard)', async () => {
+        // Inject a core memory with mem0 source - must be excluded from autobiographical canon grounding
         const coreMemory = makeMemory({
             id: 'mem-001',
             text: 'Tala loves the ocean and often dreams of the stars.',
@@ -197,11 +197,12 @@ describe('RP mode — RouterFilter allows safe core memories', () => {
         });
         memory.mockResults = [coreMemory];
 
-        const ctx = await router.process('rp-mem-1', 'Tell me about your favorite childhood memory', 'rp');
-        expect(ctx.retrieval.approvedCount).toBeGreaterThan(0);
+        const ctx = await router.process('rp-mem-1', 'Tell me about when you were 17', 'rp');
+        expect(ctx.retrieval.approvedCount).toBe(0);
+        expect(ctx.responseMode).toBe('canon_required');
     });
 
-    it('approves explicit user fact in RP mode', async () => {
+    it('keeps explicit user fact retrieval for non-autobiographical continuity', async () => {
         const explicitMemory = makeMemory({
             id: 'mem-002',
             text: "User's favorite color is deep blue.",
@@ -209,7 +210,7 @@ describe('RP mode — RouterFilter allows safe core memories', () => {
         });
         memory.mockResults = [explicitMemory];
 
-        const ctx = await router.process('rp-explicit-1', 'Do you remember what my favorite color is?', 'rp');
+        const ctx = await router.process('rp-explicit-1', 'What is my favorite color?', 'rp');
         expect(ctx.retrieval.approvedCount).toBeGreaterThan(0);
     });
 
@@ -555,3 +556,5 @@ describe('RP mode — autobiographical reads remain allowed', () => {
         expect(ctx.blockedCapabilities).not.toContain('memory_retrieval');
     });
 });
+
+

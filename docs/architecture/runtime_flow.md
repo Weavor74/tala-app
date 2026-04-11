@@ -218,6 +218,7 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 8. Age extraction for structured autobiographical filters is tolerant to imperfect phrasing (`your 17`, `you're 17`, `ur 17`, `when u were 17`) and may use standalone age numbers in range `8..33` when autobiographical context terms are present.
    The parser also normalizes common fused missing-space variants (for example `aboutwhen you were 17`) before autobiographical age extraction.
 9. Structured autobiographical age matches also bypass the autobiographical confidence threshold (`0.65`) by being treated as confidence-qualified canon hits; non-structured canon candidates still require the standard confidence gate.
+10. **Autobiographical contamination guard**: when the turn is autobiographical lore, Tala rejects interaction transcript candidates (chat logs, assistant replies, prior conversation snippets) from lore grounding. Canon autobiographical grounding uses approved source/memory types (LTMF, autobiographical diary canon, verified lore files) to prevent self-reinforcing hallucination loops.
 
 ### 3b. Live Prompt Serialization Guard (AgentService -> CloudBrain)
 

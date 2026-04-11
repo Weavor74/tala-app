@@ -408,7 +408,7 @@ describe('LTMF autobiographical age retrieval', () => {
 
         expect(ctx.responseMode).toBe('canon_required');
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
-        expect((ctx.resolvedMemories ?? []).some(m => m.metadata?.source === 'explicit')).toBe(true);
+        expect((ctx.resolvedMemories ?? []).some(m => m.metadata?.source === 'explicit')).toBe(false);
     });
 
     it('falls back safely when age query has low-semantic canon-like hits but metadata match is missing', async () => {
