@@ -27,7 +27,7 @@
             "huihui_ai/qwen3-abliterated:8b"
           ]
         },
-        "model": "codegemma:7b"
+        "model": "__custom__"
       },
       {
         "id": "2cj970pmu",
