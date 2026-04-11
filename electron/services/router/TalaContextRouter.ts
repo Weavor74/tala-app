@@ -1,4 +1,4 @@
-import { MemoryService, MemoryItem } from '../MemoryService';
+﻿import { MemoryService, MemoryItem } from '../MemoryService';
 import { Mode, ModePolicyEngine } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
@@ -31,7 +31,7 @@ import { v4 as uuidv4 } from 'uuid';
  */
 export class TalaContextRouter {
     private memoryService: MemoryService;
-    /** Optional RAG service — injected so lore turns can query LTMF/canon lore first. */
+    /** Optional RAG service â€” injected so lore turns can query LTMF/canon lore first. */
     private ragService?: RagService;
 
     /**
@@ -84,7 +84,7 @@ export class TalaContextRouter {
     ];
 
     /**
-     * Patterns that identify a query as a first-person autobiographical memory request —
+     * Patterns that identify a query as a first-person autobiographical memory request â€”
      * specifically asking for Tala's own lived experiences, not general worldbuilding lore.
      *
      * These are a narrow subset of LORE_PATTERNS that signal the user wants Tala to
@@ -96,12 +96,16 @@ export class TalaContextRouter {
         /\b(something|what|an?\s+event|a\s+time)\s+(that\s+)?happened\s+to\s+you\b/i,
         // Life-stage / age references: "when you were 17", "when you were young/a child"
         /\bwhen\s+you\s+were\s+(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
+        // Imperfect shorthand variants: "when u were 17", "when ur 17", "when your 17", "when you're 17"
+        /\bwhen\s+(?:u|ur|your|you'?re|you)\s+(?:were\s+)?(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
         // "at age [N]" or "at [N] years old"
         /\bat\s+(age\s+)?\d+(\s+years?\s*old)?\b/i,
         // "at seventeen" / "at fifteen"
         /\bat\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/i,
         // "during your seventeenth year"
         /\bduring\s+your\s+([a-z-]+|\d{1,2}(st|nd|rd|th))\s+year\b/i,
+        // "your 17" / "you're 17" / "ur 17" in autobiographical framing
+        /\b(?:your|you'?re|ur)\s+\d{1,2}\b/i,
         // Personal life-period phrases
         /\b(your\s+(childhood|upbringing|early\s+life|younger\s+years?)|growing\s+up|back\s+when\s+you\s+were)\b/i,
         // "your past" / "your personal history" / "your life story"
@@ -126,6 +130,9 @@ export class TalaContextRouter {
         eighteenth: 18, nineteenth: 19, twentieth: 20,
     };
 
+    private static readonly AUTOBIO_STANDALONE_AGE_MIN = 8;
+    private static readonly AUTOBIO_STANDALONE_AGE_MAX = 33;
+
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
     private lastLoreQueryTs: number = 0;
 
@@ -135,7 +142,7 @@ export class TalaContextRouter {
     }
 
     /**
-     * Returns true when the query is specifically asking for Tala's own lived experiences —
+     * Returns true when the query is specifically asking for Tala's own lived experiences â€”
      * first-person autobiographical queries about her personal timeline, childhood, past events,
      * or age-specific life stages.
      *
@@ -175,8 +182,11 @@ export class TalaContextRouter {
         const text = query.toLowerCase();
         const patterns: RegExp[] = [
             /\bwhen\s+you\s+were\s+(\d{1,2}|[a-z-]+)\b/i,
+            /\bwhen\s+(?:u|ur|you're|youre|you)\s+were\s+(\d{1,2}|[a-z-]+)\b/i,
             /\bat\s+(?:age\s+)?(\d{1,2}|[a-z-]+)(?:\s+years?\s*old)?\b/i,
             /\bduring\s+your\s+(\d{1,2}(?:st|nd|rd|th)|[a-z-]+)\s+year\b/i,
+            /\b(?:your|you're|youre|ur)\s+(\d{1,2}|[a-z-]+)\b/i,
+            /\bwhen\b[\s\S]{0,32}\b(\d{1,2})\b/i,
         ];
 
         for (const pattern of patterns) {
@@ -184,6 +194,21 @@ export class TalaContextRouter {
             if (!m) continue;
             const age = TalaContextRouter.normalizePotentialAge(m[1]);
             if (age !== undefined) return age;
+        }
+
+        const hasAutobioContext = /\b(your|you're|youre|ur|you|u|when|childhood|growing up|past)\b/i.test(text);
+        if (hasAutobioContext) {
+            const standalone = text.match(/\b(\d{1,2})\b/);
+            if (standalone) {
+                const n = Number(standalone[1]);
+                if (
+                    Number.isFinite(n) &&
+                    n >= TalaContextRouter.AUTOBIO_STANDALONE_AGE_MIN &&
+                    n <= TalaContextRouter.AUTOBIO_STANDALONE_AGE_MAX
+                ) {
+                    return n;
+                }
+            }
         }
         return undefined;
     }
@@ -325,6 +350,7 @@ export class TalaContextRouter {
         // 1. Resolve Mode (Handled by input)
         // 2. Classify Intent
         const rawIntent = IntentClassifier.classify(query);
+        const autobioHeuristicMatch = TalaContextRouter.isAutobiographicalLoreRequest(query);
 
         // 2a. Lore follow-up carryover: if this turn is underspecified and follows a recent
         //     lore turn, treat it as lore so autobiographical retrieval stays active.
@@ -341,14 +367,26 @@ export class TalaContextRouter {
                 subsystem: 'lore',
                 precedenceLog: 'Lore carryover from previous turn (follow-up detected)',
             }
-            : rawIntent;
+            : (
+                rawIntent.class !== 'lore' && autobioHeuristicMatch
+                    ? {
+                        ...rawIntent,
+                        class: 'lore',
+                        confidence: Math.max(rawIntent.confidence ?? 0.5, 0.72),
+                        subsystem: 'lore',
+                        precedenceLog: 'Autobiographical lore heuristic override from query phrasing',
+                    }
+                    : rawIntent
+            );
 
         if (isLoreFollowUp) {
-            console.log(`[TalaRouter] Lore follow-up detected — carrying over autobiographical retrieval context`);
+            console.log('[TalaRouter] Lore follow-up detected - carrying over autobiographical retrieval context');
+        } else if (rawIntent.class !== 'lore' && intent.class === 'lore' && autobioHeuristicMatch) {
+            console.log('[TalaRouter] Autobiographical lore heuristic detected - promoting intent to lore');
         }
 
         const isAutobiographicalLoreRequest =
-            intent.class === 'lore' && TalaContextRouter.isAutobiographicalLoreRequest(query);
+            intent.class === 'lore' && autobioHeuristicMatch;
         const autobiographicalAgeHint =
             isAutobiographicalLoreRequest ? TalaContextRouter.extractAutobiographicalAgeHint(query) : undefined;
         let memorySystemState = 'unknown';
@@ -374,7 +412,7 @@ export class TalaContextRouter {
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
         if (intent.class === 'lore' && rawIntent.precedenceLog?.includes('Greeting')) {
-            console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression — retrieval will run`);
+            console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression â€” retrieval will run`);
         }
 
         // Update lore timestamp so follow-up carryover works on the next turn
@@ -392,7 +430,7 @@ export class TalaContextRouter {
             // strictly for the requested mode.
             let candidates: MemoryItem[] = await this.memoryService.search(query, 10, mode);
 
-            // 3a. Lore/autobiographical intent — query RAG/LTMF canon lore first.
+            // 3a. Lore/autobiographical intent â€” query RAG/LTMF canon lore first.
             //
             //     RAG results are prepended to the candidate list so MemoryFilter sees them,
             //     and the lore-aware sourceRank in resolveContradictions() elevates them over
@@ -438,7 +476,7 @@ export class TalaContextRouter {
                 }
 
                 if (ragResults.length > 0) {
-                    console.log(`[TalaRouter] Lore intent — injecting ${ragResults.length} RAG/LTMF candidates`);
+                    console.log(`[TalaRouter] Lore intent â€” injecting ${ragResults.length} RAG/LTMF candidates`);
                     const now = Date.now();
                     const ragMemoryItems: MemoryItem[] = ragResults.map((r, idx) => {
                         const score = r.score ?? 0.5;
@@ -499,7 +537,7 @@ export class TalaContextRouter {
                     // RAG lore items go first; mem0 candidates follow as fallback
                     candidates = [...ragMemoryItems, ...candidates];
                 } else {
-                    console.log('[TalaRouter] Lore intent — RAG returned no results; mem0/local used as fallback');
+                    console.log('[TalaRouter] Lore intent â€” RAG returned no results; mem0/local used as fallback');
                 }
             }
 
@@ -511,7 +549,7 @@ export class TalaContextRouter {
                     return acc;
                 }, {});
                 console.log(
-                    `[TalaRouter] Candidates before filter — ${Object.entries(sourceSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${candidates.length})`
+                    `[TalaRouter] Candidates before filter â€” ${Object.entries(sourceSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${candidates.length})`
                 );
             }
 
@@ -532,8 +570,8 @@ export class TalaContextRouter {
             //     exist (rag, diary, graph, core_bio, lore), enforce a canon-first approved
             //     set so recent chat/explicit snippets cannot dominate:
             //
-            //       primary slots  → up to LORE_PRIMARY_CANDIDATE_LIMIT canon lore items
-            //       fallback slots → up to LORE_FALLBACK_CAP explicit/chat items
+            //       primary slots  â†’ up to LORE_PRIMARY_CANDIDATE_LIMIT canon lore items
+            //       fallback slots â†’ up to LORE_FALLBACK_CAP explicit/chat items
             //
             //     Fallback behavior is preserved: if no canon candidates exist, the full
             //     resolved set (explicit/chat/mem0) passes through unchanged.
@@ -543,7 +581,7 @@ export class TalaContextRouter {
                 const fallbackBucket = resolved.filter(m => !loreSources.has(m.metadata?.source ?? ''));
 
                 console.log(
-                    `[TalaRouter] Lore composition — loreCandidates=${loreBucket.length} explicitCandidates=${fallbackBucket.length} fallbackCap=${TalaContextRouter.LORE_FALLBACK_CAP}`
+                    `[TalaRouter] Lore composition â€” loreCandidates=${loreBucket.length} explicitCandidates=${fallbackBucket.length} fallbackCap=${TalaContextRouter.LORE_FALLBACK_CAP}`
                 );
 
                 if (loreBucket.length > 0) {
@@ -555,7 +593,7 @@ export class TalaContextRouter {
                     }
                     resolved = [...primary, ...fallback];
                 }
-                // else: no canon lore — fallback bucket passes through unchanged (all resolved items kept)
+                // else: no canon lore â€” fallback bucket passes through unchanged (all resolved items kept)
             }
 
             // Log final approved source composition
@@ -566,11 +604,11 @@ export class TalaContextRouter {
                     return acc;
                 }, {});
                 console.log(
-                    `[TalaRouter] Approved memories — ${Object.entries(approvedSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${resolved.length})`
+                    `[TalaRouter] Approved memories â€” ${Object.entries(approvedSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${resolved.length})`
                 );
             }
         } else {
-            console.log(`[TalaRouter] Retrieval bypassed — ${intent.class} intent (no lore/substantive override).`);
+            console.log(`[TalaRouter] Retrieval bypassed â€” ${intent.class} intent (no lore/substantive override).`);
         }
 
         // 6. Documentation Retrieval Phase (NEW)
@@ -590,7 +628,7 @@ export class TalaContextRouter {
         //      c) none of the approved memories come from a high-trust canon source
         //
         //    When the gate fires, responseMode is forced to 'canon_required' regardless
-        //    of approved memory count — even partial fallback-only sets are insufficient.
+        //    of approved memory count â€” even partial fallback-only sets are insufficient.
         let sufficientCanonMemory = true;
         let canonGateApplied = false;
         let canonSourceTypes: string[] = [];
@@ -623,21 +661,21 @@ export class TalaContextRouter {
         // 8. Assembly & Handoff
         // Derive response grounding mode.
         //
-        // Notebook active:  always 'memory_grounded_strict' — the user has an open notebook
+        // Notebook active:  always 'memory_grounded_strict' â€” the user has an open notebook
         //   and all replies must be restricted to retrieved notebook content, regardless of
         //   intent or phrasing.
         //
-        // Canon gate fired:  'canon_required' — autobiographical request with no high-trust
+        // Canon gate fired:  'canon_required' â€” autobiographical request with no high-trust
         //   canon memory; Tala must not fabricate first-person events.
         //
         // Lore intent (sufficient canon): always 'memory_grounded_strict'.
         let responseMode: ResponseMode | undefined;
         if (notebookActive) {
             responseMode = 'memory_grounded_strict';
-            console.log(`[TalaRouter] Notebook context active — forcing responseMode=memory_grounded_strict`);
+            console.log(`[TalaRouter] Notebook context active â€” forcing responseMode=memory_grounded_strict`);
         } else if (canonGateApplied) {
             responseMode = 'canon_required';
-            console.log(`[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn`);
+            console.log(`[TalaRouter] CanonGate active â€” forcing responseMode=canon_required for autobiographical turn`);
         } else if (intent.class === 'lore' && resolved.length > 0) {
             responseMode = 'memory_grounded_strict';
             console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
@@ -666,7 +704,7 @@ export class TalaContextRouter {
             // This keeps RP operationally isolated while allowing autobiographical grounding.
             blockedCapabilities.push('tools');
             allowedCapabilities.push('memory_retrieval');
-            console.log(`[TalaRouter] RP mode policy — tools=false, memoryReads=true, memoryWrites=false`);
+            console.log(`[TalaRouter] RP mode policy â€” tools=false, memoryReads=true, memoryWrites=false`);
         } else if (retrievalSuppressed) {
             // Greeting suppression: block only memory retrieval tools
             blockedCapabilities.push('memory_retrieval');
@@ -678,8 +716,8 @@ export class TalaContextRouter {
         const memoryWriteDecision = this.resolveMemoryWritePolicy(mode, intent.class, isGreetingOnly);
 
         console.log(`[TalaRouter] Routing complete. Approved memories: ${resolved.length}/${candidateCount}`);
-        console.log(`[TalaRouter] Capabilities — allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
-        console.log(`[TalaRouter] Memory write policy: ${memoryWriteDecision.category} — ${memoryWriteDecision.reason}`);
+        console.log(`[TalaRouter] Capabilities â€” allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
+        console.log(`[TalaRouter] Memory write policy: ${memoryWriteDecision.category} â€” ${memoryWriteDecision.reason}`);
 
         const context: TurnContext = {
             turnId,
@@ -762,11 +800,11 @@ export class TalaContextRouter {
      * Resolves the memory write policy for this turn based on mode and intent.
      *
      * Rules:
-     * - RP mode → do_not_write (RP isolation must not pollute memory)
-     * - Greeting intent → do_not_write (no content worth persisting)
-     * - Hybrid mode → short_term (moderate persistence)
-     * - Assistant mode with task/technical intent → long_term
-     * - Assistant mode otherwise → short_term
+     * - RP mode â†’ do_not_write (RP isolation must not pollute memory)
+     * - Greeting intent â†’ do_not_write (no content worth persisting)
+     * - Hybrid mode â†’ short_term (moderate persistence)
+     * - Assistant mode with task/technical intent â†’ long_term
+     * - Assistant mode otherwise â†’ short_term
      */
     private resolveMemoryWritePolicy(mode: Mode, intentClass: string, isGreeting: boolean): MemoryWriteDecision {
         if (mode === 'rp') {

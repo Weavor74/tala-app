@@ -93,6 +93,61 @@ describe('LTMF autobiographical age retrieval', () => {
         }
     });
 
+    it('extracts age from imperfect phrasing: "your 17"', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        await router.process('turn-your-17', 'Tell me about when your 17', 'rp');
+        const call = ragService.searchStructured.mock.calls[0];
+        expect(call[1]?.filter).toEqual({
+            age: 17,
+            source_type: 'ltmf',
+            memory_type: 'autobiographical',
+            canon: true,
+        });
+    });
+
+    it('extracts age from imperfect phrasing: "when u were 17"', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        await router.process('turn-u-were-17', 'Can you tell me what happened when u were 17?', 'rp');
+        const call = ragService.searchStructured.mock.calls[0];
+        expect(call[1]?.filter).toEqual({
+            age: 17,
+            source_type: 'ltmf',
+            memory_type: 'autobiographical',
+            canon: true,
+        });
+    });
+
+    it('extracts age from existing phrase: "at 17"', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        await router.process('turn-at-17', 'what happened to you at 17?', 'rp');
+        const call = ragService.searchStructured.mock.calls[0];
+        expect(call[1]?.filter).toEqual({
+            age: 17,
+            source_type: 'ltmf',
+            memory_type: 'autobiographical',
+            canon: true,
+        });
+    });
+
+    it('does not trigger structured age filter for non-age numeric lore query', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        await router.process('turn-non-age-number', 'tell me about world war 2 history', 'rp');
+        const call = ragService.searchStructured.mock.calls[0];
+        expect(call[1]?.filter).toBeUndefined();
+    });
+
     it('age-17 autobiographical query retrieves canon LTMF age=17 memories even without date text', async () => {
         const memoryService = {
             search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-1', 'You once mentioned a difficult year.')]),
