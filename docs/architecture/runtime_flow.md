@@ -237,6 +237,24 @@ To prevent silent loss of lore/autobiographical grounding between context assemb
 4. `CloudBrain` compares priority block labels from the incoming `systemPrompt` against serialized payload system content and emits a warning if any are missing.
 
 This instrumentation is intended for production diagnosis of lore-grounding regressions where retrieval succeeds but model-visible payload content is suspected to be incomplete.
+
+### 3c. Lore Thread Continuity Anchoring
+
+`TalaContextRouter` now keeps a session-scoped `activeLoreMemoryContext` for autobiographical/lore continuity across follow-up turns.
+
+1. Creation:
+   - After a lore turn resolves with `responseMode='memory_grounded_strict'` and canon memories, router snapshots canon memory IDs/doc IDs, labels, anchor entities, age hint, and TTL metadata.
+2. Follow-up promotion:
+   - If a later turn is underspecified (for example "what about", "tell me more", "after that", "do you remember that?") and matches thread anchors/entities, the router promotes the turn to `intent='lore'` instead of falling back to `unknown`.
+3. Reuse-first policy:
+   - On confident continuity, prior canon snapshots are injected first.
+   - When confidence is high, router reuses prior canon context before widening retrieval.
+4. Expiration/replacement:
+   - Thread expires on TTL elapse, explicit topic shift (technical/browser/tooling pivots), or repeated failed continuations.
+   - A new successful canon-grounded lore turn replaces the active context (while preserving continuity counters for same-thread follow-ups).
+5. Session persistence:
+   - `AgentService.saveSession()` now stores `activeLoreMemoryContext` in session JSON.
+   - `AgentService.loadSessionById()` restores it so lore-thread continuity survives session reload.
 10. Degraded memory-state handling remains strict by default, but autobiographical age queries can pass in degraded mode when at least one `structured_autobio_age_match=true` canon memory is present. Without that structured canon match, degraded mode still forces `canon_required`.
 
 ### 3a-i. Canon Metadata Persistence and Legacy Backfill

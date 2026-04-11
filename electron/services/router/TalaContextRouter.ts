@@ -8,6 +8,41 @@ import { RagService } from '../RagService';
 import { auditLogger } from '../AuditLogger';
 import { v4 as uuidv4 } from 'uuid';
 
+interface LoreMemorySnapshot {
+    id: string;
+    text: string;
+    source: string;
+    docId?: string;
+    title?: string;
+    score?: number;
+    confidence?: number;
+    metadata?: Record<string, unknown>;
+}
+
+export interface ActiveLoreMemoryContext {
+    originatingTurnId: string;
+    responseMode: ResponseMode;
+    approvedMemoryIds: string[];
+    approvedDocIds: string[];
+    memoryLabels: string[];
+    anchorEntities: string[];
+    ageHint?: number;
+    createdAt: number;
+    updatedAt: number;
+    expiresAt: number;
+    ttlMs: number;
+    continuationTurns: number;
+    consecutiveContinuationMisses: number;
+    memories: LoreMemorySnapshot[];
+}
+
+interface LoreContinuationDecision {
+    shouldContinue: boolean;
+    confidence: number;
+    matchedEntities: string[];
+    reason: string;
+}
+
 /**
  * Tala Context Router
  * 
@@ -39,6 +74,8 @@ export class TalaContextRouter {
      * inherits the autobiographical retrieval domain.
      */
     private static readonly LORE_CARRYOVER_MS = 5 * 60 * 1000;
+    private static readonly LORE_THREAD_TTL_MS = 8 * 60 * 1000;
+    private static readonly LORE_THREAD_MAX_MISSES = 2;
 
     /**
      * Maximum number of RAG/LTMF/canon lore candidates to inject for a lore turn.
@@ -81,6 +118,19 @@ export class TalaContextRouter {
     private static readonly LORE_FOLLOWUP_PATTERNS = [
         /\b(so\s+you\s+(don'?t|do\s+not)|you\s+(don'?t|do\s+not))\s+(have|remember|recall|know)/i,
         /\b(what\s+about\s+(that|then|it)|and\s+that|but\s+that)\b/i,
+        /\bwhat\s+about\b/i,
+        /\b(what\s+happened\s+next|tell\s+me\s+more|after\s+that|before\s+that)\b/i,
+        /\b(personal\s+story\s+about\s+it|do\s+you\s+remember\s+that)\b/i,
+    ];
+
+    private static readonly LORE_THREAD_PRONOUN_FOLLOWUP_PATTERNS = [
+        /\b(that|it|this|those)\b/i,
+        /\b(what\s+about|after\s+that|before\s+that|next|then)\b/i,
+    ];
+
+    private static readonly LORE_THREAD_TOPIC_SHIFT_PATTERNS = [
+        /\b(code|coding|file|terminal|tool|tools|browser|website|http|https|install|npm|python|typescript|debug|stack trace|unit test|run test)\b/i,
+        /\b(open|launch|navigate|search|click|build|compile|deploy)\b/i,
     ];
 
     /**
@@ -135,10 +185,228 @@ export class TalaContextRouter {
 
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
     private lastLoreQueryTs: number = 0;
+    private activeLoreMemoryContext: ActiveLoreMemoryContext | null = null;
 
     constructor(memoryService: MemoryService, ragService?: RagService) {
         this.memoryService = memoryService;
         this.ragService = ragService;
+    }
+
+    public getActiveLoreMemoryContext(): ActiveLoreMemoryContext | null {
+        if (!this.activeLoreMemoryContext) return null;
+        return JSON.parse(JSON.stringify(this.activeLoreMemoryContext));
+    }
+
+    public setActiveLoreMemoryContext(ctx: ActiveLoreMemoryContext | null): void {
+        this.activeLoreMemoryContext = ctx ? JSON.parse(JSON.stringify(ctx)) : null;
+    }
+
+    private hasLiveLoreThread(now: number): boolean {
+        return !!this.activeLoreMemoryContext && now <= this.activeLoreMemoryContext.expiresAt;
+    }
+
+    private clearLoreThread(reason: string): void {
+        if (this.activeLoreMemoryContext) {
+            console.log(
+                `[TalaRouter] Lore thread expired/cleared reason=${reason} originTurn=${this.activeLoreMemoryContext.originatingTurnId}`
+            );
+        }
+        this.activeLoreMemoryContext = null;
+    }
+
+    private static normalizeEntityText(value: string): string {
+        return value
+            .toLowerCase()
+            .replace(/[_\-]+/g, ' ')
+            .replace(/[^a-z0-9\s']/g, ' ')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+    }
+
+    private static memoryTitleFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+        if (!metadata) return undefined;
+        const directCandidates = [
+            metadata.title,
+            metadata.memory_title,
+            metadata.canonical_name,
+            metadata.event_name,
+            metadata.theme_anchor,
+        ];
+        for (const item of directCandidates) {
+            if (typeof item === 'string' && item.trim().length > 0) return item.trim();
+        }
+        const eventIdentity = metadata.event_identity as Record<string, unknown> | undefined;
+        if (eventIdentity && typeof eventIdentity.canonical_name === 'string' && eventIdentity.canonical_name.trim().length > 0) {
+            return eventIdentity.canonical_name.trim();
+        }
+        return undefined;
+    }
+
+    private static extractAnchorEntitiesFromMemories(memories: MemoryItem[]): string[] {
+        const stop = new Set([
+            'the', 'and', 'for', 'with', 'that', 'this', 'from', 'when', 'were', 'your', 'about', 'have', 'into', 'then',
+            'they', 'them', 'there', 'what', 'where', 'which', 'while', 'because', 'after', 'before', 'story', 'memory',
+            'remember', 'recall', 'tala', 'personal', 'event', 'canon', 'lore',
+        ]);
+
+        const scored = new Map<string, number>();
+        const boost = (phrase: string, score: number) => {
+            const normalized = TalaContextRouter.normalizeEntityText(phrase);
+            if (!normalized || normalized.length < 4) return;
+            const wordCount = normalized.split(' ').filter(Boolean).length;
+            if (wordCount > 4) return;
+            if (wordCount === 1 && stop.has(normalized)) return;
+            scored.set(normalized, Math.max(scored.get(normalized) ?? 0, score));
+        };
+
+        for (const memory of memories) {
+            const metadata = memory.metadata as Record<string, unknown> | undefined;
+            const title = TalaContextRouter.memoryTitleFromMetadata(metadata);
+            if (title) boost(title, 1);
+
+            const docId = typeof metadata?.docId === 'string' ? metadata.docId : undefined;
+            if (docId) {
+                const stem = docId.replace(/^.*[\\/]/, '').replace(/\.[a-z0-9]+$/i, '');
+                boost(stem, 0.95);
+            }
+
+            const text = TalaContextRouter.normalizeEntityText(memory.text || '');
+            const words = text.split(/\s+/).filter(w => w.length >= 3 && !stop.has(w));
+            for (let i = 0; i < words.length; i++) {
+                const bigram = `${words[i]} ${words[i + 1] || ''}`.trim();
+                const trigram = `${words[i]} ${words[i + 1] || ''} ${words[i + 2] || ''}`.trim();
+                if (words[i + 1]) boost(bigram, 0.75);
+                if (words[i + 2]) boost(trigram, 0.8);
+            }
+        }
+
+        return [...scored.entries()]
+            .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+            .map(([phrase]) => phrase)
+            .slice(0, 16);
+    }
+
+    private static toLoreMemorySnapshot(memory: MemoryItem): LoreMemorySnapshot {
+        const metadata = (memory.metadata && typeof memory.metadata === 'object')
+            ? { ...(memory.metadata as Record<string, unknown>) }
+            : {};
+        const title = TalaContextRouter.memoryTitleFromMetadata(metadata);
+        return {
+            id: memory.id,
+            text: memory.text,
+            source: typeof metadata.source === 'string' ? metadata.source : 'unknown',
+            docId: typeof metadata.docId === 'string' ? metadata.docId : undefined,
+            title,
+            score: typeof memory.score === 'number' ? memory.score : undefined,
+            confidence: typeof memory.confidence === 'number' ? memory.confidence : undefined,
+            metadata,
+        };
+    }
+
+    private static snapshotToMemoryItem(snapshot: LoreMemorySnapshot): MemoryItem {
+        const now = Date.now();
+        const score = snapshot.score ?? 0.8;
+        const confidence = snapshot.confidence ?? 0.8;
+        return {
+            id: snapshot.id,
+            text: snapshot.text,
+            metadata: { ...(snapshot.metadata || {}), source: snapshot.source, docId: snapshot.docId, title: snapshot.title },
+            score,
+            compositeScore: score,
+            timestamp: now,
+            salience: score,
+            confidence,
+            created_at: now,
+            last_accessed_at: null,
+            last_reinforced_at: null,
+            access_count: 0,
+            associations: [],
+            status: 'active',
+        };
+    }
+
+    private evaluateLoreContinuationDecision(
+        query: string,
+        rawIntent: Intent,
+        now: number,
+    ): LoreContinuationDecision {
+        if (!this.hasLiveLoreThread(now)) {
+            return { shouldContinue: false, confidence: 0, matchedEntities: [], reason: 'no_active_thread' };
+        }
+        if (TalaContextRouter.LORE_THREAD_TOPIC_SHIFT_PATTERNS.some(p => p.test(query)) || ['technical', 'coding', 'action', 'browser'].includes(rawIntent.class)) {
+            this.clearLoreThread('explicit_topic_shift');
+            return { shouldContinue: false, confidence: 0, matchedEntities: [], reason: 'explicit_topic_shift' };
+        }
+
+        const normalized = TalaContextRouter.normalizeEntityText(query);
+        const active = this.activeLoreMemoryContext!;
+        const matchedEntities = active.anchorEntities.filter(e => e.length > 2 && normalized.includes(e));
+
+        const explicitFollowup = TalaContextRouter.LORE_FOLLOWUP_PATTERNS.some(p => p.test(query));
+        const pronounFollowup = TalaContextRouter.LORE_THREAD_PRONOUN_FOLLOWUP_PATTERNS.some(p => p.test(query));
+        const shortQuery = normalized.split(/\s+/).filter(Boolean).length <= 10;
+
+        let confidence = 0;
+        if (explicitFollowup) confidence += 0.45;
+        if (pronounFollowup && shortQuery) confidence += 0.2;
+        if (matchedEntities.length > 0) confidence += 0.45;
+        if ((now - active.updatedAt) <= 2 * 60 * 1000) confidence += 0.1;
+        confidence = Math.min(1, confidence);
+
+        const shouldContinue = confidence >= 0.5;
+        return {
+            shouldContinue,
+            confidence,
+            matchedEntities,
+            reason: shouldContinue ? 'lore_thread_followup_match' : 'confidence_below_threshold',
+        };
+    }
+
+    private upsertLoreThreadFromResolved(
+        turnId: string,
+        responseMode: ResponseMode | undefined,
+        resolved: MemoryItem[],
+        autobiographicalAgeHint: number | undefined,
+        continuationSuccess: boolean,
+    ): void {
+        const canon = resolved.filter(m => TalaContextRouter.LORE_CANON_SOURCES.has(m.metadata?.source ?? ''));
+        if (!responseMode || responseMode !== 'memory_grounded_strict' || canon.length === 0) {
+            if (this.activeLoreMemoryContext && continuationSuccess) {
+                this.activeLoreMemoryContext.consecutiveContinuationMisses = 0;
+                this.activeLoreMemoryContext.updatedAt = Date.now();
+            }
+            return;
+        }
+
+        const now = Date.now();
+        const snapshots = canon.slice(0, TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT).map(TalaContextRouter.toLoreMemorySnapshot);
+        const approvedMemoryIds = snapshots.map(s => s.id);
+        const approvedDocIds = snapshots.map(s => s.docId).filter((v): v is string => !!v);
+        const memoryLabels = snapshots
+            .map(s => s.title || s.docId || s.id)
+            .filter(Boolean)
+            .slice(0, 8);
+        const anchorEntities = TalaContextRouter.extractAnchorEntitiesFromMemories(canon);
+
+        const prior = this.activeLoreMemoryContext;
+        this.activeLoreMemoryContext = {
+            originatingTurnId: continuationSuccess && prior ? prior.originatingTurnId : turnId,
+            responseMode,
+            approvedMemoryIds,
+            approvedDocIds,
+            memoryLabels,
+            anchorEntities,
+            ageHint: autobiographicalAgeHint,
+            createdAt: prior?.createdAt ?? now,
+            updatedAt: now,
+            expiresAt: now + TalaContextRouter.LORE_THREAD_TTL_MS,
+            ttlMs: TalaContextRouter.LORE_THREAD_TTL_MS,
+            continuationTurns: continuationSuccess
+                ? (prior?.continuationTurns ?? 0) + 1
+                : 0,
+            consecutiveContinuationMisses: 0,
+            memories: snapshots,
+        };
     }
 
     /**
@@ -382,7 +650,12 @@ export class TalaContextRouter {
         // 1. Resolve Mode (Handled by input)
         // 2. Classify Intent
         const rawIntent = IntentClassifier.classify(query);
+        const now = Date.now();
+        if (this.activeLoreMemoryContext && now > this.activeLoreMemoryContext.expiresAt) {
+            this.clearLoreThread('ttl_elapsed');
+        }
         const autobioHeuristicMatch = TalaContextRouter.isAutobiographicalLoreRequest(query);
+        const continuityDecision = this.evaluateLoreContinuationDecision(query, rawIntent, now);
 
         // 2a. Lore follow-up carryover: if this turn is underspecified and follows a recent
         //     lore turn, treat it as lore so autobiographical retrieval stays active.
@@ -391,13 +664,18 @@ export class TalaContextRouter {
             isWithinLoreWindow &&
             rawIntent.class !== 'lore' &&
             TalaContextRouter.LORE_FOLLOWUP_PATTERNS.some(p => p.test(query));
+        const loreThreadFollowUp = continuityDecision.shouldContinue;
+        const shouldThreadContinue = rawIntent.class !== 'lore' && loreThreadFollowUp;
+        const shouldReuseLoreThread = isLoreFollowUp || loreThreadFollowUp;
 
-        const intent: Intent = isLoreFollowUp
+        const intent: Intent = (isLoreFollowUp || shouldThreadContinue)
             ? {
                 class: 'lore',
-                confidence: 0.75,
+                confidence: Math.max(0.75, continuityDecision.confidence),
                 subsystem: 'lore',
-                precedenceLog: 'Lore carryover from previous turn (follow-up detected)',
+                precedenceLog: shouldThreadContinue
+                    ? `Lore thread continuation (${continuityDecision.reason})`
+                    : 'Lore carryover from previous turn (follow-up detected)',
             }
             : (
                 rawIntent.class !== 'lore' && autobioHeuristicMatch
@@ -411,8 +689,13 @@ export class TalaContextRouter {
                     : rawIntent
             );
 
-        if (isLoreFollowUp) {
+        if (shouldReuseLoreThread) {
             console.log('[TalaRouter] Lore follow-up detected - carrying over autobiographical retrieval context');
+            if (continuityDecision.matchedEntities.length > 0) {
+                console.log(
+                    `[TalaRouter] Lore thread entity resolution matched anchors=${JSON.stringify(continuityDecision.matchedEntities)} confidence=${continuityDecision.confidence.toFixed(2)}`
+                );
+            }
         } else if (rawIntent.class !== 'lore' && intent.class === 'lore' && autobioHeuristicMatch) {
             console.log('[TalaRouter] Autobiographical lore heuristic detected - promoting intent to lore');
         }
@@ -456,11 +739,31 @@ export class TalaContextRouter {
         let resolved: MemoryItem[] = [];
         let candidateCount = 0;
         let excludedCount = 0;
+        const threadCarryoverCandidates: MemoryItem[] =
+            shouldReuseLoreThread && this.activeLoreMemoryContext
+                ? this.activeLoreMemoryContext.memories.map(TalaContextRouter.snapshotToMemoryItem)
+                : [];
+        let reusedPriorCanon = false;
+        let continuationSucceeded = false;
+        let continuationFailed = false;
+        const skipFreshRetrievalForContinuation =
+            shouldReuseLoreThread &&
+            continuityDecision.confidence >= 0.8 &&
+            threadCarryoverCandidates.length > 0;
 
         if (!retrievalSuppressed) {
             // We query the MemoryService which already implements weighted ranking and association expansion
             // strictly for the requested mode.
-            let candidates: MemoryItem[] = await this.memoryService.search(query, 10, mode);
+            let candidates: MemoryItem[] = skipFreshRetrievalForContinuation
+                ? []
+                : await this.memoryService.search(query, 10, mode);
+            if (threadCarryoverCandidates.length > 0) {
+                reusedPriorCanon = true;
+                candidates = [...threadCarryoverCandidates, ...candidates];
+                console.log(
+                    `[TalaRouter] Lore thread reuse applied candidates=${threadCarryoverCandidates.length} skipFresh=${skipFreshRetrievalForContinuation}`
+                );
+            }
 
             // 3a. Lore/autobiographical intent â€” query RAG/LTMF canon lore first.
             //
@@ -469,7 +772,7 @@ export class TalaContextRouter {
             //     recent chat snippets regardless of composite score ordering.
             //
             //     Requires ragService to be injected (wired in AgentService).
-            if (intent.class === 'lore' && this.ragService) {
+            if (intent.class === 'lore' && this.ragService && !skipFreshRetrievalForContinuation) {
                 const ragOptions: { limit: number; filter?: Record<string, unknown> } = {
                     limit: TalaContextRouter.LORE_PRIMARY_CANDIDATE_LIMIT,
                 };
@@ -571,6 +874,8 @@ export class TalaContextRouter {
                 } else {
                     console.log('[TalaRouter] Lore intent â€” RAG returned no results; mem0/local used as fallback');
                 }
+            } else if (intent.class === 'lore' && skipFreshRetrievalForContinuation) {
+                console.log('[TalaRouter] Lore thread continuation confident - reusing prior canon context before widening retrieval');
             }
 
             // Log candidate source composition for audit visibility
@@ -626,6 +931,11 @@ export class TalaContextRouter {
                     resolved = [...primary, ...fallback];
                 }
                 // else: no canon lore â€” fallback bucket passes through unchanged (all resolved items kept)
+            }
+            if (shouldReuseLoreThread) {
+                const hasCanonAfterResolution = resolved.some(m => TalaContextRouter.LORE_CANON_SOURCES.has(m.metadata?.source ?? ''));
+                continuationSucceeded = hasCanonAfterResolution;
+                continuationFailed = !hasCanonAfterResolution;
             }
 
             // Log final approved source composition
@@ -701,6 +1011,14 @@ export class TalaContextRouter {
             }
         }
 
+        if (continuationFailed && this.activeLoreMemoryContext) {
+            this.activeLoreMemoryContext.consecutiveContinuationMisses += 1;
+            this.activeLoreMemoryContext.updatedAt = Date.now();
+            if (this.activeLoreMemoryContext.consecutiveContinuationMisses >= TalaContextRouter.LORE_THREAD_MAX_MISSES) {
+                this.clearLoreThread('continuation_failed_max_misses');
+            }
+        }
+
         // 8. Assembly & Handoff
         // Derive response grounding mode.
         //
@@ -723,6 +1041,13 @@ export class TalaContextRouter {
             responseMode = 'memory_grounded_strict';
             console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
         }
+        this.upsertLoreThreadFromResolved(
+            turnId,
+            responseMode,
+            resolved,
+            autobiographicalAgeHint,
+            continuationSucceeded,
+        );
 
         // Pass retrievalSuppressed flag to tell assembler not to emit a fallback block when retrieval was intentionally gated.
         const assemblyResult = ContextAssembler.assemble(
@@ -794,6 +1119,29 @@ export class TalaContextRouter {
             errorState: null,
             resolvedMemories: resolved,
             responseMode,
+            loreThread: this.activeLoreMemoryContext
+                ? {
+                    hasActiveContext: true,
+                    continued: shouldReuseLoreThread,
+                    continuationConfidence: continuityDecision.confidence,
+                    reusedPriorCanon,
+                    matchedAnchorEntities: continuityDecision.matchedEntities,
+                    originTurnId: this.activeLoreMemoryContext.originatingTurnId,
+                    expiresAt: this.activeLoreMemoryContext.expiresAt,
+                    approvedMemoryIds: this.activeLoreMemoryContext.approvedMemoryIds,
+                    approvedDocIds: this.activeLoreMemoryContext.approvedDocIds,
+                    memoryLabels: this.activeLoreMemoryContext.memoryLabels,
+                }
+                : {
+                    hasActiveContext: false,
+                    continued: false,
+                    continuationConfidence: continuityDecision.confidence,
+                    reusedPriorCanon,
+                    matchedAnchorEntities: continuityDecision.matchedEntities,
+                    approvedMemoryIds: [],
+                    approvedDocIds: [],
+                    memoryLabels: [],
+                },
             ...(intent.class === 'lore' ? {
                 canonGateDecision: {
                     isAutobiographicalLoreRequest,
@@ -835,6 +1183,16 @@ export class TalaContextRouter {
             memorySystemState,
             memorySystemDegraded,
             degradedStructuredBypassApplied,
+            loreThreadContinuation: {
+                active: !!this.activeLoreMemoryContext,
+                continued: shouldReuseLoreThread,
+                confidence: continuityDecision.confidence,
+                reusedPriorCanon,
+                matchedAnchorEntities: continuityDecision.matchedEntities,
+                activeOriginTurnId: this.activeLoreMemoryContext?.originatingTurnId ?? null,
+                activeApprovedDocIds: this.activeLoreMemoryContext?.approvedDocIds ?? [],
+                activeApprovedMemoryIds: this.activeLoreMemoryContext?.approvedMemoryIds ?? [],
+            },
             correlationId
         });
 

@@ -183,6 +183,23 @@ export interface TurnContext {
     responseMode?: ResponseMode;
 
     /**
+     * Lore-thread continuity state for follow-up autobiographical turns.
+     * Populated by TalaContextRouter when lore anchoring is active or evaluated.
+     */
+    loreThread?: {
+        hasActiveContext: boolean;
+        continued: boolean;
+        continuationConfidence: number;
+        reusedPriorCanon: boolean;
+        matchedAnchorEntities: string[];
+        originTurnId?: string;
+        expiresAt?: number;
+        approvedMemoryIds: string[];
+        approvedDocIds: string[];
+        memoryLabels: string[];
+    };
+
+    /**
      * Canon gate decision for autobiographical lore turns.
      * Populated by TalaContextRouter when intent=lore and the autobiographical
      * pattern fires. Used for audit and telemetry.

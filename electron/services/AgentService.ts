@@ -32,7 +32,7 @@ import { IngestionService } from './IngestionService';
 import { HybridMemoryManager } from './HybridMemoryManager';
 import { UserProfileService } from './UserProfileService';
 import { GuardrailService } from './GuardrailService';
-import { TalaContextRouter } from './router/TalaContextRouter';
+import { ActiveLoreMemoryContext, TalaContextRouter } from './router/TalaContextRouter';
 import { runtimeSafety } from './RuntimeSafety';
 import { GoalManager } from './plan/GoalManager';
 import { WorldService } from './WorldService';
@@ -905,6 +905,11 @@ Violation of this rule is considered a system failure.`;
                 } else {
                     this.activeNotebookContext = { id: null, sourcePaths: [] };
                 }
+                if (data.activeLoreMemoryContext) {
+                    this.talaRouter.setActiveLoreMemoryContext(data.activeLoreMemoryContext as ActiveLoreMemoryContext);
+                } else {
+                    this.talaRouter.setActiveLoreMemoryContext(null);
+                }
 
                 this.goals.loadGraph(id);
                 console.log(`[AgentService] Loaded session ${id} (${this.chatHistory.length} messages)`);
@@ -927,6 +932,7 @@ Violation of this rule is considered a system failure.`;
         this.activeParentId = '';
         this.activeBranchPoint = -1;
         this.activeNotebookContext = { id: null, sourcePaths: [] };
+        this.talaRouter.setActiveLoreMemoryContext(null);
 
         this.goals.loadGraph(id);
         this.saveSession();
@@ -1253,6 +1259,10 @@ Exported standalone package from Tala.
             if (this.activeNotebookContext.id) {
                 session.notebookContext = this.activeNotebookContext;
             }
+            const activeLoreMemoryContext = this.talaRouter.getActiveLoreMemoryContext();
+            if (activeLoreMemoryContext) {
+                session.activeLoreMemoryContext = activeLoreMemoryContext;
+            }
             fs.writeFileSync(
                 path.join(this.sessionsDir, `${this.activeSessionId}.json`),
                 JSON.stringify(session, null, 2)
@@ -1286,6 +1296,7 @@ Exported standalone package from Tala.
                 createdAt: new Date().toISOString(),
                 parentId: resolvedSource,
                 branchPoint: messageIndex,
+                activeLoreMemoryContext: sourceData.activeLoreMemoryContext || undefined,
             };
 
             fs.writeFileSync(path.join(this.sessionsDir, `${newId}.json`), JSON.stringify(session, null, 2));
@@ -1294,6 +1305,7 @@ Exported standalone package from Tala.
             this.chatHistory = branchedMessages;
             this.activeParentId = resolvedSource;
             this.activeBranchPoint = messageIndex;
+            this.talaRouter.setActiveLoreMemoryContext((sourceData.activeLoreMemoryContext as ActiveLoreMemoryContext | undefined) || null);
 
             return newId;
         } catch (e) {
