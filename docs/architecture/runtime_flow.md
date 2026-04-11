@@ -199,6 +199,10 @@ Runtime behavior is now policy-first. `hybrid` is the default active mode, and
 `TalaContextRouter.process()` resolves a per-turn `turnPolicy` that governs retrieval,
 writes, tone injection, astro/reflection inclusion, and tool exposure.
 
+For every turn, the router also builds a fresh `turnBehavior` object from a neutral
+baseline and applies the current `turnPolicy` to it. This prevents cross-turn bleed of
+immersive/style amplification while preserving memory/session continuity.
+
 `assistant` and `rp` remain valid compatibility mode values, but per-turn policy
 is authoritative for turn behavior.
 

@@ -118,6 +118,16 @@ export interface TurnPolicyState {
     mcpPreInferencePolicy: 'enabled' | 'suppressed';
 }
 
+export interface TurnBehaviorState {
+    personalityLevel: 'minimal' | 'reduced' | 'normal' | 'full';
+    astroLevel: 'off' | 'light' | 'full';
+    reflectionLevel: 'off' | 'light' | 'full';
+    toneProfile: 'neutral' | 'precise' | 'concise' | 'natural' | 'immersive';
+    immersiveStyle: boolean;
+    narrativeAmplification: boolean;
+    source: 'fresh';
+}
+
 /**
  * The unified contextual envelope for a single agent turn.
  * Compiled by the Context Router to govern the engine's next response.
@@ -146,6 +156,7 @@ export interface TurnContext {
         isGreeting: boolean;
     };
     turnPolicy: TurnPolicyState;
+    turnBehavior: TurnBehaviorState;
 
     retrieval: {
         suppressed: boolean;

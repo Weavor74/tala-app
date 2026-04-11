@@ -2,7 +2,7 @@
 import { Mode, ModePolicyEngine, type TurnPolicyId } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
-import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory, ResponseMode, TurnPolicyState } from './ContextAssembler';
+import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory, ResponseMode, TurnPolicyState, TurnBehaviorState } from './ContextAssembler';
 import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
 import { RagService } from '../RagService';
 import { auditLogger } from '../AuditLogger';
@@ -823,6 +823,8 @@ export class TalaContextRouter {
         const isGreetingOnly = intent.class === 'greeting';
         const policyId = this.resolveTurnPolicyId(mode, intent.class, isGreetingOnly, query);
         const turnPolicy = this.resolveTurnPolicy(mode, policyId, intent.class, isGreetingOnly);
+        const turnBehaviorBaseline = this.createTurnBehaviorBaseline();
+        const turnBehavior = this.applyTurnPolicyToBehavior(turnBehaviorBaseline, turnPolicy);
         const retrievalSuppressed = turnPolicy.memoryReadPolicy === 'blocked';
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
@@ -831,6 +833,12 @@ export class TalaContextRouter {
             `[TurnPolicy] memoryRead=${turnPolicy.memoryReadPolicy} memoryWrite=${turnPolicy.memoryWritePolicy} personality=${turnPolicy.personalityLevel} astro=${turnPolicy.astroLevel} reflection=${turnPolicy.reflectionLevel}`
         );
         console.log(`[TurnPolicy] tools=profile:${turnPolicy.toolExposureProfile} responseStyle=${turnPolicy.responseStyle}`);
+        console.log(
+            `[TurnBehavior] baseline personality=${turnBehaviorBaseline.personalityLevel} astro=${turnBehaviorBaseline.astroLevel} reflection=${turnBehaviorBaseline.reflectionLevel} tone=${turnBehaviorBaseline.toneProfile} immersive=${turnBehaviorBaseline.immersiveStyle}`
+        );
+        console.log(
+            `[TurnBehavior] applied policy=${turnPolicy.policyId} personality=${turnBehavior.personalityLevel} astro=${turnBehavior.astroLevel} reflection=${turnBehavior.reflectionLevel} tone=${turnBehavior.toneProfile} immersive=${turnBehavior.immersiveStyle}`
+        );
         if (intent.class === 'lore' && rawIntent.precedenceLog?.includes('Greeting')) {
             console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression â€” retrieval will run`);
         }
@@ -1244,6 +1252,7 @@ export class TalaContextRouter {
                 isGreeting: isGreetingOnly
             },
             turnPolicy,
+            turnBehavior,
             retrieval: {
                 suppressed: retrievalSuppressed,
                 approvedCount: resolved.length,
@@ -1318,6 +1327,8 @@ export class TalaContextRouter {
             allowedCapabilities,
             blockedCapabilities,
             turnPolicyId: turnPolicy.policyId,
+            toneProfile: turnBehavior.toneProfile,
+            immersiveStyle: turnBehavior.immersiveStyle,
             memoryWriteCategory: memoryWriteDecision.category,
             responseMode: responseMode ?? 'none',
             isAutobiographicalLoreRequest,
@@ -1413,5 +1424,52 @@ export class TalaContextRouter {
         if (policyId === 'immersive_roleplay' || mode === 'rp') return 'do_not_write';
         if (policyId === 'technical_execution') return mode === 'assistant' ? 'long_term' : 'short_term';
         return 'short_term';
+    }
+
+    private createTurnBehaviorBaseline(): TurnBehaviorState {
+        return {
+            personalityLevel: 'minimal',
+            astroLevel: 'off',
+            reflectionLevel: 'off',
+            toneProfile: 'neutral',
+            immersiveStyle: false,
+            narrativeAmplification: false,
+            source: 'fresh',
+        };
+    }
+
+    private applyTurnPolicyToBehavior(
+        baseline: TurnBehaviorState,
+        policy: TurnPolicyState,
+    ): TurnBehaviorState {
+        const applied: TurnBehaviorState = {
+            ...baseline,
+            personalityLevel: policy.personalityLevel,
+            astroLevel: policy.astroLevel,
+            reflectionLevel: policy.reflectionLevel,
+            toneProfile: this.mapToneProfile(policy.responseStyle),
+            immersiveStyle: policy.policyId === 'immersive_roleplay',
+            narrativeAmplification: policy.policyId === 'immersive_roleplay',
+            source: 'fresh',
+        };
+        return applied;
+    }
+
+    private mapToneProfile(
+        responseStyle: TurnPolicyState['responseStyle'],
+    ): TurnBehaviorState['toneProfile'] {
+        switch (responseStyle) {
+            case 'concise_technical':
+                return 'precise';
+            case 'neutral_informative':
+                return 'concise';
+            case 'warm_hybrid':
+                return 'natural';
+            case 'immersive_expressive':
+                return 'immersive';
+            case 'brief_direct':
+            default:
+                return 'neutral';
+        }
     }
 }

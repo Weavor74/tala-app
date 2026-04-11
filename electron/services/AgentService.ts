@@ -2434,11 +2434,12 @@ Exported standalone package from Tala.
 
         const turnObject = orchResult.turnContext;
         const turnPolicy = turnObject.turnPolicy;
+        const turnBehavior = turnObject.turnBehavior;
         const memoryContext = orchResult.memoryContextText;
         const hasMemories = orchResult.approvedMemories.length > 0;
         const isGreeting = orchResult.isGreeting;
         // Backward-compatible astroState string for legacy prompt paths
-        const astroState = turnPolicy.astroLevel === 'off'
+        const astroState = turnBehavior.astroLevel === 'off'
             ? '[ASTRO STATE]: Suppressed by turn policy'
             : (orchResult.astroStateText ?? '[ASTRO STATE]: Offline');
 
@@ -2455,14 +2456,15 @@ Exported standalone package from Tala.
             memorySuppressionReason: orchResult.memorySuppressionReason,
             intentClass: orchResult.intentClass,
             isGreeting: orchResult.isGreeting,
-            astroStateText: orchResult.astroStateText,
+            astroStateText: turnBehavior.astroLevel === 'off' ? null : orchResult.astroStateText,
             docContextText: orchResult.docContextText,
             docSourceIds: orchResult.docSourceIds,
             docRationale: orchResult.docRationale,
+            turnBehavior,
         });
 
         console.log(`[PromptAudit] turn_start sessionId=${this.activeSessionId} mode=${activeMode} intent=${turnObject.intent.class} isGreeting=${isGreeting}`);
-        console.log(`[PromptAssembly] policy=${turnPolicy.policyId} personality=${turnPolicy.personalityLevel} astro=${turnPolicy.astroLevel} reflection=${turnPolicy.reflectionLevel}`);
+        console.log(`[PromptAssembly] policy=${turnPolicy.policyId} personality=${turnBehavior.personalityLevel} astro=${turnBehavior.astroLevel} reflection=${turnBehavior.reflectionLevel} sourceBehavior=${turnBehavior.source}`);
         if (isGreeting) {
             console.log(`[AgentService] Greeting-class input ("${userMessage}") via Router. Retrieval suppressed.`);
         }
@@ -2474,7 +2476,7 @@ Exported standalone package from Tala.
         }
 
         const dynamicContextBlocks: string[] = [];
-        if (turnPolicy.astroLevel !== 'off') {
+        if (turnBehavior.astroLevel !== 'off') {
             dynamicContextBlocks.push(`[EMOTIONAL STATE]: ${astroState}`);
         }
         if (turnPolicy.memoryReadPolicy !== 'blocked') {
@@ -2482,13 +2484,14 @@ Exported standalone package from Tala.
                 `[MEMORY RECALL]: The memories below are your lived experiences. Integrate only relevant memories naturally and avoid quoting them verbatim.`
             );
         }
-        if (turnPolicy.personalityLevel === 'minimal') {
+        if (turnBehavior.personalityLevel === 'minimal') {
             dynamicContextBlocks.push('[STYLE]: Keep tone minimal and direct for this turn.');
-        } else if (turnPolicy.personalityLevel === 'reduced') {
+        } else if (turnBehavior.personalityLevel === 'reduced') {
             dynamicContextBlocks.push('[STYLE]: Keep personality present but reduced; prioritize clarity and task execution.');
-        } else if (turnPolicy.personalityLevel === 'full') {
+        } else if (turnBehavior.personalityLevel === 'full') {
             dynamicContextBlocks.push('[STYLE]: Preserve Tala identity fully while remaining grounded to available context.');
         }
+        dynamicContextBlocks.push(`[TURN TONE]: ${turnBehavior.toneProfile}; immersive=${turnBehavior.immersiveStyle}; narrativeAmplification=${turnBehavior.narrativeAmplification}`);
         const dynamicContext = dynamicContextBlocks.join('\n\n');
         const repetitionSafety = [
             '[STYLE CONSTRAINTS â€” STRICTLY ENFORCED]:',
@@ -2516,9 +2519,9 @@ Exported standalone package from Tala.
         const activeProfileId = settings.agent?.activeProfileId || 'tala';
         const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
 
-        const goalsAndReflections = turnPolicy.reflectionLevel === 'off'
+        const goalsAndReflections = turnBehavior.reflectionLevel === 'off'
             ? ''
-            : turnPolicy.reflectionLevel === 'light'
+            : turnBehavior.reflectionLevel === 'light'
                 ? this.goals.generatePromptSummary()
                 : this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
         

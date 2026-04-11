@@ -29,6 +29,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { MemoryItem } from '../MemoryService';
 import type { Mode } from '../router/ModePolicyEngine';
+import type { TurnBehaviorState } from '../router/ContextAssembler';
 import { ModePolicyEngine } from '../router/ModePolicyEngine';
 import { MemoryContributionBuilder } from './MemoryContributionModel';
 import { EmotionalModulationPolicy } from './EmotionalModulationPolicy';
@@ -89,6 +90,8 @@ export interface CognitiveAssemblyInputs {
     runtimeDegraded?: boolean;
     /** Human-readable degradation notes. */
     degradationNotes?: string;
+    /** Fresh per-turn behavior state resolved from current turnPolicy. */
+    turnBehavior?: TurnBehaviorState;
 }
 
 // ─── CognitiveTurnAssembler ───────────────────────────────────────────────────
@@ -130,6 +133,7 @@ export class CognitiveTurnAssembler {
             fallbackApplied = false,
             runtimeDegraded = false,
             degradationNotes,
+            turnBehavior,
         } = inputs;
 
         // ── 1. Mode policy ────────────────────────────────────────────────────
@@ -229,7 +233,9 @@ export class CognitiveTurnAssembler {
         // Modulation is applied when the mode allows emotional expression beyond 'low'.
         // RP mode has 'high' bounds; assistant mode has 'low' bounds (which suppresses
         // modulation to prevent identity drift in task-focused turns).
-        const allowEmotionalModulation = modePolicy.emotionalExpressionBounds !== 'low';
+        const allowEmotionalModulation =
+            (turnBehavior?.astroLevel ?? 'off') !== 'off' &&
+            modePolicy.emotionalExpressionBounds !== 'low';
         const emotionalModulation = EmotionalModulationPolicy.apply(
             allowEmotionalModulation ? astroStateText : null,
             mode,
@@ -272,9 +278,15 @@ export class CognitiveTurnAssembler {
         }
 
         // ── 5. Reflection contributions ───────────────────────────────────────
-        const reflectionContributions = reflectionContributionStore.buildContributionModel(
-            lastReflectionAt,
-        );
+        const reflectionEnabled = (turnBehavior?.reflectionLevel ?? 'off') !== 'off';
+        const reflectionContributions = reflectionEnabled
+            ? reflectionContributionStore.buildContributionModel(lastReflectionAt)
+            : {
+                applied: false,
+                activeNotes: [],
+                suppressedNotes: [],
+                lastReflectionAt,
+            };
 
         if (reflectionContributions.applied) {
             telemetry.operational(
