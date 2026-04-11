@@ -45,7 +45,7 @@
 - [Phase 6 — Cross-System Intelligence](architecture/phase6_cross_system_intelligence.md)
 - [Repository Overview: Tala](architecture/repository_overview.md)
 - [Retrieval Orchestration Architecture](architecture/retrieval_orchestration.md)
-- [Runtime Flow](architecture/runtime_flow.md)
+- [runtime_flow.md](architecture/runtime_flow.md)
 - [Semantic Retrieval Architecture](architecture/semantic_retrieval.md)
 - [Service Interactions](architecture/service_interactions.md)
 - [System Architecture Overview](architecture/overview.md)
@@ -135,6 +135,7 @@
 
 ## development
 
+- [Memory Purge Workflow](development/memory_purge.md)
 - [One-Time Autobiographical Canon Import](development/autobio_canon_one_time_import.md)
 - [Self-Maintenance Reflections](development/self_maintenance_reflections.md)
 - [Tala Self-Maintenance Orchestrator](development/self_maintenance.md)

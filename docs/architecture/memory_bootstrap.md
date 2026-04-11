@@ -188,6 +188,8 @@ includes PostgreSQL but not pgvector, a warning is surfaced during bootstrap
 | `npm run memory:down` | Stop the Docker-based stack if it was started manually (data preserved) |
 | `npm run memory:logs` | Tail `data/logs/postgres/postgres.log`; prints informative message and exits if the file does not exist yet |
 | `npm run memory:reset` | Stop Docker-based stack and remove volume + re-run memory:up |
+| `npm run memory:purge` | Safe full memory-state purge workflow (dry-run by default; execute with `-- --yes`) |
+| `npm run memory:purge:dry` | Explicit dry-run preview of the purge workflow |
 | `npm run dev:with-memory` | Run memory:up pre-flight check then launch dev |
 
 **Docker is not started automatically by `memory:up`.** If you prefer to run
@@ -203,6 +205,8 @@ Or via settings:
 ```json
 { "databaseBootstrap": { "allowDockerFallback": true } }
 ```
+
+See `docs/development/memory_purge.md` for full purge scope, safeguards, and verification steps.
 
 ---
 
