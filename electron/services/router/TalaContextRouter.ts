@@ -196,9 +196,12 @@ export class TalaContextRouter {
      * they are chat snippets or low-confidence fragments that must not be the sole
      * basis for first-person autobiographical fact claims.
      */
-    private static hasSufficientCanonMemoryForAutobio(resolved: MemoryItem[]): boolean {
+    private static hasSufficientCanonMemoryForAutobio(
+        resolved: MemoryItem[],
+        minRequiredCanonCount: number,
+    ): boolean {
         const qualifiedCanonCount = TalaContextRouter.countQualifiedCanonAutobioMemories(resolved);
-        return qualifiedCanonCount >= TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
+        return qualifiedCanonCount >= minRequiredCanonCount;
     }
 
     /**
@@ -290,6 +293,10 @@ export class TalaContextRouter {
     /** Count canon autobiographical memories that pass strict confidence gates. */
     private static countQualifiedCanonAutobioMemories(resolved: MemoryItem[]): number {
         return resolved.filter(m => TalaContextRouter.isQualifiedCanonAutobioMemory(m)).length;
+    }
+
+    private static hasStructuredAutobioAgeMatch(resolved: MemoryItem[]): boolean {
+        return resolved.some(m => m.metadata?.structured_autobio_age_match === true);
     }
 
     /**
@@ -588,18 +595,23 @@ export class TalaContextRouter {
         let canonGateApplied = false;
         let canonSourceTypes: string[] = [];
         let qualifiedCanonCount = 0;
+        let minRequiredCanonCount = TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
 
         if (intent.class === 'lore') {
             if (isAutobiographicalLoreRequest) {
                 console.log('[CanonGate] autobiographical lore request detected');
                 canonSourceTypes = [...new Set(resolved.map(m => m.metadata?.source ?? 'unknown'))];
+                const hasStructuredAgeMatch =
+                    autobiographicalAgeHint !== undefined &&
+                    TalaContextRouter.hasStructuredAutobioAgeMatch(resolved);
+                minRequiredCanonCount = hasStructuredAgeMatch ? 1 : TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT;
                 qualifiedCanonCount = TalaContextRouter.countQualifiedCanonAutobioMemories(resolved);
                 sufficientCanonMemory =
                     !memorySystemDegraded &&
-                    TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved);
+                    TalaContextRouter.hasSufficientCanonMemoryForAutobio(resolved, minRequiredCanonCount);
                 if (!sufficientCanonMemory) {
                     console.log(
-                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length} qualifiedCanon=${qualifiedCanonCount} minCanon=${TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT} minSemantic=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE} minConfidence=${TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE} memoryState=${memorySystemState}`
+                        `[CanonGate] sufficientCanonMemory=false sources=${canonSourceTypes.join(',') || 'none'} approved=${resolved.length} qualifiedCanon=${qualifiedCanonCount} minCanon=${minRequiredCanonCount} minSemantic=${TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE} minConfidence=${TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE} memoryState=${memorySystemState}`
                     );
                     console.log('[CanonGate] forcing strict no-canon response mode');
                     console.log('[CanonGate] hallucination prevention active for autobiographical turn');
@@ -708,7 +720,7 @@ export class TalaContextRouter {
                     canonSourceTypes,
                     canonGateApplied,
                     qualifiedCanonCount,
-                    minRequiredCanonCount: TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT,
+                    minRequiredCanonCount,
                     minSemanticScore: TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
                     minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
                     memorySystemState,
@@ -735,7 +747,7 @@ export class TalaContextRouter {
             canonSourceTypes,
             canonGateApplied,
             qualifiedCanonCount,
-            minRequiredCanonCount: TalaContextRouter.AUTOBIO_MIN_CANON_APPROVED_COUNT,
+            minRequiredCanonCount,
             minSemanticScore: TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
             minConfidenceScore: TalaContextRouter.AUTOBIO_MIN_CONFIDENCE_SCORE,
             memorySystemState,

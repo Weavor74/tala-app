@@ -162,6 +162,24 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ctx.responseMode).toBe('memory_grounded_strict');
     });
 
+    it('one structured age-match is sufficient for CanonGate on autobiographical age queries', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-weak', 'A vague fallback snippet.')]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('At 17, I began carrying station responsibility.', 1, { score: 0.11 }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-single-structured', 'when you were 17 what happened?', 'rp');
+        expect(ctx.canonGateDecision?.qualifiedCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.minRequiredCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
     it('non-age autobiographical lore queries still enforce standard semantic thresholds', async () => {
         const memoryService = {
             search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-low', 'A fallback conversational snippet.')]),
@@ -189,6 +207,35 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ctx.responseMode).toBe('canon_required');
         const ragCount = (ctx.resolvedMemories ?? []).filter(m => m.metadata?.source === 'rag').length;
         expect(ragCount).toBe(0);
+    });
+
+    it('non-age autobiographical queries still require two canon memories', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                {
+                    text: 'A strong autobiographical memory',
+                    score: 0.9,
+                    docId: 'LTMF-A17-0010.md',
+                    metadata: {
+                        age: 17,
+                        source_type: 'ltmf',
+                        memory_type: 'autobiographical',
+                        canon: true,
+                        age_sequence: 10,
+                    },
+                },
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-non-age-min2', 'tell me about your past', 'rp');
+        expect(ctx.canonGateDecision?.qualifiedCanonCount).toBe(1);
+        expect(ctx.canonGateDecision?.minRequiredCanonCount).toBe(2);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
     });
 
     it('falls back safely to canon_required when no age-matched canon memory exists', async () => {
