@@ -229,12 +229,56 @@ export class TalaContextRouter {
         return Math.max(0, Math.min(1, raw));
     }
 
+    private static parseNumeric(value: unknown): number | undefined {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.trim().length > 0) {
+            const n = Number(value);
+            if (Number.isFinite(n)) return n;
+        }
+        return undefined;
+    }
+
+    private static parseBoolean(value: unknown): boolean | undefined {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'string') {
+            const v = value.trim().toLowerCase();
+            if (v === 'true' || v === '1' || v === 'yes') return true;
+            if (v === 'false' || v === '0' || v === 'no') return false;
+        }
+        return undefined;
+    }
+
+    /**
+     * True only for structured age-query canon matches:
+     * age + source_type=ltmf + memory_type=autobiographical + canon=true.
+     *
+     * This override is intentionally narrow so generic lore retrieval remains
+     * gated by semantic/confidence thresholds.
+     */
+    private static isStructuredAutobioCanonAgeMatch(
+        metadata: Record<string, unknown> | undefined,
+        autobiographicalAgeHint: number | undefined,
+    ): boolean {
+        if (autobiographicalAgeHint === undefined || !metadata) return false;
+        const age = TalaContextRouter.parseNumeric(metadata.age);
+        const sourceType = typeof metadata.source_type === 'string' ? metadata.source_type.toLowerCase() : '';
+        const memoryType = typeof metadata.memory_type === 'string' ? metadata.memory_type.toLowerCase() : '';
+        const canon = TalaContextRouter.parseBoolean(metadata.canon);
+        return (
+            age === autobiographicalAgeHint &&
+            sourceType === 'ltmf' &&
+            memoryType === 'autobiographical' &&
+            canon === true
+        );
+    }
+
     /**
      * True only for canon memories that pass both semantic and confidence gates.
      */
     private static isQualifiedCanonAutobioMemory(item: MemoryItem): boolean {
         const source = item.metadata?.source ?? '';
         if (!TalaContextRouter.LORE_CANON_SOURCES.has(source)) return false;
+        if (item.metadata?.structured_autobio_age_match === true) return true;
         const semantic = TalaContextRouter.getAutobioSemanticScore(item);
         const confidence = TalaContextRouter.getAutobioConfidenceScore(item);
         return (
@@ -366,9 +410,18 @@ export class TalaContextRouter {
                 let ragResults = await this.ragService.searchStructured(query, ragOptions);
                 if (isAutobiographicalLoreRequest && ragResults.length > 0) {
                     const before = ragResults.length;
-                    ragResults = ragResults.filter(
-                        (r) => (r.score ?? 0) >= TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE,
-                    );
+                    ragResults = ragResults.filter((r) => {
+                        const sourceMetadata =
+                            r.metadata && typeof r.metadata === 'object'
+                                ? r.metadata as Record<string, unknown>
+                                : undefined;
+                        const structuredAutobioMatch = TalaContextRouter.isStructuredAutobioCanonAgeMatch(
+                            sourceMetadata,
+                            autobiographicalAgeHint,
+                        );
+                        if (structuredAutobioMatch) return true;
+                        return (r.score ?? 0) >= TalaContextRouter.AUTOBIO_MIN_SEMANTIC_SCORE;
+                    });
                     const rejected = before - ragResults.length;
                     if (rejected > 0) {
                         console.log(
@@ -392,6 +445,10 @@ export class TalaContextRouter {
                                 ? rawAge
                                 : (typeof rawAge === 'string' ? Number(rawAge) : undefined);
                         const age = Number.isFinite(parsedAge as number) ? Number(parsedAge) : undefined;
+                        const structuredAutobioAgeMatch = TalaContextRouter.isStructuredAutobioCanonAgeMatch(
+                            sourceMetadata,
+                            autobiographicalAgeHint,
+                        );
                         const sequence = sourceMetadata.age_sequence ?? sourceMetadata.sequence ?? sourceMetadata.order;
                         return {
                             id: `rag-lore-${idx}-${now}`,
@@ -411,6 +468,7 @@ export class TalaContextRouter {
                                 age_sequence: sequence,
                                 age_query_match:
                                     autobiographicalAgeHint !== undefined && age === autobiographicalAgeHint,
+                                structured_autobio_age_match: structuredAutobioAgeMatch,
                             },
                             score,
                             compositeScore: score,

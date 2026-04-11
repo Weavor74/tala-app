@@ -213,6 +213,7 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 3. RAG candidates are **prepended** to the candidate list before `MemoryFilter` so they enter the same deduplication and ranking pipeline.
 4. `MemoryFilter.resolveContradictions()` applies lore source ranking: `diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)`, ensuring canon lore outranks recent chat snippets regardless of composite score.
 5. RP mode `allowedSources` includes `'rag'` so LTMF lore items pass the source policy gate.
+6. For structured autobiographical age queries only, candidates that exactly match `age + source_type=ltmf + memory_type=autobiographical + canon=true` are treated as high-confidence canon matches even when semantic similarity is below the default autobiographical threshold. This override does not apply to non-age lore queries.
 
 ### 3a-i. Canon Metadata Persistence and Legacy Backfill
 

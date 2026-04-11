@@ -45,10 +45,18 @@ function makeExplicitMemory(id: string, text: string): MemoryItem {
     };
 }
 
-function makeAge17RagHit(text: string, sequence: number) {
+function makeAge17RagHit(
+    text: string,
+    sequence: number,
+    opts: {
+        score?: number;
+        metadata?: Record<string, unknown>;
+    } = {},
+) {
+    const score = opts.score ?? 0.86;
     return {
         text,
-        score: 0.86,
+        score,
         docId: `LTMF-A17-00${sequence}.md`,
         metadata: {
             age: 17,
@@ -56,6 +64,7 @@ function makeAge17RagHit(text: string, sequence: number) {
             memory_type: 'autobiographical',
             canon: true,
             age_sequence: sequence,
+            ...(opts.metadata ?? {}),
         },
     };
 }
@@ -129,6 +138,59 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ragCount).toBeGreaterThan(explicitCount);
     });
 
+    it('age-based structured canon matches pass CanonGate even when semantic score is low', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([
+                makeExplicitMemory('exp-1', 'A generic chat mention from earlier.'),
+            ]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('At 17, I took on station maintenance shifts.', 1, { score: 0.12 }),
+                makeAge17RagHit('At 17, I started writing private logs.', 2, { score: 0.18 }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-low-semantic', 'when you were 17 what happened?', 'rp');
+        const ragAge17 = (ctx.resolvedMemories ?? []).filter(
+            m => m.metadata?.source === 'rag' && m.metadata?.age === 17,
+        );
+        expect(ragAge17.length).toBeGreaterThanOrEqual(2);
+        expect(ctx.canonGateDecision?.qualifiedCanonCount).toBeGreaterThanOrEqual(2);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(false);
+        expect(ctx.responseMode).toBe('memory_grounded_strict');
+    });
+
+    it('non-age autobiographical lore queries still enforce standard semantic thresholds', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-low', 'A fallback conversational snippet.')]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                {
+                    text: 'Possible autobiographical mention',
+                    score: 0.18,
+                    docId: 'LTMF-A17-0099.md',
+                    metadata: {
+                        age: 17,
+                        source_type: 'ltmf',
+                        memory_type: 'autobiographical',
+                        canon: true,
+                        age_sequence: 99,
+                    },
+                },
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-non-age', 'tell me about your childhood', 'rp');
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+        const ragCount = (ctx.resolvedMemories ?? []).filter(m => m.metadata?.source === 'rag').length;
+        expect(ragCount).toBe(0);
+    });
+
     it('falls back safely to canon_required when no age-matched canon memory exists', async () => {
         const memoryService = {
             search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-only', 'You once sounded uncertain about your past.')]),
@@ -141,5 +203,29 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ctx.responseMode).toBe('canon_required');
         expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
         expect((ctx.resolvedMemories ?? []).some(m => m.metadata?.source === 'explicit')).toBe(true);
+    });
+
+    it('falls back safely when age query has low-semantic canon-like hits but metadata match is missing', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([makeExplicitMemory('exp-only', 'You were uncertain about that year.')]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([
+                makeAge17RagHit('Unstructured canonical fragment.', 1, {
+                    score: 0.11,
+                    metadata: {
+                        source_type: 'notes',
+                        canon: false,
+                    },
+                }),
+            ]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-no-match', 'at 17 what happened to you?', 'rp');
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+        const ragCount = (ctx.resolvedMemories ?? []).filter(m => m.metadata?.source === 'rag').length;
+        expect(ragCount).toBe(0);
     });
 });
