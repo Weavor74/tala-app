@@ -216,6 +216,7 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 6. For structured autobiographical age queries only, candidates that exactly match `age + source_type=ltmf + memory_type=autobiographical + canon=true` are treated as high-confidence canon matches even when semantic similarity is below the default autobiographical threshold.
 7. CanonGate uses a dynamic minimum for autobiographical age turns: if at least one resolved memory has `structured_autobio_age_match=true`, `minRequiredCanonCount=1` for that turn; otherwise it remains `2`. Non-age autobiographical lore queries always keep `minRequiredCanonCount=2`.
 8. Age extraction for structured autobiographical filters is tolerant to imperfect phrasing (`your 17`, `you're 17`, `ur 17`, `when u were 17`) and may use standalone age numbers in range `8..33` when autobiographical context terms are present.
+   The parser also normalizes common fused missing-space variants (for example `aboutwhen you were 17`) before autobiographical age extraction.
 9. Structured autobiographical age matches also bypass the autobiographical confidence threshold (`0.65`) by being treated as confidence-qualified canon hits; non-structured canon candidates still require the standard confidence gate.
 10. Degraded memory-state handling remains strict by default, but autobiographical age queries can pass in degraded mode when at least one `structured_autobio_age_match=true` canon memory is present. Without that structured canon match, degraded mode still forces `canon_required`.
 

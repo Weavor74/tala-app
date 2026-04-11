@@ -121,6 +121,21 @@ describe('LTMF autobiographical age retrieval', () => {
         });
     });
 
+    it('extracts age from fused missing-space phrasing: "aboutwhen you were 17"', async () => {
+        const memoryService = { search: vi.fn().mockResolvedValue([]) };
+        const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        await router.process('turn-aboutwhen-17', 'Tell me aboutwhen you were 17', 'rp');
+        const call = ragService.searchStructured.mock.calls[0];
+        expect(call[1]?.filter).toEqual({
+            age: 17,
+            source_type: 'ltmf',
+            memory_type: 'autobiographical',
+            canon: true,
+        });
+    });
+
     it('extracts age from imperfect phrasing: "when u were 17"', async () => {
         const memoryService = { search: vi.fn().mockResolvedValue([]) };
         const ragService = { searchStructured: vi.fn().mockResolvedValue([]) };

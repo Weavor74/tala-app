@@ -150,7 +150,33 @@ export class TalaContextRouter {
      * lore (universe history, character backgrounds) which does not require autobiographical canon.
      */
     private static isAutobiographicalLoreRequest(query: string): boolean {
-        return TalaContextRouter.AUTOBIO_LORE_PATTERNS.some(p => p.test(query));
+        const normalized = TalaContextRouter.normalizeAutobiographicalParseText(query);
+        return TalaContextRouter.AUTOBIO_LORE_PATTERNS.some(p => p.test(normalized));
+    }
+
+    /**
+     * Lightweight normalization for common missing-space autobiographical phrasing.
+     * Keeps scope intentionally narrow to avoid broad semantic rewrites.
+     */
+    private static normalizeAutobiographicalParseText(query: string): string {
+        let text = query.toLowerCase();
+        const replacements: Array<[RegExp, string]> = [
+            // "aboutwhen you were 17" -> "about when you were 17"
+            [/\baboutwhen(?=\s|you\b|u\b|your\b|you'?re\b|youre\b)/gi, 'about when'],
+            // "tell me aboutwhen" falls out of rule above, but keep boundary-safe variants.
+            [/\bbackwhen(?=\s|you\b|u\b|your\b|you'?re\b|youre\b)/gi, 'back when'],
+            [/\brememberwhen(?=\s|you\b|u\b|your\b|you'?re\b|youre\b)/gi, 'remember when'],
+            [/\brecallwhen(?=\s|you\b|u\b|your\b|you'?re\b|youre\b)/gi, 'recall when'],
+            // "whenyou were 17" -> "when you were 17"
+            [/\bwhenyou\b/gi, 'when you'],
+            [/\bwhenu\b/gi, 'when u'],
+            [/\bwhenyour\b/gi, 'when your'],
+            [/\bwhenyoure\b/gi, 'when youre'],
+        ];
+        for (const [pattern, replacement] of replacements) {
+            text = text.replace(pattern, replacement);
+        }
+        return text.replace(/\s{2,}/g, ' ').trim();
     }
 
     private static normalizePotentialAge(raw: string | undefined): number | undefined {
@@ -179,7 +205,7 @@ export class TalaContextRouter {
      * - "during your seventeenth year"
      */
     private static extractAutobiographicalAgeHint(query: string): number | undefined {
-        const text = query.toLowerCase();
+        const text = TalaContextRouter.normalizeAutobiographicalParseText(query);
         const patterns: RegExp[] = [
             /\bwhen\s+you\s+were\s+(\d{1,2}|[a-z-]+)\b/i,
             /\bwhen\s+(?:u|ur|you're|youre|you)\s+were\s+(\d{1,2}|[a-z-]+)\b/i,
