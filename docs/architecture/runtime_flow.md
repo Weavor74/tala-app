@@ -231,6 +231,7 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 This keeps strict autobiographical filters working for both new imports and legacy LTMF records that were ingested before canonical fields were present.
 
 **Follow-up carryover:** If the prior turn was `intent=lore` and the current turn matches a follow-up pattern (e.g. "you don't remember?", "what about that?"), the router carries over the lore retrieval domain for up to 5 minutes.
+**Named-event lore detection:** `IntentClassifier` promotes event-memory phrasings to `intent=lore`, including "was there an event ...", "do you remember ...", and "called <name>" style named-event lookups.
 
 ## 3b. Memory-Grounded Response Mode
 

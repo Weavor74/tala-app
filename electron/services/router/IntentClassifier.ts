@@ -79,6 +79,12 @@ export class IntentClassifier {
         /(who\s+are\s+you|tell\s+me\s+about|what\s+is\s+the)/i,
         // Autobiographical / personal-memory queries — grounded recall, not technical lookup
         /(do\s+you\s+remember|remember\s+when|childhood|your\s+favorite|personal\s+histor)/i,
+        // Named event recall queries (e.g., "was there an event called delayed ping")
+        /(was\s+there\s+an?\s+event|do\s+you\s+remember\s+(an?\s+)?event)/i,
+        // "called X" phrase as named-event lookup cue (requires at least two tokens after "called")
+        /\bcalled\s+['"`]?[a-z0-9][\w-]*(?:\s+[a-z0-9][\w-]*)+\b/i,
+        // Historical event shorthand queries that should still route to lore retrieval
+        /\bworld\s+war\s+\d+\b/i,
         // Extended autobiographical markers: age references, life history, memory follow-ups
         /(when\s+you\s+were|at\s+(age\s+)?\d+\s*(years?\s*old)?|growing\s+up|what\s+were\s+you|your\s+life|your\s+memory|have\s+a\s+memory|back\s+then)/i,
         // Follow-up lore references: queries that confirm or challenge a prior autobiographical turn

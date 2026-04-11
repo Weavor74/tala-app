@@ -205,6 +205,16 @@ describe('LoreRetrievalPriority — follow-up lore continuity', () => {
         expect(result.class).toBe('lore');
     });
 
+    it('IntentClassifier classifies "Was there an event called Delayed Ping?" as lore', () => {
+        const result = IntentClassifier.classify('Was there an event called Delayed Ping?');
+        expect(result.class).toBe('lore');
+    });
+
+    it('IntentClassifier classifies "World War 2" as lore', () => {
+        const result = IntentClassifier.classify('World War 2');
+        expect(result.class).toBe('lore');
+    });
+
     it('TalaContextRouter carries over lore retrieval context for follow-up turns', async () => {
         // Build a mock MemoryService
         const mockMemoryService = {
