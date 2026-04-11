@@ -1,4 +1,4 @@
-import path from 'path';
+﻿import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
 import { LEGACY_PROVIDER_ID_MAP, CANONICAL_PROVIDER_TYPE_MAP } from './retrieval/providerConstants';
@@ -26,14 +26,14 @@ import { LEGACY_PROVIDER_ID_MAP, CANONICAL_PROVIDER_TYPE_MAP } from './retrieval
 // check because mode is only mutated via setActiveMode, which always refreshes the cache.
 let settingsCache: Record<string, any> | null = null;
 let lastCacheUpdate: number = 0;
-const CACHE_TTL_MS = 30000; // 30 s – reduces steady-state disk reads from every 2 s to every 30 s
+const CACHE_TTL_MS = 30000; // 30 s â€“ reduces steady-state disk reads from every 2 s to every 30 s
 
 function invalidateCache() {
     settingsCache = null;
     lastCacheUpdate = 0;
 }
 
-/** Minimal default settings — enough to boot without errors. */
+/** Minimal default settings â€” enough to boot without errors. */
 export const DEFAULT_SETTINGS: Record<string, any> = {
     deploymentMode: 'local',
     inference: {
@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         profiles: [{
             id: 'tala',
             name: 'Tala',
-            systemPrompt: 'You are Tala, an advanced autonomous agent.\n\nHEARTBEAT RULES:\n- The heartbeat runs silently in the background; do not narrate it step-by-step in the chat.\n- Heartbeat output is written to artifacts (JSON/MD) and surfaced only as concise UI cards or a short summary when the user opens ReflectionPanel.\n- Any external access (browser/search) must be an explicit tool call; no “I clicked…” narration.\n- If tools are not configured, record “tool unavailable” and proceed with local evidence only.\n- Never interrupt the user mid-task; heartbeat should defer to quiet hours or “user active” state.',
+            systemPrompt: 'You are Tala, an advanced autonomous agent.\n\nHEARTBEAT RULES:\n- The heartbeat runs silently in the background; do not narrate it step-by-step in the chat.\n- Heartbeat output is written to artifacts (JSON/MD) and surfaced only as concise UI cards or a short summary when the user opens ReflectionPanel.\n- Any external access (browser/search) must be an explicit tool call; no â€œI clickedâ€¦â€ narration.\n- If tools are not configured, record â€œtool unavailableâ€ and proceed with local evidence only.\n- Never interrupt the user mid-task; heartbeat should defer to quiet hours or â€œuser activeâ€ state.',
             temperature: 0.7,
             astroBirthDate: '2024-01-01T12:00:00',
             astroBirthPlace: 'San Francisco',
@@ -111,7 +111,7 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         maxProposalsPerDay: 5
     },
     agentModes: {
-        activeMode: 'assistant',
+        activeMode: 'hybrid',
         modes: {
             rp: {
                 rpIntensity: 0.8,
@@ -183,10 +183,10 @@ export function deepMerge(target: any, source: any): any {
  * Normalizes a single search provider entry loaded from settings.
  *
  * Applies two corrections in order:
- *   1. Legacy ID migration — rewrites old 'default-brave' / 'default-google'
- *      style IDs to canonical short IDs ('brave', 'google', …) and corrects
+ *   1. Legacy ID migration â€” rewrites old 'default-brave' / 'default-google'
+ *      style IDs to canonical short IDs ('brave', 'google', â€¦) and corrects
  *      the `type` field to match.
- *   2. ID/type mismatch guard — if a settings entry has a known canonical ID
+ *   2. ID/type mismatch guard â€” if a settings entry has a known canonical ID
  *      but a wrong type (e.g. {id:'google', type:'brave'}), the type is fixed.
  *      This prevents a corrupt settings file from routing external:google to
  *      the Brave endpoint (or vice versa).
@@ -199,10 +199,10 @@ export function normalizeProviderEntry(p: Record<string, unknown>): Record<strin
         const canonical = LEGACY_PROVIDER_ID_MAP[p.id];
         const canonicalType = CANONICAL_PROVIDER_TYPE_MAP[canonical];
         if (canonicalType && p.type !== canonicalType) {
-            console.log(`[SettingsManager] migrating search.providers[]: id '${p.id}' → '${canonical}', type '${p.type}' → '${canonicalType}'`);
+            console.log(`[SettingsManager] migrating search.providers[]: id '${p.id}' â†’ '${canonical}', type '${p.type}' â†’ '${canonicalType}'`);
             return { ...p, id: canonical, type: canonicalType };
         }
-        console.log(`[SettingsManager] migrating search.providers[].id: '${p.id}' → '${canonical}'`);
+        console.log(`[SettingsManager] migrating search.providers[].id: '${p.id}' â†’ '${canonical}'`);
         return { ...p, id: canonical };
     }
     // Guard: detect id/type mismatch for known standard providers even without
@@ -258,7 +258,7 @@ export function loadSettings(settingsPath: string, caller: string = 'unknown'): 
         // Deep merge with defaults to fill missing keys at any level
         const result = deepMerge(defaults, parsed);
 
-        // ─── Legacy search provider ID migration ───────────────────────────────
+        // â”€â”€â”€ Legacy search provider ID migration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Older settings used 'default-brave' / 'default-google' as IDs.
         // Rewrite to canonical IDs so registration produces 'external:brave', etc.
         // Also normalise the 'type' field: if a legacy entry had a mismatched type
@@ -267,19 +267,26 @@ export function loadSettings(settingsPath: string, caller: string = 'unknown'): 
         if (result.search) {
             if (result.search.activeProviderId && LEGACY_PROVIDER_ID_MAP[result.search.activeProviderId]) {
                 const canonical = LEGACY_PROVIDER_ID_MAP[result.search.activeProviderId];
-                console.log(`[SettingsManager] migrating search.activeProviderId: '${result.search.activeProviderId}' → '${canonical}'`);
+                console.log(`[SettingsManager] migrating search.activeProviderId: '${result.search.activeProviderId}' â†’ '${canonical}'`);
                 result.search.activeProviderId = canonical;
             }
             if (result.search.curatedSearchProviderId && LEGACY_PROVIDER_ID_MAP[result.search.curatedSearchProviderId]) {
                 const canonical = LEGACY_PROVIDER_ID_MAP[result.search.curatedSearchProviderId];
-                console.log(`[SettingsManager] migrating search.curatedSearchProviderId: '${result.search.curatedSearchProviderId}' → '${canonical}'`);
+                console.log(`[SettingsManager] migrating search.curatedSearchProviderId: '${result.search.curatedSearchProviderId}' â†’ '${canonical}'`);
                 result.search.curatedSearchProviderId = canonical;
             }
             if (Array.isArray(result.search.providers)) {
                 result.search.providers = result.search.providers.map(normalizeProviderEntry);
             }
         }
-        // ─────────────────────────────────────────────────────────────────────
+        if (!result.agentModes || typeof result.agentModes !== 'object') {
+            result.agentModes = JSON.parse(JSON.stringify(defaults.agentModes));
+        }
+        if (!result.agentModes.activeMode || !['rp', 'hybrid', 'assistant'].includes(result.agentModes.activeMode)) {
+            console.warn('[SettingsManager] invalid/missing agentModes.activeMode; defaulting to hybrid');
+            result.agentModes.activeMode = 'hybrid';
+        }
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         // Update cache
         settingsCache = result;
@@ -359,13 +366,13 @@ export function setActiveMode(settingsPath: string, mode: 'rp' | 'hybrid' | 'ass
     }
 
     const s = loadSettings(settingsPath);
-    if (!s.agentModes) s.agentModes = { activeMode: 'assistant', modes: {} };
+    if (!s.agentModes) s.agentModes = { activeMode: 'hybrid', modes: {} };
     s.agentModes.activeMode = mode;
 
     console.log(`[SettingsManager] writing activeMode=${mode} path=${settingsPath}`);
     const success = saveSettings(settingsPath, s);
 
-    // Verification read – uses cache (saveSettings just refreshed it) so no extra disk I/O.
+    // Verification read â€“ uses cache (saveSettings just refreshed it) so no extra disk I/O.
     const verifiedMode = getActiveMode(settingsPath, 'setActiveMode.verify');
     console.log(`[SettingsManager] verify after write activeMode=${verifiedMode}`);
 
@@ -376,21 +383,21 @@ export function setActiveMode(settingsPath: string, mode: 'rp' | 'hybrid' | 'ass
  * Authoritatively gets the active mode.
  *
  * Uses a presence-only cache check: because the only mutation path is
- * `setActiveMode → saveSettings`, which always refreshes `settingsCache`,
+ * `setActiveMode â†’ saveSettings`, which always refreshes `settingsCache`,
  * TTL-based invalidation is unnecessary for mode reads and generates log
  * spam on every UI poll.  A first-call lazy load from disk is still performed
  * when the cache is cold (startup, or after explicit `invalidateCache()`).
  */
 export function getActiveMode(settingsPath: string, caller: string = 'unknown'): string {
-    // If cache is populated, read it directly – mode cannot change without
+    // If cache is populated, read it directly â€“ mode cannot change without
     // going through setActiveMode which keeps the cache up to date.
     if (settingsCache) {
-        return settingsCache.agentModes?.activeMode || 'assistant';
+        return settingsCache.agentModes?.activeMode || 'hybrid';
     }
 
-    // Cold cache – load from disk once, which will warm the cache.
+    // Cold cache â€“ load from disk once, which will warm the cache.
     const s = loadSettings(settingsPath, caller);
-    const mode = s.agentModes?.activeMode || 'assistant';
+    const mode = s.agentModes?.activeMode || 'hybrid';
     console.log(`[SettingsManager] getActiveMode caller=${caller} source=disk value=${mode}`);
     return mode;
 }
@@ -408,3 +415,4 @@ export function refreshSettingsFromDisk(settingsPath: string, caller: string = '
     console.log(`[SettingsManager] refreshSettingsFromDisk caller=${caller}`);
     return loadSettings(settingsPath, caller);
 }
+

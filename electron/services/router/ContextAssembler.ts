@@ -17,6 +17,7 @@
 
 import { MemoryItem } from '../MemoryService';
 import { NOTEBOOK_GROUNDING_CONTRACT_TEXT } from '../plan/notebookGroundingContract';
+import type { TurnPolicyId } from './ModePolicyEngine';
 
 /**
  * Response grounding mode for lore/autobiographical turns.
@@ -102,6 +103,21 @@ export interface TurnErrorState {
     recoveredViaFallback?: boolean;
 }
 
+export interface TurnPolicyState {
+    policyId: TurnPolicyId;
+    memoryReadPolicy: 'blocked' | 'relevant_only' | 'light' | 'lore_allowed';
+    memoryWritePolicy: 'do_not_write' | 'short_term' | 'long_term';
+    personalityLevel: 'minimal' | 'reduced' | 'normal' | 'full';
+    astroLevel: 'off' | 'light' | 'full';
+    reflectionLevel: 'off' | 'light' | 'full';
+    toolExposureProfile: 'none' | 'technical_strict' | 'factual_narrow' | 'balanced' | 'immersive_controlled';
+    responseStyle: 'brief_direct' | 'concise_technical' | 'neutral_informative' | 'warm_hybrid' | 'immersive_expressive';
+    docRetrievalPolicy: 'enabled' | 'suppressed';
+    worldStatePolicy: 'enabled' | 'suppressed';
+    maintenancePolicy: 'enabled' | 'suppressed';
+    mcpPreInferencePolicy: 'enabled' | 'suppressed';
+}
+
 /**
  * The unified contextual envelope for a single agent turn.
  * Compiled by the Context Router to govern the engine's next response.
@@ -129,6 +145,7 @@ export interface TurnContext {
         confidence: number;
         isGreeting: boolean;
     };
+    turnPolicy: TurnPolicyState;
 
     retrieval: {
         suppressed: boolean;

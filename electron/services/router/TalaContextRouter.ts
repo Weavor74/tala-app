@@ -1,8 +1,8 @@
 ﻿import { MemoryService, MemoryItem } from '../MemoryService';
-import { Mode, ModePolicyEngine } from './ModePolicyEngine';
+import { Mode, ModePolicyEngine, type TurnPolicyId } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
-import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory, ResponseMode } from './ContextAssembler';
+import { ContextAssembler, TurnContext, MemoryWriteDecision, MemoryWriteCategory, ResponseMode, TurnPolicyState } from './ContextAssembler';
 import { DocumentationIntelligenceService } from '../DocumentationIntelligenceService';
 import { RagService } from '../RagService';
 import { auditLogger } from '../AuditLogger';
@@ -224,6 +224,10 @@ export class TalaContextRouter {
 
     private static readonly AUTOBIO_STANDALONE_AGE_MIN = 8;
     private static readonly AUTOBIO_STANDALONE_AGE_MAX = 33;
+    private static readonly FACTUAL_QUERY_PATTERNS = [
+        /^\s*(what|who|when|where|which|explain|define|summarize|compare|why)\b/i,
+        /\b(what\s+is|how\s+does|explain|difference between|vs\.?)\b/i,
+    ];
 
     /** Timestamp of the most recent lore-classified turn (for carryover logic). */
     private lastLoreQueryTs: number = 0;
@@ -817,9 +821,16 @@ export class TalaContextRouter {
         }
 
         const isGreetingOnly = intent.class === 'greeting';
-        const retrievalSuppressed = isGreetingOnly; // Gating logic
+        const policyId = this.resolveTurnPolicyId(mode, intent.class, isGreetingOnly, query);
+        const turnPolicy = this.resolveTurnPolicy(mode, policyId, intent.class, isGreetingOnly);
+        const retrievalSuppressed = turnPolicy.memoryReadPolicy === 'blocked';
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
+        console.log(`[TurnPolicy] resolved policy=${turnPolicy.policyId} mode=${mode} intent=${intent.class}`);
+        console.log(
+            `[TurnPolicy] memoryRead=${turnPolicy.memoryReadPolicy} memoryWrite=${turnPolicy.memoryWritePolicy} personality=${turnPolicy.personalityLevel} astro=${turnPolicy.astroLevel} reflection=${turnPolicy.reflectionLevel}`
+        );
+        console.log(`[TurnPolicy] tools=profile:${turnPolicy.toolExposureProfile} responseStyle=${turnPolicy.responseStyle}`);
         if (intent.class === 'lore' && rawIntent.precedenceLog?.includes('Greeting')) {
             console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression â€” retrieval will run`);
         }
@@ -1070,7 +1081,7 @@ export class TalaContextRouter {
         // 6. Documentation Retrieval Phase (NEW)
         let docContext = '';
         const DOC_RELEVANCE_PATTERN = /\b(architecture|design|interface|spec|protocol|how does|explain|docs|documentation|logic|engine|service|requirement|traceability|security)\b/i;
-        if (docIntel && DOC_RELEVANCE_PATTERN.test(query) && mode !== 'rp') {
+        if (docIntel && DOC_RELEVANCE_PATTERN.test(query) && turnPolicy.docRetrievalPolicy === 'enabled') {
             console.log(`[TalaRouter] Turn identified as documentation-relevant. Requesting doc context...`);
             docContext = docIntel.getRelevantContext(query);
         }
@@ -1179,23 +1190,44 @@ export class TalaContextRouter {
         // 8. Capability Resolution (done here so TurnContext is self-contained)
         const blockedCapabilities: string[] = [];
         const allowedCapabilities: string[] = [];
-
-        if (mode === 'rp') {
-            // RP mode: block tool execution but explicitly allow memory retrieval reads.
-            // Memory writes remain blocked (enforced separately by memoryWriteDecision).
-            // This keeps RP operationally isolated while allowing autobiographical grounding.
+        if (turnPolicy.toolExposureProfile === 'none') {
             blockedCapabilities.push('tools');
-            allowedCapabilities.push('memory_retrieval');
-            console.log(`[TalaRouter] RP mode policy â€” tools=false, memoryReads=true, memoryWrites=false`);
-        } else if (retrievalSuppressed) {
-            // Greeting suppression: block only memory retrieval tools
-            blockedCapabilities.push('memory_retrieval');
         } else {
-            allowedCapabilities.push('all');
+            switch (turnPolicy.toolExposureProfile) {
+                case 'technical_strict':
+                    allowedCapabilities.push('system_core', 'memory_retrieval', 'diagnostic', 'browser_automation');
+                    break;
+                case 'factual_narrow':
+                    allowedCapabilities.push('memory_retrieval', 'diagnostic');
+                    break;
+                case 'immersive_controlled':
+                    if (mode === 'rp') {
+                        blockedCapabilities.push('tools');
+                        allowedCapabilities.push('memory_retrieval');
+                    } else {
+                        allowedCapabilities.push('memory_retrieval', 'diagnostic');
+                    }
+                    break;
+                case 'balanced':
+                default:
+                    allowedCapabilities.push('all');
+                    break;
+            }
+        }
+        if (retrievalSuppressed) {
+            blockedCapabilities.push('memory_retrieval');
+            const idx = allowedCapabilities.indexOf('memory_retrieval');
+            if (idx >= 0) allowedCapabilities.splice(idx, 1);
+        }
+        if (mode === 'rp' && !blockedCapabilities.includes('tools')) {
+            blockedCapabilities.push('tools');
+        }
+        if (mode === 'rp' && !allowedCapabilities.includes('memory_retrieval')) {
+            allowedCapabilities.push('memory_retrieval');
         }
 
         // 9. Memory Write Policy
-        const memoryWriteDecision = this.resolveMemoryWritePolicy(mode, intent.class, isGreetingOnly);
+        const memoryWriteDecision = this.resolveMemoryWritePolicy(mode, turnPolicy, intent.class, isGreetingOnly);
 
         console.log(`[TalaRouter] Routing complete. Approved memories: ${resolved.length}/${candidateCount}`);
         console.log(`[TalaRouter] Capabilities â€” allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
@@ -1211,6 +1243,7 @@ export class TalaContextRouter {
                 confidence: intent.confidence || 0.9,
                 isGreeting: isGreetingOnly
             },
+            turnPolicy,
             retrieval: {
                 suppressed: retrievalSuppressed,
                 approvedCount: resolved.length,
@@ -1284,6 +1317,7 @@ export class TalaContextRouter {
             fallbackUsed,
             allowedCapabilities,
             blockedCapabilities,
+            turnPolicyId: turnPolicy.policyId,
             memoryWriteCategory: memoryWriteDecision.category,
             responseMode: responseMode ?? 'none',
             isAutobiographicalLoreRequest,
@@ -1323,12 +1357,18 @@ export class TalaContextRouter {
      * - Assistant mode with task/technical intent â†’ long_term
      * - Assistant mode otherwise â†’ short_term
      */
-    private resolveMemoryWritePolicy(mode: Mode, intentClass: string, isGreeting: boolean): MemoryWriteDecision {
-        if (mode === 'rp') {
-            return { category: 'do_not_write', reason: 'RP mode isolation prohibits memory writes', executed: false };
-        }
+    private resolveMemoryWritePolicy(mode: Mode, turnPolicy: TurnPolicyState, intentClass: string, isGreeting: boolean): MemoryWriteDecision {
         if (isGreeting || intentClass === 'greeting') {
             return { category: 'do_not_write', reason: 'Greeting turns carry no persistent content', executed: false };
+        }
+        if (turnPolicy.memoryWritePolicy === 'do_not_write') {
+            const reason = mode === 'rp'
+                ? 'RP mode isolation prohibits memory writes'
+                : `Turn policy ${turnPolicy.policyId} prohibits memory writes`;
+            return { category: 'do_not_write', reason, executed: false };
+        }
+        if (turnPolicy.memoryWritePolicy === 'long_term') {
+            return { category: 'long_term', reason: `Turn policy ${turnPolicy.policyId} requires long-term retention`, executed: false };
         }
         if (mode === 'hybrid') {
             return { category: 'short_term', reason: 'Hybrid mode uses short-term persistence by default', executed: false };
@@ -1340,5 +1380,38 @@ export class TalaContextRouter {
             return { category: 'short_term', reason: 'Assistant mode default: short-term retention', executed: false };
         }
         return { category: 'short_term', reason: 'Default write policy', executed: false };
+    }
+
+    private resolveTurnPolicyId(mode: Mode, intentClass: string, isGreeting: boolean, query: string): TurnPolicyId {
+        if (isGreeting || intentClass === 'greeting') return 'greeting';
+        if (mode === 'rp' || intentClass === 'lore' || intentClass === 'narrative') return 'immersive_roleplay';
+        if (['coding', 'technical', 'action', 'browser'].includes(intentClass)) return 'technical_execution';
+        if (TalaContextRouter.FACTUAL_QUERY_PATTERNS.some((p) => p.test(query))) return 'factual_query';
+        return ModePolicyEngine.resolveTurnPolicyId(mode, intentClass, isGreeting);
+    }
+
+    private resolveTurnPolicy(mode: Mode, policyId: TurnPolicyId, intentClass: string, isGreeting: boolean): TurnPolicyState {
+        const base = ModePolicyEngine.getTurnPolicy(policyId);
+        const memoryWritePolicy = this.resolvePolicyMemoryWrite(mode, base.policyId, intentClass, isGreeting);
+        const toolExposureProfile = mode === 'assistant' && base.policyId === 'technical_execution'
+            ? 'balanced'
+            : base.toolExposureProfile;
+        return {
+            ...base,
+            toolExposureProfile,
+            memoryWritePolicy,
+        };
+    }
+
+    private resolvePolicyMemoryWrite(
+        mode: Mode,
+        policyId: TurnPolicyId,
+        intentClass: string,
+        isGreeting: boolean,
+    ): TurnPolicyState['memoryWritePolicy'] {
+        if (policyId === 'greeting' || isGreeting || intentClass === 'greeting') return 'do_not_write';
+        if (policyId === 'immersive_roleplay' || mode === 'rp') return 'do_not_write';
+        if (policyId === 'technical_execution') return mode === 'assistant' ? 'long_term' : 'short_term';
+        return 'short_term';
     }
 }

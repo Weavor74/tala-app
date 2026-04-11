@@ -180,7 +180,7 @@ Gracefully shuts down all active MCP sidecars and local inference engines./
 
 ---
 #### `_wireRepairExecutor`
-Wires the MemoryRepairExecutionService singleton with live handlers that perform real subsystem operations.  Called once at the end of igniteSoul() after all dependent services are ready. Handler mapping:  reconnect_canonical — shutdown + re-init canonical PostgreSQL store  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)  reconnect_mem0      — shutdown + re-ignite mem0 MCP server  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService  reconnect_rag       — shutdown + re-ignite tala-core RAG server drain_deferred_work is wired via DeferredMemoryReplayService.drain() which replays bounded batches of persisted work items when canonical is healthy./
+Wires the MemoryRepairExecutionService singleton with live handlers that perform real subsystem operations.  Called once at the end of igniteSoul() after all dependent services are ready. Handler mapping:  reconnect_canonical â€” shutdown + re-init canonical PostgreSQL store  reinit_canonical    â€” same as reconnect_canonical (full teardown + reinit)  reconnect_mem0      â€” shutdown + re-ignite mem0 MCP server  re_resolve_providers â€” re-run MemoryProviderResolver and update MemoryService config  reconnect_graph     â€” disconnect + reconnect tala-memory-graph via McpService  reconnect_rag       â€” shutdown + re-ignite tala-core RAG server drain_deferred_work is wired via DeferredMemoryReplayService.drain() which replays bounded batches of persisted work items when canonical is healthy./
 
 **Arguments**: ``
 **Returns**: `void`
@@ -343,7 +343,7 @@ Assemble and return the current MemoryOperatorReviewModel for the operator revi
 
 ---
 #### `runMemoryMaintenanceNow`
-Trigger an immediate memory maintenance analytics run (manual refresh). Equivalent to a human-requested scheduler tick — does not change any settings or configurations.  Safe to call from the operator review panel. Returns the run result, or null if the scheduler is not available./
+Trigger an immediate memory maintenance analytics run (manual refresh). Equivalent to a human-requested scheduler tick â€” does not change any settings or configurations.  Safe to call from the operator review panel. Returns the run result, or null if the scheduler is not available./
 
 **Arguments**: ``
 **Returns**: `Promise<import('../../shared/memory/MemoryMaintenanceState').MemoryRepairScheduledRunResult | null>`

@@ -173,7 +173,7 @@ CORE CONSTRAINTS:
         autoSync: false
     },
     agentModes: {
-        activeMode: 'assistant',
+        activeMode: 'hybrid',
         modes: {
             rp: {
                 rpIntensity: 0.8,

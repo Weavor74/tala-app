@@ -125,7 +125,7 @@ function App() {
   // Engine Status
   const [localEngineRunning, setLocalEngineRunning] = useState(false);
   const [isStartingEngine, setIsStartingEngine] = useState(false);
-  const [activeMode, setActiveMode] = useState<'rp' | 'hybrid' | 'assistant'>('assistant');
+  const [activeMode, setActiveMode] = useState<'rp' | 'hybrid' | 'assistant'>('hybrid');
   const [showModeSettings, setShowModeSettings] = useState(false);
 
   // Model Warning State

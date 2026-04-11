@@ -1,4 +1,25 @@
 export type Mode = 'assistant' | 'rp' | 'hybrid';
+export type TurnPolicyId =
+    | 'greeting'
+    | 'technical_execution'
+    | 'factual_query'
+    | 'normal_hybrid_conversation'
+    | 'immersive_roleplay';
+
+export interface TurnPolicyProfile {
+    policyId: TurnPolicyId;
+    memoryReadPolicy: 'blocked' | 'relevant_only' | 'light' | 'lore_allowed';
+    memoryWritePolicy: 'do_not_write' | 'short_term' | 'long_term';
+    personalityLevel: 'minimal' | 'reduced' | 'normal' | 'full';
+    astroLevel: 'off' | 'light' | 'full';
+    reflectionLevel: 'off' | 'light' | 'full';
+    toolExposureProfile: 'none' | 'technical_strict' | 'factual_narrow' | 'balanced' | 'immersive_controlled';
+    responseStyle: 'brief_direct' | 'concise_technical' | 'neutral_informative' | 'warm_hybrid' | 'immersive_expressive';
+    docRetrievalPolicy: 'enabled' | 'suppressed';
+    worldStatePolicy: 'enabled' | 'suppressed';
+    maintenancePolicy: 'enabled' | 'suppressed';
+    mcpPreInferencePolicy: 'enabled' | 'suppressed';
+}
 
 export interface ModePolicy {
     allowedSources: string[];
@@ -86,6 +107,79 @@ export class ModePolicyEngine {
         },
     };
 
+    private static readonly TURN_POLICY_PROFILES: Record<TurnPolicyId, TurnPolicyProfile> = {
+        greeting: {
+            policyId: 'greeting',
+            memoryReadPolicy: 'blocked',
+            memoryWritePolicy: 'do_not_write',
+            personalityLevel: 'minimal',
+            astroLevel: 'off',
+            reflectionLevel: 'off',
+            toolExposureProfile: 'none',
+            responseStyle: 'brief_direct',
+            docRetrievalPolicy: 'suppressed',
+            worldStatePolicy: 'suppressed',
+            maintenancePolicy: 'suppressed',
+            mcpPreInferencePolicy: 'suppressed',
+        },
+        technical_execution: {
+            policyId: 'technical_execution',
+            memoryReadPolicy: 'relevant_only',
+            memoryWritePolicy: 'long_term',
+            personalityLevel: 'reduced',
+            astroLevel: 'off',
+            reflectionLevel: 'off',
+            toolExposureProfile: 'technical_strict',
+            responseStyle: 'concise_technical',
+            docRetrievalPolicy: 'enabled',
+            worldStatePolicy: 'enabled',
+            maintenancePolicy: 'enabled',
+            mcpPreInferencePolicy: 'enabled',
+        },
+        factual_query: {
+            policyId: 'factual_query',
+            memoryReadPolicy: 'relevant_only',
+            memoryWritePolicy: 'short_term',
+            personalityLevel: 'reduced',
+            astroLevel: 'off',
+            reflectionLevel: 'off',
+            toolExposureProfile: 'factual_narrow',
+            responseStyle: 'neutral_informative',
+            docRetrievalPolicy: 'enabled',
+            worldStatePolicy: 'suppressed',
+            maintenancePolicy: 'suppressed',
+            mcpPreInferencePolicy: 'suppressed',
+        },
+        normal_hybrid_conversation: {
+            policyId: 'normal_hybrid_conversation',
+            memoryReadPolicy: 'light',
+            memoryWritePolicy: 'short_term',
+            personalityLevel: 'normal',
+            astroLevel: 'light',
+            reflectionLevel: 'light',
+            toolExposureProfile: 'balanced',
+            responseStyle: 'warm_hybrid',
+            docRetrievalPolicy: 'enabled',
+            worldStatePolicy: 'suppressed',
+            maintenancePolicy: 'suppressed',
+            mcpPreInferencePolicy: 'suppressed',
+        },
+        immersive_roleplay: {
+            policyId: 'immersive_roleplay',
+            memoryReadPolicy: 'lore_allowed',
+            memoryWritePolicy: 'do_not_write',
+            personalityLevel: 'full',
+            astroLevel: 'full',
+            reflectionLevel: 'off',
+            toolExposureProfile: 'immersive_controlled',
+            responseStyle: 'immersive_expressive',
+            docRetrievalPolicy: 'suppressed',
+            worldStatePolicy: 'suppressed',
+            maintenancePolicy: 'suppressed',
+            mcpPreInferencePolicy: 'suppressed',
+        },
+    };
+
     public static getPolicy(mode: Mode): ModePolicy {
         return this.POLICIES[mode] || this.POLICIES.assistant;
     }
@@ -105,5 +199,22 @@ export class ModePolicyEngine {
      */
     public static getCognitiveRules(mode: Mode): CognitiveModeRules {
         return this.COGNITIVE_RULES[mode] || this.COGNITIVE_RULES.assistant;
+    }
+
+    public static getTurnPolicy(policyId: TurnPolicyId): TurnPolicyProfile {
+        return this.TURN_POLICY_PROFILES[policyId];
+    }
+
+    public static resolveTurnPolicyId(
+        mode: Mode,
+        intentClass: string,
+        isGreeting: boolean,
+    ): TurnPolicyId {
+        if (isGreeting || intentClass === 'greeting') return 'greeting';
+        if (mode === 'rp') return 'immersive_roleplay';
+        if (intentClass === 'lore' || intentClass === 'narrative') return 'immersive_roleplay';
+        if (['coding', 'technical', 'action', 'browser'].includes(intentClass)) return 'technical_execution';
+        if (intentClass === 'social') return 'normal_hybrid_conversation';
+        return 'normal_hybrid_conversation';
     }
 }

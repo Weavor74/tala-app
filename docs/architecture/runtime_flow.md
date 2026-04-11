@@ -195,14 +195,20 @@ object that describes everything known about a turn from start to finish.
 
 ## 3. Mode Routing and Capability Gating
 
-Mode is enforced centrally by `TalaContextRouter.process()`, not scattered across services.
+Runtime behavior is now policy-first. `hybrid` is the default active mode, and
+`TalaContextRouter.process()` resolves a per-turn `turnPolicy` that governs retrieval,
+writes, tone injection, astro/reflection inclusion, and tool exposure.
 
-| Mode | Memory Retrieval | Memory Write | Tool Access |
-|------|-----------------|--------------|-------------|
-| `assistant` | Enabled (filtered by mode_scope) | short_term or long_term | All allowed |
-| `rp` | Enabled for lore/RP turns; blocked for greetings | do_not_write | All blocked |
-| `hybrid` | Enabled | short_term | All allowed |
-| Greeting (any mode) | Suppressed | do_not_write | memory_retrieval blocked |
+`assistant` and `rp` remain valid compatibility mode values, but per-turn policy
+is authoritative for turn behavior.
+
+| Turn Policy | Typical Trigger | Memory Retrieval | Memory Write | Tool Exposure |
+|------|-----------------|--------------|-------------|-------------|
+| `greeting` | greeting/openers | blocked | `do_not_write` | `none` |
+| `technical_execution` | coding/technical/browser/action intents | relevant_only | `long_term` | `technical_strict` |
+| `factual_query` | factual question framing | relevant_only | `short_term` | `factual_narrow` |
+| `normal_hybrid_conversation` | normal social/conversational turns | light | `short_term` | `balanced` |
+| `immersive_roleplay` | lore/narrative/autobiographical turns | lore_allowed | `do_not_write` | `immersive_controlled` |
 
 ## 3a. Lore / Autobiographical Retrieval Policy
 
@@ -595,15 +601,15 @@ AgentService.chat()
 
 ### Source Gating Policy
 
-`PreInferenceContextOrchestrator` applies intent/mode-aware gating before any retrieval call:
+`PreInferenceContextOrchestrator` applies `turnPolicy`-aware gating before any retrieval call:
 
 | Source | Queried | Suppressed |
 |--------|---------|-----------|
 | Memory (via TalaContextRouter) | Always | â€” |
-| Docs (via TalaContextRouter) | doc-relevant query + mode â‰  rp | RP mode or no relevant query |
-| Astro/emotion | mode â‰  rp and astro ready | RP mode or astro unavailable |
+| Docs (via TalaContextRouter) | doc-relevant query + `turnPolicy.docRetrievalPolicy=enabled` | policy suppression or no relevant query |
+| Astro/emotion | `turnPolicy.astroLevel â‰  off` and astro ready | policy suppression or astro unavailable |
 | Reflection store | Always (in-process) | â€” |
-| MCP pre-inference | coding/technical/task intent + mode â‰  rp | Greeting, conversation, RP |
+| MCP pre-inference | `turnPolicy.mcpPreInferencePolicy=enabled` + technical intent | policy suppression, greeting, conversation, RP |
 
 ### Graceful Degradation
 

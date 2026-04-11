@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable no-empty */
 /* eslint-disable prefer-const */
@@ -243,11 +243,11 @@ Violation of this rule is considered a system failure.`;
     private logViewerService: LogViewerService | null = null;
     /** Feature flag for legacy memory migration. */
     private USE_STRUCTURED_LTMF = true;
-    /** Memory repair executor — wired after igniteSoul completes. */
+    /** Memory repair executor â€” wired after igniteSoul completes. */
     private _repairExecutor: MemoryRepairExecutionService | null = null;
-    /** Scheduled memory repair analytics loop — wired alongside _repairExecutor. */
+    /** Scheduled memory repair analytics loop â€” wired alongside _repairExecutor. */
     private _repairScheduler: MemoryRepairSchedulerService | null = null;
-    /** Operator review surface aggregator — wired alongside _repairScheduler. */
+    /** Operator review surface aggregator â€” wired alongside _repairScheduler. */
     private _operatorReviewSvc: MemoryOperatorReviewService | null = null;
     /**
      * Parameters captured during igniteSoul() so repair handlers can restart
@@ -272,9 +272,9 @@ Violation of this rule is considered a system failure.`;
     private currentTurnAuditRecord?: PromptAuditRecord;
     private activeTurnId: string | null = null;
     // Phase 3A: Live Cognitive Path Integration
-    /** Pre-inference context orchestrator — gathers all live context before CognitiveTurnAssembler. */
+    /** Pre-inference context orchestrator â€” gathers all live context before CognitiveTurnAssembler. */
     private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
-    /** Optional diagnostics aggregator — records cognitive context after each turn. */
+    /** Optional diagnostics aggregator â€” records cognitive context after each turn. */
     private diagnosticsAggregator: RuntimeDiagnosticsAggregator | null = null;
 
     private static shouldApplyCanonRequiredAutobioOverride(turnObject: any, activeMode: string): boolean {
@@ -855,7 +855,7 @@ Violation of this rule is considered a system failure.`;
                     const title = firstUser ? firstUser.content.slice(0, 60) : 'Migrated Chat';
                     const session = { id, title, messages: data, createdAt: new Date().toISOString() };
                     fs.writeFileSync(path.join(this.sessionsDir, `${id}.json`), JSON.stringify(session, null, 2));
-                    console.log(`[AgentService] Migrated legacy chat history → session ${id}`);
+                    console.log(`[AgentService] Migrated legacy chat history â†’ session ${id}`);
                 }
                 fs.unlinkSync(this.chatHistoryPath);
             }
@@ -983,11 +983,11 @@ Violation of this rule is considered a system failure.`;
         for (const msg of messages) {
             switch (msg.role) {
                 case 'user':
-                    lines.push(`## 🧑 User`);
+                    lines.push(`## ðŸ§‘ User`);
                     lines.push(msg.content);
                     break;
                 case 'assistant':
-                    lines.push(`## 🤖 Tala`);
+                    lines.push(`## ðŸ¤– Tala`);
                     lines.push(msg.content);
                     break;
                 case 'tool':
@@ -1287,7 +1287,7 @@ Exported standalone package from Tala.
 
             const newId = this.generateId();
             const firstUser = branchedMessages.find((m: ChatMessage) => m.role === 'user');
-            const title = firstUser ? `⑂ ${firstUser.content.slice(0, 55)}` : '⑂ Branch';
+            const title = firstUser ? `â‘‚ ${firstUser.content.slice(0, 55)}` : 'â‘‚ Branch';
 
             const session = {
                 id: newId,
@@ -1813,7 +1813,7 @@ Exported standalone package from Tala.
 
             this.isSoulReady = true;
 
-            // ── Memory Integrity: inform MemoryService of subsystem availability ──
+            // â”€â”€ Memory Integrity: inform MemoryService of subsystem availability â”€â”€
             // After igniteSoul completes, update the memory service with the
             // real availability of canonical store, RAG, integrity mode from settings.
             // Graph projection availability is updated inline when the MCP connect
@@ -1828,10 +1828,10 @@ Exported standalone package from Tala.
                         console.error(`[DBHealth] Postgres unreachable: ${dbHealth.error ?? 'unknown error'}`);
                     } else {
                         if (!dbHealth.pgvectorInstalled) {
-                            console.warn('[DBHealth] pgvector not installed — vector search will be unavailable');
+                            console.warn('[DBHealth] pgvector not installed â€” vector search will be unavailable');
                         }
                         if (!dbHealth.migrationsApplied) {
-                            console.warn('[DBHealth] schema_migrations not found — schema may not be initialized');
+                            console.warn('[DBHealth] schema_migrations not found â€” schema may not be initialized');
                         }
                     }
                 }
@@ -1844,7 +1844,7 @@ Exported standalone package from Tala.
                 });
             }
 
-            // ── Memory Repair Executor: wire and start after all services are ready ──
+            // â”€â”€ Memory Repair Executor: wire and start after all services are ready â”€â”€
             this._wireRepairExecutor();
 
             // LTMF Migration: Archive legacy .txt files if structured mode is enabled
@@ -1882,12 +1882,12 @@ Exported standalone package from Tala.
      * after all dependent services are ready.
      *
      * Handler mapping:
-     *  reconnect_canonical — shutdown + re-init canonical PostgreSQL store
-     *  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)
-     *  reconnect_mem0      — shutdown + re-ignite mem0 MCP server
-     *  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config
-     *  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService
-     *  reconnect_rag       — shutdown + re-ignite tala-core RAG server
+     *  reconnect_canonical â€” shutdown + re-init canonical PostgreSQL store
+     *  reinit_canonical    â€” same as reconnect_canonical (full teardown + reinit)
+     *  reconnect_mem0      â€” shutdown + re-ignite mem0 MCP server
+     *  re_resolve_providers â€” re-run MemoryProviderResolver and update MemoryService config
+     *  reconnect_graph     â€” disconnect + reconnect tala-memory-graph via McpService
+     *  reconnect_rag       â€” shutdown + re-ignite tala-core RAG server
      *
      * drain_deferred_work is wired via DeferredMemoryReplayService.drain() which
      * replays bounded batches of persisted work items when canonical is healthy.
@@ -1923,12 +1923,12 @@ Exported standalone package from Tala.
                 // Wire operator review aggregator
                 this._operatorReviewSvc = new MemoryOperatorReviewService(this.memory, this._repairScheduler);
 
-                // ── Repair evidence persistence subscribers ───────────────────
+                // â”€â”€ Repair evidence persistence subscribers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 // Subscribe once to TelemetryBus and persist the remaining
                 // repair-evidence event types that are not covered by
                 // MemoryRepairExecutionService or MemoryRepairTriggerService.
                 //
-                // All appends are fire-and-forget — persistence failures must
+                // All appends are fire-and-forget â€” persistence failures must
                 // never block the repair or chat execution path.
 
                 const bus = TelemetryBus.getInstance();
@@ -2051,13 +2051,13 @@ Exported standalone package from Tala.
             }
         };
 
-        // ── reconnect_canonical ───────────────────────────────────────────────
+        // â”€â”€ reconnect_canonical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('reconnect_canonical', () => restoreCanonical('reconnect_canonical'));
 
-        // ── reinit_canonical ─────────────────────────────────────────────────
+        // â”€â”€ reinit_canonical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('reinit_canonical', () => restoreCanonical('reinit_canonical'));
 
-        // ── reconnect_mem0 ───────────────────────────────────────────────────
+        // â”€â”€ reconnect_mem0 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('reconnect_mem0', async (): Promise<boolean> => {
             if (!this._ignitionParams) return false;
             try {
@@ -2079,7 +2079,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // ── re_resolve_providers ─────────────────────────────────────────────
+        // â”€â”€ re_resolve_providers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('re_resolve_providers', async (): Promise<boolean> => {
             try {
                 const resolver = new MemoryProviderResolver(this.inference.getProviderInventory());
@@ -2092,7 +2092,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // ── reconnect_graph ──────────────────────────────────────────────────
+        // â”€â”€ reconnect_graph â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('reconnect_graph', async (): Promise<boolean> => {
             if (!this._ignitionParams || !this.mcpService) return false;
             try {
@@ -2117,7 +2117,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // ── reconnect_rag ────────────────────────────────────────────────────
+        // â”€â”€ reconnect_rag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         executor.registerRepairHandler('reconnect_rag', async (): Promise<boolean> => {
             if (!this._ignitionParams) return false;
             try {
@@ -2140,7 +2140,7 @@ Exported standalone package from Tala.
         executor.start();
         console.log('[AgentService] MemoryRepairExecutionService started with live handlers.');
 
-        // ── MemoryRepairSchedulerService ──────────────────────────────────────
+        // â”€â”€ MemoryRepairSchedulerService â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Start the scheduled analytics + self-maintenance loop only when the
         // outcome repository has been successfully wired (it's created above in
         // the pool-guarded block).  The scheduler holds a direct reference to
@@ -2218,7 +2218,7 @@ Exported standalone package from Tala.
         try {
             return JSON.parse(trimmed);
         } catch (e) {
-            // Case 3 — tolerant repair (development only)
+            // Case 3 â€” tolerant repair (development only)
             try {
                 const repaired = trimmed
                     .replace(/'/g, '"') // Single quotes to double
@@ -2270,7 +2270,7 @@ Exported standalone package from Tala.
             // Skip to the next '{' at depth 0
             if (text[i] !== '{') { i++; continue; }
 
-            // Found an opening brace — scan forward to find the matching closing brace
+            // Found an opening brace â€” scan forward to find the matching closing brace
             const start = i;
             let depth = 0;
             let inString = false;
@@ -2433,11 +2433,14 @@ Exported standalone package from Tala.
         );
 
         const turnObject = orchResult.turnContext;
+        const turnPolicy = turnObject.turnPolicy;
         const memoryContext = orchResult.memoryContextText;
         const hasMemories = orchResult.approvedMemories.length > 0;
         const isGreeting = orchResult.isGreeting;
         // Backward-compatible astroState string for legacy prompt paths
-        const astroState = orchResult.astroStateText ?? '[ASTRO STATE]: Offline';
+        const astroState = turnPolicy.astroLevel === 'off'
+            ? '[ASTRO STATE]: Suppressed by turn policy'
+            : (orchResult.astroStateText ?? '[ASTRO STATE]: Offline');
 
         // --- PHASE 3A: COGNITIVE TURN ASSEMBLY ---
         // Build the authoritative TalaCognitiveContext for this turn.
@@ -2459,6 +2462,7 @@ Exported standalone package from Tala.
         });
 
         console.log(`[PromptAudit] turn_start sessionId=${this.activeSessionId} mode=${activeMode} intent=${turnObject.intent.class} isGreeting=${isGreeting}`);
+        console.log(`[PromptAssembly] policy=${turnPolicy.policyId} personality=${turnPolicy.personalityLevel} astro=${turnPolicy.astroLevel} reflection=${turnPolicy.reflectionLevel}`);
         if (isGreeting) {
             console.log(`[AgentService] Greeting-class input ("${userMessage}") via Router. Retrieval suppressed.`);
         }
@@ -2469,34 +2473,54 @@ Exported standalone package from Tala.
             return { message: funcResult, artifact: null, suppressChatContent: false };
         }
 
-        const dynamicContext = `[EMOTIONAL STATE]: ${astroState}\n\n[MEMORY RECALL]: The memories below are your lived experiences — parts of who you are. Weave them naturally into your response the way a person would recall something that happened to them. Do not quote them verbatim or announce you are referencing them. If something in the conversation connects to a memory, let it surface organically. If no memory is relevant, simply respond without mentioning memory at all.`;
+        const dynamicContextBlocks: string[] = [];
+        if (turnPolicy.astroLevel !== 'off') {
+            dynamicContextBlocks.push(`[EMOTIONAL STATE]: ${astroState}`);
+        }
+        if (turnPolicy.memoryReadPolicy !== 'blocked') {
+            dynamicContextBlocks.push(
+                `[MEMORY RECALL]: The memories below are your lived experiences. Integrate only relevant memories naturally and avoid quoting them verbatim.`
+            );
+        }
+        if (turnPolicy.personalityLevel === 'minimal') {
+            dynamicContextBlocks.push('[STYLE]: Keep tone minimal and direct for this turn.');
+        } else if (turnPolicy.personalityLevel === 'reduced') {
+            dynamicContextBlocks.push('[STYLE]: Keep personality present but reduced; prioritize clarity and task execution.');
+        } else if (turnPolicy.personalityLevel === 'full') {
+            dynamicContextBlocks.push('[STYLE]: Preserve Tala identity fully while remaining grounded to available context.');
+        }
+        const dynamicContext = dynamicContextBlocks.join('\n\n');
         const repetitionSafety = [
-            '[STYLE CONSTRAINTS — STRICTLY ENFORCED]:',
+            '[STYLE CONSTRAINTS â€” STRICTLY ENFORCED]:',
             'DO NOT open your response with any of the following banned openers:',
-            '  • Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
-            '  • Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
-            '  • Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
-            '  • Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
+            '  â€¢ Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
+            '  â€¢ Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
+            '  â€¢ Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
+            '  â€¢ Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
             'DO NOT start with a first-person action verb followed by a body part or location.',
             'DO NOT use the word "hums" as an opener.',
             'VARY your sentence structure. Do not consistently open responses with "I".',
             'Speak directly. The first sentence must deliver content, not setup.',
             '',
-            '[AGENT EXECUTION CONTRACT — MANDATORY]:',
-            '  • When performing file, terminal, or code actions, you MUST use the corresponding tools.',
-            '  • You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
-            '  • NEVER claim an action was performed unless the tool output confirms it.',
-            '  • If a tool fails, report the error exactly as received.',
+            '[AGENT EXECUTION CONTRACT â€” MANDATORY]:',
+            '  â€¢ When performing file, terminal, or code actions, you MUST use the corresponding tools.',
+            '  â€¢ You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
+            '  â€¢ NEVER claim an action was performed unless the tool output confirms it.',
+            '  â€¢ If a tool fails, report the error exactly as received.',
         ].join('\n');
 
-        const agentModes = settings.agentModes || { activeMode: 'assistant', modes: { assistant: { verbosity: 'normal', autoUseTools: true, safeMode: true, memoryWrites: true, toolsOnlyCodingTurns: true, ollamaTimeoutMs: 600000 } } };
+        const agentModes = settings.agentModes || { activeMode: 'hybrid', modes: { assistant: { verbosity: 'normal', autoUseTools: true, safeMode: true, memoryWrites: true, toolsOnlyCodingTurns: true, ollamaTimeoutMs: 600000 } } };
         const isDiagnosticRequest = /list tools|verify|test|mcp|logs/i.test(userMessage);
         const modeConfig = agentModes.modes?.[activeMode] || {};
 
         const activeProfileId = settings.agent?.activeProfileId || 'tala';
         const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
 
-        const goalsAndReflections = this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
+        const goalsAndReflections = turnPolicy.reflectionLevel === 'off'
+            ? ''
+            : turnPolicy.reflectionLevel === 'light'
+                ? this.goals.generatePromptSummary()
+                : this.goals.generatePromptSummary() + "\n" + this.getReflectionSummary();
         
         // Identity Injection: Load user profile to tell the LLM who the User is
         let userIdentity = "";
@@ -2519,19 +2543,10 @@ Exported standalone package from Tala.
         fs.appendFileSync(auditLogPath, JSON.stringify(turnAuditEntry) + "\n");
 
         // --- CAPABILITY RESOLUTION GATING ---
-        let allowedCapabilities: string[] | undefined = undefined;
-
-        if (activeMode === 'rp') {
-            turnObject.blockedCapabilities.push('all');
-        } else if (activeMode === 'hybrid') {
-            turnObject.allowedCapabilities.push('system_core', 'memory_retrieval', 'diagnostic');
-            allowedCapabilities = turnObject.allowedCapabilities;
-        } else {
-            allowedCapabilities = ['all'];
-        }
-
+        let allowedCapabilities: string[] | undefined = turnObject.allowedCapabilities?.length
+            ? [...turnObject.allowedCapabilities]
+            : ['all'];
         if (turnObject.retrieval.suppressed) {
-            turnObject.blockedCapabilities.push('memory_retrieval');
             if (allowedCapabilities?.includes('all')) {
                 allowedCapabilities = ['system_core', 'diagnostic', 'memory_write'];
             } else if (allowedCapabilities) {
@@ -2539,12 +2554,42 @@ Exported standalone package from Tala.
             }
         }
 
+        const policyToolAllowList: Set<string> | null = (() => {
+            switch (turnPolicy.toolExposureProfile) {
+                case 'none':
+                    return new Set();
+                case 'technical_strict':
+                    return new Set([
+                        'fs_read_text', 'fs_write_text', 'fs_list', 'shell_run',
+                        'mem0_search', 'retrieve_context', 'query_graph',
+                        'manage_goals', 'get_emotion_state', 'reflection_create_goal',
+                        'self_audit', 'reflection_clean', 'system_diagnose',
+                        'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
+                        'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
+                    ]);
+                case 'factual_narrow':
+                    return new Set([
+                        'mem0_search', 'retrieve_context', 'query_graph',
+                        'fs_read_text', 'fs_list', 'self_audit', 'system_diagnose',
+                    ]);
+                case 'immersive_controlled':
+                    if (activeMode === 'rp') return new Set();
+                    return new Set(['mem0_search', 'query_graph', 'retrieve_context', 'get_emotion_state']);
+                case 'balanced':
+                default:
+                    return null;
+            }
+        })();
+
         let toolSigs = "";
         let filteredTools: any[] = [];
-        if (turnObject.blockedCapabilities.includes('all') || activeMode === 'rp') {
-            toolSigs = "[NO TOOLS AVAILABLE IN RP MODE]";
+        if (turnObject.blockedCapabilities.includes('all') || activeMode === 'rp' || turnPolicy.toolExposureProfile === 'none') {
+            toolSigs = "[NO TOOLS AVAILABLE FOR CURRENT TURN POLICY]";
         } else {
             filteredTools = this.tools.getToolDefinitions(allowedCapabilities, activeMode);
+            if (policyToolAllowList) {
+                filteredTools = filteredTools.filter((t: any) => policyToolAllowList.has(t.function.name));
+            }
             const formatSig = (tool: any) => {
                 let props = [];
                 for (const [key, val] of Object.entries(tool.function.parameters.properties) as any) {
@@ -2678,9 +2723,9 @@ Exported standalone package from Tala.
                     ? 'retrieval_policy_suppressed'
                     : !hasMemories ? 'no_approved_memories' : undefined;
 
-            const toolsBlocked = turnObject?.blockedCapabilities?.includes('all') || activeMode === 'rp';
+            const toolsBlocked = turnObject?.blockedCapabilities?.includes('all') || activeMode === 'rp' || turnPolicy.toolExposureProfile === 'none';
             const toolsExcludedReason = toolsBlocked
-                ? (activeMode === 'rp' ? 'rp_mode_block_all' : 'capability_policy_block_all')
+                ? (activeMode === 'rp' ? 'rp_mode_block_all' : `turn_policy_${turnPolicy.toolExposureProfile}`)
                 : undefined;
 
             const auditRecord = promptAuditService.buildRecord({
@@ -2720,16 +2765,16 @@ Exported standalone package from Tala.
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        // Build the set of allowed tool names for this turn — used for execution-time gating.
+        // Build the set of allowed tool names for this turn â€” used for execution-time gating.
         // filteredTools was computed above from the capability-resolved allowedCapabilities array.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
-        // ── Browser-task mode state ───────────────────────────────────────────
+        // â”€â”€ Browser-task mode state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // When intent is 'browser', the turn enters browser-task mode:
-        //   – tool palette is reduced to browser-relevant tools
-        //   – DOM is auto-fetched after every successful mutating browser action
-        //   – multi-step loop continues instead of finalizing on empty retry
+        //   â€“ tool palette is reduced to browser-relevant tools
+        //   â€“ DOM is auto-fetched after every successful mutating browser action
+        //   â€“ multi-step loop continues instead of finalizing on empty retry
         const BROWSER_TASK_TOOL_NAMES = new Set([
             'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
             'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
@@ -2748,7 +2793,7 @@ Exported standalone package from Tala.
         if (isBrowserTask) {
             console.log(`[BrowserTaskMode] activated intent=browser`);
         }
-        // ─────────────────────────────────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         const executionLog: TurnExecutionLog = {
             turnId: `${this.activeSessionId}_${Date.now()}`,
@@ -2780,10 +2825,10 @@ Exported standalone package from Tala.
         // Evaluated once per turn before the retry loop. Produces a deterministic
         // gate decision that is preserved across all retry iterations (Rule Group E).
         // Rules applied:
-        //   A — Block mem0_search when lore/memory-grounded context already exists.
-        //   B — Suppress tools with recent failures exceeding the degraded threshold.
-        //   C — Signal directAnswerPreferred when grounded memory is sufficient.
-        //   D — Signal requiresToolUse for coding / browser intents.
+        //   A â€” Block mem0_search when lore/memory-grounded context already exists.
+        //   B â€” Suppress tools with recent failures exceeding the degraded threshold.
+        //   C â€” Signal directAnswerPreferred when grounded memory is sufficient.
+        //   D â€” Signal requiresToolUse for coding / browser intents.
         const gateDecision = toolGatekeeper.evaluate({
             intentClass: turnObject.intent.class,
             activeMode,
@@ -2802,7 +2847,7 @@ Exported standalone package from Tala.
             );
         }
         if (gateDecision.directAnswerPreferred) {
-            console.log('[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient');
+            console.log('[ToolGatekeeper] directAnswerPreferred=true â€” grounded context is sufficient');
         }
 
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
@@ -2819,12 +2864,10 @@ Exported standalone package from Tala.
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
                 let toolsToSend = filteredTools; // Re-declare toolsToSend
-                if (activeMode === 'rp') {
+                if (turnPolicy.toolExposureProfile === 'none' || activeMode === 'rp') {
                     toolsToSend = [];
-                } else if (activeMode === 'hybrid') {
-                    const allowed = ['fs_read_text', 'mem0_search', 'query_graph', 'manage_goals', 'get_emotion_state', 'reflection_create_goal'];
-                    if (modeConfig.allowShellRun) allowed.push('shell_run');
-                    toolsToSend = toolsToSend.filter((t: any) => allowed.includes(t.function.name));
+                } else if (policyToolAllowList) {
+                    toolsToSend = toolsToSend.filter((t: any) => policyToolAllowList.has(t.function.name));
                 } else if (isBrowserTask) {
                     // Browser-task mode: reduce tool palette to browser-relevant tools only.
                     // This prevents the model from being overwhelmed by unrelated tools and
@@ -2833,18 +2876,18 @@ Exported standalone package from Tala.
                     console.log(`[BrowserTaskMode] toolsFiltered count=${toolsToSend.length}`);
                 }
 
-                if ((turnObject.intent.class === 'coding' || isBrowserTask) && activeMode !== 'rp') {
+                if ((turnObject.intent.class === 'coding' || isBrowserTask) && turnPolicy.toolExposureProfile !== 'none' && activeMode !== 'rp') {
                     brainOptions.tool_choice = 'required';
-                } else if (turnObject.intent.class === 'conversation' || activeMode === 'rp') {
+                } else if (turnObject.intent.class === 'conversation' || turnPolicy.toolExposureProfile === 'none' || activeMode === 'rp') {
                     toolsToSend = [];
                 }
 
                 // --- HARD TOOL GATE ---
                 // Strip all tools whenever the turn is a greeting or no capabilities are
                 // explicitly allowed. Authorization is derived from intent and the
-                // allowedCapabilities array length — 'tools' is not a valid ToolCapability
+                // allowedCapabilities array length â€” 'tools' is not a valid ToolCapability
                 // value and must not be used in any capability check.
-                // This is the authoritative enforcement point — it fires AFTER all mode-gating
+                // This is the authoritative enforcement point â€” it fires AFTER all mode-gating
                 // so it cannot be bypassed by earlier incomplete checks.
                 const requestedTools = toolsToSend;
                 const allowedCaps = allowedCapabilities ?? [];
@@ -3059,7 +3102,7 @@ Exported standalone package from Tala.
                 // --- HARDENED ToolRequired Gate ---
                 // Fire the recovery-retry whenever the model skipped structured tool calls
                 // despite tools being available.  The original keyword-only heuristic was
-                // too narrow – it missed browser/web tasks and any non-file-system tool use.
+                // too narrow â€“ it missed browser/web tasks and any non-file-system tool use.
                 // New logic: also trigger when tools *were sent* to the model (toolsToSend
                 // is non-empty) but no structured calls came back.  For non-coding turns
                 // the retry is "best-effort": if it also produces no calls we fall through
@@ -3080,7 +3123,7 @@ Exported standalone package from Tala.
                 const requiresTool = toolsToSend.length > 0 && (hasKeywordIndicatingToolUse || calls.length === 0);
 
                 // Guard: never fire the ToolRequired retry for greeting turns or turns where
-                // no tools were authorized — they should produce plain-content responses.
+                // no tools were authorized â€” they should produce plain-content responses.
                 // Also never force tools when ToolGatekeeper blocked them or when grounded
                 // memory context makes a direct answer sufficient (directAnswerPreferred).
                 const toolsBlocked = gateDecision.blockedTools.length > 0;
@@ -3116,7 +3159,7 @@ Failure to provide a tool call will result in system termination.`;
                     // Using filteredTools (the full unfiltered set) would send all 57+ tools on
                     // the retry, which overloads constrained local models (e.g. 8B Ollama) and
                     // reliably causes a second 90s timeout.  toolsToSend already has the correct
-                    // mode-gated subset (e.g. 5–6 tools for hybrid mode).
+                    // mode-gated subset (e.g. 5â€“6 tools for hybrid mode).
                     const retryTools = isBrowserTask
                         ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
                         : toolsToSend;
@@ -3185,7 +3228,7 @@ Failure to provide a tool call will result in system termination.`;
                         }
                         // Non-coding: fall through to plain-content path (calls.length === 0 below).
                     } else {
-                        // Retry produced tool calls — update assistantMsg to use the retry
+                        // Retry produced tool calls â€” update assistantMsg to use the retry
                         // response's content so the committed message is internally consistent
                         // (content and tool_calls come from the same inference call).
                         assistantMsg.content = AgentService.enforceCanonRequiredAutobioFallbackReply(
@@ -3228,7 +3271,7 @@ Failure to provide a tool call will result in system termination.`;
                             console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
                             // Prepend an incomplete notice to the model's response so the caller
                             // can surface the reason to the user.
-                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
+                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed â€” no browser action succeeded within the allotted continuation steps.';
                             finalResponse = `${incompleteNote}\n\n${AgentService.enforceCanonRequiredAutobioFallbackReply(
                                 response.content || '',
                                 enforceCanonRequiredAutobioOverride,
@@ -3436,14 +3479,14 @@ Failure to provide a tool call will result in system termination.`;
                         'inference_timeout',
                         'warn',
                         `turn:${turnId}`,
-                        `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
+                        `StreamOpenTimeoutError on tool-bearing request â€” retrying without tools`,
                         'failure',
                         { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
                     );
                     try {
                         // Only attempt fallback if the user hasn't already aborted the request.
                         if (signal.aborted) {
-                            console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
+                            console.log(`[AgentService] StreamOpenTimeout fallback skipped â€” signal aborted turn=${turnId}`);
                         } else {
                             const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
                             const fallbackResponse = await this.streamWithBrain(
@@ -3516,13 +3559,13 @@ Failure to provide a tool call will result in system termination.`;
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
         if (finalResponse && settings.agent?.capabilities?.memory !== false) {
             const storeMemories = async () => {
-                // ── Memory Integrity Policy gate ──────────────────────────────
+                // â”€â”€ Memory Integrity Policy gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 // Evaluate health before any write. If hard-disabled (critical/
                 // disabled state), skip all memory operations and emit an alert.
                 const memHealth = this.memory.getHealthStatus();
                 if (memHealth.hardDisabled) {
                     console.warn(
-                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED — state=${memHealth.state}. ` +
+                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED â€” state=${memHealth.state}. ` +
                         `Reason: ${memHealth.summary}`,
                     );
                     TelemetryBus.getInstance().emit({
@@ -3607,11 +3650,11 @@ Failure to provide a tool call will result in system termination.`;
                         console.warn('[AgentService] P7A canonical write failed:', writeResult.error);
                     }
                 } else {
-                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
+                    console.warn('[AgentService] P7A: canonical memory repository not available â€” derived writes will proceed without canonical ID');
                 }
 
                 try {
-                    // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
+                    // 1. Mem0 (derived): store interaction â€” reference canonical_memory_id when available
                     if (!allowMem0Write) {
                         console.log(`[AgentService][MemoryIntegrity] Mem0 write suppressed (mem0Runtime unavailable). state=${memHealth.state}`);
                         // Enqueue extraction work so it can be replayed when extraction recovers
@@ -3669,7 +3712,7 @@ Failure to provide a tool call will result in system termination.`;
 
                 try {
                     // 3. Memory Graph (derived): run extraction pipeline on the full exchange.
-                    // process_memory handles Extract → Validate → Store internally.
+                    // process_memory handles Extract â†’ Validate â†’ Store internally.
                     if (!allowGraphWrite) {
                         console.log(`[AgentService][MemoryIntegrity] Graph write suppressed (extraction/graphProjection unavailable). state=${memHealth.state}`);
                         // Enqueue graph_projection work so it can be replayed when graph recovers
@@ -3873,7 +3916,7 @@ Failure to provide a tool call will result in system termination.`;
                 const buildErrors = (report.match(/--- BUILD CHECK ---[\s\S]*?Summary:\s*(\d+)\s*TypeScript\s*errors/i) || [0, 0])[1];
                 
                 const totalIssues = Number(lintErrors) + Number(lintWarnings) + Number(buildErrors);
-                const status = totalIssues > 0 ? "⚠️ Issues Found" : "✅ Clean";
+                const status = totalIssues > 0 ? "âš ï¸ Issues Found" : "âœ… Clean";
                 
                 // Extract top issues (first 5 unique lines containing 'error' or 'warning')
                 const issues = report.split('\n')
@@ -3909,7 +3952,7 @@ Failure to provide a tool call will result in system termination.`;
                     if (searchRes.matches && searchRes.matches.length > 0) {
                         report += `**Top Matches:**\n`;
                         searchRes.matches.forEach((m: any) => {
-                            const confidenceEmoji = m.confidence === 'high' ? '🟢' : '🟡';
+                            const confidenceEmoji = m.confidence === 'high' ? 'ðŸŸ¢' : 'ðŸŸ¡';
                             report += `- ${confidenceEmoji} \`${m.filePath}\` (Score: ${m.score}, Type: ${m.matchType})\n`;
                             if (m.preview) {
                                 report += `  > ${m.preview.trim()}\n`;
@@ -4184,8 +4227,8 @@ Failure to provide a tool call will result in system termination.`;
 
         if (log.toolCalls.length > 0) {
             log.toolCalls.forEach((tc, i) => {
-                const status = tc.ok ? "✅ Succeeded" : "❌ Failed";
-                summary += `${i + 1}. **${tc.name}** — ${status}\n`;
+                const status = tc.ok ? "âœ… Succeeded" : "âŒ Failed";
+                summary += `${i + 1}. **${tc.name}** â€” ${status}\n`;
                 if (tc.argsPreview) {
                     summary += `   - **Arguments**: \`${tc.argsPreview}\`\n`;
                 }
@@ -4207,7 +4250,7 @@ Failure to provide a tool call will result in system termination.`;
         // Resolve the current provider selection so executeStream() has the correct metadata.
         const selection = this.inference.selectProvider({ fallbackAllowed: true, turnId: this.activeTurnId ?? 'unknown' });
         if (selection.success && selection.selectedProvider) {
-            console.log(`[AgentService] streamWithBrain — provider chosen: ${selection.selectedProvider.providerId} (${selection.selectedProvider.providerType}) turnId: ${this.activeTurnId ?? 'unknown'}`);
+            console.log(`[AgentService] streamWithBrain â€” provider chosen: ${selection.selectedProvider.providerId} (${selection.selectedProvider.providerType}) turnId: ${this.activeTurnId ?? 'unknown'}`);
             const req: import('../../shared/inferenceProviderTypes').StreamInferenceRequest = {
                 provider: selection.selectedProvider,
                 turnId: this.activeTurnId ?? 'unknown',
@@ -4218,7 +4261,7 @@ Failure to provide a tool call will result in system termination.`;
             return this.inference.executeStream(brain, messages, systemPrompt, onChunk, req, tools, options);
         }
         // Fallback: if no provider is selected, call brain directly (preserves pre-existing behavior)
-        console.log(`[AgentService] streamWithBrain — no provider selected, calling brain directly turnId: ${this.activeTurnId ?? 'unknown'}`);
+        console.log(`[AgentService] streamWithBrain â€” no provider selected, calling brain directly turnId: ${this.activeTurnId ?? 'unknown'}`);
         return brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
     }
 
@@ -4260,12 +4303,12 @@ Failure to provide a tool call will result in system termination.`;
      * result for the LLM.
      *
      * Control flow:
-     *   tool result ("BROWSER_NAVIGATE: …")
-     *   → dispatchBrowserCommand()
-     *   → onEvent("browser-navigate", { url, surfaceId })   ← sent to renderer
-     *   → Browser.tsx relays to webview / captures screenshot
-     *   → provideBrowserData() resolves the pending promise
-     *   → actual result returned to LLM
+     *   tool result ("BROWSER_NAVIGATE: â€¦")
+     *   â†’ dispatchBrowserCommand()
+     *   â†’ onEvent("browser-navigate", { url, surfaceId })   â† sent to renderer
+     *   â†’ Browser.tsx relays to webview / captures screenshot
+     *   â†’ provideBrowserData() resolves the pending promise
+     *   â†’ actual result returned to LLM
      *
      * @param rawResult  The raw `BROWSER_*` string from ToolService.
      * @param onEvent    The agent-event callback provided by IpcRouter.
@@ -4287,10 +4330,10 @@ Failure to provide a tool call will result in system termination.`;
      */
     private static normalizeBrowserSelector(raw: string): string {
         // Formats handled:
-        //   "12[:V] <input:text> Search"  → "12"
-        //   "[12] INPUT SEARCH"           → "12"
-        //   "12"                          → "12"  (already canonical)
-        //   "input[name='q']"             → pass through (CSS selector)
+        //   "12[:V] <input:text> Search"  â†’ "12"
+        //   "[12] INPUT SEARCH"           â†’ "12"
+        //   "12"                          â†’ "12"  (already canonical)
+        //   "input[name='q']"             â†’ pass through (CSS selector)
         const m = raw.match(/^\[?(\d+)\]?(?:\[|[:, <]|$)/);
         if (m) return m[1];
         return raw;
@@ -4497,7 +4540,7 @@ Failure to provide a tool call will result in system termination.`;
     /**
      * Trigger an immediate memory maintenance analytics run (manual refresh).
      *
-     * Equivalent to a human-requested scheduler tick — does not change any
+     * Equivalent to a human-requested scheduler tick â€” does not change any
      * settings or configurations.  Safe to call from the operator review panel.
      *
      * Returns the run result, or null if the scheduler is not available.
@@ -4712,7 +4755,7 @@ Failure to provide a tool call will result in system termination.`;
 
     private getActiveMode(settings?: any): string {
         const s = settings || loadSettings(this.settingsPath);
-        const mode = s.agentModes?.activeMode || 'assistant';
+        const mode = s.agentModes?.activeMode || 'hybrid';
         return mode;
     }
 
@@ -4720,7 +4763,7 @@ Failure to provide a tool call will result in system termination.`;
         // Use module-level getActiveMode for a guaranteed cache-only read.
         const mode = getActiveMode(this.settingsPath, 'AgentService.addMemory');
 
-        // P7A: canonical write first — get a canonical_memory_id from Postgres before
+        // P7A: canonical write first â€” get a canonical_memory_id from Postgres before
         // writing to the derived mem0 store. If Postgres is unavailable, the write
         // proceeds but is flagged by the MemoryService P7A guard.
         let canonicalMemoryId: string | null = null;
@@ -4743,7 +4786,7 @@ Failure to provide a tool call will result in system termination.`;
                 console.warn('[AgentService:addMemory] P7A canonical write failed:', result.error);
             }
         } else {
-            console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
+            console.warn('[AgentService:addMemory] P7A: canonical repository not available â€” derived write will lack canonical_memory_id');
         }
 
         return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
@@ -4777,7 +4820,7 @@ Failure to provide a tool call will result in system termination.`;
             engine: instance?.engine || 'unknown',
             source: instance?.source || 'unknown',
             isLowFidelity,
-            warning: isLowFidelity ? "⚠️ Low Fidelity Model" : ""
+            warning: isLowFidelity ? "âš ï¸ Low Fidelity Model" : ""
         };
     }
 }

@@ -186,6 +186,7 @@ export class PreInferenceContextOrchestrator {
                 this.docIntel ?? undefined,
                 options.notebookActive,
             );
+            const turnPolicy = turnContext.turnPolicy;
 
             const isGreeting = turnContext.intent.isGreeting;
             const intentClass = turnContext.intent.class;
@@ -257,8 +258,8 @@ export class PreInferenceContextOrchestrator {
                 );
             } else {
                 sourcesSuppressed.push('doc_intel');
-                docRationale = mode === 'rp'
-                    ? 'Documentation retrieval suppressed: RP mode'
+                docRationale = turnPolicy.docRetrievalPolicy === 'suppressed'
+                    ? 'Documentation retrieval suppressed by turn policy'
                     : 'No documentation-relevant query detected';
                 telemetry.operational(
                     'cognitive',
@@ -277,7 +278,7 @@ export class PreInferenceContextOrchestrator {
             // Emotional state is suppressed in RP mode (separate full emotional control)
             // and when astro service is unavailable.
             const shouldQueryAstro =
-                mode !== 'rp' &&
+                turnPolicy.astroLevel !== 'off' &&
                 this.astroService !== null &&
                 this.astroService.getReadyStatus();
 
@@ -319,8 +320,8 @@ export class PreInferenceContextOrchestrator {
                 }
             } else {
                 sourcesSuppressed.push('astro');
-                const suppressReason = mode === 'rp'
-                    ? 'RP mode suppresses external emotional state'
+                const suppressReason = turnPolicy.astroLevel === 'off'
+                    ? 'Turn policy suppresses astro state'
                     : this.astroService === null
                     ? 'AstroService not wired'
                     : 'AstroService not ready';
@@ -363,7 +364,7 @@ export class PreInferenceContextOrchestrator {
 
             // ── 5. MCP pre-inference (intent/mode-gated) ──────────────────────
             let mcpContextSummary: string | undefined;
-            const mcpEligible = this._isMcpPreInferenceEligible(mode, intentClass);
+            const mcpEligible = this._isMcpPreInferenceEligible(turnContext);
 
             if (mcpEligible && this.mcpService?.callTool) {
                 sourcesQueried.push('mcp_preinference');
@@ -452,7 +453,7 @@ export class PreInferenceContextOrchestrator {
             let worldStateSummary: string | undefined;
             const worldModel = this.worldModelAssembler?.getCachedModel();
 
-            if (worldModel && this._isWorldStateRelevant(mode, intentClass)) {
+            if (worldModel && this._isWorldStateRelevant(turnContext)) {
                 worldStateSummary = this._buildWorldStateSummary(worldModel, intentClass);
                 sourcesQueried.push('world_model');
                 telemetry.operational(
@@ -481,7 +482,7 @@ export class PreInferenceContextOrchestrator {
             // Selectively inject maintenance context on troubleshooting/technical turns.
             // Suppressed on general chat, greeting, and RP mode to avoid noise.
             let maintenanceSummary: string | undefined;
-            if (this.maintenanceLoop && this._isMaintenanceRelevant(mode, intentClass)) {
+            if (this.maintenanceLoop && this._isMaintenanceRelevant(turnContext)) {
                 if (this.maintenanceLoop.hasActionableIssues()) {
                     const cognitiveSummary = this.maintenanceLoop.getCognitiveSummary();
                     maintenanceSummary = this._buildMaintenanceSummary(cognitiveSummary);
@@ -541,7 +542,10 @@ export class PreInferenceContextOrchestrator {
      *   - Greeting/conversation intents: MCP is suppressed (no cognitive overhead)
      *   - Assistant/hybrid with technical/coding/task intent: MCP may be queried
      */
-    private _isMcpPreInferenceEligible(mode: Mode, intentClass: string): boolean {
+    private _isMcpPreInferenceEligible(turnContext: TurnContext): boolean {
+        if (turnContext.turnPolicy.mcpPreInferencePolicy !== 'enabled') return false;
+        const mode = turnContext.resolvedMode as Mode;
+        const intentClass = turnContext.intent.class;
         if (mode === 'rp') return false;
         if (intentClass === 'greeting' || intentClass === 'conversation') return false;
         return intentClass === 'coding' || intentClass === 'technical' || intentClass === 'task';
@@ -578,7 +582,10 @@ export class PreInferenceContextOrchestrator {
      *   - Assistant/hybrid with technical, coding, task, or workspace intent:
      *     world state is relevant and should be contributed.
      */
-    private _isWorldStateRelevant(mode: Mode, intentClass: string): boolean {
+    private _isWorldStateRelevant(turnContext: TurnContext): boolean {
+        if (turnContext.turnPolicy.worldStatePolicy !== 'enabled') return false;
+        const mode = turnContext.resolvedMode as Mode;
+        const intentClass = turnContext.intent.class;
         if (mode === 'rp') return false;
         if (intentClass === 'greeting' || intentClass === 'conversation') return false;
         return (
@@ -643,7 +650,10 @@ export class PreInferenceContextOrchestrator {
      * Returns true if maintenance summary should be contributed for this turn.
      * Suppressed on RP mode, greetings, and general conversation.
      */
-    private _isMaintenanceRelevant(mode: Mode, intentClass: string): boolean {
+    private _isMaintenanceRelevant(turnContext: TurnContext): boolean {
+        if (turnContext.turnPolicy.maintenancePolicy !== 'enabled') return false;
+        const mode = turnContext.resolvedMode as Mode;
+        const intentClass = turnContext.intent.class;
         if (mode === 'rp') return false;
         if (intentClass === 'greeting' || intentClass === 'conversation') return false;
         return (
