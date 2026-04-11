@@ -5,6 +5,7 @@ import fs from 'fs';
 import archiver from 'archiver';
 import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { resolveAppPath, resolveDataPath } from './PathResolver';
 
 // Local definition to avoid importing React-dependent settingsData.ts in Main process
 interface BackupConfig {
@@ -48,7 +49,7 @@ export class BackupService {
      * Reads the backup configuration from `app_settings.json`.
      */
     private getConfig(): BackupConfig | null {
-        const settingsPath = path.join(app.getPath('userData'), 'app_settings.json');
+        const settingsPath = resolveDataPath('app_settings.json');
         if (fs.existsSync(settingsPath)) {
             try {
                 const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -196,7 +197,7 @@ export class BackupService {
         // Determine Local Output Path
         // We always create a local zip first, then optionally upload it.
         let backupDir = config.localPath;
-        if (!backupDir) backupDir = './backups'; // Default fallback
+        if (!backupDir) backupDir = resolveAppPath(path.join('exports', 'backups')); // Default fallback
 
         if (!path.isAbsolute(backupDir)) {
             // If relative, make it relative to UserData or Documents?

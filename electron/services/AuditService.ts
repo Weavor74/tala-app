@@ -20,6 +20,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { resolveLogsPath } from './PathResolver';
 
 // ─────────────────────────────────────────────────────────────────────
 // TYPES & INTERFACES
@@ -70,7 +71,7 @@ export type AuditEventType =
 // CONFIGURATION
 // ─────────────────────────────────────────────────────────────────────
 
-const AUDIT_LOG_DIR = './DOCS_TODAY';
+const AUDIT_LOG_DIR = resolveLogsPath();
 const AUDIT_LOG_PATH = path.join(AUDIT_LOG_DIR, 'audit-log.jsonl');
 const SECRET_KEY = process.env.TALA_AUDIT_SECRET || 'default-dev-key';
 

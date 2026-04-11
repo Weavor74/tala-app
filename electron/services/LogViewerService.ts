@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
+import { resolveLogsPath } from './PathResolver';
 import type {
     LogViewerEntry,
     LogSourceInfo,
@@ -55,8 +55,8 @@ export class LogViewerService {
     private mcpStatus: 'online' | 'degraded' | 'offline' | 'unknown' = 'unknown';
 
     constructor() {
-        // Centralized log path resolution - using userData/logs
-        this.logsDir = path.join(app.getPath('userData'), 'logs');
+        // Centralized log path resolution - app-root/data/logs by default.
+        this.logsDir = resolveLogsPath();
         if (!fs.existsSync(this.logsDir)) {
             try {
                 fs.mkdirSync(this.logsDir, { recursive: true });

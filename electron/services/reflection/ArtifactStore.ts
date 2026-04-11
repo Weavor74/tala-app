@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ReflectionEvent, ChangeProposal, OutcomeRecord } from './types';
+import { DATA_ROOT, isPathWithinAppRoot } from '../PathResolver';
 
 /**
  * Handles persistent storage of reflection artifacts in the local filesystem.
@@ -9,8 +10,14 @@ import { ReflectionEvent, ChangeProposal, OutcomeRecord } from './types';
 export class ArtifactStore {
     private baseDir: string;
 
-    constructor(userDataDir: string) {
-        this.baseDir = path.join(userDataDir, 'memory');
+    constructor(rootPath: string) {
+        const dataRoot = path.basename(rootPath) === 'data'
+            ? rootPath
+            : path.join(rootPath, 'data');
+        this.baseDir = path.join(dataRoot, 'reflection', 'artifacts');
+        if (!isPathWithinAppRoot(this.baseDir) && !path.resolve(this.baseDir).toLowerCase().startsWith(path.resolve(DATA_ROOT).toLowerCase())) {
+            console.warn(`[PathGuard] write escaped app root path=${this.baseDir}`);
+        }
         this.ensureDirectories();
     }
 

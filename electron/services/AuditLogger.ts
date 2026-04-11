@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { app } from 'electron';
 import { redact } from './log_redact';
 import { v4 as uuidv4 } from 'uuid';
+import { resolveLogsPath } from './PathResolver';
 
 /**
  * AuditLogger
@@ -42,7 +42,7 @@ class AuditLogger {
         // userData is only available in Electron after app is ready or via app.getPath
         // During startup we must be safe.
         try {
-            this.logDir = path.join(app.getPath('userData'), 'logs');
+            this.logDir = resolveLogsPath();
             this.logPath = path.join(this.logDir, 'audit-log.jsonl');
             console.log(`[AuditLogger] Initialized at: ${this.logPath}`);
             this.ensureDirectory();
@@ -147,7 +147,7 @@ class AuditLogger {
             try {
                 if (!this.logPath) {
                     // Try to initialize if it failed earlier
-                    this.logDir = path.join(app.getPath('userData'), 'logs');
+                    this.logDir = resolveLogsPath();
                     this.logPath = path.join(this.logDir, 'audit-log.jsonl');
                     this.ensureDirectory();
                 }

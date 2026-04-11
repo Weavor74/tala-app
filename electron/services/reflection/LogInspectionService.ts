@@ -4,8 +4,11 @@ import * as path from 'path';
 export class LogInspectionService {
     private logsRoot: string;
 
-    constructor(userDataPath: string) {
-        this.logsRoot = path.join(userDataPath, 'logs');
+    constructor(rootPath: string) {
+        const dataRoot = path.basename(rootPath) === 'data'
+            ? rootPath
+            : path.join(rootPath, 'data');
+        this.logsRoot = path.join(dataRoot, 'logs');
     }
 
     public listAvailableLogs(): string[] {

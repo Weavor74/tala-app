@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { FunctionService } from './FunctionService';
 import { AgentService } from './AgentService';
 import { policyGate, PolicyDeniedError } from './policy/PolicyGate';
+import { resolveDataPath } from './PathResolver';
 const { ImapFlow } = require('imapflow');
 
 /**
@@ -483,7 +484,7 @@ export class WorkflowEngine {
      */
     private getCredential(keyName: string): any {
         try {
-            const settingsPath = path.join(app.getPath('userData'), 'app_settings.json');
+            const settingsPath = resolveDataPath('app_settings.json');
             if (!fs.existsSync(settingsPath)) return null;
 
             const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -851,7 +852,7 @@ Do not output markdown.
                 }
 
                 // Resolve workflow path
-                const workflowsDir = path.join(app.getPath('userData'), 'workflows');
+                const workflowsDir = resolveDataPath('workflows');
                 const fullWorkflowPath = path.join(workflowsDir, workflowPath);
 
                 if (!fs.existsSync(fullWorkflowPath)) {
@@ -1003,7 +1004,7 @@ Do not output markdown.
 
                 const profileIds: string[] = node.data.profiles || [];
                 const parallel: boolean = node.data.parallel !== false; // default true
-                const settingsPath = path.join(app.getPath('userData'), 'app_settings.json');
+                const settingsPath = resolveDataPath('app_settings.json');
                 let allProfiles: any[] = [];
 
                 try {

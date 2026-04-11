@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
+import { resolveLogsPath } from './PathResolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -161,8 +161,7 @@ export class PromptAuditService {
             return;
         }
         try {
-            const userData = app.getPath('userData');
-            const logDir = path.join(userData, 'logs');
+            const logDir = resolveLogsPath();
             if (!fs.existsSync(logDir)) {
                 fs.mkdirSync(logDir, { recursive: true });
             }

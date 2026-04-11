@@ -1,8 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { app } from 'electron';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { RuntimeFlags } from './RuntimeFlags';
 import { policyGate } from './policy/PolicyGate';
@@ -11,6 +9,7 @@ import { MemoryIntegrityPolicy } from './memory/MemoryIntegrityPolicy';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
 import type { MemoryHealthStatus, MemoryHealthTransition, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import { TelemetryBus } from './telemetry/TelemetryBus';
+import { resolveDataPath } from './PathResolver';
 
 /**
  * Association
@@ -380,7 +379,7 @@ export class MemoryService {
      * to establish the remote connection.
      */
     constructor() {
-        this.localPath = path.join(app.getPath('userData'), 'tala_memory.json');
+        this.localPath = resolveDataPath(path.join('memory', 'tala_memory.json'));
         this.loadLocal();
     }
 
@@ -520,7 +519,11 @@ export class MemoryService {
             console.log(`[MemoryService] Launching mem0-core with Tala-injected memory runtime config`);
 
             try {
-                const configPath = path.join(os.tmpdir(), `tala_memory_runtime_${Date.now()}.json`);
+                const configPath = resolveDataPath(path.join('temp', `tala_memory_runtime_${Date.now()}.json`));
+                const configDir = path.dirname(configPath);
+                if (!fs.existsSync(configDir)) {
+                    fs.mkdirSync(configDir, { recursive: true });
+                }
                 fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2), 'utf-8');
                 runtimeEnv['TALA_MEMORY_RUNTIME_CONFIG_PATH'] = configPath;
             } catch (writeErr) {

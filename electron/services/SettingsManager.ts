@@ -1,6 +1,5 @@
-﻿import path from 'path';
+import path from 'path';
 import fs from 'fs';
-import { app } from 'electron';
 import { LEGACY_PROVIDER_ID_MAP, CANONICAL_PROVIDER_TYPE_MAP } from './retrieval/providerConstants';
 
 /**
@@ -415,4 +414,5 @@ export function refreshSettingsFromDisk(settingsPath: string, caller: string = '
     console.log(`[SettingsManager] refreshSettingsFromDisk caller=${caller}`);
     return loadSettings(settingsPath, caller);
 }
+
 

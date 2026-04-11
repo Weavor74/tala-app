@@ -34,7 +34,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { app } from 'electron';
+import { resolveDataPath } from './PathResolver';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -319,7 +319,10 @@ export class GuardrailService {
     private _inferFn: ((prompt: string) => Promise<string>) | null = null;
 
     constructor(userDataPath?: string) {
-        const base = userDataPath || app.getPath('userData');
+        const base = resolveDataPath('', userDataPath, {
+            label: 'guardrails',
+            externalByConfiguration: Boolean(userDataPath && path.isAbsolute(userDataPath))
+        });
         this.guardrailsPath = path.join(base, 'guardrails.json');
     }
 

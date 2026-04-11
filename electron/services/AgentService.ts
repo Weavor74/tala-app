@@ -71,6 +71,7 @@ import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
+import { resolveDataPath } from './PathResolver';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -395,8 +396,8 @@ Violation of this rule is considered a system failure.`;
         this.coordinator = new ToolExecutionCoordinator(this.tools);
         this.backup = new BackupService();
         this.inference = inference || new InferenceService();
-        this.ingestion = new IngestionService(this.rag, app.getPath('userData')); // Fallback root
-        this.goals = new GoalManager(app.getPath('userData'));
+        this.ingestion = new IngestionService(this.rag, resolveDataPath('')); // Fallback root
+        this.goals = new GoalManager(resolveDataPath(''));
         this.userProfile = userProfile || null;
         this.systemInfo = null;
 
@@ -456,9 +457,9 @@ Violation of this rule is considered a system failure.`;
         if (terminal) this.terminal = terminal;
         if (functions) this.functions = functions;
 
-        this.settingsPath = path.join(app.getPath('userData'), 'app_settings.json');
-        this.chatHistoryPath = path.join(app.getPath('userData'), 'chat_history.json');
-        this.sessionsDir = path.join(app.getPath('userData'), 'chat_sessions');
+        this.settingsPath = resolveDataPath('app_settings.json');
+        this.chatHistoryPath = resolveDataPath('chat_history.json');
+        this.sessionsDir = resolveDataPath('chat_sessions');
 
         if (!fs.existsSync(this.sessionsDir)) fs.mkdirSync(this.sessionsDir, { recursive: true });
 
@@ -568,7 +569,7 @@ Violation of this rule is considered a system failure.`;
             },
             execute: async (args) => {
                 try {
-                    const gs = new GuardrailService(app.getPath('userData'));
+                    const gs = new GuardrailService(resolveDataPath(''));
                     const definition = {
                         name: args.name,
                         description: args.description,
@@ -2534,7 +2535,7 @@ Exported standalone package from Tala.
         }
 
         // Mode Audit Logging
-        const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit.log');
+        const auditLogPath = resolveDataPath(path.join('logs', 'mode_audit.log'));
         if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
 
         // --- TURN CONTEXT OBSERVABILITY ---
@@ -2707,7 +2708,7 @@ Exported standalone package from Tala.
 
         // --- PROMPT AUDIT LOGGING ---
         // (Turn start audit already logged above during retrieval step)
-        const auditDir = path.join(app.getPath('userData'), 'data', 'logs', 'prompts');
+        const auditDir = resolveDataPath(path.join('logs', 'prompts'));
         if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
         const auditFile = path.join(auditDir, `${this.activeSessionId}_${Date.now()}.log`);
         fs.writeFileSync(auditFile, `SYSTEM PROMPT:\n${systemPrompt}\n\nUSER:${userMessage}`);
@@ -4027,7 +4028,7 @@ Failure to provide a tool call will result in system termination.`;
         ];
 
         // Audit Logging (Technical bypass)
-        const auditLogPath = path.join(app.getPath('userData'), 'data', 'logs', 'mode_audit_bypass.log');
+        const auditLogPath = resolveDataPath(path.join('logs', 'mode_audit_bypass.log'));
         if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
         fs.appendFileSync(auditLogPath, JSON.stringify({ timestamp: new Date().toISOString(), intent, toolName, turnId }) + "\n");
 
@@ -4270,7 +4271,7 @@ Failure to provide a tool call will result in system termination.`;
 
     private recordTokenUsage(tokens: number) {
         try {
-            const ledgerPath = path.join(app.getPath('userData'), 'memory', 'token_ledger.json');
+            const ledgerPath = resolveDataPath(path.join('memory', 'token_ledger.json'));
             let ledger: any = fs.existsSync(ledgerPath) ? JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')) : {};
             const today = new Date().toISOString().slice(0, 10);
             ledger[today] = (ledger[today] || 0) + tokens;
@@ -4672,7 +4673,7 @@ Failure to provide a tool call will result in system termination.`;
 
     public getReflectionSummary(): string {
         try {
-            const memoryDir = path.join(app.getPath('userData'), 'memory');
+            const memoryDir = resolveDataPath('memory');
             const reflectionsDir = path.join(memoryDir, 'reflections');
             const proposalsDir = path.join(memoryDir, 'proposals');
 

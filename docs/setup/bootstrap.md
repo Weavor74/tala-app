@@ -89,6 +89,33 @@ All setup scripts derive the repo root from their own filesystem location, **not
 the caller's working directory.  This means every script works correctly regardless of
 where it is launched from.
 
+### Runtime Storage Contract (Electron Main Process)
+
+Tala now treats app-root-relative storage as the default rule for Tala-owned files.
+`electron/services/PathResolver.ts` is the authoritative resolver and defaults all
+application-owned writes under:
+
+- `<app-root>/data/logs`
+- `<app-root>/data/cache`
+- `<app-root>/data/temp`
+- `<app-root>/data/memory`
+- `<app-root>/data/reflection`
+- `<app-root>/data/diagnostics`
+
+Additional app-root-owned roots are created by bootstrap for portability:
+
+- `<app-root>/runtime`
+- `<app-root>/models`
+- `<app-root>/exports`
+
+If a Tala-owned path resolves outside app root unexpectedly, the main process logs:
+
+- `[PathGuard] write escaped app root path=...`
+
+Explicit operator-configured external paths are still allowed, but are logged as:
+
+- `[PathGuard] external-by-configuration ...`
+
 ### Bash scripts (root-level)
 
 ```bash
