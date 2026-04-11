@@ -2826,6 +2826,12 @@ Exported standalone package from Tala.
                     }
                 }
 
+                if (gateDecision.hardBlockAllTools) {
+                    toolsToSend = [];
+                    delete brainOptions.tool_choice;
+                    console.log('[ToolGatekeeper] hardBlockAllTools=true - forcing no-tools request for this turn');
+                }
+
                 console.log(`[AgentService] turn=${turn} mode=${activeMode} intent=${turnObject.intent.class} tools_sent=${toolsToSend.length} reason=${(turnObject.intent.class === 'conversation' || activeMode === 'rp') ? 'omitted_by_intent_or_mode' : 'active'}`);
 
                 // --- ROUTING INVARIANTS (Hard Guarantees) ---
@@ -2961,6 +2967,13 @@ Exported standalone package from Tala.
                 }
 
                 let calls: CanonicalToolCall[] = (activeMode === 'rp') ? [] : (responseToolCalls || []);
+
+                if (gateDecision.hardBlockAllTools) {
+                    if (calls.length > 0) {
+                        console.log(`[ToolGatekeeper] hardBlockAllTools dropped ${calls.length} tool call(s) from model output`);
+                    }
+                    calls = [];
+                }
 
                 // --- HARDENED ToolRequired Gate ---
                 // Fire the recovery-retry whenever the model skipped structured tool calls

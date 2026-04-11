@@ -1,4 +1,4 @@
-# Runtime Flow
+﻿# Runtime Flow
 
 This document outlines the dynamic behavior of the Tala system across various operational phases.
 
@@ -24,40 +24,40 @@ that provides the named seams where future runtime authority boundaries will att
 
 ```
 user input
-  → IPC dispatch (chat-message via IpcRouter)
-      IpcRouter reads active mode from settings → passes origin='ipc', executionMode=(activeMode) in KernelRequest
-  → AgentKernel.execute()                  [top-level execution shell — Phase 2d]
-      → normalizeRequest()                 [normalize/validate KernelRequest; preserve origin/executionMode]
-      → intake()                           [stamp executionId, startedAt, executionClass;
+  â†’ IPC dispatch (chat-message via IpcRouter)
+      IpcRouter reads active mode from settings â†’ passes origin='ipc', executionMode=(activeMode) in KernelRequest
+  â†’ AgentKernel.execute()                  [top-level execution shell â€” Phase 2d]
+      â†’ normalizeRequest()                 [normalize/validate KernelRequest; preserve origin/executionMode]
+      â†’ intake()                           [stamp executionId, startedAt, executionClass;
                                             reads origin/executionMode from request with 'ipc'/'assistant' fallbacks;
-                                            emits execution.created → registers ExecutionState → emits execution.accepted via TelemetryBus]
-      → classifyExecution()                [PolicyGate top-level admission check → advance state to 'planning'; future: context assembly trigger]
-      → runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
-          → AgentService.chat()
-          → TalaContextRouter.process()       [mode/context assembly]
-            → IntentClassifier.classify()     [intent detection; lore follow-up carryover if prior turn was lore]
-            → MemoryService.search()          [memory retrieval, gated by mode]
-            → RagService.searchStructured()   [lore intent only — LTMF/canon lore candidates prepended first]
-            → MemoryFilter.filter()           [mode-scope isolation; RP mode allows source=rag for LTMF]
-            → MemoryFilter.resolveContradictions()  [lore-aware source ranking: diary/graph > rag > mem0 > chat]
-            → ContextAssembler.assemble()     [prompt block construction]
-            → resolveMemoryWritePolicy()      [mode-aware write decision]
-            → auditLogger.info(turn_routed)   [structured telemetry]
-          → TurnContext                       [canonical turn carrier]
-          → capability/tool gating            [allowedCapabilities, blockedCapabilities]
-          → LLM / tool execution              [OllamaBrain / CloudBrain / ToolService]
-          → ArtifactRouter.normalizeAgentOutput()  [output channel determination]
-            → auditLogger.info(artifact_routed)
-          → TurnContext.artifactDecision      [routing decision recorded]
-          → GuardrailService                  [output safety check]
-          → UI delivery (IPC stream)
-      → finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.finalizing → execution.completed via TelemetryBus; future: outcome learning, audit records]
-      [on policy deny] classifyExecution → blockExecution() in store + emit execution.blocked via TelemetryBus → throw PolicyDeniedError → re-throw (no execution.failed)
-      [on error] catch → failExecution() in store + emit execution.failed via TelemetryBus → re-throw
-  → chat-done event (carries executionId + executionOrigin from KernelResult.meta)
+                                            emits execution.created â†’ registers ExecutionState â†’ emits execution.accepted via TelemetryBus]
+      â†’ classifyExecution()                [PolicyGate top-level admission check â†’ advance state to 'planning'; future: context assembly trigger]
+      â†’ runDelegatedFlow()                 [delegate to AgentService.chat(); future: inference/tool/memory coordination]
+          â†’ AgentService.chat()
+          â†’ TalaContextRouter.process()       [mode/context assembly]
+            â†’ IntentClassifier.classify()     [intent detection; lore follow-up carryover if prior turn was lore]
+            â†’ MemoryService.search()          [memory retrieval, gated by mode]
+            â†’ RagService.searchStructured()   [lore intent only â€” LTMF/canon lore candidates prepended first]
+            â†’ MemoryFilter.filter()           [mode-scope isolation; RP mode allows source=rag for LTMF]
+            â†’ MemoryFilter.resolveContradictions()  [lore-aware source ranking: diary/graph > rag > mem0 > chat]
+            â†’ ContextAssembler.assemble()     [prompt block construction]
+            â†’ resolveMemoryWritePolicy()      [mode-aware write decision]
+            â†’ auditLogger.info(turn_routed)   [structured telemetry]
+          â†’ TurnContext                       [canonical turn carrier]
+          â†’ capability/tool gating            [allowedCapabilities, blockedCapabilities]
+          â†’ LLM / tool execution              [OllamaBrain / CloudBrain / ToolService]
+          â†’ ArtifactRouter.normalizeAgentOutput()  [output channel determination]
+            â†’ auditLogger.info(artifact_routed)
+          â†’ TurnContext.artifactDecision      [routing decision recorded]
+          â†’ GuardrailService                  [output safety check]
+          â†’ UI delivery (IPC stream)
+      â†’ finalizeExecution()                [record durationMs, build terminal ExecutionState, emit execution.finalizing â†’ execution.completed via TelemetryBus; future: outcome learning, audit records]
+      [on policy deny] classifyExecution â†’ blockExecution() in store + emit execution.blocked via TelemetryBus â†’ throw PolicyDeniedError â†’ re-throw (no execution.failed)
+      [on error] catch â†’ failExecution() in store + emit execution.failed via TelemetryBus â†’ re-throw
+  â†’ chat-done event (carries executionId + executionOrigin from KernelResult.meta)
 ```
 
-### AgentKernel — Execution Shell
+### AgentKernel â€” Execution Shell
 
 `AgentKernel` (`electron/services/kernel/AgentKernel.ts`) is the stable top-level execution shell.
 It does not replace any subsystem; it coordinates the entrypoint and owns the lifecycle frame around
@@ -81,7 +81,7 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| *(AgentTurnOutput fields)* | — | `message`, `artifact`, `suppressChatContent`, `outputChannel` |
+| *(AgentTurnOutput fields)* | â€” | `message`, `artifact`, `suppressChatContent`, `outputChannel` |
 | `meta` | `KernelExecutionMeta` | Execution correlation and classification metadata |
 | `executionState` | `ExecutionState` | Terminal execution state using shared runtime vocabulary |
 
@@ -91,11 +91,11 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 |-------|------|--------|
 | `executionId` | `string` | UUID v4, generated at intake |
 | `startedAt` | `number` | Unix ms at intake |
-| `executionType` | `RuntimeExecutionType` | `shared/runtime/executionTypes.ts` — currently `'chat_turn'` |
-| `executionClass` | `ExecutionClass` | kernel-local — `'standard'` \| `'direct_answer'` \| `'tool_heavy'` |
+| `executionType` | `RuntimeExecutionType` | `shared/runtime/executionTypes.ts` â€” currently `'chat_turn'` |
+| `executionClass` | `ExecutionClass` | kernel-local â€” `'standard'` \| `'direct_answer'` \| `'tool_heavy'` |
 | `durationMs` | `number` | Set at finalize |
-| `origin` | `RuntimeExecutionOrigin` | `shared/runtime/executionTypes.ts` — resolved from `KernelRequest.origin` at intake; `IpcRouter` passes `'ipc'` |
-| `mode` | `RuntimeExecutionMode` | `shared/runtime/executionTypes.ts` — resolved from `KernelRequest.executionMode` at intake; `IpcRouter` passes the active mode from settings |
+| `origin` | `RuntimeExecutionOrigin` | `shared/runtime/executionTypes.ts` â€” resolved from `KernelRequest.origin` at intake; `IpcRouter` passes `'ipc'` |
+| `mode` | `RuntimeExecutionMode` | `shared/runtime/executionTypes.ts` â€” resolved from `KernelRequest.executionMode` at intake; `IpcRouter` passes the active mode from settings |
 
 
 ### Shared Execution Contract Adoption (Phase 3)
@@ -105,7 +105,7 @@ built from the shared runtime contracts in `shared/runtime/executionTypes.ts`.
 | Seam | File | Adopted vocabulary |
 |------|------|--------------------|
 | Chat turn entry | `AgentKernel.ts` | `RuntimeExecutionType ('chat_turn')`, `RuntimeExecutionOrigin`, `RuntimeExecutionMode`, `ExecutionState` |
-| IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` → passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
+| IPC dispatch | `IpcRouter.ts` | reads `getActiveMode()` â†’ passes `executionMode` + `origin: 'ipc'` in `KernelRequest` |
 | Autonomous run | `AutonomousRun` (autonomyTypes.ts) | `executionId` (maps to `runId`), `runtimeExecutionType: 'autonomy_task'`, `runtimeExecutionOrigin: 'autonomy_engine'`; `_executeGoalPipeline` registers with `ExecutionStateStore` and emits `execution.created/accepted/finalizing/completed/failed` via `TelemetryBus` (subsystem=`'kernel'`, mode=`'system'`); `execution.finalizing` and `execution.completed` include `durationMs` |
 | Reflection planning run | `PlanRun` (reflectionPlanTypes.ts) | `runtimeExecutionType: 'reflection_task'` |
 
@@ -133,7 +133,7 @@ For autonomy tasks: `type='autonomy_task'`, `origin='autonomy_engine'`, `mode='s
 
 This unified schema enables a future dashboard to consume both streams without distinguishing the source.
 
-### PolicyGate — Runtime Enforcement Seam
+### PolicyGate â€” Runtime Enforcement Seam
 
 `PolicyGate` (`electron/services/policy/PolicyGate.ts`) is the central cross-cutting enforcement seam.
 It is stateless and deterministic: the same context always produces the same decision.
@@ -146,8 +146,8 @@ changing any call site.
 |------|--------|--------------|--------------|
 | Execution admission | `checkExecution(ctx)` / `evaluate()` | `ExecutionAdmissionContext` | `AgentKernel.classifyExecution()` |
 | Side-effect pre-check | `checkSideEffect(ctx)` / `assertSideEffect(ctx)` | `SideEffectContext` | `AgentService` before `tools.executeTool()` |
-| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowEngine.executeWorkflow()` — before each BFS node, with `executionMode` threaded from caller |
-| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowRegistry.executeWorkflow()` — before each step's `toolDef.execute()`; `executionMode` defaults to `'system'` (MCP/system origin); `mutationIntent=mcp_node_execute:<tool>` |
+| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowEngine.executeWorkflow()` â€” before each BFS node, with `executionMode` threaded from caller |
+| Side-effect pre-check | `assertSideEffect(ctx)` | `SideEffectContext` (`actionKind='workflow_action'`) | `WorkflowRegistry.executeWorkflow()` â€” before each step's `toolDef.execute()`; `executionMode` defaults to `'system'` (MCP/system origin); `mutationIntent=mcp_node_execute:<tool>` |
 
 #### `SideEffectContext` fields
 
@@ -165,7 +165,7 @@ changing any call site.
 #### Future enforcement seams (prepared, not yet enforced)
 
 The following call sites are identified for future rule attachment; wiring them requires only adding
-rules to `PolicyGate.evaluate()` — no call-site changes are needed:
+rules to `PolicyGate.evaluate()` â€” no call-site changes are needed:
 
 - `AgentService` post-turn memory write (after tool loop, before `mem0`/Postgres write)
 
@@ -208,8 +208,8 @@ Mode is enforced centrally by `TalaContextRouter.process()`, not scattered acros
 
 For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRouter.process()` applies a canon-first retrieval policy:
 
-1. **RAG/LTMF** (`RagService.searchStructured()`) — canonical lore, up to 5 results. For autobiographical age queries, Tala applies structured filters (`age`, `source_type=ltmf`, `memory_type=autobiographical`, `canon=true`) so canon retrieval does not depend on natural-language dates inside memory text.
-2. **mem0 / local conversational memory** (`MemoryService.search()`) — fallback, 10 results.
+1. **RAG/LTMF** (`RagService.searchStructured()`) â€” canonical lore, up to 5 results. For autobiographical age queries, Tala applies structured filters (`age`, `source_type=ltmf`, `memory_type=autobiographical`, `canon=true`) so canon retrieval does not depend on natural-language dates inside memory text.
+2. **mem0 / local conversational memory** (`MemoryService.search()`) â€” fallback, 10 results.
 3. RAG candidates are **prepended** to the candidate list before `MemoryFilter` so they enter the same deduplication and ranking pipeline.
 4. `MemoryFilter.resolveContradictions()` applies lore source ranking: `diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)`, ensuring canon lore outranks recent chat snippets regardless of composite score.
 5. RP mode `allowedSources` includes `'rag'` so LTMF lore items pass the source policy gate.
@@ -278,35 +278,35 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
 Prompt assembly behavior: if `ContextAssembler` produced `memoryContext`, `CompactPromptBuilder` carries that assembled memory block into the final system prompt across standard, compact, and compact-engineering prompt paths. Retry/tool-required branches prepend extra constraints but still send the same memory-bearing system prompt.
 
 **`memory_grounded_soft` / `memory_grounded_strict`** (sufficient canon memory):
-1. **`[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]`** _(structured age-matched autobiographical canon only)_ — System directive: "You must answer using the provided autobiographical memory. Do not generalize or invent."
-2. **`[AUTOBIOGRAPHICAL MEMORY - AGE X]`** _(structured age-matched autobiographical canon only)_ — Prominent age-scoped autobiographical memory block placed before generic canon lore formatting.
-3. **`[CANON LORE MEMORIES — HIGH PRIORITY]`** — Memories formatted with per-entry source labels:
+1. **`[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]`** _(structured age-matched autobiographical canon only)_ â€” System directive: "You must answer using the provided autobiographical memory. Do not generalize or invent."
+2. **`[AUTOBIOGRAPHICAL MEMORY - AGE X]`** _(structured age-matched autobiographical canon only)_ â€” Prominent age-scoped autobiographical memory block placed before generic canon lore formatting.
+3. **`[CANON LORE MEMORIES â€” HIGH PRIORITY]`** â€” Memories formatted with per-entry source labels:
    ```
    Memory 1:
    Source: LTMF
    Content: <memory text>
    ```
-   Source label mapping: `rag` → `LTMF`, `core_bio` → `core_biographical`, `mem0` → `autobiographical`, etc.
+   Source label mapping: `rag` â†’ `LTMF`, `core_bio` â†’ `core_biographical`, `mem0` â†’ `autobiographical`, etc.
 
-4. **`[MEMORY GROUNDED RECALL — SOFT]`** or **`[MEMORY GROUNDED RECALL — STRICT]`** — Grounding instruction block placed immediately after the memories.
+4. **`[MEMORY GROUNDED RECALL â€” SOFT]`** or **`[MEMORY GROUNDED RECALL â€” STRICT]`** â€” Grounding instruction block placed immediately after the memories.
 
 **`canon_required`** (insufficient canon memory, canon gate fired):
-1. **`[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]`** _(if fallback memories exist)_ — Any fallback memories labeled as "fallback only — insufficient for autobiographical fact claims".
-2. **`[CANON GATE — NO VERIFIED AUTOBIOGRAPHICAL MEMORY]`** — Hard no-fabrication instruction. Always emitted for `canon_required` regardless of memory count. Instructs Tala to: state that no grounded memory exists, not fabricate autobiographical events, and optionally invite the user to define that canon deliberately.
-3. **AgentService prompt-level override (non-RP autobiographical turns only)** — `AgentService.chat()` appends a top-level system constraint block when `responseMode='canon_required'` and `canonGateDecision.isAutobiographicalLoreRequest=true`:
+1. **`[FALLBACK CONTEXT â€” INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]`** _(if fallback memories exist)_ â€” Any fallback memories labeled as "fallback only â€” insufficient for autobiographical fact claims".
+2. **`[CANON GATE â€” NO VERIFIED AUTOBIOGRAPHICAL MEMORY]`** â€” Hard no-fabrication instruction. Always emitted for `canon_required` regardless of memory count. Instructs Tala to: state that no grounded memory exists, not fabricate autobiographical events, and optionally invite the user to define that canon deliberately.
+3. **AgentService prompt-level override (non-RP autobiographical turns only)** â€” `AgentService.chat()` appends a top-level system constraint block when `responseMode='canon_required'` and `canonGateDecision.isAutobiographicalLoreRequest=true`:
    - "You MUST NOT invent, fabricate, or simulate personal memories."
    - "If you do not have verified autobiographical memory ... explicitly state that you do not have a memory."
    - "Violation of this rule is considered a system failure."
-4. **Deterministic output fallback (non-RP autobiographical turns only)** — `AgentService` normalizes assistant prose to:
+4. **Deterministic output fallback (non-RP autobiographical turns only)** â€” `AgentService` normalizes assistant prose to:
    - `"I don't have a recorded memory from that time."`
    This is a final-response guard against autobiographical narrative hallucination in `canon_required` mode.
-5. **Authoritative finalize-stage override** — after stream/retry/timeout paths complete, `AgentService.chat()` applies a last outbound replacement before:
+5. **Authoritative finalize-stage override** â€” after stream/retry/timeout paths complete, `AgentService.chat()` applies a last outbound replacement before:
    - post-turn memory writes
    - artifact routing
    - chat history persistence
    - returned `AgentTurnOutput` to UI
    This guarantees user-visible and persisted response content is the fixed fallback string for eligible turns.
-6. **Finalize enforcement telemetry/logging** — when replacement is applied:
+6. **Finalize enforcement telemetry/logging** â€” when replacement is applied:
    - log line includes `canon_required_fallback_enforced=true`, `originalContentLength=<n>`, `replacedAtStage=finalize`
    - telemetry event: `canon_required_fallback_enforced` with payload fields:
      - `canon_required_fallback_enforced`
@@ -341,7 +341,7 @@ Forbidden: inventing a specific event in first person as recalled fact (e.g., "I
 [CanonGate] sufficientCanonMemory=false sources=explicit approved=1
 [CanonGate] forcing strict no-canon response mode
 [CanonGate] hallucination prevention active for autobiographical turn
-[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn
+[TalaRouter] CanonGate active â€” forcing responseMode=canon_required for autobiographical turn
 ```
 
 ## 3c. Tool Gatekeeper (ToolGatekeeper)
@@ -366,7 +366,8 @@ Forbidden: inventing a specific event in first person as recalled fact (e.g., "I
 |---|---|---|
 | **A** | `intent=lore` AND `approvedMemoryCount > 0` | `mem0_search` blocked |
 | **A** | `responseMode=memory_grounded_soft` OR `memory_grounded_strict` OR `canon_required` | `mem0_search` blocked |
-| **B** | Tool failure count ≥ 3 in 5-minute rolling window | Tool suppressed |
+| **A+** | `intent=lore` AND `responseMode=memory_grounded_strict` | Hard no-tools path: all tools blocked, `requiresToolUse=false`, model-emitted tool calls clamped to `[]` |
+| **B** | Tool failure count â‰¥ 3 in 5-minute rolling window | Tool suppressed |
 | **B** | Tool marked degraded via `markToolDegraded()` | Tool suppressed |
 | **C** | Rules A fires | `directAnswerPreferred = true` |
 | **D** | `intent=coding` OR `isBrowserTask` | `requiresToolUse = true` |
@@ -382,8 +383,8 @@ Forbidden: inventing a specific event in first person as recalled fact (e.g., "I
 ### Log output
 
 ```
-[ToolGatekeeper] blocked=mem0_search reasons=ruleA:mem0_search blocked — lore/memory-grounded turn (intent=lore responseMode=memory_grounded_soft approvedMemories=3) | ruleC:directAnswerPreferred=true — grounded memory context is sufficient
-[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient
+[ToolGatekeeper] blocked=mem0_search reasons=ruleA:mem0_search blocked â€” lore/memory-grounded turn (intent=lore responseMode=memory_grounded_soft approvedMemories=3) | ruleC:directAnswerPreferred=true â€” grounded memory context is sufficient
+[ToolGatekeeper] directAnswerPreferred=true â€” grounded context is sufficient
 [ToolGatekeeper] applied gate: removed 1 tool(s) blocked=mem0_search turn=1
 ```
 
@@ -404,7 +405,7 @@ The decision is included in the `TurnContext` and carried through to the agent f
 Every write decision includes a human-readable `reason` field for audit.
 
 `TalaContextRouter` logs the resolved write policy to stdout as:
-`[TalaRouter] Memory write policy: <category> — <reason>`.
+`[TalaRouter] Memory write policy: <category> â€” <reason>`.
 This is also captured in the `turn_routed` JSONL audit event under the `memoryWriteCategory` field.
 
 ## 5. MCP Lifecycle States
@@ -422,9 +423,9 @@ state machine. The runtime checks `isServiceCallable(serverId)` before invoking 
 | `DISABLED` | Explicitly disabled by user or policy |
 
 When a service is not `CONNECTED`, the agent degrades gracefully:
-- Astro unavailable → continues without emotional modulation
-- Memory graph unavailable → falls back to local memory store
-- Non-critical services → turn continues, `TurnContext.auditMetadata.mcpServicesUsed` records the gap
+- Astro unavailable â†’ continues without emotional modulation
+- Memory graph unavailable â†’ falls back to local memory store
+- Non-critical services â†’ turn continues, `TurnContext.auditMetadata.mcpServicesUsed` records the gap
 
 ## 6. Artifact Output Routing
 
@@ -474,45 +475,45 @@ All inference requests are gated through a single authoritative path:
 
 ```
 AgentService.loadBrainConfig()
-  → InferenceService.reconfigureRegistry(config)     [update provider registry from settings]
-  → InferenceService.selectProvider(request)         [deterministic selection + fallback policy]
-    → InferenceProviderRegistry.getInventory()       [read current provider state]
-    → ProviderSelectionService.select()              [apply selection rules]
-      → 1. request-selected provider if ready
-      → 2. registry-selected provider if ready
-      → 3. explicit local-first waterfall (`ollama` → `vllm` → `llamacpp` → `koboldcpp`)
-      → 4. embedded waterfall (`embedded_vllm` → `embedded_llamacpp`)
-      → 5. cloud provider (only after local/embedded exhaustion in `auto`, or directly in `cloud-only`)
-      → 6. InferenceFailureResult if no viable provider
-  → InferenceSelectionResult                         [selected provider + fallback chain]
-  → configure OllamaBrain / CloudBrain              [brain wired to selected provider endpoint]
+  â†’ InferenceService.reconfigureRegistry(config)     [update provider registry from settings]
+  â†’ InferenceService.selectProvider(request)         [deterministic selection + fallback policy]
+    â†’ InferenceProviderRegistry.getInventory()       [read current provider state]
+    â†’ ProviderSelectionService.select()              [apply selection rules]
+      â†’ 1. request-selected provider if ready
+      â†’ 2. registry-selected provider if ready
+      â†’ 3. explicit local-first waterfall (`ollama` â†’ `vllm` â†’ `llamacpp` â†’ `koboldcpp`)
+      â†’ 4. embedded waterfall (`embedded_vllm` â†’ `embedded_llamacpp`)
+      â†’ 5. cloud provider (only after local/embedded exhaustion in `auto`, or directly in `cloud-only`)
+      â†’ 6. InferenceFailureResult if no viable provider
+  â†’ InferenceSelectionResult                         [selected provider + fallback chain]
+  â†’ configure OllamaBrain / CloudBrain              [brain wired to selected provider endpoint]
 ```
 
 ### Provider Detection Flow
 
 ```
 InferenceService.refreshProviders()
-  → InferenceProviderRegistry.refresh()
-    → _runAllProbes() [all configured providers in parallel, failures isolated]
-      → probeOllama()          → /api/tags
-      → probeLlamaCpp()        → /health → /v1/models
-      → probeEmbeddedLlamaCpp()  → fs.existsSync + /health
-      → probeVllm()            → /v1/models
-      → probeKoboldCpp()       → /api/v1/model
-      → probeCloud()           → /v1/models
-    → _applyProbeResult()      [update descriptor status, emit telemetry]
-    → telemetry: provider_detected | provider_probe_failed | provider_unavailable
-  → telemetry: provider_inventory_refreshed
+  â†’ InferenceProviderRegistry.refresh()
+    â†’ _runAllProbes() [all configured providers in parallel, failures isolated]
+      â†’ probeOllama()          â†’ /api/tags
+      â†’ probeLlamaCpp()        â†’ /health â†’ /v1/models
+      â†’ probeEmbeddedLlamaCpp()  â†’ fs.existsSync + /health
+      â†’ probeVllm()            â†’ /v1/models
+      â†’ probeKoboldCpp()       â†’ /api/v1/model
+      â†’ probeCloud()           â†’ /v1/models
+    â†’ _applyProbeResult()      [update descriptor status, emit telemetry]
+    â†’ telemetry: provider_detected | provider_probe_failed | provider_unavailable
+  â†’ telemetry: provider_inventory_refreshed
 ```
 
 ### IPC Surface for Provider Selection
 
 | Channel | Direction | Description |
 |---------|-----------|-------------|
-| `inference:listProviders` | renderer → main | Returns current `InferenceProviderInventory` |
-| `inference:refreshProviders` | renderer → main | Runs probes and returns updated inventory |
-| `inference:selectProvider` | renderer → main | Sets user-selected provider ID |
-| `inference:getSelectedProvider` | renderer → main | Returns selected provider descriptor |
+| `inference:listProviders` | renderer â†’ main | Returns current `InferenceProviderInventory` |
+| `inference:refreshProviders` | renderer â†’ main | Runs probes and returns updated inventory |
+| `inference:selectProvider` | renderer â†’ main | Sets user-selected provider ID |
+| `inference:getSelectedProvider` | renderer â†’ main | Returns selected provider descriptor |
 
 ### Telemetry Events Added (Phase 3)
 
@@ -536,22 +537,22 @@ Phase 3A connects the cognitive model from Phases 3 and 3B to every live chat tu
 
 ```
 AgentService.chat()
-  → PreInferenceContextOrchestrator.orchestrate()   [single canonical gathering call]
-    → TalaContextRouter.process()                    [memory + doc retrieval, intent, mode]
-    → AstroService.getEmotionalState()               [emotional state, mode-gated]
-    → reflectionContributionStore.getNoteCount()     [in-process, no I/O]
-    → _queryMcpPreInference()                        [intent/mode-gated, graceful no-op]
-  → PreInferenceOrchestrationResult                  [normalised pre-inference packet]
-  → CognitiveTurnAssembler.assemble()                [builds TalaCognitiveContext]
-  → InferenceService.selectProvider()                [provider/model for this turn]
-  → PromptProfileSelector.select()                   [model capability profile]
-  → CognitiveContextCompactor.compact()              [CompactPromptPacket]
-  → CompactPromptBuilder.build(..., compactPacket)   [final system prompt]
-  → streamWithBrain()                                [canonical inference path]
-  → post-turn:
-      → storeMemories()                              [mem0 + RAG + memory graph]
-      → ReflectionEngine.recordTurn()                [latency/outcome signal]
-      → diagnosticsAggregator.recordCognitiveContext() [diagnostics snapshot]
+  â†’ PreInferenceContextOrchestrator.orchestrate()   [single canonical gathering call]
+    â†’ TalaContextRouter.process()                    [memory + doc retrieval, intent, mode]
+    â†’ AstroService.getEmotionalState()               [emotional state, mode-gated]
+    â†’ reflectionContributionStore.getNoteCount()     [in-process, no I/O]
+    â†’ _queryMcpPreInference()                        [intent/mode-gated, graceful no-op]
+  â†’ PreInferenceOrchestrationResult                  [normalised pre-inference packet]
+  â†’ CognitiveTurnAssembler.assemble()                [builds TalaCognitiveContext]
+  â†’ InferenceService.selectProvider()                [provider/model for this turn]
+  â†’ PromptProfileSelector.select()                   [model capability profile]
+  â†’ CognitiveContextCompactor.compact()              [CompactPromptPacket]
+  â†’ CompactPromptBuilder.build(..., compactPacket)   [final system prompt]
+  â†’ streamWithBrain()                                [canonical inference path]
+  â†’ post-turn:
+      â†’ storeMemories()                              [mem0 + RAG + memory graph]
+      â†’ ReflectionEngine.recordTurn()                [latency/outcome signal]
+      â†’ diagnosticsAggregator.recordCognitiveContext() [diagnostics snapshot]
 ```
 
 ### Source Gating Policy
@@ -560,21 +561,21 @@ AgentService.chat()
 
 | Source | Queried | Suppressed |
 |--------|---------|-----------|
-| Memory (via TalaContextRouter) | Always | — |
-| Docs (via TalaContextRouter) | doc-relevant query + mode ≠ rp | RP mode or no relevant query |
-| Astro/emotion | mode ≠ rp and astro ready | RP mode or astro unavailable |
-| Reflection store | Always (in-process) | — |
-| MCP pre-inference | coding/technical/task intent + mode ≠ rp | Greeting, conversation, RP |
+| Memory (via TalaContextRouter) | Always | â€” |
+| Docs (via TalaContextRouter) | doc-relevant query + mode â‰  rp | RP mode or no relevant query |
+| Astro/emotion | mode â‰  rp and astro ready | RP mode or astro unavailable |
+| Reflection store | Always (in-process) | â€” |
+| MCP pre-inference | coding/technical/task intent + mode â‰  rp | Greeting, conversation, RP |
 
 ### Graceful Degradation
 
-- Astro unavailable → `astroStateText = null`, telemetry `emotional_state_skipped`, turn continues.
-- MCP pre-inference fails → `mcpContextSummary = undefined`, telemetry `mcp_preinference_failed`, turn continues.
-- Compaction fails → `compactPacket = undefined`, legacy `CompactPromptBuilder` path used, warning logged.
+- Astro unavailable â†’ `astroStateText = null`, telemetry `emotional_state_skipped`, turn continues.
+- MCP pre-inference fails â†’ `mcpContextSummary = undefined`, telemetry `mcp_preinference_failed`, turn continues.
+- Compaction fails â†’ `compactPacket = undefined`, legacy `CompactPromptBuilder` path used, warning logged.
 
 ### TurnContext.resolvedMemories (Phase 3A)
 
-`TurnContext` now includes `resolvedMemories?: MemoryItem[]` — the de-duplicated, contradiction-resolved memories from the router retrieval pass. This feeds `CognitiveTurnAssembler.assemble()` directly without a second memory query.
+`TurnContext` now includes `resolvedMemories?: MemoryItem[]` â€” the de-duplicated, contradiction-resolved memories from the router retrieval pass. This feeds `CognitiveTurnAssembler.assemble()` directly without a second memory query.
 
 ### Diagnostics Integration
 
@@ -590,45 +591,45 @@ AgentService.chat()
 
 ```
 streamWithBrain()
-  → response (BrainResponse | StreamInferenceResult)
+  â†’ response (BrainResponse | StreamInferenceResult)
   
   1. responseToolCalls = response.toolCalls         [canonical; may be undefined]
   
   2. Loop-detection guard
        if !responseToolCalls?.length
          && runtimeSafety.checkResponseLoop(content)
-       → finalResponse = "Loop detected…"  ← ONLY fires when no tool calls present
+       â†’ finalResponse = "Loop detectedâ€¦"  â† ONLY fires when no tool calls present
          break
   
   3. calls = (activeMode === 'rp') ? [] : responseToolCalls
   
   4. ToolRequired recovery retry
        triggers when ALL of the following are true:
-         • toolsToSend.length > 0 (tools were authorized for this turn)
-         • hasKeywordIndicatingToolUse || calls.length === 0
-         • calls.length === 0
-         • activeMode !== 'rp'
-         • turn is not a greeting
-         • gateDecision.blockedTools.length === 0  ← skip if ToolGatekeeper blocked tools
-         • !gateDecision.directAnswerPreferred      ← skip if grounded memory is sufficient
-       • sends retryResponse with envelope prompt + filteredTools
-       • populates calls from retryResponse.toolCalls
-       • falls back to brace-depth JSON envelope extraction from retryResponse.content
-       • if calls found: assistantMsg.content ← retryResponse.content (consistency fix)
-       • if calls empty + coding intent: hard-fail ("Tool call required…")  break
-       • if calls empty + other intent: fall through to plain-content path
+         â€¢ toolsToSend.length > 0 (tools were authorized for this turn)
+         â€¢ hasKeywordIndicatingToolUse || calls.length === 0
+         â€¢ calls.length === 0
+         â€¢ activeMode !== 'rp'
+         â€¢ turn is not a greeting
+         â€¢ gateDecision.blockedTools.length === 0  â† skip if ToolGatekeeper blocked tools
+         â€¢ !gateDecision.directAnswerPreferred      â† skip if grounded memory is sufficient
+       â€¢ sends retryResponse with envelope prompt + filteredTools
+       â€¢ populates calls from retryResponse.toolCalls
+       â€¢ falls back to brace-depth JSON envelope extraction from retryResponse.content
+       â€¢ if calls found: assistantMsg.content â† retryResponse.content (consistency fix)
+       â€¢ if calls empty + coding intent: hard-fail ("Tool call requiredâ€¦")  break
+       â€¢ if calls empty + other intent: fall through to plain-content path
   
   5. Plain-content finalization
        if calls.length === 0:
-         finalResponse = response.content  ← ONLY reached when no canonical toolCalls
+         finalResponse = response.content  â† ONLY reached when no canonical toolCalls
          break
   
   6. Tool execution
        for each call in calls:
          ToolService.executeTool(toolName, args, allowedToolNames)
          if result.startsWith('BROWSER_') && onEvent:
-           dispatchBrowserCommand() → agent-event → workspace browser panel
-         executionLog.toolCalls.push(…)
+           dispatchBrowserCommand() â†’ agent-event â†’ workspace browser panel
+         executionLog.toolCalls.push(â€¦)
 ```
 
 ### Key invariants (enforced post-fix)
@@ -647,8 +648,8 @@ streamWithBrain()
 
 The keyword check (step 4) fires on two sets of patterns ANDed together:
 
-- **File-system verbs** (`create`, `write`, `edit`, …) × **file nouns** (`file`, `script`, `.ts`, `.json`, …)
-- **Browser verbs** (`browse`, `navigate`, `open`, `search`, `click`, `scroll`, `go`, …) × **web nouns** (`url`, `page`, `browser`, `site`, `https`, …) or HTTP URL pattern
+- **File-system verbs** (`create`, `write`, `edit`, â€¦) Ã— **file nouns** (`file`, `script`, `.ts`, `.json`, â€¦)
+- **Browser verbs** (`browse`, `navigate`, `open`, `search`, `click`, `scroll`, `go`, â€¦) Ã— **web nouns** (`url`, `page`, `browser`, `site`, `https`, â€¦) or HTTP URL pattern
 
 ---
 
@@ -673,57 +674,57 @@ All Phase 3A events are emitted in the `cognitive` subsystem:
 
 ---
 
-## 9. Autonomous Self-Improvement Pipeline (Phases 4–5.1)
+## 9. Autonomous Self-Improvement Pipeline (Phases 4â€“5.1)
 
 The autonomous improvement pipeline runs in `AutonomousRunOrchestrator` as a background cycle. It is separate from the user turn loop.
 
 ```
 AutonomousRunOrchestrator.runCycleOnce()
-  → GoalDetectionEngine.runOnce()         (Phase 4.1/4.2 — detect candidates)
-  → GoalPrioritizationEngine.score()      (Phase 4C — score and tier goals)
-  → AutonomyPolicyGate.evaluate()         (Phase 4D — required gate)
-    → [blocked → policy_blocked goal]
-    → [permitted → continue]
-  → [Phase 5 Adaptive Layer — optional]
-    → GoalValueScoringEngine.score()      (P5B)
-    → StrategySelectionEngine.select()    (P5C)
-    → AdaptivePolicyGate.evaluate()       (P5D)
-      → defer/suppress/escalate → update goal status, return
-      → proceed → continue
-  → [Phase 5.1 Escalation Layer — optional]
-    → ModelCapabilityEvaluator.evaluate() (P5.1B — can model handle this?)
-      → canHandle=true → continue
-      → canHandle=false:
-          EscalationPolicyEngine.evaluate()  (P5.1C — is escalation allowed?)
-          DecompositionEngine.decompose()    (P5.1D — bounded decomposition plan)
-          ExecutionStrategySelector.select() (P5.1E — which strategy?)
-          → proceed_local   → continue
-          → escalate_human  → policy_blocked + humanReviewRequired=true
-          → escalate_remote → policy_blocked + humanReviewRequired=true (default)
-          → decompose_local → _executeGoalPipeline with scopeHint from first step
-          → defer           → goal reset to scored (next cycle)
-  → _executeGoalPipeline()
-      → set run.executionId = run.runId (canonical cross-seam identifier)
-      → ExecutionStateStore.beginExecution() (registers run as 'accepted' autonomy_task)
-      → TelemetryBus.emit(execution.created, execution.accepted)
-      → SafeChangePlanner.plan()           (Phase 2)
-      → GovernanceAppService.evaluate()    (Phase 3.5)
-      → ExecutionOrchestrator.start()      (Phase 3)
+  â†’ GoalDetectionEngine.runOnce()         (Phase 4.1/4.2 â€” detect candidates)
+  â†’ GoalPrioritizationEngine.score()      (Phase 4C â€” score and tier goals)
+  â†’ AutonomyPolicyGate.evaluate()         (Phase 4D â€” required gate)
+    â†’ [blocked â†’ policy_blocked goal]
+    â†’ [permitted â†’ continue]
+  â†’ [Phase 5 Adaptive Layer â€” optional]
+    â†’ GoalValueScoringEngine.score()      (P5B)
+    â†’ StrategySelectionEngine.select()    (P5C)
+    â†’ AdaptivePolicyGate.evaluate()       (P5D)
+      â†’ defer/suppress/escalate â†’ update goal status, return
+      â†’ proceed â†’ continue
+  â†’ [Phase 5.1 Escalation Layer â€” optional]
+    â†’ ModelCapabilityEvaluator.evaluate() (P5.1B â€” can model handle this?)
+      â†’ canHandle=true â†’ continue
+      â†’ canHandle=false:
+          EscalationPolicyEngine.evaluate()  (P5.1C â€” is escalation allowed?)
+          DecompositionEngine.decompose()    (P5.1D â€” bounded decomposition plan)
+          ExecutionStrategySelector.select() (P5.1E â€” which strategy?)
+          â†’ proceed_local   â†’ continue
+          â†’ escalate_human  â†’ policy_blocked + humanReviewRequired=true
+          â†’ escalate_remote â†’ policy_blocked + humanReviewRequired=true (default)
+          â†’ decompose_local â†’ _executeGoalPipeline with scopeHint from first step
+          â†’ defer           â†’ goal reset to scored (next cycle)
+  â†’ _executeGoalPipeline()
+      â†’ set run.executionId = run.runId (canonical cross-seam identifier)
+      â†’ ExecutionStateStore.beginExecution() (registers run as 'accepted' autonomy_task)
+      â†’ TelemetryBus.emit(execution.created, execution.accepted)
+      â†’ SafeChangePlanner.plan()           (Phase 2)
+      â†’ GovernanceAppService.evaluate()    (Phase 3.5)
+      â†’ ExecutionOrchestrator.start()      (Phase 3)
       finally:
-        → compute durationMs = Date.now() - startedAtMs
+        â†’ compute durationMs = Date.now() - startedAtMs
         on success:
-          → ExecutionStateStore.advancePhase('finalizing')
-          → TelemetryBus.emit(execution.finalizing)  (executionId=runId, durationMs)
-          → TelemetryBus.emit(execution.completed)   (executionId=runId, durationMs)
-          → ExecutionStateStore.completeExecution()
+          â†’ ExecutionStateStore.advancePhase('finalizing')
+          â†’ TelemetryBus.emit(execution.finalizing)  (executionId=runId, durationMs)
+          â†’ TelemetryBus.emit(execution.completed)   (executionId=runId, durationMs)
+          â†’ ExecutionStateStore.completeExecution()
         on failure:
-          → TelemetryBus.emit(execution.failed)      (executionId=runId, failureReason)
-          → ExecutionStateStore.failExecution()
-        → OutcomeLearningRegistry.record()           (Phase 4)
-        → RecoveryPackOutcomeTracker.record()        (Phase 4.3 — when pack used)
-        → SubsystemProfileRegistry.update()          (Phase 5 feedback)
-        → DecompositionOutcomeTracker.finalizePlan() (Phase 5.1 — when decomposing)
-        → EscalationAuditTracker.record()            (Phase 5.1 audit trail)
+          â†’ TelemetryBus.emit(execution.failed)      (executionId=runId, failureReason)
+          â†’ ExecutionStateStore.failExecution()
+        â†’ OutcomeLearningRegistry.record()           (Phase 4)
+        â†’ RecoveryPackOutcomeTracker.record()        (Phase 4.3 â€” when pack used)
+        â†’ SubsystemProfileRegistry.update()          (Phase 5 feedback)
+        â†’ DecompositionOutcomeTracker.finalizePlan() (Phase 5.1 â€” when decomposing)
+        â†’ EscalationAuditTracker.record()            (Phase 5.1 audit trail)
 ```
 
 ### Phase 5.1 Integration Notes

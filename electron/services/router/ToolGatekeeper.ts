@@ -45,6 +45,8 @@ export interface ToolGateDecision {
     directAnswerPreferred: boolean;
     /** True when the intent mandates at least one tool call (coding, browser). */
     requiresToolUse: boolean;
+    /** True when this turn must run as a strict no-tools path. */
+    hardBlockAllTools: boolean;
 }
 
 /**
@@ -200,6 +202,7 @@ export class ToolGatekeeper {
         const gatingReasons: string[] = [];
         let directAnswerPreferred = false;
         let requiresToolUse = false;
+        let hardBlockAllTools = false;
 
         // ── Rule Group E: Retry discipline ─────────────────────────────────
         // On a retry pass, re-apply previously blocked tools so the expanded
@@ -218,8 +221,26 @@ export class ToolGatekeeper {
             responseMode === 'memory_grounded_soft' ||
             responseMode === 'memory_grounded_strict';
         const isCanonRequired = responseMode === 'canon_required';
+        const isLoreStrictNoTools =
+            intentClass === 'lore' && responseMode === 'memory_grounded_strict';
         const isLoreWithMemory =
             intentClass === 'lore' && approvedMemoryCount > 0;
+
+        if (isLoreStrictNoTools) {
+            hardBlockAllTools = true;
+            directAnswerPreferred = true;
+            requiresToolUse = false;
+            for (const toolName of candidateToolNames) {
+                blockedSet.add(toolName);
+            }
+            gatingReasons.push(
+                `ruleA:all tools blocked - lore memory_grounded_strict turn ` +
+                `(intent=${intentClass} approvedMemories=${approvedMemoryCount})`
+            );
+            gatingReasons.push(
+                'ruleC:directAnswerPreferred=true - strict lore grounding requires memory-only response'
+            );
+        }
 
         if (isCanonRequired) {
             for (const toolName of candidateToolNames) {
@@ -234,7 +255,7 @@ export class ToolGatekeeper {
             );
         }
 
-        if (isLoreWithMemory || isMemoryGrounded) {
+        if (!hardBlockAllTools && (isLoreWithMemory || isMemoryGrounded)) {
             blockedSet.add('mem0_search');
             gatingReasons.push(
                 `ruleA:mem0_search blocked — lore/memory-grounded turn ` +
@@ -269,14 +290,14 @@ export class ToolGatekeeper {
         // ── Rule Group D: Intent-based requiresToolUse flag ────────────────
         // For coding and browser intents the model is expected to produce at
         // least one tool call; signal this to the caller.
-        if (!isCanonRequired && (intentClass === 'coding' || isBrowserTask)) {
+        if (!isCanonRequired && !hardBlockAllTools && (intentClass === 'coding' || isBrowserTask)) {
             requiresToolUse = true;
         }
 
         const blockedTools = [...blockedSet];
         const allowedTools = candidateToolNames.filter(t => !blockedSet.has(t));
 
-        return { allowedTools, blockedTools, gatingReasons, directAnswerPreferred, requiresToolUse };
+        return { allowedTools, blockedTools, gatingReasons, directAnswerPreferred, requiresToolUse, hardBlockAllTools };
     }
 }
 

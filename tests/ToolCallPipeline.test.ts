@@ -473,3 +473,34 @@ describe('ToolCallPipeline Fix 5 — retry uses mode-filtered toolsToSend', () =
         expect(iter2.length).toBe(iter3.length);
     });
 });
+
+/**
+ * Mirrors the AgentService strict lore hard-block clamp.
+ * When active, any model-emitted tool calls are discarded.
+ */
+function clampToolCallsForHardLoreBlock(
+    responseToolCalls: { type: string; function: { name: string } }[],
+    hardBlockAllTools: boolean
+): { type: string; function: { name: string } }[] {
+    if (!hardBlockAllTools) return responseToolCalls;
+    return [];
+}
+
+describe('Fix 5 - strict lore hard block emits no tool calls', () => {
+    it('clamps tool calls to [] when hardBlockAllTools=true', () => {
+        const modelCalls = [
+            { type: 'function', function: { name: 'mem0_search' } },
+            { type: 'function', function: { name: 'query_graph' } },
+        ];
+        const clamped = clampToolCallsForHardLoreBlock(modelCalls, true);
+        expect(clamped).toEqual([]);
+    });
+
+    it('preserves tool calls when hardBlockAllTools=false', () => {
+        const modelCalls = [
+            { type: 'function', function: { name: 'query_graph' } },
+        ];
+        const clamped = clampToolCallsForHardLoreBlock(modelCalls, false);
+        expect(clamped).toEqual(modelCalls);
+    });
+});

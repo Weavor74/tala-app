@@ -67,13 +67,16 @@ describe('Test 1 — Rule A: lore intent + approved RAG memory suppresses mem0_s
         expect(decision.allowedTools).not.toContain('mem0_search');
     });
 
-    it('blocks mem0_search for memory_grounded_strict regardless of approvedCount', () => {
+    it('blocks all tools for lore + memory_grounded_strict', () => {
         const decision = gate.evaluate(makeContext({
             intentClass: 'lore',
             approvedMemoryCount: 0,
             responseMode: 'memory_grounded_strict',
         }));
-        expect(decision.blockedTools).toContain('mem0_search');
+        expect(decision.allowedTools).toHaveLength(0);
+        expect(decision.blockedTools.length).toBe(ALL_TOOLS.length);
+        expect(decision.hardBlockAllTools).toBe(true);
+        expect(decision.requiresToolUse).toBe(false);
     });
 
     it('blocks mem0_search for memory_grounded_soft on any intent', () => {
@@ -393,14 +396,14 @@ describe('Test 7 — No global tool loss: unrelated intents receive full candida
         expect(decision.blockedTools).toContain('mem0_search');
     });
 
-    it('mem0_add is never blocked by Rule A (only mem0_search is suppressed)', () => {
+    it('non-lore strict grounding does not globally block tools', () => {
         const decision = gate.evaluate(makeContext({
-            intentClass: 'lore',
+            intentClass: 'conversation',
             approvedMemoryCount: 5,
             responseMode: 'memory_grounded_strict',
         }));
         expect(decision.allowedTools).toContain('mem0_add');
-        expect(decision.blockedTools).not.toContain('mem0_add');
+        expect(decision.hardBlockAllTools).toBe(false);
     });
 
     it('degraded tool suppression does not affect healthy tools', () => {
