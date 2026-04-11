@@ -9,7 +9,7 @@
         "id": "ollama-local",
         "alias": "Ollama (Local)",
         "source": "local",
-        "engine": "vllm",
+        "engine": "ollama",
         "endpoint": "http://127.0.0.1:11434",
         "priority": 0,
         "params": {
@@ -27,7 +27,7 @@
             "huihui_ai/qwen3-abliterated:8b"
           ]
         },
-        "model": "huihui_ai/qwen3-abliterated:1.7b"
+        "model": "codegemma:7b"
       },
       {
         "id": "2cj970pmu",
@@ -310,7 +310,7 @@
     "maxProposalsPerDay": 5
   },
   "agentModes": {
-    "activeMode": "hybrid",
+    "activeMode": "assistant",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,
@@ -353,6 +353,9 @@
     "logToFile": true,
     "previewChars": 1200,
     "maxFullInlineChars": 12000
+  },
+  "memory": {
+    "integrityMode": "balanced"
   },
   "guardrailPolicy": {
     "version": 1,
