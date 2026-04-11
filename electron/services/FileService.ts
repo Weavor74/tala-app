@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import chokidar from 'chokidar';
 import { CodeAccessPolicy } from './CodeAccessPolicy';
+import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 
 /**
  * Represents a single file or directory entry within the workspace file tree.
@@ -356,13 +357,33 @@ export class FileService {
         }
 
         if (!fs.existsSync(fullPath)) {
-            throw new Error("File not found");
+            const error = new Error("File not found") as Error & { code?: string };
+            error.code = 'FILE_NOT_FOUND';
+            RuntimeErrorLogger.log({
+                source: 'filesystem',
+                component: 'FileService',
+                event: 'read-file',
+                code: 'FILE_NOT_FOUND',
+                message: error.message,
+                stack: error.stack,
+                metadata: { path: filePath },
+            });
+            throw error;
         }
 
         try {
             return fs.readFileSync(fullPath, 'utf-8');
         } catch (e: any) {
             console.error("Read failed", e);
+            RuntimeErrorLogger.log({
+                source: 'filesystem',
+                component: 'FileService',
+                event: 'read-file',
+                code: 'FILE_READ_ERROR',
+                message: e?.message || String(e),
+                stack: e?.stack,
+                metadata: { path: filePath },
+            });
             throw new Error(`Failed to read file: ${e.message}`);
         }
     }

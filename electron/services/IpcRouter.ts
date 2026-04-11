@@ -47,6 +47,7 @@ import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
+import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -99,6 +100,7 @@ export interface IpcRouterContext {
  * - System-level interactions (Terminal PTYs, OAuth, Native Dialogs).
  */
 export class IpcRouter {
+  private static ipcHandleWrapped = false;
   /**
    * Initializes the router with a dependency-injected context.
    * @param ctx - Service container containing all backend managers and paths.
@@ -118,6 +120,7 @@ export class IpcRouter {
    */
   public registerAll() {
     const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, logViewerService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
+    this.installIpcErrorWrapper();
 
     // Helper to simulate mutable let from main.ts
     const getSettingsPath = () => this.ctx.getSettingsPath();
@@ -2361,5 +2364,61 @@ export class IpcRouter {
       return TelemetryBus.getInstance().getRecentEvents().slice();
     });
 
+  }
+
+  private installIpcErrorWrapper() {
+    if (IpcRouter.ipcHandleWrapped) return;
+
+    const originalHandle = ipcMain.handle.bind(ipcMain);
+    ipcMain.handle = ((channel: string, listener: (event: any, ...args: any[]) => any) => {
+      const wrapped = async (event: any, ...args: any[]) => {
+        try {
+          return await listener(event, ...args);
+        } catch (error: any) {
+          RuntimeErrorLogger.log({
+            source: 'ipc',
+            component: this.inferIpcComponent(channel),
+            event: channel,
+            code: this.stableIpcErrorCode(channel),
+            message: error?.message || String(error),
+            stack: error?.stack,
+            metadata: { argCount: args?.length ?? 0 },
+          });
+          throw error;
+        }
+      };
+      return originalHandle(channel, wrapped);
+    }) as typeof ipcMain.handle;
+
+    IpcRouter.ipcHandleWrapped = true;
+  }
+
+  private inferIpcComponent(channel: string): string {
+    if (!channel) return 'IpcRouter';
+    const prefix = channel.split(':')[0];
+    switch (prefix) {
+      case 'read-file':
+      case 'write-file':
+      case 'create-file':
+      case 'delete-path':
+      case 'list-directory':
+        return 'FileService';
+      case 'terminal':
+        return 'TerminalService';
+      case 'reflection':
+        return 'ReflectionService';
+      case 'settings':
+        return 'SettingsManager';
+      case 'inference':
+        return 'InferenceService';
+      case 'git':
+        return 'GitService';
+      default:
+        return prefix || 'IpcRouter';
+    }
+  }
+
+  private stableIpcErrorCode(channel: string): string {
+    return `${channel.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()}_ERROR`;
   }
 }

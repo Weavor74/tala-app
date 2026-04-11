@@ -56,6 +56,19 @@ Key behavior:
   - multi-source breadth
 - Escalation reasons are preserved in issue metadata and trace logs (`[IssueCluster]`, `[SeverityEscalation]`, `[CandidateScreening]`)
 
+## 5.2 Runtime Error Capture Wiring
+Runtime failures now feed reflection from one canonical JSONL sink:
+- Path: `data/logs/runtime-errors.jsonl` (resolved via `PathResolver.resolveLogsPath('runtime-errors.jsonl')`)
+- Writer: `electron/services/logging/RuntimeErrorLogger.ts`
+
+Capture points:
+- IPC invoke handler failures: `electron/services/IpcRouter.ts` wraps `ipcMain.handle(...)` registrations and logs on catch before rethrow.
+- Filesystem read failures: `electron/services/FileService.ts` logs `read-file` errors (including `FILE_NOT_FOUND`) with path metadata.
+- Process-level failures: `electron/main.ts` logs `uncaughtException` and `unhandledRejection`.
+
+Logging format is one JSON object per line with stable fields:
+`timestamp`, `level`, `source`, `component`, `event`, optional `code`, `message`, `stack`, and `metadata`.
+
 ## 6. Manual Single-Run Trigger (Debug)
 `ReflectionAppService` now exposes `reflection:runNow` (wired in `electron/preload.ts` as `window.api.reflection.runReflectionNow`) for forcing one immediate reflection cycle using the same queue/scheduler/service pipeline used in normal operation.
 

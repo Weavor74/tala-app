@@ -112,6 +112,7 @@ import { StrategyRoutingEngine } from './services/autonomy/crossSystem/StrategyR
 import { StrategyRoutingOutcomeTracker } from './services/autonomy/crossSystem/StrategyRoutingOutcomeTracker';
 import { StrategyRoutingDashboardBridge } from './services/autonomy/crossSystem/StrategyRoutingDashboardBridge';
 import { StrategyRoutingAppService } from './services/autonomy/StrategyRoutingAppService';
+import { RuntimeErrorLogger } from './services/logging/RuntimeErrorLogger';
 
 // ═══════════════════════════════════════════════════════════════════════
 // PATH CONFIGURATION
@@ -654,6 +655,14 @@ selfModelRefreshService.init().catch(e => console.error('[SelfModel] init failed
 // ═══════════════════════════════════════════════════════════════════════
 
 process.on('uncaughtException', (error) => {
+  RuntimeErrorLogger.log({
+    source: 'process',
+    component: 'main',
+    event: 'uncaughtException',
+    code: 'PROCESS_UNCAUGHT_EXCEPTION',
+    message: error?.message || String(error),
+    stack: error?.stack,
+  });
   console.error('[Main] Uncaught Exception:', error);
   logViewerService.logRuntimeError(error, {
     source: 'runtime_error_main',
@@ -664,6 +673,16 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+  const rejectionError = reason instanceof Error ? reason : new Error(String(reason));
+  RuntimeErrorLogger.log({
+    source: 'process',
+    component: 'main',
+    event: 'unhandledRejection',
+    code: 'PROCESS_UNHANDLED_REJECTION',
+    message: rejectionError.message,
+    stack: rejectionError.stack,
+    metadata: { reason: String(reason) }
+  });
   console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
   const error = reason instanceof Error ? reason : new Error(String(reason));
   logViewerService.logRuntimeError(error, {
