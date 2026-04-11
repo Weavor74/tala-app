@@ -62,6 +62,13 @@ export class ArtifactStore {
         fs.writeFileSync(filePath, JSON.stringify(proposal, null, 2));
     }
 
+    async updateAutoFixProposal(proposal: AutoFixProposal): Promise<void> {
+        await this.saveAutoFixProposal({
+            ...proposal,
+            updatedAt: proposal.updatedAt || new Date().toISOString(),
+        });
+    }
+
     async updateAutoFixProposalStatus(proposalId: string, status: AutoFixProposalStatus): Promise<AutoFixProposal | null> {
         const existing = await this.getAutoFixProposal(proposalId);
         if (!existing) return null;
@@ -89,12 +96,24 @@ export class ArtifactStore {
         const proposals: AutoFixProposal[] = [];
         for (const file of files) {
             try {
-                proposals.push(JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')) as AutoFixProposal);
+                const proposal = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')) as AutoFixProposal;
+                proposals.push({
+                    duplicateCount: 0,
+                    observationCount: proposal.observationCount ?? proposal.duplicateCount ?? 1,
+                    ...proposal,
+                });
             } catch (err) {
                 console.error(`[ArtifactStore] Failed to parse auto-fix proposal ${file}:`, err);
             }
         }
         return proposals.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+
+    async findLatestAutoFixProposalByDedupeKey(dedupeKey: string): Promise<AutoFixProposal | null> {
+        if (!dedupeKey) return null;
+        const proposals = await this.listAutoFixProposals();
+        const match = proposals.find(p => p.dedupeKey === dedupeKey);
+        return match ?? null;
     }
 
     async saveAutoFixOutcome(outcome: AutoFixOutcome): Promise<void> {

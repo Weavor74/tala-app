@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { ReflectionIssue } from './reflectionEcosystemTypes';
@@ -6,16 +7,15 @@ import { isPathWithinAppRoot, resolveDataPath } from '../PathResolver';
 import { loadSettings, saveSettings } from '../SettingsManager';
 import { ArtifactStore } from './ArtifactStore';
 import {
-    AutoFixActionType,
     AutoFixExecutionPlan,
     AutoFixGateDecision,
     AutoFixGateResult,
     AutoFixOutcome,
     AutoFixPolicy,
     AutoFixProposal,
-    AutoFixProposalCategory,
     AutoFixProposalStatus,
     AutoFixRiskLevel,
+    AutoFixSkipReason,
     AutoFixVerificationResult,
 } from './AutoFixTypes';
 
@@ -34,6 +34,15 @@ const DEFAULT_AUTO_FIX_POLICY: AutoFixPolicy = {
         'agentModes.modes.hybrid.allowShellRun',
         'agentModes.modes.hybrid.allowFsWrite',
     ],
+    cooldowns: {
+        proposedMinutes: 30,
+        appliedSuccessMinutes: 240,
+        failedMinutes: 60,
+        blockedMinutes: 120,
+        approvalRequiredMinutes: 240,
+        rolledBackMinutes: 180,
+    },
+    materialChangeConfidenceDelta: 0.15,
 };
 
 const RISK_WEIGHT: Record<AutoFixRiskLevel, number> = {
@@ -42,6 +51,27 @@ const RISK_WEIGHT: Record<AutoFixRiskLevel, number> = {
     high: 3,
     critical: 4,
 };
+
+const SEVERITY_WEIGHT: Record<string, number> = {
+    low: 1,
+    medium: 2,
+    high: 3,
+    critical: 4,
+};
+
+const SUPPRESSING_STATES = new Set<AutoFixProposalStatus>([
+    'proposed',
+    'gated_requires_approval',
+    'executing',
+    'verification_passed',
+    'verification_failed',
+    'gated_blocked',
+    'completed',
+    'rolled_back',
+    'failed',
+    'skipped_cooldown',
+    'skipped_target_locked',
+]);
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -68,13 +98,62 @@ function setByPath(obj: Record<string, any>, dottedPath: string, value: unknown)
     cursor[keys[keys.length - 1]] = value;
 }
 
+function stableSerialize(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) return `[${value.map(v => stableSerialize(v)).join(',')}]`;
+    if (typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, v]) => `${k}:${stableSerialize(v)}`);
+        return `{${entries.join('|')}}`;
+    }
+    return String(value).trim().toLowerCase();
+}
+
+function hashString(input: string): string {
+    return crypto.createHash('sha256').update(input).digest('hex').slice(0, 24);
+}
+
+function normalizePathForKey(value?: string): string {
+    if (!value) return '';
+    return path.resolve(value).replace(/\\/g, '/').toLowerCase();
+}
+
+function normalizeTarget(proposal: AutoFixProposal): string {
+    if (proposal.targetKey) return `key:${proposal.targetKey}`;
+    if (proposal.targetPath) return `path:${normalizePathForKey(proposal.targetPath)}`;
+    return `type:${proposal.targetType}`;
+}
+
+function cooldownMinutesForStatus(policy: AutoFixPolicy, status: AutoFixProposalStatus): number {
+    switch (status) {
+        case 'proposed':
+            return policy.cooldowns.proposedMinutes;
+        case 'completed':
+        case 'verification_passed':
+            return policy.cooldowns.appliedSuccessMinutes;
+        case 'verification_failed':
+        case 'failed':
+        case 'skipped_target_locked':
+            return policy.cooldowns.failedMinutes;
+        case 'gated_blocked':
+            return policy.cooldowns.blockedMinutes;
+        case 'gated_requires_approval':
+            return policy.cooldowns.approvalRequiredMinutes;
+        case 'rolled_back':
+            return policy.cooldowns.rolledBackMinutes;
+        default:
+            return 0;
+    }
+}
+
 export class AutoFixEngine {
     private readonly artifactStore: ArtifactStore;
     private readonly settingsPath: string;
     private readonly logsDir: string;
     private readonly cacheDir: string;
     private readonly lifecycle: LogLifecycleService;
-    private activeProposalId: string | null = null;
+    private readonly activeTargetLocks = new Map<string, string>();
 
     constructor(params: {
         artifactStore: ArtifactStore;
@@ -105,6 +184,11 @@ export class AutoFixEngine {
             allowedActions: configured.allowedActions ?? DEFAULT_AUTO_FIX_POLICY.allowedActions,
             allowlistedConfigKeys: configured.allowlistedConfigKeys ?? DEFAULT_AUTO_FIX_POLICY.allowlistedConfigKeys,
             irreversibleAllowedActions: configured.irreversibleAllowedActions ?? DEFAULT_AUTO_FIX_POLICY.irreversibleAllowedActions,
+            cooldowns: {
+                ...DEFAULT_AUTO_FIX_POLICY.cooldowns,
+                ...(configured.cooldowns ?? {}),
+            },
+            materialChangeConfidenceDelta: configured.materialChangeConfidenceDelta ?? DEFAULT_AUTO_FIX_POLICY.materialChangeConfidenceDelta,
         };
     }
 
@@ -113,6 +197,7 @@ export class AutoFixEngine {
         const symptoms = Array.isArray(issue.symptoms) ? issue.symptoms : [];
         const affectedFiles = Array.isArray(issue.affectedFiles) ? issue.affectedFiles : [];
         const errorsInSymptoms = symptoms.find((s) => String(s).toLowerCase().includes('errors found in logs'));
+
         if (errorsInSymptoms) {
             proposals.push(this.createProposal({
                 sourceRunId,
@@ -130,6 +215,7 @@ export class AutoFixEngine {
                 requiresApproval: false,
                 rollbackPlan: 'not_applicable: log rotation is maintenance-only and non-destructive for active stream',
                 verificationPlan: 'Confirm runtime-errors.jsonl exists and active file size is below threshold after rotation.',
+                sourceSeverity: issue.severity,
             }));
         }
 
@@ -150,14 +236,18 @@ export class AutoFixEngine {
                 rollbackPlan: 'not_applicable: proposal artifact only',
                 verificationPlan: 'Patch plan artifact written under reflection artifacts.',
                 proposedValue: { affectedFiles },
+                sourceSeverity: issue.severity,
             }));
         }
 
+        const finalProposals: AutoFixProposal[] = [];
         for (const proposal of proposals) {
-            await this.artifactStore.saveAutoFixProposal(proposal);
+            const deduped = await this.persistWithDeduplication(proposal);
+            if (!finalProposals.find(p => p.proposalId === deduped.proposalId)) {
+                finalProposals.push(deduped);
+            }
         }
-
-        return proposals;
+        return finalProposals;
     }
 
     public async listProposals(): Promise<AutoFixProposal[]> {
@@ -175,14 +265,11 @@ export class AutoFixEngine {
         const gate = this.applySafetyGate(proposal);
         const plan = this.buildExecutionPlan(proposal, true);
 
-        const nextStatus: AutoFixProposalStatus =
-            gate.decision === 'auto_apply_allowed' ? 'proposed'
-                : gate.decision === 'approval_required' ? 'gated_requires_approval'
-                    : 'gated_blocked';
-        await this.artifactStore.updateAutoFixProposalStatus(proposalId, nextStatus);
-
+        if (gate.decision === 'auto_apply_allowed') {
+            console.log(`[ProposalCooldown] proposalId=${proposalId} decision=${this.isCooldownActive(proposal) ? 'skip' : 'allow'} cooldownUntil=${proposal.cooldownUntil || ''}`);
+        }
         console.log(`[AutoFixGate] proposalId=${proposalId} decision=${gate.decision} reason=${gate.reason}`);
-        return { proposal: await this.artifactStore.getAutoFixProposal(proposalId), gate, plan };
+        return { proposal, gate, plan };
     }
 
     public async dryRunProposal(proposalId: string): Promise<{ proposal: AutoFixProposal | null; gate: AutoFixGateResult | null; plan: AutoFixExecutionPlan | null }> {
@@ -190,17 +277,9 @@ export class AutoFixEngine {
     }
 
     public async runProposal(proposalId: string): Promise<{ success: boolean; proposal: AutoFixProposal | null; gate: AutoFixGateResult | null; plan: AutoFixExecutionPlan | null; outcome?: AutoFixOutcome }> {
-        const proposal = await this.artifactStore.getAutoFixProposal(proposalId);
+        let proposal = await this.artifactStore.getAutoFixProposal(proposalId);
         if (!proposal) {
             return { success: false, proposal: null, gate: null, plan: null };
-        }
-        if (this.activeProposalId && this.activeProposalId !== proposalId) {
-            return {
-                success: false,
-                proposal,
-                gate: { proposalId, decision: 'blocked_out_of_scope', reason: 'another_autofix_run_active' },
-                plan: null,
-            };
         }
 
         const gate = this.applySafetyGate(proposal);
@@ -210,23 +289,43 @@ export class AutoFixEngine {
 
         if (gate.decision !== 'auto_apply_allowed') {
             const status: AutoFixProposalStatus = gate.decision === 'approval_required' ? 'gated_requires_approval' : 'gated_blocked';
-            await this.artifactStore.updateAutoFixProposalStatus(proposalId, status);
+            proposal = await this.updateProposalStatus(proposal, status);
 
             if (proposal.actionType === 'emit_patch_plan') {
-                await this.artifactStore.savePatchPlanArtifact(proposalId, {
-                    proposal,
-                    gate,
-                    generatedAt: nowIso(),
-                    plan,
-                });
+                await this.artifactStore.savePatchPlanArtifact(proposalId, { proposal, gate, generatedAt: nowIso(), plan });
             }
-
             const outcome = await this.persistOutcome(proposal, status, gate.decision, 'skipped_with_reason', false, gate.reason);
-            return { success: false, proposal: await this.artifactStore.getAutoFixProposal(proposalId), gate, plan, outcome };
+            return { success: false, proposal, gate, plan, outcome };
         }
 
-        this.activeProposalId = proposalId;
-        await this.artifactStore.updateAutoFixProposalStatus(proposalId, 'executing');
+        if (this.isCooldownActive(proposal)) {
+            const details = `cooldown_active_until_${proposal.cooldownUntil}`;
+            proposal = await this.updateProposalStatus(proposal, 'skipped_cooldown');
+            const outcome = await this.persistOutcome(proposal, 'skipped_cooldown', gate.decision, 'skipped_with_reason', false, details, 'cooldown_active');
+            console.log(`[ProposalCooldown] proposalId=${proposalId} decision=skip cooldownUntil=${proposal.cooldownUntil || ''}`);
+            return { success: false, proposal, gate, plan, outcome };
+        }
+
+        const targetLockKey = proposal.targetLockKey || this.computeTargetLockKey(proposal);
+        const lockAttempt = this.acquireTargetLock(targetLockKey, proposal.proposalId);
+        if (!lockAttempt.acquired) {
+            proposal = await this.updateProposalStatus(proposal, 'skipped_target_locked');
+            const outcome = await this.persistOutcome(
+                proposal,
+                'skipped_target_locked',
+                gate.decision,
+                'skipped_with_reason',
+                false,
+                'target_locked',
+                'target_locked',
+                lockAttempt.holder
+            );
+            console.log(`[TargetLock] key=${targetLockKey} decision=blocked holder=${lockAttempt.holder || ''} proposalId=${proposal.proposalId}`);
+            return { success: false, proposal, gate, plan, outcome };
+        }
+
+        console.log(`[TargetLock] key=${targetLockKey} decision=acquired proposalId=${proposal.proposalId}`);
+        proposal = await this.updateProposalStatus(proposal, 'executing');
         console.log(`[AutoFix] proposalId=${proposalId} stage=apply_started`);
 
         let rollbackContext: Record<string, unknown> = {};
@@ -236,18 +335,17 @@ export class AutoFixEngine {
             const verification = await this.verifyProposal(proposal);
 
             if (verification.result === 'passed') {
-                await this.artifactStore.updateAutoFixProposalStatus(proposalId, 'verification_passed');
+                proposal = await this.updateProposalStatus(proposal, 'completed');
                 console.log(`[AutoFix] proposalId=${proposalId} stage=verify_passed`);
-                await this.artifactStore.updateAutoFixProposalStatus(proposalId, 'completed');
                 const outcome = await this.persistOutcome(proposal, 'completed', gate.decision, 'passed', false, verification.message);
-                return { success: true, proposal: await this.artifactStore.getAutoFixProposal(proposalId), gate, plan, outcome };
+                return { success: true, proposal, gate, plan, outcome };
             }
 
-            await this.artifactStore.updateAutoFixProposalStatus(proposalId, 'verification_failed');
+            proposal = await this.updateProposalStatus(proposal, 'verification_failed');
             console.log(`[AutoFix] proposalId=${proposalId} stage=verify_failed`);
             const rolledBack = await this.rollbackProposal(proposal, rollbackContext);
             if (rolledBack) {
-                await this.artifactStore.updateAutoFixProposalStatus(proposalId, 'rolled_back');
+                proposal = await this.updateProposalStatus(proposal, 'rolled_back');
                 console.log(`[AutoFix] proposalId=${proposalId} stage=rollback_complete`);
             }
             const outcome = await this.persistOutcome(
@@ -258,11 +356,11 @@ export class AutoFixEngine {
                 rolledBack,
                 verification.message
             );
-            return { success: false, proposal: await this.artifactStore.getAutoFixProposal(proposalId), gate, plan, outcome };
+            return { success: false, proposal, gate, plan, outcome };
         } catch (error: any) {
             console.log(`[AutoFix] proposalId=${proposalId} stage=verify_failed`);
             const rolledBack = await this.rollbackProposal(proposal, rollbackContext);
-            await this.artifactStore.updateAutoFixProposalStatus(proposalId, rolledBack ? 'rolled_back' : 'failed');
+            proposal = await this.updateProposalStatus(proposal, rolledBack ? 'rolled_back' : 'failed');
             const outcome = await this.persistOutcome(
                 proposal,
                 rolledBack ? 'rolled_back' : 'failed',
@@ -271,21 +369,50 @@ export class AutoFixEngine {
                 rolledBack,
                 error?.message || 'unknown_error'
             );
-            return { success: false, proposal: await this.artifactStore.getAutoFixProposal(proposalId), gate, plan, outcome };
+            return { success: false, proposal, gate, plan, outcome };
         } finally {
-            this.activeProposalId = null;
+            this.releaseTargetLock(targetLockKey, proposal.proposalId);
+            console.log(`[TargetLock] key=${targetLockKey} decision=released proposalId=${proposal.proposalId}`);
         }
     }
 
-    private createProposal(input: Omit<AutoFixProposal, 'proposalId' | 'status' | 'createdAt' | 'updatedAt'>): AutoFixProposal {
+    private createProposal(input: Omit<AutoFixProposal, 'proposalId' | 'status' | 'createdAt' | 'updatedAt' | 'dedupeKey' | 'firstSeenAt' | 'lastSeenAt' | 'duplicateCount' | 'observationCount' | 'cooldownUntil' | 'targetLockKey'>): AutoFixProposal {
         const timestamp = nowIso();
-        return {
+        const proposalId = buildProposalId();
+        const proposal: AutoFixProposal = {
             ...input,
-            proposalId: buildProposalId(),
+            proposalId,
             status: 'proposed',
             createdAt: timestamp,
             updatedAt: timestamp,
+            firstSeenAt: timestamp,
+            lastSeenAt: timestamp,
+            duplicateCount: 0,
+            observationCount: 1,
         };
+        proposal.dedupeKey = this.computeDedupeKey(proposal);
+        proposal.targetLockKey = this.computeTargetLockKey(proposal);
+        return proposal;
+    }
+
+    private computeDedupeKey(proposal: AutoFixProposal): string {
+        const serialized = [
+            proposal.category,
+            proposal.issueType,
+            proposal.targetType,
+            normalizeTarget(proposal),
+            proposal.actionType,
+            stableSerialize(proposal.proposedValue),
+        ].join('|');
+        return `afk_${hashString(serialized)}`;
+    }
+
+    private computeTargetLockKey(proposal: AutoFixProposal): string {
+        if (proposal.targetKey) return `target:key:${proposal.targetKey}`;
+        if (proposal.targetPath) return `target:path:${normalizePathForKey(proposal.targetPath)}`;
+        if (proposal.actionType === 'suppress_provider') return `target:provider:${String(proposal.proposedValue || proposal.targetKey || 'unknown')}`;
+        if (proposal.dedupeKey) return `target:dedupe:${proposal.dedupeKey}`;
+        return `target:proposal:${proposal.proposalId}`;
     }
 
     private applySafetyGate(proposal: AutoFixProposal): AutoFixGateResult {
@@ -297,7 +424,7 @@ export class AutoFixEngine {
             return {
                 proposalId: proposal.proposalId,
                 decision: proposal.category === 'code_patch_plan' ? 'approval_required' : 'blocked_out_of_scope',
-                reason: proposal.category === 'code_patch_plan' ? 'code_modification_not_auto_allowed' : 'category_not_allowlisted'
+                reason: proposal.category === 'code_patch_plan' ? 'code_modification_not_auto_allowed' : 'category_not_allowlisted',
             };
         }
         if (!policy.allowedActions.includes(proposal.actionType)) {
@@ -392,10 +519,7 @@ export class AutoFixEngine {
                 return { backupPath };
             }
             case 'emit_patch_plan': {
-                const artifactPath = await this.artifactStore.savePatchPlanArtifact(proposal.proposalId, {
-                    proposal,
-                    generatedAt: nowIso(),
-                });
+                const artifactPath = await this.artifactStore.savePatchPlanArtifact(proposal.proposalId, { proposal, generatedAt: nowIso() });
                 return { artifactPath };
             }
             default:
@@ -416,12 +540,12 @@ export class AutoFixEngine {
             }
             case 'rotate_log': {
                 const logPath = proposal.targetPath || path.join(this.logsDir, 'runtime-errors.jsonl');
-                const exists = fs.existsSync(logPath);
-                return exists ? { result: 'passed', message: 'active_log_exists' } : { result: 'failed', message: 'active_log_missing' };
+                return fs.existsSync(logPath)
+                    ? { result: 'passed', message: 'active_log_exists' }
+                    : { result: 'failed', message: 'active_log_missing' };
             }
-            case 'prune_logs': {
+            case 'prune_logs':
                 return { result: 'passed', message: 'prune_completed' };
-            }
             case 'suppress_provider': {
                 if (!proposal.targetKey || !proposal.proposedValue) return { result: 'failed', message: 'provider_target_missing' };
                 const settings = loadSettings(this.settingsPath);
@@ -430,11 +554,10 @@ export class AutoFixEngine {
                     ? { result: 'passed', message: 'provider_suppressed' }
                     : { result: 'failed', message: 'provider_not_suppressed' };
             }
-            case 'clear_runtime_cache': {
+            case 'clear_runtime_cache':
                 return fs.existsSync(this.cacheDir)
                     ? { result: 'passed', message: 'cache_dir_reset' }
                     : { result: 'failed', message: 'cache_dir_missing' };
-            }
             case 'emit_patch_plan': {
                 const artifactPath = path.join(resolveDataPath(path.join('reflection', 'artifacts', 'auto_fix', 'patch_plans')), `${proposal.proposalId}.json`);
                 return fs.existsSync(artifactPath)
@@ -451,13 +574,7 @@ export class AutoFixEngine {
             console.log(`[AutoFix] proposalId=${proposal.proposalId} stage=rollback_started`);
             switch (proposal.actionType) {
                 case 'update_config_value':
-                case 'update_policy_value': {
-                    if (!proposal.targetKey) return false;
-                    const settings = loadSettings(this.settingsPath);
-                    setByPath(settings, proposal.targetKey, context.beforeValue);
-                    saveSettings(this.settingsPath, settings);
-                    return true;
-                }
+                case 'update_policy_value':
                 case 'suppress_provider': {
                     if (!proposal.targetKey) return false;
                     const settings = loadSettings(this.settingsPath);
@@ -481,17 +598,113 @@ export class AutoFixEngine {
         }
     }
 
+    private async persistWithDeduplication(proposal: AutoFixProposal): Promise<AutoFixProposal> {
+        const existing = proposal.dedupeKey
+            ? await this.artifactStore.findLatestAutoFixProposalByDedupeKey(proposal.dedupeKey)
+            : null;
+        if (!existing || existing.proposalId === proposal.proposalId) {
+            await this.artifactStore.saveAutoFixProposal(proposal);
+            console.log(`[ProposalDedup] dedupeKey=${proposal.dedupeKey || ''} action=created proposalId=${proposal.proposalId}`);
+            return proposal;
+        }
+
+        const bypassReason = this.getMaterialChangeReason(existing, proposal);
+        const cooldownActive = this.isCooldownActive(existing);
+        const shouldMerge = !bypassReason && (SUPPRESSING_STATES.has(existing.status) || cooldownActive);
+        if (shouldMerge) {
+            const merged: AutoFixProposal = {
+                ...existing,
+                lastSeenAt: nowIso(),
+                updatedAt: nowIso(),
+                duplicateCount: (existing.duplicateCount ?? 0) + 1,
+                observationCount: (existing.observationCount ?? existing.duplicateCount ?? 1) + 1,
+                evidenceSummary: this.mergeEvidence(existing.evidenceSummary, proposal.evidenceSummary),
+            };
+            await this.artifactStore.saveAutoFixProposal(merged);
+            console.log(`[ProposalDedup] dedupeKey=${proposal.dedupeKey || ''} action=merged existingProposalId=${existing.proposalId}`);
+            return merged;
+        }
+
+        const created: AutoFixProposal = {
+            ...proposal,
+            lastMaterialChangeReason: bypassReason || undefined,
+        };
+        await this.artifactStore.saveAutoFixProposal(created);
+        console.log(`[ProposalDedup] dedupeKey=${proposal.dedupeKey || ''} action=created proposalId=${created.proposalId} reason=${bypassReason || 'new_cycle'}`);
+        return created;
+    }
+
+    private mergeEvidence(existing: string, incoming: string): string {
+        const a = (existing || '').trim();
+        const b = (incoming || '').trim();
+        if (!a) return b;
+        if (!b) return a;
+        if (a.includes(b)) return a;
+        if (b.includes(a)) return b;
+        return `${a} | ${b}`;
+    }
+
+    private getMaterialChangeReason(existing: AutoFixProposal, incoming: AutoFixProposal): string | null {
+        const policy = this.getPolicy();
+        const existingSeverity = SEVERITY_WEIGHT[String(existing.sourceSeverity || '').toLowerCase()] || 0;
+        const incomingSeverity = SEVERITY_WEIGHT[String(incoming.sourceSeverity || '').toLowerCase()] || 0;
+        if (incomingSeverity > existingSeverity) return 'severity_increased';
+        if ((incoming.confidence - existing.confidence) >= policy.materialChangeConfidenceDelta) return 'confidence_increased';
+        if (stableSerialize(existing.proposedValue) !== stableSerialize(incoming.proposedValue)) return 'target_value_changed';
+        if ((incoming.evidenceSummary || '') && !(existing.evidenceSummary || '').includes(incoming.evidenceSummary || '')) return 'new_evidence';
+        return null;
+    }
+
+    private isCooldownActive(proposal: AutoFixProposal): boolean {
+        if (!proposal.cooldownUntil) return false;
+        const until = new Date(proposal.cooldownUntil).getTime();
+        if (!Number.isFinite(until)) return false;
+        return Date.now() < until;
+    }
+
+    private async updateProposalStatus(proposal: AutoFixProposal, status: AutoFixProposalStatus): Promise<AutoFixProposal> {
+        const policy = this.getPolicy();
+        const minutes = cooldownMinutesForStatus(policy, status);
+        const cooldownUntil = minutes > 0 ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : proposal.cooldownUntil;
+        const updated: AutoFixProposal = {
+            ...proposal,
+            status,
+            updatedAt: nowIso(),
+            lastSeenAt: nowIso(),
+            cooldownUntil,
+        };
+        await this.artifactStore.saveAutoFixProposal(updated);
+        return updated;
+    }
+
+    private acquireTargetLock(key: string, proposalId: string): { acquired: boolean; holder?: string } {
+        const holder = this.activeTargetLocks.get(key);
+        if (holder && holder !== proposalId) return { acquired: false, holder };
+        this.activeTargetLocks.set(key, proposalId);
+        return { acquired: true };
+    }
+
+    private releaseTargetLock(key: string, proposalId: string): void {
+        const holder = this.activeTargetLocks.get(key);
+        if (holder === proposalId) {
+            this.activeTargetLocks.delete(key);
+        }
+    }
+
     private async persistOutcome(
         proposal: AutoFixProposal,
         status: AutoFixProposalStatus,
         gateDecision: AutoFixGateDecision,
         verificationResult: AutoFixVerificationResult,
         rolledBack: boolean,
-        details: string
+        details: string,
+        skipReason: AutoFixSkipReason = 'none',
+        lockHolderProposalId?: string
     ): Promise<AutoFixOutcome> {
+        const updatedProposal = proposal.status === status ? proposal : await this.updateProposalStatus(proposal, status);
         const outcome: AutoFixOutcome = {
             outcomeId: `afo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            proposalId: proposal.proposalId,
+            proposalId: updatedProposal.proposalId,
             status,
             gateDecision,
             verificationResult,
@@ -499,6 +712,11 @@ export class AutoFixEngine {
             details,
             createdAt: nowIso(),
             updatedAt: nowIso(),
+            dedupeKey: updatedProposal.dedupeKey,
+            cooldownUntil: updatedProposal.cooldownUntil,
+            targetLockKey: updatedProposal.targetLockKey,
+            skipReason,
+            lockHolderProposalId,
         };
         await this.artifactStore.saveAutoFixOutcome(outcome);
         return outcome;

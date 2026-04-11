@@ -62,6 +62,13 @@ Safety model:
 - App-root containment is enforced for path targets
 - Rollback + verification are required unless action is explicitly marked as irreversible maintenance
 
+Proposal hygiene controls:
+- Deterministic deduplication fingerprints (`dedupeKey`) are generated from stable proposal intent fields (category/issue/action/normalized target/value).
+- Repeated equivalent proposals are merged into existing records (incremented `duplicateCount`/`observationCount`, updated `lastSeenAt`) instead of multiplying.
+- Material-change bypass is supported for severity/confidence/evidence/value shifts so genuinely changed conditions can re-surface.
+- Cooldown metadata (`cooldownUntil`) is persisted per proposal/outcome to suppress noisy re-proposals after success/failure/block/approval states.
+- Target-scoped in-process locks (`targetLockKey`) are acquired before execution so overlapping runs on the same logical target are blocked and logged without globally serializing unrelated targets.
+
 Persistence:
 - Proposals and outcomes are stored under `data/reflection/artifacts/auto_fix/` via `ArtifactStore`
 - IPC/manual controls in `ReflectionAppService`:

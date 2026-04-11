@@ -19,6 +19,11 @@ export type AutoFixRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
 export type AutoFixProposalStatus =
     | 'proposed'
+    | 'merged_into_existing'
+    | 'superseded'
+    | 'skipped_duplicate'
+    | 'skipped_cooldown'
+    | 'skipped_target_locked'
     | 'gated_blocked'
     | 'gated_requires_approval'
     | 'executing'
@@ -37,6 +42,14 @@ export type AutoFixGateDecision =
     | 'blocked_external_path'
     | 'blocked_missing_rollback'
     | 'blocked_missing_verification';
+
+export type AutoFixSkipReason =
+    | 'none'
+    | 'deduplicated_existing'
+    | 'cooldown_active'
+    | 'target_locked'
+    | 'conflicting_execution'
+    | 'material_change_bypass';
 
 export type AutoFixVerificationResult = 'passed' | 'failed' | 'partial' | 'skipped_with_reason';
 
@@ -62,6 +75,17 @@ export interface AutoFixProposal {
     createdAt: string;
     updatedAt: string;
     proposedValue?: unknown;
+    dedupeKey?: string;
+    firstSeenAt?: string;
+    lastSeenAt?: string;
+    duplicateCount?: number;
+    observationCount?: number;
+    cooldownUntil?: string;
+    targetLockKey?: string;
+    mergedIntoProposalId?: string;
+    supersededByProposalId?: string;
+    sourceSeverity?: 'low' | 'medium' | 'high' | 'critical' | string;
+    lastMaterialChangeReason?: string;
 }
 
 export interface AutoFixExecutionStep {
@@ -96,6 +120,20 @@ export interface AutoFixOutcome {
     details: string;
     createdAt: string;
     updatedAt: string;
+    dedupeKey?: string;
+    cooldownUntil?: string;
+    targetLockKey?: string;
+    skipReason?: AutoFixSkipReason;
+    lockHolderProposalId?: string;
+}
+
+export interface AutoFixCooldownPolicy {
+    proposedMinutes: number;
+    appliedSuccessMinutes: number;
+    failedMinutes: number;
+    blockedMinutes: number;
+    approvalRequiredMinutes: number;
+    rolledBackMinutes: number;
 }
 
 export interface AutoFixPolicy {
@@ -107,4 +145,6 @@ export interface AutoFixPolicy {
     requireRollback: boolean;
     irreversibleAllowedActions: AutoFixActionType[];
     allowlistedConfigKeys: string[];
+    cooldowns: AutoFixCooldownPolicy;
+    materialChangeConfidenceDelta: number;
 }

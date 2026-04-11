@@ -112,7 +112,16 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
             minConfidence: 0.7,
             maxRiskAllowedForAutoApply: 'low',
             requireAppRootContainment: true,
-            requireRollback: true
+            requireRollback: true,
+            cooldowns: {
+                proposedMinutes: 30,
+                appliedSuccessMinutes: 240,
+                failedMinutes: 60,
+                blockedMinutes: 120,
+                approvalRequiredMinutes: 240,
+                rolledBackMinutes: 180
+            },
+            materialChangeConfidenceDelta: 0.15
         }
     },
     agentModes: {
