@@ -44,6 +44,8 @@ import { CandidatePatch, ReflectionDashboardState } from './reflectionEcosystemT
 import { ReflectionIntentService, ReflectionIntentResult, ReflectionIntentClass } from './ReflectionIntentService';
 import * as fs from 'fs';
 import * as path from 'path';
+import { AutoFixEngine } from './AutoFixEngine';
+import { AutoFixProposal } from './AutoFixTypes';
 
 export class ReflectionService {
     private isEnabled: boolean;
@@ -70,6 +72,8 @@ export class ReflectionService {
     private queue: ReflectionQueueService;
     private scheduler: ReflectionScheduler;
     private intentService: ReflectionIntentService;
+    private artifactStore: ArtifactStore;
+    private autoFixEngine: AutoFixEngine;
 
     private git: any = null; // Legacy ref for ToolService capability parity if needed
     private rootDir: string;
@@ -99,7 +103,8 @@ export class ReflectionService {
 
         // 3. Loop Services
         this.selfImprovement = new SelfImprovementService(this.repoInspector, this.logInspector);
-        this.reflection = new ReflectionEngine(new ArtifactStore(userDataDir));
+        this.artifactStore = new ArtifactStore(userDataDir);
+        this.reflection = new ReflectionEngine(this.artifactStore);
         this.patchStager = new PatchStagingService(this.dirs, this.protectedRegistry);
         this.validator = new ValidationService(this.safeCmd, this.dirs);
         this.promoter = new PromotionService(rootDir, this.dirs, this.protectedRegistry, this.identityRegistry);
@@ -108,6 +113,12 @@ export class ReflectionService {
         this.goals = new GoalService(this.dirs);
         this.queue = new ReflectionQueueService(this.dirs);
         this.intentService = new ReflectionIntentService();
+        this.autoFixEngine = new AutoFixEngine({
+            artifactStore: this.artifactStore,
+            settingsPath: this.settingsPath,
+            logsDir: this.dirs.logsDir,
+            cacheDir: path.join(userDataDir, 'cache'),
+        });
 
         // Wire the execution callback
         this.scheduler = new ReflectionScheduler(
@@ -483,6 +494,18 @@ export class ReflectionService {
             });
             console.log(`[ReflectionService] Analyzed issue root cause hypothesis: ${analyzed.selectedHypothesis}`);
 
+            const autoFixProposals = await this.autoFixEngine.synthesizeProposals(
+                runId,
+                issue,
+                analyzed?.selectedHypothesis || ''
+            );
+            this.traceStage(runId, 'proposal_persistence', {
+                success: true,
+                recordsCreated: 1 + autoFixProposals.length,
+                destination: 'reflection-journal.jsonl+auto_fix_proposals',
+                autoFixProposalCount: autoFixProposals.length,
+            });
+
             this.scheduler.updateActivityPhase('journaling');
 
             const persistStartedAt = Date.now();
@@ -494,15 +517,11 @@ export class ReflectionService {
                 tags: ['orchestration', 'manual_scan'],
                 confidence: 0.90
             });
-            this.traceStage(runId, 'proposal_persistence', {
-                success: true,
-                recordsCreated: 1,
-                destination: 'reflection-journal.jsonl',
-                durationMs: Date.now() - persistStartedAt
-            });
             this.traceStage(runId, 'ready_state', {
                 proposalsReady: analyzed?.selectedHypothesis ? 1 : 0,
-                promoted: 0
+                promoted: 0,
+                autoFixProposalCount: autoFixProposals.length,
+                durationMs: Date.now() - persistStartedAt,
             });
             this.traceStage(runId, 'proposal_promotion', {
                 count: 0,
@@ -594,6 +613,11 @@ export class ReflectionService {
             this.traceStage(runId, 'proposal_generation', { count: analyzed?.selectedHypothesis ? 1 : 0, issueId: issue.issueId });
             this.traceStage(runId, 'proposal_validation', { count: analyzed?.selectedHypothesis ? 1 : 0, success: Boolean(analyzed?.selectedHypothesis) });
             console.log(`[ReflectionService] Goal ${goalId} analysis hypothesis: ${analyzed.selectedHypothesis}`);
+            const autoFixProposals = await this.autoFixEngine.synthesizeProposals(
+                runId,
+                issue,
+                analyzed?.selectedHypothesis || ''
+            );
 
             // STEP 3: Complete execution
             await this.goals.updateGoalStatus(goalId, 'completed');
@@ -609,11 +633,11 @@ export class ReflectionService {
             });
             this.traceStage(runId, 'proposal_persistence', {
                 success: true,
-                recordsCreated: 1,
+                recordsCreated: 1 + autoFixProposals.length,
                 destination: 'reflection-journal.jsonl',
                 goalId
             });
-            this.traceStage(runId, 'ready_state', { proposalsReady: analyzed?.selectedHypothesis ? 1 : 0, goalId });
+            this.traceStage(runId, 'ready_state', { proposalsReady: analyzed?.selectedHypothesis ? 1 : 0, goalId, autoFixProposalCount: autoFixProposals.length });
             this.traceStage(runId, 'proposal_promotion', { count: 0, skipped: true, reason: 'goal_pipeline_stops_at_hypothesis' });
             this.traceStage(runId, 'cycle_complete', { durationMs: Date.now() - startedAt, issueId: issue.issueId, goalId });
 
@@ -691,6 +715,27 @@ export class ReflectionService {
     getActivePatches() { return this.activePatches; }
     getJournalService() { return this.journal; }
     getPromoter() { return this.promoter; }
+    getAutoFixEngine() { return this.autoFixEngine; }
+
+    public async listAutoFixProposals(): Promise<AutoFixProposal[]> {
+        return this.autoFixEngine.listProposals();
+    }
+
+    public async autoFixEvaluate(proposalId: string) {
+        return this.autoFixEngine.evaluateProposal(proposalId);
+    }
+
+    public async autoFixDryRun(proposalId: string) {
+        return this.autoFixEngine.dryRunProposal(proposalId);
+    }
+
+    public async autoFixRun(proposalId: string) {
+        return this.autoFixEngine.runProposal(proposalId);
+    }
+
+    public async listAutoFixOutcomes() {
+        return this.autoFixEngine.listOutcomes();
+    }
 
     private notifyRenderer(channel: string, data: any) {
         try {

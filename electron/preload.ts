@@ -477,6 +477,11 @@ contextBridge.exposeInMainWorld('tala', {
     processNextGoal: () => ipcRenderer.invoke('reflection:processNextGoal'),
     cancelQueueItem: (id: string) => ipcRenderer.invoke('reflection:cancelQueueItem', id),
     retryQueueItem: (id: string) => ipcRenderer.invoke('reflection:retryQueueItem', id),
+    autoFixEvaluate: (proposalId: string) => ipcRenderer.invoke('reflection:autoFixEvaluate', proposalId),
+    autoFixDryRun: (proposalId: string) => ipcRenderer.invoke('reflection:autoFixDryRun', proposalId),
+    autoFixRun: (proposalId: string) => ipcRenderer.invoke('reflection:autoFixRun', proposalId),
+    listAutoFixProposals: () => ipcRenderer.invoke('reflection:listAutoFixProposals'),
+    listAutoFixOutcomes: () => ipcRenderer.invoke('reflection:listAutoFixOutcomes'),
 
     // ─── Phase 3.5 integration: promote a Phase 2 planned proposal + trigger governance ──
     /** Promotes a classified SafeChangeProposal and triggers automatic governance evaluation. */

@@ -77,6 +77,26 @@ export class ReflectionAppService {
             })
         );
 
+        ipcMain.handle('reflection:autoFixEvaluate', (_, proposalId: string) =>
+            this.executeWithTelemetry('autoFixEvaluate', () => this.reflectionService.autoFixEvaluate(proposalId))
+        );
+
+        ipcMain.handle('reflection:autoFixDryRun', (_, proposalId: string) =>
+            this.executeWithTelemetry('autoFixDryRun', () => this.reflectionService.autoFixDryRun(proposalId))
+        );
+
+        ipcMain.handle('reflection:autoFixRun', (_, proposalId: string) =>
+            this.executeWithTelemetry('autoFixRun', () => this.reflectionService.autoFixRun(proposalId))
+        );
+
+        ipcMain.handle('reflection:listAutoFixProposals', () =>
+            this.executeWithTelemetry('listAutoFixProposals', () => this.reflectionService.listAutoFixProposals())
+        );
+
+        ipcMain.handle('reflection:listAutoFixOutcomes', () =>
+            this.executeWithTelemetry('listAutoFixOutcomes', () => this.reflectionService.listAutoFixOutcomes())
+        );
+
         ipcMain.handle('reflection:listGoals', () =>
             this.executeWithTelemetry('listGoals', () => this.reflectionService.getGoalsService().listGoals())
         );

@@ -87,6 +87,29 @@ export class LogLifecycleService {
         return this.rotateIfOversized(activePath, fileName, this.config.maxActiveFileBytes, 'startup_oversized_existing');
     }
 
+    public pruneRotated(fileName: string): void {
+        const parsed = path.parse(fileName);
+        const prefix = parsed.name;
+        const ext = parsed.ext || '.log';
+        const rotated = fs.readdirSync(this.logsDir)
+            .filter((name) => name.startsWith(`${prefix}.`) && name.endsWith(ext))
+            .map((name) => {
+                const match = name.match(new RegExp(`^${this.escapeRegex(prefix)}\\.(\\d+)${this.escapeRegex(ext)}$`));
+                return match ? { name, index: Number(match[1]) } : null;
+            })
+            .filter((item): item is { name: string; index: number } => item !== null)
+            .sort((a, b) => a.index - b.index);
+
+        const maxKeep = this.config.rotatedRetentionCount;
+        while (rotated.length > maxKeep) {
+            const toDelete = rotated.pop();
+            if (!toDelete) break;
+            const fullPath = path.join(this.logsDir, toDelete.name);
+            fs.unlinkSync(fullPath);
+            console.log(`[LogLifecycle] prune file=${toDelete.name} reason=retention_limit`);
+        }
+    }
+
     public readRecentWindow(fileName: string, options: RecentLogWindowOptions = {}): RecentLogWindow {
         const fullPath = this.resolveManagedLogPath(fileName);
         return this.readRecentWindowFromPath(fullPath, options);
@@ -212,6 +235,10 @@ export class LogLifecycleService {
 
     private normalizePath(input: string): string {
         return path.resolve(input).replace(/[\\/]+$/g, '').toLowerCase();
+    }
+
+    private escapeRegex(value: string): string {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     private logOutsideRootIfNeeded(): void {

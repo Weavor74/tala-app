@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ReflectionEvent, ChangeProposal, OutcomeRecord } from './types';
 import { DATA_ROOT, isPathWithinAppRoot } from '../PathResolver';
+import { AutoFixOutcome, AutoFixProposal, AutoFixProposalStatus } from './AutoFixTypes';
 
 /**
  * Handles persistent storage of reflection artifacts in the local filesystem.
@@ -26,7 +27,10 @@ export class ArtifactStore {
             'reflections',
             'proposals',
             'outcomes',
-            'backups/reflection_changes'
+            'backups/reflection_changes',
+            'auto_fix/proposals',
+            'auto_fix/outcomes',
+            'auto_fix/patch_plans',
         ];
         dirs.forEach(d => {
             const fullPath = path.join(this.baseDir, d);
@@ -51,6 +55,72 @@ export class ArtifactStore {
     async saveOutcome(outcome: OutcomeRecord): Promise<void> {
         const filePath = path.join(this.baseDir, 'outcomes', `${outcome.proposalId}.json`);
         fs.writeFileSync(filePath, JSON.stringify(outcome, null, 2));
+    }
+
+    async saveAutoFixProposal(proposal: AutoFixProposal): Promise<void> {
+        const filePath = path.join(this.baseDir, 'auto_fix', 'proposals', `${proposal.proposalId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(proposal, null, 2));
+    }
+
+    async updateAutoFixProposalStatus(proposalId: string, status: AutoFixProposalStatus): Promise<AutoFixProposal | null> {
+        const existing = await this.getAutoFixProposal(proposalId);
+        if (!existing) return null;
+        const updated: AutoFixProposal = { ...existing, status, updatedAt: new Date().toISOString() };
+        await this.saveAutoFixProposal(updated);
+        return updated;
+    }
+
+    async getAutoFixProposal(proposalId: string): Promise<AutoFixProposal | null> {
+        const filePath = path.join(this.baseDir, 'auto_fix', 'proposals', `${proposalId}.json`);
+        if (!fs.existsSync(filePath)) return null;
+        try {
+            const content = fs.readFileSync(filePath, 'utf-8');
+            return JSON.parse(content) as AutoFixProposal;
+        } catch (err) {
+            console.error(`[ArtifactStore] Failed to load auto-fix proposal ${proposalId}:`, err);
+            return null;
+        }
+    }
+
+    async listAutoFixProposals(): Promise<AutoFixProposal[]> {
+        const dir = path.join(this.baseDir, 'auto_fix', 'proposals');
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        const proposals: AutoFixProposal[] = [];
+        for (const file of files) {
+            try {
+                proposals.push(JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')) as AutoFixProposal);
+            } catch (err) {
+                console.error(`[ArtifactStore] Failed to parse auto-fix proposal ${file}:`, err);
+            }
+        }
+        return proposals.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+
+    async saveAutoFixOutcome(outcome: AutoFixOutcome): Promise<void> {
+        const filePath = path.join(this.baseDir, 'auto_fix', 'outcomes', `${outcome.proposalId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(outcome, null, 2));
+    }
+
+    async listAutoFixOutcomes(): Promise<AutoFixOutcome[]> {
+        const dir = path.join(this.baseDir, 'auto_fix', 'outcomes');
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+        const outcomes: AutoFixOutcome[] = [];
+        for (const file of files) {
+            try {
+                outcomes.push(JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')) as AutoFixOutcome);
+            } catch (err) {
+                console.error(`[ArtifactStore] Failed to parse auto-fix outcome ${file}:`, err);
+            }
+        }
+        return outcomes.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    }
+
+    async savePatchPlanArtifact(proposalId: string, payload: unknown): Promise<string> {
+        const filePath = path.join(this.baseDir, 'auto_fix', 'patch_plans', `${proposalId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+        return filePath;
     }
 
     async getProposals(status?: string): Promise<ChangeProposal[]> {

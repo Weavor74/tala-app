@@ -107,7 +107,13 @@ export const DEFAULT_SETTINGS: Record<string, any> = {
         quietHours: { start: '00:00', end: '06:00' },
         autoApplyRiskLevel: 3, // Low (1-3)
         retentionDays: 30,
-        maxProposalsPerDay: 5
+        maxProposalsPerDay: 5,
+        autoFix: {
+            minConfidence: 0.7,
+            maxRiskAllowedForAutoApply: 'low',
+            requireAppRootContainment: true,
+            requireRollback: true
+        }
     },
     agentModes: {
         activeMode: 'hybrid',

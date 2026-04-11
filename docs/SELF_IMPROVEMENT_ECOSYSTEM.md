@@ -50,3 +50,23 @@ Behavior:
 - Rejects when reflection is disabled or another run is active
 - Dev-safe gate: disabled in production unless `TALA_REFLECTION_MANUAL=1`
 - If no candidates exist, expected outcome is an explicit traced abort (`reason=no_candidates`)
+
+## 7. Bounded Auto-Fix Engine (Safe First Wave)
+`electron/services/reflection/AutoFixEngine.ts` extends reflection outputs into a policy-bounded self-maintenance loop:
+
+`Reflection -> Structured Proposal -> AutoFixGate -> Execution Plan -> Apply -> Verify -> Persist/Rollback`
+
+Safety model:
+- Only low-risk allowlisted categories/actions can auto-apply (`policy`, `config`, `runtime_state`, `storage_maintenance`, `provider_suppression`)
+- Code edits are never auto-applied in this wave (`code_patch_plan` is gated to approval and stored as a patch-plan artifact)
+- App-root containment is enforced for path targets
+- Rollback + verification are required unless action is explicitly marked as irreversible maintenance
+
+Persistence:
+- Proposals and outcomes are stored under `data/reflection/artifacts/auto_fix/` via `ArtifactStore`
+- IPC/manual controls in `ReflectionAppService`:
+  - `reflection:autoFixEvaluate`
+  - `reflection:autoFixDryRun`
+  - `reflection:autoFixRun`
+  - `reflection:listAutoFixProposals`
+  - `reflection:listAutoFixOutcomes`

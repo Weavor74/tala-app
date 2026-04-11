@@ -41,6 +41,16 @@ The IPC system follows a **Two-Stage Isolation Pattern**:
 | `mcp:tools:list` | Invoke | `null` | `ToolSchema[]` | Lists all active MCP tools. |
 | `terminal:run` | Invoke | `{ command: string }` | `ExecResult` | Executes a shell command (Sensitive). |
 
+### 4.4. Reflection & Auto-Fix (Debug/Safe Control Plane)
+| Channel | Type | Payload | Returns | Description |
+|:---|:---|:---|:---|:---|
+| `reflection:runNow` | Invoke | `null` | `{ accepted: boolean, runId?: string, reason?: string, message?: string }` | Forces one reflection cycle through the production orchestration path (dev-gated). |
+| `reflection:autoFixEvaluate` | Invoke | `{ proposalId: string }` | `{ proposal, gate, plan }` | Evaluates gate decision and normalized plan without applying mutations. |
+| `reflection:autoFixDryRun` | Invoke | `{ proposalId: string }` | `{ proposal, gate, plan }` | Alias for non-mutating execution-plan preview. |
+| `reflection:autoFixRun` | Invoke | `{ proposalId: string }` | `{ success: boolean, proposal, gate, plan, outcome? }` | Executes a proposal only when `AutoFixGate` returns `auto_apply_allowed`. |
+| `reflection:listAutoFixProposals` | Invoke | `null` | `AutoFixProposal[]` | Reads persisted proposal records under `data/reflection/artifacts/auto_fix/proposals`. |
+| `reflection:listAutoFixOutcomes` | Invoke | `null` | `AutoFixOutcome[]` | Reads persisted execution outcomes under `data/reflection/artifacts/auto_fix/outcomes`. |
+
 ## 5. Security Controls
 -   **Channel Whitelisting**: Only channels explicitly registered in `IpcRouter.ts` are processed.
 -   **Context Isolation**: `contextIsolation: true` is enabled in the BrowserView.
