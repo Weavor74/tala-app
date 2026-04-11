@@ -40,6 +40,14 @@ export interface PromptContext {
  * stop the model from hallucinating narrative prose.
  */
 export class CompactPromptBuilder {
+    private static readonly PRIORITY_MEMORY_BLOCK_PATTERN =
+        /\[(AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY|AUTOBIOGRAPHICAL MEMORY - AGE [^\]]+|CANON LORE MEMORIES|MEMORY GROUNDED RECALL|CANON GATE - NO VERIFIED AUTOBIOGRAPHICAL MEMORY)\]/i;
+
+    private static shouldPreferRawMemoryContext(context: PromptContext): boolean {
+        if (!context.hasMemories || !context.memoryContext) return false;
+        return this.PRIORITY_MEMORY_BLOCK_PATTERN.test(context.memoryContext);
+    }
+
     public static build(context: PromptContext): string {
         // If we are NOT in an engineering mode, or NOT a small model, 
         // fallback to the standard rich emotional prompt template.
@@ -170,12 +178,13 @@ export class CompactPromptBuilder {
         const effectiveDynamic = context.compactPacket
             ? (context.compactPacket.emotionalBiasBlock || context.dynamicContext)
             : context.dynamicContext;
-        const effectiveMemory = context.compactPacket
+        const preferRawMemoryContext = this.shouldPreferRawMemoryContext(context);
+        const effectiveMemory = (context.compactPacket && !preferRawMemoryContext)
             ? [context.compactPacket.continuityBlock, context.compactPacket.currentTaskBlock]
                 .filter(Boolean)
                 .join('\n\n')
             : context.memoryContext;
-        const hasEffectiveMemory = context.compactPacket
+        const hasEffectiveMemory = (context.compactPacket && !preferRawMemoryContext)
             ? !!(context.compactPacket.continuityBlock || context.compactPacket.currentTaskBlock)
             : context.hasMemories;
 

@@ -274,6 +274,8 @@ Fallback sources (`mem0`, `explicit`, `conversation`) alone are **not sufficient
 
 `ContextAssembler.assemble()` emits blocks based on `responseMode`:
 
+Compaction behavior: when assembled memory context contains high-priority autobiographical/canon blocks (for example `[AUTOBIOGRAPHICAL MEMORY - AGE X]`, `[CANON LORE MEMORIES ...]`, or `[CANON GATE ...]`), `CompactPromptBuilder` preserves those assembled blocks in the final system prompt instead of replacing them with compact continuity/task summaries.
+
 **`memory_grounded_soft` / `memory_grounded_strict`** (sufficient canon memory):
 1. **`[AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY]`** _(structured age-matched autobiographical canon only)_ — System directive: "You must answer using the provided autobiographical memory. Do not generalize or invent."
 2. **`[AUTOBIOGRAPHICAL MEMORY - AGE X]`** _(structured age-matched autobiographical canon only)_ — Prominent age-scoped autobiographical memory block placed before generic canon lore formatting.
