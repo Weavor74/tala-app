@@ -31,6 +31,7 @@ import yaml
 import re
 from sentence_transformers import SentenceTransformer
 from mcp.server.fastmcp import FastMCP
+from metadata_canon import canonicalize_metadata_for_storage, metadata_matches_filter
 
 # Initialize FastMCP Server
 mcp = FastMCP("Tala Core")
@@ -63,8 +64,18 @@ class SimpleVectorStore:
             try:
                 self.vectors = np.load(self.vectors_path)
                 with open(self.metadata_path, 'r', encoding='utf-8') as f:
-                    self.metadata = json.load(f)
+                    loaded_metadata = json.load(f)
+                changed = False
+                self.metadata = []
+                for meta in loaded_metadata:
+                    normalized = canonicalize_metadata_for_storage(meta)
+                    if normalized != meta:
+                        changed = True
+                    self.metadata.append(normalized)
                 sys.stderr.write(f"Loaded {len(self.metadata)} entries from {self.directory}\n")
+                if changed:
+                    self.save()
+                    sys.stderr.write("[RAG] Backfilled canonical metadata fields for legacy records.\n")
             except Exception as e:
                 sys.stderr.write(f"Error loading store: {e}. Starting fresh.\n")
                 self.vectors = np.empty((0, 384), dtype=np.float32)
@@ -97,7 +108,7 @@ class SimpleVectorStore:
             meta['id'] = ids[i]
             if 'text' not in meta:
                 meta['text'] = documents[i] # Ensure text is stored fallback
-            self.metadata.append(meta)
+            self.metadata.append(canonicalize_metadata_for_storage(meta))
             
         self.save()
 
@@ -130,17 +141,7 @@ class SimpleVectorStore:
         if filter_meta:
             indices = []
             for i, meta in enumerate(self.metadata):
-                match = True
-                for k, v in filter_meta.items():
-                    val = meta.get(k)
-                    if isinstance(v, list):
-                        if val not in v:
-                            match = False
-                            break
-                    elif val != v:
-                        match = False
-                        break
-                if match:
+                if metadata_matches_filter(meta, filter_meta):
                     indices.append(i)
             indices = np.array(indices, dtype=int)
         else:
@@ -173,7 +174,7 @@ class SimpleVectorStore:
         results = []
         for local_idx in top_k_local:
             original_idx = indices[local_idx]
-            match_meta = self.metadata[original_idx]
+            match_meta = canonicalize_metadata_for_storage(self.metadata[original_idx])
             match_score = float(scores[local_idx])
             
             results.append({
@@ -415,7 +416,7 @@ def ingest_file(file_path: str, category: str = "general") -> str:
                 "is_structured": bool(frontmatter_match)
             }
             # Add LTMF-specific fields if they exist
-            standard_fields = ['id', 'age', 'life_stage', 'emotional_state', 'emotional_weight', 'triggers', 'participants', 'location', 'tags']
+            standard_fields = ['id', 'age', 'life_stage', 'emotional_state', 'emotional_weight', 'triggers', 'participants', 'location', 'tags', 'source_type', 'memory_type', 'canon', 'age_sequence', 'sequence', 'order', 'memory_index']
             for field in standard_fields:
                 if field in metadata_from_file:
                     chunk_metadata[field] = metadata_from_file[field]

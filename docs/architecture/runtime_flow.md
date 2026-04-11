@@ -214,6 +214,16 @@ For `intent=lore` (autobiographical queries about Tala's past), `TalaContextRout
 4. `MemoryFilter.resolveContradictions()` applies lore source ranking: `diary/graph(4) > rag(3) > mem0(2) > explicit/chat(1)`, ensuring canon lore outranks recent chat snippets regardless of composite score.
 5. RP mode `allowedSources` includes `'rag'` so LTMF lore items pass the source policy gate.
 
+### 3a-i. Canon Metadata Persistence and Legacy Backfill
+
+`mcp-servers/tala-core/server.py` now normalizes LTMF chunk metadata through `mcp-servers/tala-core/metadata_canon.py` at three points:
+
+1. Store load: existing `metadata.json` records are backfilled and persisted when canonical fields are missing.
+2. Ingestion add: each new chunk metadata object is normalized before append/save.
+3. Search filter: structured filter matching (`age`, `source_type`, `memory_type`, `canon`, `age_sequence`) uses normalized metadata with type-safe coercion.
+
+This keeps strict autobiographical filters working for both new imports and legacy LTMF records that were ingested before canonical fields were present.
+
 **Follow-up carryover:** If the prior turn was `intent=lore` and the current turn matches a follow-up pattern (e.g. "you don't remember?", "what about that?"), the router carries over the lore retrieval domain for up to 5 minutes.
 
 ## 3b. Memory-Grounded Response Mode
