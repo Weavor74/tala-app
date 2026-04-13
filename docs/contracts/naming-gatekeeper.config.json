@@ -1,0 +1,34 @@
+{
+  "contractName": "tala.naming-gatekeeper",
+  "version": "1.0.0",
+  "criticalBoundaryPathRegexes": [
+    "^electron/services/memory/",
+    "^electron/services/policy/",
+    "^electron/services/telemetry/",
+    "^electron/services/execution/",
+    "^electron/services/reflection/",
+    "^electron/services/inference/",
+    "^electron/services/autonomy/",
+    "^electron/services/governance/",
+    "^electron/services/router/",
+    "^electron/services/IpcRouter\\.ts$",
+    "^electron/services/TelemetryService\\.ts$",
+    "^electron/services/Workflow(Service|Engine)\\.ts$",
+    "^electron/services/PathResolver\\.ts$",
+    "^electron/ipc/",
+    "^shared/telemetry\\.ts$",
+    "^shared/runtime/.*",
+    "^src/.*/(ipc|telemetry|workflow|inference|policy|memory)/"
+  ],
+  "hardFailRulesInCriticalChangedFiles": [
+    "naming/banned-term",
+    "naming/event-pattern",
+    "naming/event-command-form",
+    "naming/ipc-pattern",
+    "naming/api-route-pattern"
+  ],
+  "baselineGrowthControl": {
+    "requireJustification": true,
+    "maxAllowedGrowthWithJustification": 20
+  }
+}

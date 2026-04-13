@@ -27,3 +27,14 @@ jobs:
 
       - name: Validate naming contract drift
         run: npm run docs:validate:naming
+
+      - name: Gatekeeper naming pass
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" > .changed-files.txt
+            npm run docs:gatekeeper:naming -- --changed-files-file .changed-files.txt --baseline-ref "origin/${{ github.base_ref }}"
+          else
+            npm run docs:gatekeeper:naming
+          fi

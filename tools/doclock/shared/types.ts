@@ -80,6 +80,52 @@ export interface NamingExceptionsFile {
   exceptions: NamingExceptionEntry[];
 }
 
+export type GatekeeperNamingStatus = 'PASS' | 'PASS_WITH_DEBT' | 'WARN_ESCALATE' | 'FAIL';
+
+export interface GatekeeperNamingFinding {
+  file: string;
+  rule: string;
+  message: string;
+  symbol?: string;
+  value?: string;
+  severity?: Severity;
+  line?: number;
+  column?: number;
+  source: 'new_violation' | 'allowed_exception' | 'stale_exception' | 'policy';
+}
+
+export interface GatekeeperNamingResult {
+  status: GatekeeperNamingStatus;
+  summary: string;
+  counts: {
+    totalDetectedViolations: number;
+    newViolations: number;
+    allowedExceptions: number;
+    staleExceptions: number;
+    criticalBoundaryFindings: number;
+    changedCriticalFiles: number;
+    baselineExceptionDelta: number;
+  };
+  findings: {
+    newViolations: GatekeeperNamingFinding[];
+    staleExceptions: GatekeeperNamingFinding[];
+    criticalBoundaryFindings: GatekeeperNamingFinding[];
+  };
+  debt: {
+    hasNamingDebt: boolean;
+    allowedExceptionCount: number;
+  };
+  warnings: string[];
+  escalations: string[];
+  metadata: {
+    changedFilesEvaluated: string[];
+    criticalBoundaryFilesEvaluated: string[];
+    baselineGrowthJustified: boolean;
+    baselineGrowthJustification?: string;
+    gatekeeperConfigPath: string;
+  };
+}
+
 export type ArtifactKind =
   | 'file'
   | 'class'

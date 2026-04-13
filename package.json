@@ -25,6 +25,7 @@
     "docs:regen": "npm run docs:index && npm run docs:architecture && npm run docs:contracts",
     "docs:verify": "npx tsx scripts/diagnostics/validate_docs_drift.ts",
     "docs:validate:naming": "npx tsx tools/doclock/validate-naming-contract.ts",
+    "docs:gatekeeper:naming": "npx tsx tools/doclock/validate-naming-contract.ts --gatekeeper",
     "docs:baseline:naming": "npx tsx tools/doclock/validate-naming-contract.ts --update-baseline",
     "docs:classify:artifact": "npx tsx tools/doclock/classify-artifact.ts",
     "docs:validate:artifact-name": "npx tsx tools/doclock/validate-artifact-name.ts",
