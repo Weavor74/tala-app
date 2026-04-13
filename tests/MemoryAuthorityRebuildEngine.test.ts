@@ -35,6 +35,7 @@ function makeRebuildPool(options: {
   records: MemoryRow[];
   projections?: ProjectionRow[];
   failTarget?: { memory_id: string; target_system: ProjectionTargetSystem };
+  failCleanupMemoryId?: string;
 }) {
   const records = [...options.records];
   const projections: ProjectionRow[] = [...(options.projections ?? [])];
@@ -87,6 +88,22 @@ function makeRebuildPool(options: {
       }
 
       if (sql.includes("UPDATE memory_projections") && sql.includes("projection_status = 'stale'")) {
+        if (sql.includes('WHERE memory_id = $1')) {
+          const memoryId = params?.[0] as string;
+          if (options.failCleanupMemoryId && memoryId === options.failCleanupMemoryId) {
+            throw new Error(`simulated cleanup failure for ${memoryId}`);
+          }
+          for (const row of projections.filter(p => p.memory_id === memoryId)) {
+            row.projection_status = 'stale';
+            row.projected_version = null;
+            row.error_message = row.error_message ?? 'canonical_inactive';
+            row.updated_at = new Date();
+            row.attempted_at = new Date();
+            row.projected_at = null;
+          }
+          return Promise.resolve({ rows: [] });
+        }
+
         const projectionId = params?.[0] as string;
         const version = params?.[1] as number;
         const row = projections.find(p => p.projection_id === projectionId);
@@ -278,5 +295,88 @@ describe('MemoryAuthorityService Derived Rebuild Engine', () => {
     expect(report.partial_failure).toBe(true);
     expect(report.failures.some(f => f.memory_id === failId && f.target_system === 'graph')).toBe(true);
     expect(report.projections_rebuilt).toBe(2);
+  });
+
+  it('cleanupDerivedState invalidates tombstoned projections and reports unsupported external layers as no-op', async () => {
+    const tombId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const now = new Date();
+    const pool = makeRebuildPool({
+      records: [
+        { memory_id: tombId, memory_type: 'interaction', subject_id: 'turn-10', version: 3, authority_status: 'tombstoned', content_text: 'inactive' },
+      ],
+      projections: [
+        { projection_id: 'tm-mem0', memory_id: tombId, target_system: 'mem0', projection_status: 'projected', canonical_version: 2, projected_version: 2, projection_ref: null, attempted_at: now, projected_at: now, error_message: null, created_at: now, updated_at: now },
+      ],
+    });
+
+    const svc = new MemoryAuthorityService(pool as never);
+    const report = await svc.cleanupDerivedState({ canonicalMemoryId: tombId, reason: 'tombstone' });
+
+    expect(report.canonical_ids_processed).toEqual([tombId]);
+    expect(report.invalidated_count).toBe(1);
+    expect(report.noop_count).toBe(3);
+    const mem0Projection = pool.__state.projections.find(p => p.memory_id === tombId && p.target_system === 'mem0');
+    expect(mem0Projection?.projection_status).toBe('stale');
+    expect(mem0Projection?.projected_version).toBeNull();
+  });
+
+  it('cleanupDerivedState handles superseded records and remains idempotent across runs', async () => {
+    const supersededId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    const now = new Date();
+    const pool = makeRebuildPool({
+      records: [
+        { memory_id: supersededId, memory_type: 'interaction', subject_id: 'turn-11', version: 4, authority_status: 'superseded', content_text: 'old merged source' },
+      ],
+      projections: [
+        { projection_id: 'sp-graph', memory_id: supersededId, target_system: 'graph', projection_status: 'projected', canonical_version: 3, projected_version: 3, projection_ref: null, attempted_at: now, projected_at: now, error_message: null, created_at: now, updated_at: now },
+      ],
+    });
+
+    const svc = new MemoryAuthorityService(pool as never);
+    const first = await svc.cleanupDerivedState({ canonicalMemoryId: supersededId, reason: 'superseded' });
+    const second = await svc.cleanupDerivedState({ canonicalMemoryId: supersededId, reason: 'superseded' });
+
+    expect(first.invalidated_count).toBe(1);
+    expect(second.invalidated_count).toBe(1);
+    expect(second.failed_count).toBe(0);
+    expect(second.partial_failure).toBe(false);
+  });
+
+  it('cleanupDerivedState reports partial failures explicitly when projection cleanup fails', async () => {
+    const tombId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const pool = makeRebuildPool({
+      records: [
+        { memory_id: tombId, memory_type: 'interaction', subject_id: 'turn-12', version: 1, authority_status: 'tombstoned', content_text: 'inactive' },
+      ],
+      failCleanupMemoryId: tombId,
+    });
+
+    const svc = new MemoryAuthorityService(pool as never);
+    const report = await svc.cleanupDerivedState({ canonicalMemoryId: tombId });
+
+    expect(report.partial_failure).toBe(true);
+    expect(report.failed_count).toBe(1);
+    expect(report.failures.some(f => f.canonical_memory_id === tombId && f.layer === 'projection_metadata')).toBe(true);
+  });
+
+  it('rebuild after cleanup does not resurrect tombstoned memory as active projections', async () => {
+    const tombId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const now = new Date();
+    const pool = makeRebuildPool({
+      records: [
+        { memory_id: tombId, memory_type: 'interaction', subject_id: 'turn-13', version: 2, authority_status: 'tombstoned', content_text: 'inactive' },
+      ],
+      projections: [
+        { projection_id: 'tp-vector', memory_id: tombId, target_system: 'vector', projection_status: 'projected', canonical_version: 1, projected_version: 1, projection_ref: null, attempted_at: now, projected_at: now, error_message: null, created_at: now, updated_at: now },
+      ],
+    });
+
+    const svc = new MemoryAuthorityService(pool as never);
+    await svc.cleanupDerivedState({ canonicalMemoryId: tombId, reason: 'tombstone' });
+    await svc.rebuildDerivedState({ canonicalMemoryId: tombId, fullRebuild: true });
+
+    const projection = pool.__state.projections.find(p => p.memory_id === tombId && p.target_system === 'vector');
+    expect(projection?.projection_status).toBe('stale');
+    expect(projection?.projected_version).toBeNull();
   });
 });

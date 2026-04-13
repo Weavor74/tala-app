@@ -281,6 +281,34 @@ Backfill guarantees:
 - ineligible records are skipped/quarantined with explicit reasons
 - repeated runs converge safely (already-anchored records are not re-migrated)
 
+### Tombstone / Supersession Cleanup
+
+Canonical inactive state (`authority_status='tombstoned'` or `'superseded'`)
+is now the source event for downstream cleanup/invalidation.
+
+Implemented cleanup path:
+- `MemoryAuthorityService.cleanupDerivedState(...)`
+  - loads canonical state from `memory_records`
+  - invalidates `memory_projections` for inactive canonical IDs
+  - reports unsupported external adapter layers as explicit no-op
+- `DerivedMemoryCleanupService.cleanupInactiveDerivedArtifacts(...)`
+  - delegates authority cleanup above
+  - removes local derived projections from `MemoryService` using canonical IDs
+
+Supported real cleanup/invalidation layers:
+- `memory_projections` table (invalidated/staled)
+- local `MemoryService` projection store (physical removal by canonical ID)
+
+Report-only / no-op layers (adapter not concretely implemented in repo):
+- external `mem0` cleanup adapter
+- external graph cleanup adapter
+- external vector cleanup adapter
+
+Rebuild interaction:
+- `rebuildDerivedState()` never restores tombstoned/superseded canonical memory
+  as active projections
+- cleanup + rebuild are idempotent and canonical-to-derived only
+
 ### Service Location
 
 ```

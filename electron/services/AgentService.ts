@@ -59,6 +59,7 @@ import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory, getLastDbHealth } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
 import { LegacyMemoryBackfillService } from './memory/LegacyMemoryBackfillService';
+import { DerivedMemoryCleanupService } from './memory/DerivedMemoryCleanupService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
@@ -71,6 +72,7 @@ import type { MemoryOperatorReviewModel } from '../../shared/memory/MemoryOperat
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { LegacyMemoryBackfillRequest, LegacyMemoryBackfillReport } from '../../shared/memory/authorityTypes';
+import type { DerivedCleanupRequest, DerivedCleanupReport } from '../../shared/memory/authorityTypes';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 import { resolveStoragePath } from './PathResolver';
@@ -4891,6 +4893,24 @@ Failure to provide a tool call will result in system termination.`;
         return backfillService.backfillLegacyMemories(request);
     }
 
+    /**
+     * Cleanup/invalidate derived artifacts for canonically inactive memory.
+     * Canonical authority_status drives cleanup decisions.
+     */
+    public async cleanupInactiveDerivedMemory(
+        request: DerivedCleanupRequest = {},
+    ): Promise<DerivedCleanupReport | null> {
+        const repo = getCanonicalMemoryRepository();
+        if (!repo) {
+            console.warn('[AgentService:cleanupInactiveDerivedMemory] Canonical repository unavailable');
+            return null;
+        }
+        const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+        const authorityService = new MemoryAuthorityService(pool);
+        const cleanupService = new DerivedMemoryCleanupService(authorityService, this.memory);
+        return cleanupService.cleanupInactiveDerivedArtifacts(request);
+    }
+
     public async deleteMemory(id: string) {
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
             console.warn(`[AgentService:deleteMemory] Refusing non-canonical memory id: ${id}`);
@@ -4911,8 +4931,17 @@ Failure to provide a tool call will result in system termination.`;
             return false;
         }
 
-        await this.memory.removeDerivedProjectionForCanonical(id);
-        return true;
+        const cleanupReport = await this.cleanupInactiveDerivedMemory({
+            canonicalMemoryId: id,
+            reason: 'tombstone',
+        });
+        if (!cleanupReport) {
+            return false;
+        }
+        if (cleanupReport.partial_failure) {
+            console.warn('[AgentService:deleteMemory] Derived cleanup completed with failures:', cleanupReport.failures);
+        }
+        return cleanupReport.failed_count === 0;
     }
 
     /**

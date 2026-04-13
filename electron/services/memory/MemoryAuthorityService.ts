@@ -32,6 +32,11 @@ import type {
     MemoryInvocationContext,
     MemoryOperationResult,
     CandidateReviewDecision,
+    DerivedCleanupRequest,
+    DerivedCleanupReport,
+    DerivedCleanupLayer,
+    DerivedCleanupLayerOutcome,
+    DerivedCleanupFailure,
 } from '../../../shared/memory/authorityTypes';
 import {
     selectMemoryByAuthority,
@@ -738,6 +743,196 @@ export class MemoryAuthorityService {
     }
 
     /**
+     * Cleanup/invalidate derived artifacts for canonically inactive memory.
+     *
+     * Source of truth is always memory_records authority_status.
+     * This method never promotes derived state and is safe to rerun.
+     */
+    async cleanupDerivedState(request: DerivedCleanupRequest = {}): Promise<DerivedCleanupReport> {
+        const startMs = Date.now();
+        const runAt = new Date().toISOString();
+        const executionId = `mem-cleanup-${Date.now()}`;
+        const bus = TelemetryBus.getInstance();
+        const scope = this._normalizeDerivedCleanupRequest(request);
+        const failures: DerivedCleanupFailure[] = [];
+        const itemOutcomes: Array<{
+            canonical_memory_id: string;
+            authority_status: CanonicalMemory['authority_status'];
+            layer_outcomes: DerivedCleanupLayerOutcome[];
+        }> = [];
+        const layersAttempted: DerivedCleanupLayer[] = [
+            'projection_metadata',
+            'mem0_external',
+            'graph_external',
+            'vector_external',
+        ];
+
+        let cleanedCount = 0;
+        let invalidatedCount = 0;
+        let skippedCount = 0;
+        let noopCount = 0;
+        let failedCount = 0;
+        const processed = new Set<string>();
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: 'memory.derived_cleanup_requested',
+            payload: {
+                canonical_memory_ids: scope.canonicalMemoryIds.length > 0 ? scope.canonicalMemoryIds : 'inactive',
+                inactive_only: scope.inactiveOnly,
+                reason: scope.reason ?? null,
+            },
+        });
+
+        const records = await this._loadCanonicalRecordsForDerivedCleanup(scope);
+        for (const record of records) {
+            processed.add(record.memory_id);
+            const layerOutcomes: DerivedCleanupLayerOutcome[] = [];
+            bus.emit({
+                executionId,
+                subsystem: 'memory',
+                event: 'memory.derived_cleanup_item_started',
+                payload: {
+                    memory_id: record.memory_id,
+                    authority_status: record.authority_status,
+                },
+            });
+
+            if (record.authority_status !== 'tombstoned' && record.authority_status !== 'superseded') {
+                layerOutcomes.push({
+                    layer: 'projection_metadata',
+                    outcome: 'skipped',
+                    detail: `canonical_status_not_inactive:${record.authority_status}`,
+                });
+                skippedCount++;
+            } else {
+                try {
+                    bus.emit({
+                        executionId,
+                        subsystem: 'memory',
+                        event: 'memory.derived_cleanup_layer_started',
+                        payload: { memory_id: record.memory_id, layer: 'projection_metadata' },
+                    });
+                    await this.pool.query(
+                        `UPDATE memory_projections
+                         SET projection_status = 'stale',
+                             projected_version = NULL,
+                             attempted_at = NOW(),
+                             projected_at = NULL,
+                             error_message = COALESCE(error_message, 'canonical_inactive'),
+                             updated_at = NOW()
+                         WHERE memory_id = $1
+                           AND projection_status != 'stale'`,
+                        [record.memory_id],
+                    );
+                    layerOutcomes.push({
+                        layer: 'projection_metadata',
+                        outcome: 'invalidated',
+                        detail: `projection_state_marked_stale_from_${record.authority_status}`,
+                    });
+                    invalidatedCount++;
+                    bus.emit({
+                        executionId,
+                        subsystem: 'memory',
+                        event: 'memory.derived_cleanup_layer_completed',
+                        payload: {
+                            memory_id: record.memory_id,
+                            layer: 'projection_metadata',
+                            outcome: 'invalidated',
+                        },
+                    });
+                } catch (err) {
+                    const reason = err instanceof Error ? err.message : String(err);
+                    layerOutcomes.push({
+                        layer: 'projection_metadata',
+                        outcome: 'failed',
+                        detail: reason,
+                    });
+                    failures.push({
+                        canonical_memory_id: record.memory_id,
+                        layer: 'projection_metadata',
+                        reason,
+                    });
+                    failedCount++;
+                    bus.emit({
+                        executionId,
+                        subsystem: 'memory',
+                        event: 'memory.derived_cleanup_layer_failed',
+                        payload: {
+                            memory_id: record.memory_id,
+                            layer: 'projection_metadata',
+                            reason,
+                        },
+                    });
+                }
+            }
+
+            for (const layer of ['mem0_external', 'graph_external', 'vector_external'] as const) {
+                layerOutcomes.push({
+                    layer,
+                    outcome: 'noop',
+                    detail: 'adapter_not_configured_in_repository',
+                });
+                noopCount++;
+                bus.emit({
+                    executionId,
+                    subsystem: 'memory',
+                    event: 'memory.derived_cleanup_layer_noop',
+                    payload: {
+                        memory_id: record.memory_id,
+                        layer,
+                        reason: 'adapter_not_configured_in_repository',
+                    },
+                });
+            }
+
+            itemOutcomes.push({
+                canonical_memory_id: record.memory_id,
+                authority_status: record.authority_status,
+                layer_outcomes: layerOutcomes,
+            });
+        }
+
+        const partialFailure = failures.length > 0;
+        const report: DerivedCleanupReport = {
+            run_at: runAt,
+            request_scope: {
+                canonical_memory_ids: scope.canonicalMemoryIds.length > 0 ? scope.canonicalMemoryIds : 'inactive',
+                inactive_only: scope.inactiveOnly,
+                reason: scope.reason,
+            },
+            canonical_ids_processed: [...processed],
+            layers_attempted: layersAttempted,
+            cleaned_count: cleanedCount,
+            invalidated_count: invalidatedCount,
+            skipped_count: skippedCount,
+            noop_count: noopCount,
+            failed_count: failedCount,
+            item_outcomes: itemOutcomes,
+            failures,
+            partial_failure: partialFailure,
+            duration_ms: Date.now() - startMs,
+        };
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: partialFailure ? 'memory.derived_cleanup_completed_with_partial_failures' : 'memory.derived_cleanup_completed',
+            payload: {
+                canonical_ids_processed: report.canonical_ids_processed.length,
+                invalidated_count: invalidatedCount,
+                skipped_count: skippedCount,
+                noop_count: noopCount,
+                failed_count: failedCount,
+                duration_ms: report.duration_ms,
+            },
+        });
+
+        return report;
+    }
+
+    /**
      * Deterministic merge path:
      * - target memory remains canonical source of truth
      * - source memory is superseded and tombstoned
@@ -815,6 +1010,10 @@ export class MemoryAuthorityService {
                 [source.memory_id, target.memory_id],
             );
             await this._markProjectionsStale(source.memory_id);
+            await this.cleanupDerivedState({
+                canonicalMemoryId: source.memory_id,
+                reason: 'superseded',
+            });
 
             const decision: CandidateReviewDecision = {
                 candidate_id: source.memory_id,
@@ -1297,6 +1496,10 @@ export class MemoryAuthorityService {
                 'system',
             );
             await this._markProjectionsStale(memoryId);
+            await this.cleanupDerivedState({
+                canonicalMemoryId: memoryId,
+                reason: 'tombstone',
+            });
 
             console.log(`[MemoryAuthority] Record tombstoned: ${memoryId}`);
             bus.emit({
@@ -1354,6 +1557,70 @@ export class MemoryAuthorityService {
             staleOnly: Boolean(request.staleOnly),
             fullRebuild: Boolean(request.fullRebuild),
         };
+    }
+
+    private _normalizeDerivedCleanupRequest(request: DerivedCleanupRequest): {
+        canonicalMemoryIds: string[];
+        inactiveOnly: boolean;
+        reason?: string;
+    } {
+        const ids = new Set<string>();
+        if (request.canonicalMemoryId && request.canonicalMemoryId.trim()) {
+            ids.add(request.canonicalMemoryId.trim());
+        }
+        for (const id of request.canonicalMemoryIds ?? []) {
+            if (id && id.trim()) ids.add(id.trim());
+        }
+        return {
+            canonicalMemoryIds: [...ids],
+            inactiveOnly: request.inactiveOnly ?? ids.size === 0,
+            reason: request.reason,
+        };
+    }
+
+    private async _loadCanonicalRecordsForDerivedCleanup(scope: {
+        canonicalMemoryIds: string[];
+        inactiveOnly: boolean;
+    }): Promise<Array<{
+        memory_id: string;
+        authority_status: CanonicalMemory['authority_status'];
+    }>> {
+        if (scope.canonicalMemoryIds.length > 0) {
+            const explicitRows = await this.pool.query<{
+                memory_id: string;
+                authority_status: CanonicalMemory['authority_status'];
+            }>(
+                `SELECT memory_id, authority_status
+                 FROM memory_records
+                 WHERE memory_id = ANY($1::uuid[])
+                 ORDER BY created_at ASC`,
+                [scope.canonicalMemoryIds],
+            );
+            return explicitRows.rows;
+        }
+
+        if (!scope.inactiveOnly) {
+            const allRows = await this.pool.query<{
+                memory_id: string;
+                authority_status: CanonicalMemory['authority_status'];
+            }>(
+                `SELECT memory_id, authority_status
+                 FROM memory_records
+                 ORDER BY created_at ASC`,
+            );
+            return allRows.rows;
+        }
+
+        const inactiveRows = await this.pool.query<{
+            memory_id: string;
+            authority_status: CanonicalMemory['authority_status'];
+        }>(
+            `SELECT memory_id, authority_status
+             FROM memory_records
+             WHERE authority_status IN ('tombstoned', 'superseded')
+             ORDER BY created_at ASC`,
+        );
+        return inactiveRows.rows;
     }
 
     private async _loadCanonicalRecordsForRebuild(scope: {

@@ -29,6 +29,7 @@ Rejected or deferred candidates must not be surfaced as durable truth.
 - Rebuild flows execute canonical-to-derived synchronization for `mem0`, `graph`, and `vector` projection metadata in `memory_projections`.
 - Rebuild supports scoped execution by canonical ID, canonical ID list, stale-only mode, and full rebuild mode.
 - Tombstoned/superseded canonical records are propagated as stale derived projections and are never restored as active truth.
+- Cleanup flows are canonical-driven: `MemoryAuthorityService.cleanupDerivedState()` invalidates `memory_projections`, and `DerivedMemoryCleanupService` removes local derived projections from `MemoryService` for inactive canonical IDs.
 
 ## Legacy Backfill Recovery
 - Legacy/local memory records without canonical IDs are suppressed from authoritative recall until backfilled.
@@ -43,6 +44,10 @@ Rejected or deferred candidates must not be surfaced as durable truth.
   - `memory_projections` synchronization for `mem0`, `graph`, and `vector`
   - stale marker clearing on successful projection synchronization
   - tombstone/superseded propagation to derived projection state
+  - canonical inactive cleanup (`tombstoned`/`superseded`) for:
+    - `memory_projections` invalidation (`projection_status='stale'`, `projected_version=NULL`)
+    - local `MemoryService` derived projection removal (canonical-ID anchored)
 - Still no-op/reporting only:
   - external adapter writes beyond `memory_projections` metadata (for example, external vector service writes)
+  - external cleanup adapters for `mem0`, graph, and vector services (not configured as concrete writers in this repository)
   - non-existent derived sinks that do not yet have concrete repository writers

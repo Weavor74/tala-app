@@ -400,3 +400,69 @@ export interface LegacyMemoryBackfillReport {
     duration_ms: number;
     partial_failure: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Derived cleanup contracts (tombstone/supersession propagation)
+// ---------------------------------------------------------------------------
+
+export interface DerivedCleanupRequest {
+    canonicalMemoryId?: string;
+    canonicalMemoryIds?: string[];
+    /**
+     * When true, process all canonical records currently inactive
+     * (authority_status in tombstoned/superseded).
+     */
+    inactiveOnly?: boolean;
+    /**
+     * Optional cleanup reason marker for telemetry/audit surfaces.
+     * Example: 'tombstone', 'superseded', 'integrity_repair'.
+     */
+    reason?: string;
+}
+
+export type DerivedCleanupLayer =
+    | 'projection_metadata'
+    | 'local_projection_store'
+    | 'mem0_external'
+    | 'graph_external'
+    | 'vector_external';
+
+export type DerivedCleanupOutcomeKind = 'cleaned' | 'invalidated' | 'skipped' | 'failed' | 'noop';
+
+export interface DerivedCleanupLayerOutcome {
+    layer: DerivedCleanupLayer;
+    outcome: DerivedCleanupOutcomeKind;
+    detail: string;
+}
+
+export interface DerivedCleanupItemOutcome {
+    canonical_memory_id: string;
+    authority_status: CanonicalMemory['authority_status'];
+    layer_outcomes: DerivedCleanupLayerOutcome[];
+}
+
+export interface DerivedCleanupFailure {
+    canonical_memory_id: string;
+    layer: DerivedCleanupLayer;
+    reason: string;
+}
+
+export interface DerivedCleanupReport {
+    run_at: string;
+    request_scope: {
+        canonical_memory_ids: string[] | 'inactive';
+        inactive_only: boolean;
+        reason?: string;
+    };
+    canonical_ids_processed: string[];
+    layers_attempted: DerivedCleanupLayer[];
+    cleaned_count: number;
+    invalidated_count: number;
+    skipped_count: number;
+    noop_count: number;
+    failed_count: number;
+    item_outcomes: DerivedCleanupItemOutcome[];
+    failures: DerivedCleanupFailure[];
+    partial_failure: boolean;
+    duration_ms: number;
+}

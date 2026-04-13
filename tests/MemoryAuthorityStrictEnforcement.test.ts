@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryService } from '../electron/services/MemoryService';
 import { MemoryAuthorityService } from '../electron/services/memory/MemoryAuthorityService';
+import { DerivedMemoryCleanupService } from '../electron/services/memory/DerivedMemoryCleanupService';
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/tala-test' },
@@ -192,5 +193,118 @@ describe('Memory authority strict enforcement', () => {
     expect(removed).toBe(true);
     const all = await memoryService.getAll();
     expect(all).toHaveLength(0);
+  });
+
+  it('cleanup coordinator removes local derived projection for inactive canonical memory', async () => {
+    const canonicalId = '00000000-0000-0000-0000-0000000000bb';
+    const pool = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('SELECT authority_status') && sql.includes('FROM memory_records')) {
+          return Promise.resolve({ rows: [{ authority_status: 'tombstoned' }] });
+        }
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    repoState.repo = { getSharedPool: () => pool };
+
+    const memoryService = new MemoryService();
+    (memoryService as unknown as { localMemories: Array<{ id: string; text: string; metadata: { canonical_memory_id: string }; timestamp: number; salience: number; confidence: number; created_at: number; last_accessed_at: number | null; last_reinforced_at: number | null; access_count: number; associations: Array<{ target_id: string; type: 'related_to' | 'contradicts' | 'supersedes'; weight: number }>; status: 'active' | 'contested' | 'superseded' | 'archived' }> }).localMemories = [
+      {
+        id: canonicalId,
+        text: 'cleanup target',
+        metadata: { canonical_memory_id: canonicalId },
+        timestamp: Date.now(),
+        salience: 0.5,
+        confidence: 0.8,
+        created_at: Date.now(),
+        last_accessed_at: null,
+        last_reinforced_at: Date.now(),
+        access_count: 0,
+        associations: [],
+        status: 'active',
+      },
+    ];
+
+    const authority = {
+      cleanupDerivedState: vi.fn().mockResolvedValue({
+        run_at: new Date().toISOString(),
+        request_scope: { canonical_memory_ids: [canonicalId], inactive_only: true, reason: 'tombstone' },
+        canonical_ids_processed: [canonicalId],
+        layers_attempted: ['projection_metadata', 'mem0_external', 'graph_external', 'vector_external'],
+        cleaned_count: 0,
+        invalidated_count: 1,
+        skipped_count: 0,
+        noop_count: 3,
+        failed_count: 0,
+        item_outcomes: [{
+          canonical_memory_id: canonicalId,
+          authority_status: 'tombstoned',
+          layer_outcomes: [],
+        }],
+        failures: [],
+        partial_failure: false,
+        duration_ms: 1,
+      }),
+    } as unknown as MemoryAuthorityService;
+
+    const cleanup = new DerivedMemoryCleanupService(authority, memoryService);
+    const report = await cleanup.cleanupInactiveDerivedArtifacts({ canonicalMemoryId: canonicalId });
+
+    expect(report.cleaned_count).toBe(1);
+    expect(report.failed_count).toBe(0);
+    const all = await memoryService.getAll();
+    expect(all).toHaveLength(0);
+  });
+
+  it('cleanup coordinator reports explicit failure when local cleanup cannot validate canonical state', async () => {
+    const canonicalId = '00000000-0000-0000-0000-0000000000bc';
+    repoState.repo = { getSharedPool: () => ({ query: vi.fn().mockResolvedValue({ rows: [] }) }) };
+
+    const memoryService = new MemoryService();
+    (memoryService as unknown as { localMemories: Array<{ id: string; text: string; metadata: { canonical_memory_id: string }; timestamp: number; salience: number; confidence: number; created_at: number; last_accessed_at: number | null; last_reinforced_at: number | null; access_count: number; associations: Array<{ target_id: string; type: 'related_to' | 'contradicts' | 'supersedes'; weight: number }>; status: 'active' | 'contested' | 'superseded' | 'archived' }> }).localMemories = [
+      {
+        id: canonicalId,
+        text: 'cleanup failure target',
+        metadata: { canonical_memory_id: canonicalId },
+        timestamp: Date.now(),
+        salience: 0.5,
+        confidence: 0.8,
+        created_at: Date.now(),
+        last_accessed_at: null,
+        last_reinforced_at: Date.now(),
+        access_count: 0,
+        associations: [],
+        status: 'active',
+      },
+    ];
+
+    const authority = {
+      cleanupDerivedState: vi.fn().mockResolvedValue({
+        run_at: new Date().toISOString(),
+        request_scope: { canonical_memory_ids: [canonicalId], inactive_only: true, reason: 'tombstone' },
+        canonical_ids_processed: [canonicalId],
+        layers_attempted: ['projection_metadata', 'mem0_external', 'graph_external', 'vector_external'],
+        cleaned_count: 0,
+        invalidated_count: 1,
+        skipped_count: 0,
+        noop_count: 3,
+        failed_count: 0,
+        item_outcomes: [{
+          canonical_memory_id: canonicalId,
+          authority_status: 'tombstoned',
+          layer_outcomes: [],
+        }],
+        failures: [],
+        partial_failure: false,
+        duration_ms: 1,
+      }),
+    } as unknown as MemoryAuthorityService;
+
+    const cleanup = new DerivedMemoryCleanupService(authority, memoryService);
+    const report = await cleanup.cleanupInactiveDerivedArtifacts({ canonicalMemoryId: canonicalId });
+
+    expect(report.partial_failure).toBe(true);
+    expect(report.failed_count).toBe(1);
+    expect(report.failures.some(f => f.layer === 'local_projection_store')).toBe(true);
   });
 });
