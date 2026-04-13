@@ -356,3 +356,47 @@ export interface RebuildAction {
     action_kind: 'create' | 'update' | 'skip';
     reason: string;
 }
+
+// ---------------------------------------------------------------------------
+// Legacy backfill contracts
+// ---------------------------------------------------------------------------
+
+export interface LegacyMemoryBackfillRequest {
+    legacyMemoryId?: string;
+    legacyMemoryIds?: string[];
+    fullBackfill?: boolean;
+    dryRun?: boolean;
+}
+
+export type LegacyMemoryBackfillOutcomeStatus =
+    | 'migrated'
+    | 'linked_existing'
+    | 'skipped'
+    | 'quarantined'
+    | 'failed';
+
+export interface LegacyMemoryBackfillOutcome {
+    legacy_memory_id: string;
+    status: LegacyMemoryBackfillOutcomeStatus;
+    reason: string;
+    canonical_memory_id?: string | null;
+}
+
+export interface LegacyMemoryBackfillReport {
+    run_at: string;
+    dry_run: boolean;
+    request_scope: {
+        legacy_memory_ids: string[] | 'all';
+        full_backfill: boolean;
+    };
+    scanned_count: number;
+    eligible_count: number;
+    migrated_count: number;
+    skipped_count: number;
+    duplicate_merged_count: number;
+    quarantined_count: number;
+    failed_count: number;
+    outcomes: LegacyMemoryBackfillOutcome[];
+    duration_ms: number;
+    partial_failure: boolean;
+}

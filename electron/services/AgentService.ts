@@ -58,6 +58,7 @@ import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregato
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory, getLastDbHealth } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
+import { LegacyMemoryBackfillService } from './memory/LegacyMemoryBackfillService';
 import { MemoryProviderResolver } from './memory/MemoryProviderResolver';
 import { MemoryRepairExecutionService } from './memory/MemoryRepairExecutionService';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
@@ -69,6 +70,7 @@ import { MemoryOperatorReviewService } from './memory/MemoryOperatorReviewServic
 import type { MemoryOperatorReviewModel } from '../../shared/memory/MemoryOperatorReviewModel';
 import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
+import type { LegacyMemoryBackfillRequest, LegacyMemoryBackfillReport } from '../../shared/memory/authorityTypes';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 import { resolveStoragePath } from './PathResolver';
@@ -4868,6 +4870,25 @@ Failure to provide a tool call will result in system termination.`;
 
     public async getAllMemories() {
         return this.memory.getAll();
+    }
+
+    /**
+     * Canonical backfill migration for legacy local memory projections.
+     * All canonical writes are authority-routed through MemoryAuthorityService.
+     */
+    public async backfillLegacyMemories(
+        request: LegacyMemoryBackfillRequest = {},
+    ): Promise<LegacyMemoryBackfillReport | null> {
+        const repo = getCanonicalMemoryRepository();
+        if (!repo) {
+            console.warn('[AgentService:backfillLegacyMemories] Canonical repository unavailable');
+            return null;
+        }
+
+        const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+        const authorityService = new MemoryAuthorityService(pool);
+        const backfillService = new LegacyMemoryBackfillService(authorityService, this.memory);
+        return backfillService.backfillLegacyMemories(request);
     }
 
     public async deleteMemory(id: string) {

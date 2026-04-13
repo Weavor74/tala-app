@@ -260,6 +260,27 @@ AgentService.storeMemories()
 - Marks tombstoned/superseded canonical memories as stale in derived projections (never active)
 - Verifies no canonical records have NULL content_text (unreachable)
 
+### Canonical Backfill Migration (Legacy Recovery)
+
+`LegacyMemoryBackfillService.backfillLegacyMemories()` provides the approved
+recovery path for legacy/local memory projections that predate canonical
+anchoring.
+
+- Source scan: `MemoryService.getLegacyUnanchoredMemoriesForBackfill()`
+- Canonicalization: `MemoryAuthorityService.detectDuplicates()` and
+  `MemoryAuthorityService.tryCreateCanonicalMemory()`
+- Re-anchor: `MemoryService.anchorLegacyMemoryToCanonical()`
+- Invalid/unsafe legacy data: `MemoryService.quarantineLegacyMemoryForBackfill()`
+
+Backfill guarantees:
+- canonical writes occur only through `MemoryAuthorityService`
+- duplicate legacy records link to existing canonical IDs instead of creating
+  duplicate canonical rows
+- eligible records receive canonical IDs and become authoritative only after
+  re-anchoring
+- ineligible records are skipped/quarantined with explicit reasons
+- repeated runs converge safely (already-anchored records are not re-migrated)
+
 ### Service Location
 
 ```

@@ -30,6 +30,14 @@ Rejected or deferred candidates must not be surfaced as durable truth.
 - Rebuild supports scoped execution by canonical ID, canonical ID list, stale-only mode, and full rebuild mode.
 - Tombstoned/superseded canonical records are propagated as stale derived projections and are never restored as active truth.
 
+## Legacy Backfill Recovery
+- Legacy/local memory records without canonical IDs are suppressed from authoritative recall until backfilled.
+- Canonical backfill runs through `LegacyMemoryBackfillService` and must canonicalize via `MemoryAuthorityService`.
+- Backfill supports scoped execution (`legacyMemoryId`, `legacyMemoryIds`, `fullBackfill`) and optional `dryRun`.
+- Eligible legacy records are canonicalized or linked to existing canonical records, then re-anchored with `canonical_memory_id`.
+- Ambiguous/invalid/inactive legacy records are skipped or quarantined with explicit reasons; they are never silently promoted.
+- Backfill produces a machine-usable report with per-item outcomes (`migrated`, `linked_existing`, `skipped`, `quarantined`, `failed`).
+
 ## Current Rebuild Coverage
 - Executable now:
   - `memory_projections` synchronization for `mem0`, `graph`, and `vector`

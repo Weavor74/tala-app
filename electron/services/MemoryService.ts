@@ -53,6 +53,14 @@ export interface MemoryItem {
     status: 'active' | 'contested' | 'superseded' | 'archived';
 }
 
+export interface LegacyMemoryBackfillCandidate {
+    legacy_memory_id: string;
+    text: string;
+    metadata: Record<string, unknown>;
+    timestamp: number;
+    status: MemoryItem['status'];
+}
+
 /**
  * Fact-Based Conversational Memory Engine.
  * 
@@ -987,6 +995,75 @@ export class MemoryService {
      */
     public async getAll(): Promise<MemoryItem[]> {
         return this.filterCanonicalBackedMemories([...this.localMemories], 'getAll').sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    public getLegacyUnanchoredMemoriesForBackfill(request?: {
+        legacyMemoryId?: string;
+        legacyMemoryIds?: string[];
+        fullBackfill?: boolean;
+    }): LegacyMemoryBackfillCandidate[] {
+        const ids = new Set<string>();
+        if (request?.legacyMemoryId) ids.add(request.legacyMemoryId);
+        for (const id of request?.legacyMemoryIds ?? []) {
+            if (id) ids.add(id);
+        }
+
+        const candidates = this.localMemories
+            .filter(memory => !this.hasCanonicalMemoryAnchor(memory))
+            .filter(memory => ids.size === 0 || ids.has(memory.id))
+            .filter(memory => {
+                if (request?.fullBackfill) return true;
+                const state = String(memory.metadata?.backfill_state ?? '');
+                return state !== 'quarantined';
+            })
+            .map(memory => ({
+                legacy_memory_id: memory.id,
+                text: memory.text,
+                metadata: (memory.metadata ?? {}) as Record<string, unknown>,
+                timestamp: memory.timestamp,
+                status: memory.status,
+            }));
+
+        return candidates.sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    public async anchorLegacyMemoryToCanonical(legacyMemoryId: string, canonicalMemoryId: string): Promise<boolean> {
+        if (!MemoryService.UUID_RE.test(canonicalMemoryId)) {
+            this._emitBypassBlocked('anchorLegacyMemoryToCanonical', `invalid canonical id=${canonicalMemoryId}`);
+            throw new Error(`[MemoryService] Invalid canonical memory ID: ${canonicalMemoryId}`);
+        }
+
+        await this._assertCanonicalRecordState(
+            canonicalMemoryId,
+            ['canonical', 'superseded'],
+            'anchorLegacyMemoryToCanonical',
+        );
+
+        const item = this.localMemories.find(memory => memory.id === legacyMemoryId);
+        if (!item) return false;
+        item.id = canonicalMemoryId;
+        item.metadata = {
+            ...(item.metadata ?? {}),
+            canonical_memory_id: canonicalMemoryId,
+            backfill_state: 'anchored',
+            backfill_anchored_at: new Date().toISOString(),
+            backfill_legacy_id: legacyMemoryId,
+        };
+        this.saveLocal();
+        return true;
+    }
+
+    public quarantineLegacyMemoryForBackfill(legacyMemoryId: string, reason: string): boolean {
+        const item = this.localMemories.find(memory => memory.id === legacyMemoryId);
+        if (!item) return false;
+        item.metadata = {
+            ...(item.metadata ?? {}),
+            backfill_state: 'quarantined',
+            backfill_quarantine_reason: reason,
+            backfill_quarantined_at: new Date().toISOString(),
+        };
+        this.saveLocal();
+        return true;
     }
 
     /**
