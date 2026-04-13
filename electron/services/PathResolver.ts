@@ -32,16 +32,16 @@ export const APP_ROOT = electronApp
  * The root directory for application data (settings, logs, local DBs).
  * Redirected to a local folder within APP_ROOT for portability.
  */
-export const DATA_ROOT = path.join(APP_ROOT, 'data');
-export const LOCAL_DATA_DIR = DATA_ROOT; // Alias for backward compatibility
+export const appStorageRootPath = path.join(APP_ROOT, 'data');
+export const localStorageRootPath = appStorageRootPath; // Alias for backward compatibility
 
-export const DATA_DIRS = {
-    logs: path.join(DATA_ROOT, 'logs'),
-    cache: path.join(DATA_ROOT, 'cache'),
-    temp: path.join(DATA_ROOT, 'temp'),
-    memory: path.join(DATA_ROOT, 'memory'),
-    reflection: path.join(DATA_ROOT, 'reflection'),
-    diagnostics: path.join(DATA_ROOT, 'diagnostics'),
+export const STORAGE_DIRECTORY_PATHS = {
+    logs: path.join(appStorageRootPath, 'logs'),
+    cache: path.join(appStorageRootPath, 'cache'),
+    temp: path.join(appStorageRootPath, 'temp'),
+    memory: path.join(appStorageRootPath, 'memory'),
+    reflection: path.join(appStorageRootPath, 'reflection'),
+    diagnostics: path.join(appStorageRootPath, 'diagnostics'),
 } as const;
 
 export type ResolvePathOptions = {
@@ -103,8 +103,8 @@ export function resolveAppPath(defaultRelativePath: string, override?: string, o
 /**
  * Resolves a path relative to the data root (APP_ROOT/data).
  */
-export function resolveDataPath(defaultRelativePath: string, override?: string, options?: ResolvePathOptions): string {
-    return resolvePathWithGuard(DATA_ROOT, defaultRelativePath, override, options);
+export function resolveStoragePath(defaultRelativePath: string, override?: string, options?: ResolvePathOptions): string {
+    return resolvePathWithGuard(appStorageRootPath, defaultRelativePath, override, options);
 }
 
 /**
@@ -116,25 +116,27 @@ export function resolveRuntimePath(assetSubPath: string, override?: string): str
 }
 
 export function resolveLogsPath(override?: string, options?: ResolvePathOptions): string {
-    return resolveDataPath('logs', override, { label: 'logs', ...options });
+    return resolveStoragePath('logs', override, { label: 'logs', ...options });
 }
 
 export function resolveCachePath(override?: string, options?: ResolvePathOptions): string {
-    return resolveDataPath('cache', override, { label: 'cache', ...options });
+    return resolveStoragePath('cache', override, { label: 'cache', ...options });
 }
 
-export function resolveTempPath(override?: string, options?: ResolvePathOptions): string {
-    return resolveDataPath('temp', override, { label: 'temp', ...options });
+export function resolveScratchPath(override?: string, options?: ResolvePathOptions): string {
+    return resolveStoragePath('temp', override, { label: 'temp', ...options });
 }
 
 export function resolveMemoryPath(override?: string, options?: ResolvePathOptions): string {
-    return resolveDataPath('memory', override, { label: 'memory', ...options });
+    return resolveStoragePath('memory', override, { label: 'memory', ...options });
 }
 
 export function resolveReflectionPath(override?: string, options?: ResolvePathOptions): string {
-    return resolveDataPath('reflection', override, { label: 'reflection', ...options });
+    return resolveStoragePath('reflection', override, { label: 'reflection', ...options });
 }
 
-export function isPathWithinAppRoot(targetPath: string): boolean {
+export function validatePathWithinAppRoot(targetPath: string): boolean {
     return isWithinPath(targetPath, APP_ROOT);
 }
+
+

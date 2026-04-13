@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
-import { resolveAppPath, resolveDataPath, resolveRuntimePath, APP_ROOT, DATA_ROOT } from '../electron/services/PathResolver';
+import { resolveAppPath, resolveStoragePath, resolveRuntimePath, APP_ROOT, appStorageRootPath } from '../electron/services/PathResolver';
 
 // Mock Electron app
 vi.mock('electron', () => ({
@@ -21,11 +21,11 @@ describe('PathResolver', () => {
   });
 
   it('should resolve APP_ROOT correctly in development', () => {
-    expect(APP_ROOT).toBe('D:/src/client1/tala-app');
+    expect(APP_ROOT).toBe(path.normalize('D:/src/client1/tala-app'));
   });
 
-  it('should resolve DATA_ROOT correctly', () => {
-    expect(DATA_ROOT).toBe(path.join(APP_ROOT, 'data'));
+  it('should resolve appStorageRootPath correctly', () => {
+    expect(appStorageRootPath).toBe(path.join(APP_ROOT, 'data'));
   });
 
   it('should resolveAppPath relative to app root', () => {
@@ -45,9 +45,9 @@ describe('PathResolver', () => {
     expect(result).toBe(path.resolve(APP_ROOT, override));
   });
 
-  it('should resolveDataPath relative to data root', () => {
-    const result = resolveDataPath('logs/db');
-    expect(result).toBe(path.resolve(DATA_ROOT, 'logs/db'));
+  it('should resolveStoragePath relative to data root', () => {
+    const result = resolveStoragePath('logs/db');
+    expect(result).toBe(path.resolve(appStorageRootPath, 'logs/db'));
   });
 
   it('should resolveRuntimePath relative to runtime folder', () => {
@@ -55,3 +55,5 @@ describe('PathResolver', () => {
     expect(result).toBe(path.resolve(APP_ROOT, 'runtime/postgres'));
   });
 });
+
+

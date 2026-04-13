@@ -9,7 +9,7 @@ import { MemoryIntegrityPolicy } from './memory/MemoryIntegrityPolicy';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
 import type { MemoryHealthStatus, MemoryHealthTransition, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import { TelemetryBus } from './telemetry/TelemetryBus';
-import { resolveDataPath } from './PathResolver';
+import { resolveStoragePath } from './PathResolver';
 
 /**
  * Association
@@ -379,7 +379,7 @@ export class MemoryService {
      * to establish the remote connection.
      */
     constructor() {
-        this.localPath = resolveDataPath(path.join('memory', 'tala_memory.json'));
+        this.localPath = resolveStoragePath(path.join('memory', 'tala_memory.json'));
         this.loadLocal();
     }
 
@@ -519,7 +519,7 @@ export class MemoryService {
             console.log(`[MemoryService] Launching mem0-core with Tala-injected memory runtime config`);
 
             try {
-                const configPath = resolveDataPath(path.join('temp', `tala_memory_runtime_${Date.now()}.json`));
+                const configPath = resolveStoragePath(path.join('temp', `tala_memory_runtime_${Date.now()}.json`));
                 const configDir = path.dirname(configPath);
                 if (!fs.existsSync(configDir)) {
                     fs.mkdirSync(configDir, { recursive: true });
@@ -1017,3 +1017,4 @@ export class MemoryService {
         }
     }
 }
+

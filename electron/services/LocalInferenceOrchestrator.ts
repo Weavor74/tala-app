@@ -1,5 +1,5 @@
 /**
- * LocalInferenceManager — Hardened Lifecycle Manager
+ * LocalInferenceOrchestrator — Hardened Lifecycle Manager
  *
  * Phase 2 Trustworthiness Hardening — Objective 8
  *
@@ -64,9 +64,9 @@ export interface InferenceRequestResult {
     retryCount: number;
 }
 
-// ─── LocalInferenceManager ────────────────────────────────────────────────────
+// ─── LocalInferenceOrchestrator ────────────────────────────────────────────────────
 
-export class LocalInferenceManager {
+export class LocalInferenceOrchestrator {
     private engine: LocalEngineService;
     private config: LocalInferenceConfig;
     private _state: LocalInferenceState = 'disabled';
@@ -111,7 +111,7 @@ export class LocalInferenceManager {
             'local_inference',
             'inference_state_changed',
             next === 'failed' || next === 'unavailable' ? 'error' : next === 'degraded' ? 'warn' : 'info',
-            'LocalInferenceManager',
+            'LocalInferenceOrchestrator',
             `Local inference state: ${previous} → ${next} (${reason})`,
             next === 'failed' ? 'failure' : 'success',
             {
@@ -214,7 +214,7 @@ export class LocalInferenceManager {
                 'local_inference',
                 'inference_started',
                 'info',
-                'LocalInferenceManager',
+                'LocalInferenceOrchestrator',
                 `Local inference server started (${durationMs}ms)`,
                 'success',
                 {
@@ -238,7 +238,7 @@ export class LocalInferenceManager {
                 'local_inference',
                 'inference_failed',
                 'error',
-                'LocalInferenceManager',
+                'LocalInferenceOrchestrator',
                 `Local inference server failed to start: ${errorMessage}`,
                 'failure',
                 {
@@ -307,7 +307,7 @@ export class LocalInferenceManager {
                 'local_inference',
                 'inference_failed',
                 'warn',
-                'LocalInferenceManager',
+                'LocalInferenceOrchestrator',
                 `Inference request rejected — not ready (state: ${this._state})`,
                 'failure',
                 {
@@ -330,7 +330,7 @@ export class LocalInferenceManager {
                     'local_inference',
                     'inference_started',
                     'info',
-                    'LocalInferenceManager',
+                    'LocalInferenceOrchestrator',
                     `Inference request (attempt ${retryCount + 1}/${this.config.maxRetries + 1})`,
                     'success',
                     {
@@ -362,7 +362,7 @@ export class LocalInferenceManager {
                 telemetry.audit(
                     'local_inference',
                     'inference_completed',
-                    'LocalInferenceManager',
+                    'LocalInferenceOrchestrator',
                     `Inference completed in ${durationMs}ms`,
                     'success',
                     {
@@ -391,7 +391,7 @@ export class LocalInferenceManager {
                     telemetry.audit(
                         'local_inference',
                         'inference_timeout',
-                        'LocalInferenceManager',
+                        'LocalInferenceOrchestrator',
                         `Inference request timed out after ${this.config.requestTimeoutMs}ms (attempt ${retryCount + 1})`,
                         'failure',
                         {
@@ -412,7 +412,7 @@ export class LocalInferenceManager {
                         'local_inference',
                         'inference_failed',
                         'error',
-                        'LocalInferenceManager',
+                        'LocalInferenceOrchestrator',
                         `Inference request failed (attempt ${retryCount + 1}): ${errorMessage}`,
                         'failure',
                         {
@@ -450,7 +450,7 @@ export class LocalInferenceManager {
                     telemetry.audit(
                         'local_inference',
                         'degraded_fallback',
-                        'LocalInferenceManager',
+                        'LocalInferenceOrchestrator',
                         `Local inference exhausted retries — degraded state`,
                         'failure',
                         {
@@ -507,7 +507,7 @@ export class LocalInferenceManager {
             'local_inference',
             'subsystem_unavailable',
             'warn',
-            'LocalInferenceManager',
+            'LocalInferenceOrchestrator',
             'Local inference is unavailable — recovery probe did not succeed',
             'failure',
             { turnId, mode }
@@ -588,3 +588,4 @@ export class LocalInferenceManager {
         return new Promise<void>((resolve) => setTimeout(resolve, ms));
     }
 }
+

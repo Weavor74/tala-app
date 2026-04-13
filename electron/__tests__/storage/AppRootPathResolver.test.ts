@@ -13,34 +13,34 @@ describe('PathResolver app-root storage defaults', () => {
         const {
             resolveLogsPath,
             resolveCachePath,
-            resolveTempPath,
-            DATA_ROOT,
+            resolveScratchPath,
+            appStorageRootPath,
         } = await import('../../services/PathResolver');
 
-        expect(DATA_ROOT).toBe(path.join(APP_ROOT, 'data'));
+        expect(appStorageRootPath).toBe(path.join(APP_ROOT, 'data'));
         expect(resolveLogsPath()).toBe(path.join(APP_ROOT, 'data', 'logs'));
         expect(resolveCachePath()).toBe(path.join(APP_ROOT, 'data', 'cache'));
-        expect(resolveTempPath()).toBe(path.join(APP_ROOT, 'data', 'temp'));
+        expect(resolveScratchPath()).toBe(path.join(APP_ROOT, 'data', 'temp'));
     });
 
     it('warns when a Tala-owned path override escapes app root unexpectedly', async () => {
-        const { resolveDataPath } = await import('../../services/PathResolver');
+        const { resolveStoragePath } = await import('../../services/PathResolver');
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const escaped = path.join(os.tmpdir(), 'outside-root', 'logs');
 
-        const resolved = resolveDataPath('logs', escaped);
+        const resolved = resolveStoragePath('logs', escaped);
 
         expect(resolved).toBe(escaped);
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[PathGuard] write escaped app root'));
     });
 
     it('allows explicit external paths when marked external-by-configuration', async () => {
-        const { resolveDataPath } = await import('../../services/PathResolver');
+        const { resolveStoragePath } = await import('../../services/PathResolver');
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
         const externalPath = path.join(os.tmpdir(), 'configured-external', 'logs');
 
-        const resolved = resolveDataPath('logs', externalPath, {
+        const resolved = resolveStoragePath('logs', externalPath, {
             externalByConfiguration: true,
             label: 'configured-log-path',
         });
@@ -50,3 +50,5 @@ describe('PathResolver app-root storage defaults', () => {
         expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('write escaped app root'));
     });
 });
+
+

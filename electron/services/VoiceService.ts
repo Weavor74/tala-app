@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { resolveDataPath } from './PathResolver';
+import { resolveStoragePath } from './PathResolver';
 
 /**
  * VoiceService — Handles speech-to-text (Whisper) and text-to-speech (ElevenLabs).
@@ -32,7 +32,7 @@ export class VoiceService {
         this.whisperApiKey = config?.whisperApiKey || process.env.OPENAI_API_KEY || '';
         this.elevenLabsApiKey = config?.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY || '';
         this.elevenLabsVoiceId = config?.elevenLabsVoiceId || 'EXAVITQu4vr4xnSDxMaL'; // Default: "Sarah"
-        this.outputDir = resolveDataPath('voice');
+        this.outputDir = resolveStoragePath('voice');
 
         if (!fs.existsSync(this.outputDir)) {
             fs.mkdirSync(this.outputDir, { recursive: true });
@@ -202,3 +202,4 @@ export class VoiceService {
         };
     }
 }
+

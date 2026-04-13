@@ -5,7 +5,7 @@ import { LocalDatabaseRuntime } from '../electron/services/db/LocalDatabaseRunti
 // Mock PathResolver
 vi.mock('../electron/services/PathResolver', () => ({
   resolveRuntimePath: (subPath: string, override?: string) => override || path.join('D:/APP_ROOT/runtime', subPath),
-  resolveDataPath: (subPath: string, override?: string) => override || path.join('D:/APP_ROOT/data', subPath)
+  resolveStoragePath: (subPath: string, override?: string) => override || path.join('D:/APP_ROOT/data', subPath)
 }));
 
 describe('LocalDatabaseRuntime', () => {
@@ -37,3 +37,4 @@ describe('LocalDatabaseRuntime', () => {
     expect(bins.postgres).toBe(path.join('D:/APP_ROOT/runtime/postgres/bin', `postgres${ext}`));
   });
 });
+

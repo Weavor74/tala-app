@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { LocalInferenceManager } from '../../services/LocalInferenceManager';
+import { LocalInferenceOrchestrator } from '../../services/LocalInferenceOrchestrator';
 import type { LocalEngineService } from '../../services/LocalEngineService';
 
 // Mock TelemetryService to capture emitted events
@@ -75,8 +75,8 @@ function makeMockEngine(overrides: Partial<{
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeManager(engineOverrides = {}, configOverrides: Record<string, unknown> = {}): LocalInferenceManager {
-    return new LocalInferenceManager(makeMockEngine(engineOverrides), {
+function makeManager(engineOverrides = {}, configOverrides: Record<string, unknown> = {}): LocalInferenceOrchestrator {
+    return new LocalInferenceOrchestrator(makeMockEngine(engineOverrides), {
         port: 18080,
         startupTimeoutMs: 5000,
         requestTimeoutMs: 500,
@@ -89,7 +89,7 @@ function makeManager(engineOverrides = {}, configOverrides: Record<string, unkno
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('LocalInferenceManager — state machine', () => {
+describe('LocalInferenceOrchestrator — state machine', () => {
     beforeEach(() => {
         emittedEvents.length = 0;
     });
@@ -141,7 +141,7 @@ describe('LocalInferenceManager — state machine', () => {
     });
 });
 
-describe('LocalInferenceManager — readiness enforcement', () => {
+describe('LocalInferenceOrchestrator — readiness enforcement', () => {
     beforeEach(() => {
         emittedEvents.length = 0;
     });
@@ -174,14 +174,14 @@ describe('LocalInferenceManager — readiness enforcement', () => {
     });
 });
 
-describe('LocalInferenceManager — request timeout and retry', () => {
+describe('LocalInferenceOrchestrator — request timeout and retry', () => {
     beforeEach(() => {
         emittedEvents.length = 0;
     });
 
     it('returns failure result on request timeout (no network available)', async () => {
         // Port 19999 is unused — requests will fail fast with ECONNREFUSED
-        const mgr = new LocalInferenceManager(makeMockEngine(), {
+        const mgr = new LocalInferenceOrchestrator(makeMockEngine(), {
             port: 19999,
             startupTimeoutMs: 5000,
             requestTimeoutMs: 200,
@@ -201,7 +201,7 @@ describe('LocalInferenceManager — request timeout and retry', () => {
     });
 
     it('retries up to maxRetries on failure', async () => {
-        const mgr = new LocalInferenceManager(makeMockEngine(), {
+        const mgr = new LocalInferenceOrchestrator(makeMockEngine(), {
             port: 19998,
             startupTimeoutMs: 5000,
             requestTimeoutMs: 100,
@@ -220,7 +220,7 @@ describe('LocalInferenceManager — request timeout and retry', () => {
     });
 });
 
-describe('LocalInferenceManager — recovery', () => {
+describe('LocalInferenceOrchestrator — recovery', () => {
     afterEach(() => {
         emittedEvents.length = 0;
     });
@@ -244,7 +244,7 @@ describe('LocalInferenceManager — recovery', () => {
     });
 });
 
-describe('LocalInferenceManager — telemetry emission', () => {
+describe('LocalInferenceOrchestrator — telemetry emission', () => {
     beforeEach(() => {
         emittedEvents.length = 0;
     });
@@ -258,7 +258,7 @@ describe('LocalInferenceManager — telemetry emission', () => {
     });
 
     it('emits degraded_fallback after exhausting retries', async () => {
-        const mgr = new LocalInferenceManager(makeMockEngine(), {
+        const mgr = new LocalInferenceOrchestrator(makeMockEngine(), {
             port: 19996,
             startupTimeoutMs: 5000,
             requestTimeoutMs: 50,
@@ -284,3 +284,4 @@ describe('LocalInferenceManager — telemetry emission', () => {
         expect(typeof status.engineStatus).toBe('object');
     });
 });
+

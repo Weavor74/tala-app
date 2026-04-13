@@ -612,3 +612,34 @@ These canonical names are approved reference patterns for Tala self-modification
 - Policy config factory: `buildDefaultGuardrailPolicyConfig()`
 - Execution state holder: `ExecutionStateStore`
 - Runtime policy enforcer: `PolicyGate`
+
+### 18.9 Inference provider resolution and fallback examples
+
+- Provider registry: `InferenceProviderRegistry`
+- Provider selection policy: `ProviderSelectionService`
+- Selection function: `selectProvider()`
+- Inventory read function: `getProviderInventory()`
+- Embedded provider availability checks:
+  - `checkEmbeddedLlamaCppAvailability()`
+  - `checkEmbeddedVllmAvailability()`
+- Embedded lifecycle orchestrator: `LocalInferenceOrchestrator`
+- Fallback-aware outcome signals:
+  - `provider_fallback_applied`
+  - `inference_timeout`
+
+### 18.10 Path / storage / portable-root enforcement examples
+
+- Storage root path constant: `appStorageRootPath`
+- Local storage root path constant: `localStorageRootPath`
+- Directory map constant: `STORAGE_DIRECTORY_PATHS`
+- Pure path resolution:
+  - `resolveAppPath()`
+  - `resolveStoragePath()`
+  - `resolveRuntimePath()`
+- Scoped storage path resolution:
+  - `resolveLogsPath()`
+  - `resolveCachePath()`
+  - `resolveScratchPath()`
+  - `resolveMemoryPath()`
+- Portable-root safety validation:
+  - `validatePathWithinAppRoot()`

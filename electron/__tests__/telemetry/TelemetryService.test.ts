@@ -205,7 +205,7 @@ describe('TelemetryService — turn reconstruction', () => {
         const opts = { turnId: 'turn-degraded', mode: 'assistant' };
         const events = [
             svc.emit('agent', 'turn_start', 'info', 'AgentService', 'Turn started', 'success', opts),
-            svc.emit('local_inference', 'degraded_fallback', 'warn', 'LocalInferenceManager', 'Fallback activated', 'failure', opts),
+            svc.emit('local_inference', 'degraded_fallback', 'warn', 'LocalInferenceOrchestrator', 'Fallback activated', 'failure', opts),
             svc.emit('agent', 'turn_completed', 'info', 'AgentService', 'Turn completed', 'success', opts),
         ];
 
@@ -239,3 +239,4 @@ describe('TelemetryService — turn reconstruction', () => {
         expect(reconstruction!.eventSequence.length).toBe(events.length);
     });
 });
+

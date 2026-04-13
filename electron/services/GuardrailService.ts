@@ -34,7 +34,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { resolveDataPath } from './PathResolver';
+import { resolveStoragePath } from './PathResolver';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -319,7 +319,7 @@ export class GuardrailService {
     private _inferFn: ((prompt: string) => Promise<string>) | null = null;
 
     constructor(userDataPath?: string) {
-        const base = resolveDataPath('', userDataPath, {
+        const base = resolveStoragePath('', userDataPath, {
             label: 'guardrails',
             externalByConfiguration: Boolean(userDataPath && path.isAbsolute(userDataPath))
         });
@@ -818,3 +818,4 @@ export class GuardrailError extends Error {
         this.guardName = guardName;
     }
 }
+

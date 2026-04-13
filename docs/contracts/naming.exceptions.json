@@ -3598,22 +3598,6 @@
                            "addedAt":  "2026-04-13T16:32:45.405Z"
                        },
                        {
-                           "file":  "electron/services/inference/InferenceProviderRegistry.ts",
-                           "rule":  "naming/function-verb",
-                           "symbol":  "probeEmbeddedLlamaCpp",
-                           "value":  "probeEmbeddedLlamaCpp",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/inference/InferenceProviderRegistry.ts",
-                           "rule":  "naming/function-verb",
-                           "symbol":  "probeEmbeddedVllm",
-                           "value":  "probeEmbeddedVllm",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
                            "file":  "electron/services/inference/inferenceTimeouts.ts",
                            "rule":  "naming/file-pattern",
                            "value":  "inferenceTimeouts.ts",
@@ -4605,29 +4589,6 @@
                            "addedAt":  "2026-04-13T16:32:45.405Z"
                        },
                        {
-                           "file":  "electron/services/LocalInferenceManager.ts",
-                           "rule":  "naming/banned-term",
-                           "value":  "LocalInferenceManager",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/LocalInferenceManager.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "LocalInferenceManager",
-                           "value":  "LocalInferenceManager",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/LocalInferenceManager.ts",
-                           "rule":  "naming/exported-class-role",
-                           "symbol":  "LocalInferenceManager",
-                           "value":  "LocalInferenceManager",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
                            "file":  "electron/services/log_redact.ts",
                            "rule":  "naming/file-pattern",
                            "value":  "log_redact.ts",
@@ -4724,54 +4685,6 @@
                            "file":  "electron/services/MemoryService.js",
                            "rule":  "naming/file-pattern",
                            "value":  "MemoryService.js",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "DATA_DIRS",
-                           "value":  "DATA_DIRS",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "DATA_ROOT",
-                           "value":  "DATA_ROOT",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "LOCAL_DATA_DIR",
-                           "value":  "LOCAL_DATA_DIR",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "resolveDataPath",
-                           "value":  "resolveDataPath",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/banned-term",
-                           "symbol":  "resolveTempPath",
-                           "value":  "resolveTempPath",
-                           "reason":  "legacy violation - baseline tracking",
-                           "addedAt":  "2026-04-13T16:32:45.405Z"
-                       },
-                       {
-                           "file":  "electron/services/PathResolver.ts",
-                           "rule":  "naming/function-verb",
-                           "symbol":  "isPathWithinAppRoot",
-                           "value":  "isPathWithinAppRoot",
                            "reason":  "legacy violation - baseline tracking",
                            "addedAt":  "2026-04-13T16:32:45.405Z"
                        },

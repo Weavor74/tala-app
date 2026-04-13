@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { DATA_ROOT } from '../PathResolver';
+import { appStorageRootPath } from '../PathResolver';
 
 export class ReflectionDataDirectories {
     private readonly dataRoot: string;
@@ -13,7 +13,7 @@ export class ReflectionDataDirectories {
         if (!fs.existsSync(this.dataRoot)) {
             fs.mkdirSync(this.dataRoot, { recursive: true });
         }
-        if (!path.resolve(this.dataRoot).toLowerCase().startsWith(path.resolve(DATA_ROOT).toLowerCase())) {
+        if (!path.resolve(this.dataRoot).toLowerCase().startsWith(path.resolve(appStorageRootPath).toLowerCase())) {
             console.warn(`[PathGuard] write escaped app root path=${this.dataRoot}`);
         }
         this.ensureDirectories();
@@ -74,3 +74,5 @@ export class ReflectionDataDirectories {
 
     get logsDir() { return path.join(this.dataRoot, 'logs'); }
 }
+
+

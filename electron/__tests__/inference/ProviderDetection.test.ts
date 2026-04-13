@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { InferenceProviderRegistry, probeEmbeddedLlamaCpp } from '../../services/inference/InferenceProviderRegistry';
+import { InferenceProviderRegistry, checkEmbeddedLlamaCppAvailability } from '../../services/inference/InferenceProviderRegistry';
 
 // ─── Mock fs module ───────────────────────────────────────────────────────────
 
@@ -237,9 +237,9 @@ describe('InferenceProviderRegistry — embedded llama.cpp detection', () => {
     });
 
     it('reports not_running with degraded health when binary and model present but server not responding', async () => {
-        // Test probeEmbeddedLlamaCpp directly with binaryExists=true, modelExists=true
+        // Test checkEmbeddedLlamaCppAvailability directly with binaryExists=true, modelExists=true
         // This avoids the need to mock fs.existsSync at the module level
-        const result = await probeEmbeddedLlamaCpp(19988, '/models/test.gguf', true, true);
+        const result = await checkEmbeddedLlamaCppAvailability(19988, '/models/test.gguf', true, true);
         // Server not running at port 19988 → degraded (files present but not running)
         expect(result.reachable).toBe(false);
         expect(result.health).toBe('degraded');
@@ -247,11 +247,11 @@ describe('InferenceProviderRegistry — embedded llama.cpp detection', () => {
     });
 
     it('reports ready when embedded server probe returns 200', async () => {
-        // Test probeEmbeddedLlamaCpp directly with server responding
+        // Test checkEmbeddedLlamaCppAvailability directly with server responding
         // Use a /health response at port 8088 to simulate running server
         setHttpResponse('/health', { status: 200, body: JSON.stringify({ status: 'ok' }) });
 
-        const result = await probeEmbeddedLlamaCpp(8080, '/models/test.gguf', true, true);
+        const result = await checkEmbeddedLlamaCppAvailability(8080, '/models/test.gguf', true, true);
         expect(result.reachable).toBe(true);
         expect(result.health).toBe('healthy');
         expect(result.status).toBe('ready');
@@ -381,3 +381,4 @@ describe('InferenceProviderRegistry — registry resilience', () => {
         expect(ready.every(p => p.ready)).toBe(true);
     });
 });
+

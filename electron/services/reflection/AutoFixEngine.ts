@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { ReflectionIssue } from './reflectionEcosystemTypes';
 import { LogLifecycleService } from '../LogLifecycleService';
-import { isPathWithinAppRoot, resolveDataPath } from '../PathResolver';
+import { validatePathWithinAppRoot, resolveStoragePath } from '../PathResolver';
 import { loadSettings, saveSettings } from '../SettingsManager';
 import { ArtifactStore } from './ArtifactStore';
 import {
@@ -170,7 +170,7 @@ export class AutoFixEngine {
         this.artifactStore = params.artifactStore;
         this.settingsPath = params.settingsPath;
         this.logsDir = params.logsDir;
-        this.cacheDir = params.cacheDir ?? resolveDataPath('cache');
+        this.cacheDir = params.cacheDir ?? resolveStoragePath('cache');
         this.lifecycle = new LogLifecycleService(this.logsDir, params.logLifecycleConfig);
     }
 
@@ -451,7 +451,7 @@ export class AutoFixEngine {
             }
         }
         if (policy.requireAppRootContainment && proposal.targetPath) {
-            if (!isPathWithinAppRoot(proposal.targetPath)) {
+            if (!validatePathWithinAppRoot(proposal.targetPath)) {
                 return { proposalId: proposal.proposalId, decision: 'blocked_external_path', reason: 'target_path_outside_app_root' };
             }
         }
@@ -559,7 +559,7 @@ export class AutoFixEngine {
                     ? { result: 'passed', message: 'cache_dir_reset' }
                     : { result: 'failed', message: 'cache_dir_missing' };
             case 'emit_patch_plan': {
-                const artifactPath = path.join(resolveDataPath(path.join('reflection', 'artifacts', 'auto_fix', 'patch_plans')), `${proposal.proposalId}.json`);
+                const artifactPath = path.join(resolveStoragePath(path.join('reflection', 'artifacts', 'auto_fix', 'patch_plans')), `${proposal.proposalId}.json`);
                 return fs.existsSync(artifactPath)
                     ? { result: 'passed', message: 'patch_plan_written' }
                     : { result: 'failed', message: 'patch_plan_missing' };
@@ -722,3 +722,4 @@ export class AutoFixEngine {
         return outcome;
     }
 }
+

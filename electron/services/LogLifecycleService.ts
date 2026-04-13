@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { isPathWithinAppRoot, resolveLogsPath } from './PathResolver';
+import { validatePathWithinAppRoot, resolveLogsPath } from './PathResolver';
 
 export interface LogLifecycleConfig {
     maxActiveFileBytes: number;
@@ -242,7 +242,7 @@ export class LogLifecycleService {
     }
 
     private logOutsideRootIfNeeded(): void {
-        if (isPathWithinAppRoot(this.logsDir)) return;
+        if (validatePathWithinAppRoot(this.logsDir)) return;
         if (this.externalByConfiguration) {
             console.info(`[PathGuard] external-by-configuration label=logs path=${this.logsDir}`);
             return;
@@ -259,3 +259,4 @@ export function getDefaultLogLifecycle(): LogLifecycleService {
     }
     return defaultLogLifecycle;
 }
+

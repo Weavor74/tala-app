@@ -19,7 +19,7 @@
 
 import path from 'path';
 import type { DatabaseConfig } from '../../../shared/dbConfig';
-import { resolveRuntimePath, resolveDataPath } from '../PathResolver';
+import { resolveRuntimePath, resolveStoragePath } from '../PathResolver';
 
 /** Resolved path set for the local runtime. */
 export interface RuntimePaths {
@@ -89,12 +89,12 @@ export class LocalDatabaseRuntime {
    * Tala initialises this via initdb on first run and writes cluster data here.
    */
   getDataRoot(): string {
-    return resolveDataPath('postgres', this.options.dataPathOverride);
+    return resolveStoragePath('postgres', this.options.dataPathOverride);
   }
 
   /** Logs root: directory for PostgreSQL server log files. */
   getLogsRoot(): string {
-    return resolveDataPath(path.join('logs', 'postgres'));
+    return resolveStoragePath(path.join('logs', 'postgres'));
   }
 
   /** Directory containing the PostgreSQL executables within the runtime root. */
@@ -182,3 +182,4 @@ export class LocalDatabaseRuntime {
     ].join('\n');
   }
 }
+

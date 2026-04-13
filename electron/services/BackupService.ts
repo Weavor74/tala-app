@@ -5,7 +5,7 @@ import fs from 'fs';
 import archiver from 'archiver';
 import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { resolveAppPath, resolveDataPath } from './PathResolver';
+import { resolveAppPath, resolveStoragePath } from './PathResolver';
 
 // Local definition to avoid importing React-dependent settingsData.ts in Main process
 interface BackupConfig {
@@ -49,7 +49,7 @@ export class BackupService {
      * Reads the backup configuration from `app_settings.json`.
      */
     private getConfig(): BackupConfig | null {
-        const settingsPath = resolveDataPath('app_settings.json');
+        const settingsPath = resolveStoragePath('app_settings.json');
         if (fs.existsSync(settingsPath)) {
             try {
                 const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -243,3 +243,4 @@ export class BackupService {
         }
     }
 }
+

@@ -169,7 +169,7 @@ async function probeCloud(endpoint: string, apiKey?: string): Promise<ProviderPr
 
 /** Probe embedded llama.cpp using the running port from LocalEngineService status. */
 /** Exported for direct unit testing. Callers within this module use this via `_probeOne()`. */
-export async function probeEmbeddedLlamaCpp(
+export async function checkEmbeddedLlamaCppAvailability(
     enginePort: number,
     modelPath: string,
     binaryExists: boolean,
@@ -240,7 +240,7 @@ export async function probeEmbeddedLlamaCpp(
 }
 
 /** Probe embedded vLLM server running at http://127.0.0.1:<port>/v1/models. */
-export async function probeEmbeddedVllm(
+export async function checkEmbeddedVllmAvailability(
     enginePort: number,
     modelId: string,
 ): Promise<ProviderProbeResult> {
@@ -540,7 +540,7 @@ export class InferenceProviderRegistry {
                 const binaryExists = binaryPath ? fs.existsSync(binaryPath) : false;
                 const modelExists = modelPath ? fs.existsSync(modelPath) : false;
                 const port = embCfg.port ?? 8080;
-                result = await probeEmbeddedLlamaCpp(port, modelPath, binaryExists, modelExists);
+                result = await checkEmbeddedLlamaCppAvailability(port, modelPath, binaryExists, modelExists);
                 result.providerId = desc.providerId;
                 break;
             }
@@ -552,7 +552,7 @@ export class InferenceProviderRegistry {
                 const embVllmCfg = this.config.embeddedVllm ?? {};
                 const port = embVllmCfg.port ?? 8000;
                 const modelId = embVllmCfg.modelId ?? '';
-                result = await probeEmbeddedVllm(port, modelId);
+                result = await checkEmbeddedVllmAvailability(port, modelId);
                 result.providerId = desc.providerId;
                 break;
             }
@@ -652,3 +652,4 @@ function _makeDescriptor(fields: {
         models: [],
     };
 }
+

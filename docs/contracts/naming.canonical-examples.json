@@ -71,6 +71,34 @@
       "policy": [
         "PolicyGate"
       ]
+    },
+    "inferenceResolution": {
+      "registry": "InferenceProviderRegistry",
+      "selectionService": "ProviderSelectionService",
+      "selectionFunction": "selectProvider",
+      "inventoryFunction": "getProviderInventory",
+      "fallbackChecks": [
+        "checkEmbeddedLlamaCppAvailability",
+        "checkEmbeddedVllmAvailability"
+      ],
+      "embeddedLifecycle": "LocalInferenceOrchestrator"
+    },
+    "pathStoragePortableRoot": {
+      "rootPath": "appStorageRootPath",
+      "localRootPath": "localStorageRootPath",
+      "directoryMap": "STORAGE_DIRECTORY_PATHS",
+      "resolutionFunctions": [
+        "resolveAppPath",
+        "resolveStoragePath",
+        "resolveRuntimePath",
+        "resolveLogsPath",
+        "resolveCachePath",
+        "resolveScratchPath",
+        "resolveMemoryPath"
+      ],
+      "validationFunctions": [
+        "validatePathWithinAppRoot"
+      ]
     }
   }
 }

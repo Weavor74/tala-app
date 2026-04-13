@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ReflectionEvent, ChangeProposal, OutcomeRecord } from './types';
-import { DATA_ROOT, isPathWithinAppRoot } from '../PathResolver';
+import { appStorageRootPath, validatePathWithinAppRoot } from '../PathResolver';
 import { AutoFixOutcome, AutoFixProposal, AutoFixProposalStatus } from './AutoFixTypes';
 
 /**
@@ -16,7 +16,7 @@ export class ArtifactStore {
             ? rootPath
             : path.join(rootPath, 'data');
         this.baseDir = path.join(dataRoot, 'reflection', 'artifacts');
-        if (!isPathWithinAppRoot(this.baseDir) && !path.resolve(this.baseDir).toLowerCase().startsWith(path.resolve(DATA_ROOT).toLowerCase())) {
+        if (!validatePathWithinAppRoot(this.baseDir) && !path.resolve(this.baseDir).toLowerCase().startsWith(path.resolve(appStorageRootPath).toLowerCase())) {
             console.warn(`[PathGuard] write escaped app root path=${this.baseDir}`);
         }
         this.ensureDirectories();
@@ -297,3 +297,5 @@ export class ArtifactStore {
         return deletedCount;
     }
 }
+
+

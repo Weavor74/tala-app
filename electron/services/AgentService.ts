@@ -1,4 +1,4 @@
-﻿/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable no-empty */
 /* eslint-disable prefer-const */
@@ -71,7 +71,7 @@ import type { MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
-import { resolveDataPath } from './PathResolver';
+import { resolveStoragePath } from './PathResolver';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -244,11 +244,11 @@ Violation of this rule is considered a system failure.`;
     private logViewerService: LogViewerService | null = null;
     /** Feature flag for legacy memory migration. */
     private USE_STRUCTURED_LTMF = true;
-    /** Memory repair executor â€” wired after igniteSoul completes. */
+    /** Memory repair executor — wired after igniteSoul completes. */
     private _repairExecutor: MemoryRepairExecutionService | null = null;
-    /** Scheduled memory repair analytics loop â€” wired alongside _repairExecutor. */
+    /** Scheduled memory repair analytics loop — wired alongside _repairExecutor. */
     private _repairScheduler: MemoryRepairSchedulerService | null = null;
-    /** Operator review surface aggregator â€” wired alongside _repairScheduler. */
+    /** Operator review surface aggregator — wired alongside _repairScheduler. */
     private _operatorReviewSvc: MemoryOperatorReviewService | null = null;
     /**
      * Parameters captured during igniteSoul() so repair handlers can restart
@@ -273,9 +273,9 @@ Violation of this rule is considered a system failure.`;
     private currentTurnAuditRecord?: PromptAuditRecord;
     private activeTurnId: string | null = null;
     // Phase 3A: Live Cognitive Path Integration
-    /** Pre-inference context orchestrator â€” gathers all live context before CognitiveTurnAssembler. */
+    /** Pre-inference context orchestrator — gathers all live context before CognitiveTurnAssembler. */
     private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
-    /** Optional diagnostics aggregator â€” records cognitive context after each turn. */
+    /** Optional diagnostics aggregator — records cognitive context after each turn. */
     private diagnosticsAggregator: RuntimeDiagnosticsAggregator | null = null;
 
     private static shouldApplyCanonRequiredAutobioOverride(turnObject: any, activeMode: string): boolean {
@@ -396,8 +396,8 @@ Violation of this rule is considered a system failure.`;
         this.coordinator = new ToolExecutionCoordinator(this.tools);
         this.backup = new BackupService();
         this.inference = inference || new InferenceService();
-        this.ingestion = new IngestionService(this.rag, resolveDataPath('')); // Fallback root
-        this.goals = new GoalManager(resolveDataPath(''));
+        this.ingestion = new IngestionService(this.rag, resolveStoragePath('')); // Fallback root
+        this.goals = new GoalManager(resolveStoragePath(''));
         this.userProfile = userProfile || null;
         this.systemInfo = null;
 
@@ -457,9 +457,9 @@ Violation of this rule is considered a system failure.`;
         if (terminal) this.terminal = terminal;
         if (functions) this.functions = functions;
 
-        this.settingsPath = resolveDataPath('app_settings.json');
-        this.chatHistoryPath = resolveDataPath('chat_history.json');
-        this.sessionsDir = resolveDataPath('chat_sessions');
+        this.settingsPath = resolveStoragePath('app_settings.json');
+        this.chatHistoryPath = resolveStoragePath('chat_history.json');
+        this.sessionsDir = resolveStoragePath('chat_sessions');
 
         if (!fs.existsSync(this.sessionsDir)) fs.mkdirSync(this.sessionsDir, { recursive: true });
 
@@ -569,7 +569,7 @@ Violation of this rule is considered a system failure.`;
             },
             execute: async (args) => {
                 try {
-                    const gs = new GuardrailService(resolveDataPath(''));
+                    const gs = new GuardrailService(resolveStoragePath(''));
                     const definition = {
                         name: args.name,
                         description: args.description,
@@ -856,7 +856,7 @@ Violation of this rule is considered a system failure.`;
                     const title = firstUser ? firstUser.content.slice(0, 60) : 'Migrated Chat';
                     const session = { id, title, messages: data, createdAt: new Date().toISOString() };
                     fs.writeFileSync(path.join(this.sessionsDir, `${id}.json`), JSON.stringify(session, null, 2));
-                    console.log(`[AgentService] Migrated legacy chat history â†’ session ${id}`);
+                    console.log(`[AgentService] Migrated legacy chat history → session ${id}`);
                 }
                 fs.unlinkSync(this.chatHistoryPath);
             }
@@ -984,11 +984,11 @@ Violation of this rule is considered a system failure.`;
         for (const msg of messages) {
             switch (msg.role) {
                 case 'user':
-                    lines.push(`## ðŸ§‘ User`);
+                    lines.push(`## 🧑 User`);
                     lines.push(msg.content);
                     break;
                 case 'assistant':
-                    lines.push(`## ðŸ¤– Tala`);
+                    lines.push(`## 🤖 Tala`);
                     lines.push(msg.content);
                     break;
                 case 'tool':
@@ -1288,7 +1288,7 @@ Exported standalone package from Tala.
 
             const newId = this.generateId();
             const firstUser = branchedMessages.find((m: ChatMessage) => m.role === 'user');
-            const title = firstUser ? `â‘‚ ${firstUser.content.slice(0, 55)}` : 'â‘‚ Branch';
+            const title = firstUser ? `⑂ ${firstUser.content.slice(0, 55)}` : '⑂ Branch';
 
             const session = {
                 id: newId,
@@ -1814,7 +1814,7 @@ Exported standalone package from Tala.
 
             this.isSoulReady = true;
 
-            // â”€â”€ Memory Integrity: inform MemoryService of subsystem availability â”€â”€
+            // ── Memory Integrity: inform MemoryService of subsystem availability ──
             // After igniteSoul completes, update the memory service with the
             // real availability of canonical store, RAG, integrity mode from settings.
             // Graph projection availability is updated inline when the MCP connect
@@ -1829,10 +1829,10 @@ Exported standalone package from Tala.
                         console.error(`[DBHealth] Postgres unreachable: ${dbHealth.error ?? 'unknown error'}`);
                     } else {
                         if (!dbHealth.pgvectorInstalled) {
-                            console.warn('[DBHealth] pgvector not installed â€” vector search will be unavailable');
+                            console.warn('[DBHealth] pgvector not installed — vector search will be unavailable');
                         }
                         if (!dbHealth.migrationsApplied) {
-                            console.warn('[DBHealth] schema_migrations not found â€” schema may not be initialized');
+                            console.warn('[DBHealth] schema_migrations not found — schema may not be initialized');
                         }
                     }
                 }
@@ -1845,7 +1845,7 @@ Exported standalone package from Tala.
                 });
             }
 
-            // â”€â”€ Memory Repair Executor: wire and start after all services are ready â”€â”€
+            // ── Memory Repair Executor: wire and start after all services are ready ──
             this._wireRepairExecutor();
 
             // LTMF Migration: Archive legacy .txt files if structured mode is enabled
@@ -1883,12 +1883,12 @@ Exported standalone package from Tala.
      * after all dependent services are ready.
      *
      * Handler mapping:
-     *  reconnect_canonical â€” shutdown + re-init canonical PostgreSQL store
-     *  reinit_canonical    â€” same as reconnect_canonical (full teardown + reinit)
-     *  reconnect_mem0      â€” shutdown + re-ignite mem0 MCP server
-     *  re_resolve_providers â€” re-run MemoryProviderResolver and update MemoryService config
-     *  reconnect_graph     â€” disconnect + reconnect tala-memory-graph via McpService
-     *  reconnect_rag       â€” shutdown + re-ignite tala-core RAG server
+     *  reconnect_canonical — shutdown + re-init canonical PostgreSQL store
+     *  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)
+     *  reconnect_mem0      — shutdown + re-ignite mem0 MCP server
+     *  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config
+     *  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService
+     *  reconnect_rag       — shutdown + re-ignite tala-core RAG server
      *
      * drain_deferred_work is wired via DeferredMemoryReplayService.drain() which
      * replays bounded batches of persisted work items when canonical is healthy.
@@ -1924,12 +1924,12 @@ Exported standalone package from Tala.
                 // Wire operator review aggregator
                 this._operatorReviewSvc = new MemoryOperatorReviewService(this.memory, this._repairScheduler);
 
-                // â”€â”€ Repair evidence persistence subscribers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Repair evidence persistence subscribers ───────────────────
                 // Subscribe once to TelemetryBus and persist the remaining
                 // repair-evidence event types that are not covered by
                 // MemoryRepairExecutionService or MemoryRepairTriggerService.
                 //
-                // All appends are fire-and-forget â€” persistence failures must
+                // All appends are fire-and-forget — persistence failures must
                 // never block the repair or chat execution path.
 
                 const bus = TelemetryBus.getInstance();
@@ -2052,13 +2052,13 @@ Exported standalone package from Tala.
             }
         };
 
-        // â”€â”€ reconnect_canonical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── reconnect_canonical ───────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_canonical', () => restoreCanonical('reconnect_canonical'));
 
-        // â”€â”€ reinit_canonical â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── reinit_canonical ─────────────────────────────────────────────────
         executor.registerRepairHandler('reinit_canonical', () => restoreCanonical('reinit_canonical'));
 
-        // â”€â”€ reconnect_mem0 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── reconnect_mem0 ───────────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_mem0', async (): Promise<boolean> => {
             if (!this._ignitionParams) return false;
             try {
@@ -2080,7 +2080,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // â”€â”€ re_resolve_providers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── re_resolve_providers ─────────────────────────────────────────────
         executor.registerRepairHandler('re_resolve_providers', async (): Promise<boolean> => {
             try {
                 const resolver = new MemoryProviderResolver(this.inference.getProviderInventory());
@@ -2093,7 +2093,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // â”€â”€ reconnect_graph â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── reconnect_graph ──────────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_graph', async (): Promise<boolean> => {
             if (!this._ignitionParams || !this.mcpService) return false;
             try {
@@ -2118,7 +2118,7 @@ Exported standalone package from Tala.
             }
         });
 
-        // â”€â”€ reconnect_rag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── reconnect_rag ────────────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_rag', async (): Promise<boolean> => {
             if (!this._ignitionParams) return false;
             try {
@@ -2141,7 +2141,7 @@ Exported standalone package from Tala.
         executor.start();
         console.log('[AgentService] MemoryRepairExecutionService started with live handlers.');
 
-        // â”€â”€ MemoryRepairSchedulerService â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── MemoryRepairSchedulerService ──────────────────────────────────────
         // Start the scheduled analytics + self-maintenance loop only when the
         // outcome repository has been successfully wired (it's created above in
         // the pool-guarded block).  The scheduler holds a direct reference to
@@ -2219,7 +2219,7 @@ Exported standalone package from Tala.
         try {
             return JSON.parse(trimmed);
         } catch (e) {
-            // Case 3 â€” tolerant repair (development only)
+            // Case 3 — tolerant repair (development only)
             try {
                 const repaired = trimmed
                     .replace(/'/g, '"') // Single quotes to double
@@ -2271,7 +2271,7 @@ Exported standalone package from Tala.
             // Skip to the next '{' at depth 0
             if (text[i] !== '{') { i++; continue; }
 
-            // Found an opening brace â€” scan forward to find the matching closing brace
+            // Found an opening brace — scan forward to find the matching closing brace
             const start = i;
             let depth = 0;
             let inString = false;
@@ -2495,22 +2495,22 @@ Exported standalone package from Tala.
         dynamicContextBlocks.push(`[TURN TONE]: ${turnBehavior.toneProfile}; immersive=${turnBehavior.immersiveStyle}; narrativeAmplification=${turnBehavior.narrativeAmplification}`);
         const dynamicContext = dynamicContextBlocks.join('\n\n');
         const repetitionSafety = [
-            '[STYLE CONSTRAINTS â€” STRICTLY ENFORCED]:',
+            '[STYLE CONSTRAINTS — STRICTLY ENFORCED]:',
             'DO NOT open your response with any of the following banned openers:',
-            '  â€¢ Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
-            '  â€¢ Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
-            '  â€¢ Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
-            '  â€¢ Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
+            '  • Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
+            '  • Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
+            '  • Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
+            '  • Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
             'DO NOT start with a first-person action verb followed by a body part or location.',
             'DO NOT use the word "hums" as an opener.',
             'VARY your sentence structure. Do not consistently open responses with "I".',
             'Speak directly. The first sentence must deliver content, not setup.',
             '',
-            '[AGENT EXECUTION CONTRACT â€” MANDATORY]:',
-            '  â€¢ When performing file, terminal, or code actions, you MUST use the corresponding tools.',
-            '  â€¢ You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
-            '  â€¢ NEVER claim an action was performed unless the tool output confirms it.',
-            '  â€¢ If a tool fails, report the error exactly as received.',
+            '[AGENT EXECUTION CONTRACT — MANDATORY]:',
+            '  • When performing file, terminal, or code actions, you MUST use the corresponding tools.',
+            '  • You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
+            '  • NEVER claim an action was performed unless the tool output confirms it.',
+            '  • If a tool fails, report the error exactly as received.',
         ].join('\n');
 
         const agentModes = settings.agentModes || { activeMode: 'hybrid', modes: { assistant: { verbosity: 'normal', autoUseTools: true, safeMode: true, memoryWrites: true, toolsOnlyCodingTurns: true, ollamaTimeoutMs: 600000 } } };
@@ -2535,7 +2535,7 @@ Exported standalone package from Tala.
         }
 
         // Mode Audit Logging
-        const auditLogPath = resolveDataPath(path.join('logs', 'mode_audit.log'));
+        const auditLogPath = resolveStoragePath(path.join('logs', 'mode_audit.log'));
         if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
 
         // --- TURN CONTEXT OBSERVABILITY ---
@@ -2708,7 +2708,7 @@ Exported standalone package from Tala.
 
         // --- PROMPT AUDIT LOGGING ---
         // (Turn start audit already logged above during retrieval step)
-        const auditDir = resolveDataPath(path.join('logs', 'prompts'));
+        const auditDir = resolveStoragePath(path.join('logs', 'prompts'));
         if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
         const auditFile = path.join(auditDir, `${this.activeSessionId}_${Date.now()}.log`);
         fs.writeFileSync(auditFile, `SYSTEM PROMPT:\n${systemPrompt}\n\nUSER:${userMessage}`);
@@ -2769,16 +2769,16 @@ Exported standalone package from Tala.
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        // Build the set of allowed tool names for this turn â€” used for execution-time gating.
+        // Build the set of allowed tool names for this turn — used for execution-time gating.
         // filteredTools was computed above from the capability-resolved allowedCapabilities array.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
-        // â”€â”€ Browser-task mode state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Browser-task mode state ───────────────────────────────────────────
         // When intent is 'browser', the turn enters browser-task mode:
-        //   â€“ tool palette is reduced to browser-relevant tools
-        //   â€“ DOM is auto-fetched after every successful mutating browser action
-        //   â€“ multi-step loop continues instead of finalizing on empty retry
+        //   – tool palette is reduced to browser-relevant tools
+        //   – DOM is auto-fetched after every successful mutating browser action
+        //   – multi-step loop continues instead of finalizing on empty retry
         const BROWSER_TASK_TOOL_NAMES = new Set([
             'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
             'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
@@ -2797,7 +2797,7 @@ Exported standalone package from Tala.
         if (isBrowserTask) {
             console.log(`[BrowserTaskMode] activated intent=browser`);
         }
-        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─────────────────────────────────────────────────────────────────────
 
         const executionLog: TurnExecutionLog = {
             turnId: `${this.activeSessionId}_${Date.now()}`,
@@ -2829,10 +2829,10 @@ Exported standalone package from Tala.
         // Evaluated once per turn before the retry loop. Produces a deterministic
         // gate decision that is preserved across all retry iterations (Rule Group E).
         // Rules applied:
-        //   A â€” Block mem0_search when lore/memory-grounded context already exists.
-        //   B â€” Suppress tools with recent failures exceeding the degraded threshold.
-        //   C â€” Signal directAnswerPreferred when grounded memory is sufficient.
-        //   D â€” Signal requiresToolUse for coding / browser intents.
+        //   A — Block mem0_search when lore/memory-grounded context already exists.
+        //   B — Suppress tools with recent failures exceeding the degraded threshold.
+        //   C — Signal directAnswerPreferred when grounded memory is sufficient.
+        //   D — Signal requiresToolUse for coding / browser intents.
         const gateDecision = toolGatekeeper.evaluate({
             intentClass: turnObject.intent.class,
             activeMode,
@@ -2851,7 +2851,7 @@ Exported standalone package from Tala.
             );
         }
         if (gateDecision.directAnswerPreferred) {
-            console.log('[ToolGatekeeper] directAnswerPreferred=true â€” grounded context is sufficient');
+            console.log('[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient');
         }
 
         while (turn < AgentService.MAX_AGENT_ITERATIONS) {
@@ -2889,9 +2889,9 @@ Exported standalone package from Tala.
                 // --- HARD TOOL GATE ---
                 // Strip all tools whenever the turn is a greeting or no capabilities are
                 // explicitly allowed. Authorization is derived from intent and the
-                // allowedCapabilities array length â€” 'tools' is not a valid ToolCapability
+                // allowedCapabilities array length — 'tools' is not a valid ToolCapability
                 // value and must not be used in any capability check.
-                // This is the authoritative enforcement point â€” it fires AFTER all mode-gating
+                // This is the authoritative enforcement point — it fires AFTER all mode-gating
                 // so it cannot be bypassed by earlier incomplete checks.
                 const requestedTools = toolsToSend;
                 const allowedCaps = allowedCapabilities ?? [];
@@ -3106,7 +3106,7 @@ Exported standalone package from Tala.
                 // --- HARDENED ToolRequired Gate ---
                 // Fire the recovery-retry whenever the model skipped structured tool calls
                 // despite tools being available.  The original keyword-only heuristic was
-                // too narrow â€“ it missed browser/web tasks and any non-file-system tool use.
+                // too narrow – it missed browser/web tasks and any non-file-system tool use.
                 // New logic: also trigger when tools *were sent* to the model (toolsToSend
                 // is non-empty) but no structured calls came back.  For non-coding turns
                 // the retry is "best-effort": if it also produces no calls we fall through
@@ -3127,7 +3127,7 @@ Exported standalone package from Tala.
                 const requiresTool = toolsToSend.length > 0 && (hasKeywordIndicatingToolUse || calls.length === 0);
 
                 // Guard: never fire the ToolRequired retry for greeting turns or turns where
-                // no tools were authorized â€” they should produce plain-content responses.
+                // no tools were authorized — they should produce plain-content responses.
                 // Also never force tools when ToolGatekeeper blocked them or when grounded
                 // memory context makes a direct answer sufficient (directAnswerPreferred).
                 const toolsBlocked = gateDecision.blockedTools.length > 0;
@@ -3163,7 +3163,7 @@ Failure to provide a tool call will result in system termination.`;
                     // Using filteredTools (the full unfiltered set) would send all 57+ tools on
                     // the retry, which overloads constrained local models (e.g. 8B Ollama) and
                     // reliably causes a second 90s timeout.  toolsToSend already has the correct
-                    // mode-gated subset (e.g. 5â€“6 tools for hybrid mode).
+                    // mode-gated subset (e.g. 5–6 tools for hybrid mode).
                     const retryTools = isBrowserTask
                         ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
                         : toolsToSend;
@@ -3232,7 +3232,7 @@ Failure to provide a tool call will result in system termination.`;
                         }
                         // Non-coding: fall through to plain-content path (calls.length === 0 below).
                     } else {
-                        // Retry produced tool calls â€” update assistantMsg to use the retry
+                        // Retry produced tool calls — update assistantMsg to use the retry
                         // response's content so the committed message is internally consistent
                         // (content and tool_calls come from the same inference call).
                         assistantMsg.content = AgentService.enforceCanonRequiredAutobioFallbackReply(
@@ -3275,7 +3275,7 @@ Failure to provide a tool call will result in system termination.`;
                             console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
                             // Prepend an incomplete notice to the model's response so the caller
                             // can surface the reason to the user.
-                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed â€” no browser action succeeded within the allotted continuation steps.';
+                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
                             finalResponse = `${incompleteNote}\n\n${AgentService.enforceCanonRequiredAutobioFallbackReply(
                                 response.content || '',
                                 enforceCanonRequiredAutobioOverride,
@@ -3483,14 +3483,14 @@ Failure to provide a tool call will result in system termination.`;
                         'inference_timeout',
                         'warn',
                         `turn:${turnId}`,
-                        `StreamOpenTimeoutError on tool-bearing request â€” retrying without tools`,
+                        `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
                         'failure',
                         { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
                     );
                     try {
                         // Only attempt fallback if the user hasn't already aborted the request.
                         if (signal.aborted) {
-                            console.log(`[AgentService] StreamOpenTimeout fallback skipped â€” signal aborted turn=${turnId}`);
+                            console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
                         } else {
                             const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.currentTurnAuditRecord };
                             const fallbackResponse = await this.streamWithBrain(
@@ -3563,13 +3563,13 @@ Failure to provide a tool call will result in system termination.`;
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
         if (finalResponse && settings.agent?.capabilities?.memory !== false) {
             const storeMemories = async () => {
-                // â”€â”€ Memory Integrity Policy gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Memory Integrity Policy gate ──────────────────────────────
                 // Evaluate health before any write. If hard-disabled (critical/
                 // disabled state), skip all memory operations and emit an alert.
                 const memHealth = this.memory.getHealthStatus();
                 if (memHealth.hardDisabled) {
                     console.warn(
-                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED â€” state=${memHealth.state}. ` +
+                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED — state=${memHealth.state}. ` +
                         `Reason: ${memHealth.summary}`,
                     );
                     TelemetryBus.getInstance().emit({
@@ -3654,11 +3654,11 @@ Failure to provide a tool call will result in system termination.`;
                         console.warn('[AgentService] P7A canonical write failed:', writeResult.error);
                     }
                 } else {
-                    console.warn('[AgentService] P7A: canonical memory repository not available â€” derived writes will proceed without canonical ID');
+                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
                 }
 
                 try {
-                    // 1. Mem0 (derived): store interaction â€” reference canonical_memory_id when available
+                    // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
                     if (!allowMem0Write) {
                         console.log(`[AgentService][MemoryIntegrity] Mem0 write suppressed (mem0Runtime unavailable). state=${memHealth.state}`);
                         // Enqueue extraction work so it can be replayed when extraction recovers
@@ -3716,7 +3716,7 @@ Failure to provide a tool call will result in system termination.`;
 
                 try {
                     // 3. Memory Graph (derived): run extraction pipeline on the full exchange.
-                    // process_memory handles Extract â†’ Validate â†’ Store internally.
+                    // process_memory handles Extract → Validate → Store internally.
                     if (!allowGraphWrite) {
                         console.log(`[AgentService][MemoryIntegrity] Graph write suppressed (extraction/graphProjection unavailable). state=${memHealth.state}`);
                         // Enqueue graph_projection work so it can be replayed when graph recovers
@@ -3920,7 +3920,7 @@ Failure to provide a tool call will result in system termination.`;
                 const buildErrors = (report.match(/--- BUILD CHECK ---[\s\S]*?Summary:\s*(\d+)\s*TypeScript\s*errors/i) || [0, 0])[1];
                 
                 const totalIssues = Number(lintErrors) + Number(lintWarnings) + Number(buildErrors);
-                const status = totalIssues > 0 ? "âš ï¸ Issues Found" : "âœ… Clean";
+                const status = totalIssues > 0 ? "⚠️ Issues Found" : "✅ Clean";
                 
                 // Extract top issues (first 5 unique lines containing 'error' or 'warning')
                 const issues = report.split('\n')
@@ -3956,7 +3956,7 @@ Failure to provide a tool call will result in system termination.`;
                     if (searchRes.matches && searchRes.matches.length > 0) {
                         report += `**Top Matches:**\n`;
                         searchRes.matches.forEach((m: any) => {
-                            const confidenceEmoji = m.confidence === 'high' ? 'ðŸŸ¢' : 'ðŸŸ¡';
+                            const confidenceEmoji = m.confidence === 'high' ? '🟢' : '🟡';
                             report += `- ${confidenceEmoji} \`${m.filePath}\` (Score: ${m.score}, Type: ${m.matchType})\n`;
                             if (m.preview) {
                                 report += `  > ${m.preview.trim()}\n`;
@@ -4028,7 +4028,7 @@ Failure to provide a tool call will result in system termination.`;
         ];
 
         // Audit Logging (Technical bypass)
-        const auditLogPath = resolveDataPath(path.join('logs', 'mode_audit_bypass.log'));
+        const auditLogPath = resolveStoragePath(path.join('logs', 'mode_audit_bypass.log'));
         if (!fs.existsSync(path.dirname(auditLogPath))) fs.mkdirSync(path.dirname(auditLogPath), { recursive: true });
         fs.appendFileSync(auditLogPath, JSON.stringify({ timestamp: new Date().toISOString(), intent, toolName, turnId }) + "\n");
 
@@ -4231,8 +4231,8 @@ Failure to provide a tool call will result in system termination.`;
 
         if (log.toolCalls.length > 0) {
             log.toolCalls.forEach((tc, i) => {
-                const status = tc.ok ? "âœ… Succeeded" : "âŒ Failed";
-                summary += `${i + 1}. **${tc.name}** â€” ${status}\n`;
+                const status = tc.ok ? "✅ Succeeded" : "❌ Failed";
+                summary += `${i + 1}. **${tc.name}** — ${status}\n`;
                 if (tc.argsPreview) {
                     summary += `   - **Arguments**: \`${tc.argsPreview}\`\n`;
                 }
@@ -4254,7 +4254,7 @@ Failure to provide a tool call will result in system termination.`;
         // Resolve the current provider selection so executeStream() has the correct metadata.
         const selection = this.inference.selectProvider({ fallbackAllowed: true, turnId: this.activeTurnId ?? 'unknown' });
         if (selection.success && selection.selectedProvider) {
-            console.log(`[AgentService] streamWithBrain â€” provider chosen: ${selection.selectedProvider.providerId} (${selection.selectedProvider.providerType}) turnId: ${this.activeTurnId ?? 'unknown'}`);
+            console.log(`[AgentService] streamWithBrain — provider chosen: ${selection.selectedProvider.providerId} (${selection.selectedProvider.providerType}) turnId: ${this.activeTurnId ?? 'unknown'}`);
             const req: import('../../shared/inferenceProviderTypes').StreamInferenceRequest = {
                 provider: selection.selectedProvider,
                 turnId: this.activeTurnId ?? 'unknown',
@@ -4265,13 +4265,13 @@ Failure to provide a tool call will result in system termination.`;
             return this.inference.executeStream(brain, messages, systemPrompt, onChunk, req, tools, options);
         }
         // Fallback: if no provider is selected, call brain directly (preserves pre-existing behavior)
-        console.log(`[AgentService] streamWithBrain â€” no provider selected, calling brain directly turnId: ${this.activeTurnId ?? 'unknown'}`);
+        console.log(`[AgentService] streamWithBrain — no provider selected, calling brain directly turnId: ${this.activeTurnId ?? 'unknown'}`);
         return brain.streamResponse(messages, systemPrompt, onChunk, signal, tools, options);
     }
 
     private recordTokenUsage(tokens: number) {
         try {
-            const ledgerPath = resolveDataPath(path.join('memory', 'token_ledger.json'));
+            const ledgerPath = resolveStoragePath(path.join('memory', 'token_ledger.json'));
             let ledger: any = fs.existsSync(ledgerPath) ? JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')) : {};
             const today = new Date().toISOString().slice(0, 10);
             ledger[today] = (ledger[today] || 0) + tokens;
@@ -4307,12 +4307,12 @@ Failure to provide a tool call will result in system termination.`;
      * result for the LLM.
      *
      * Control flow:
-     *   tool result ("BROWSER_NAVIGATE: â€¦")
-     *   â†’ dispatchBrowserCommand()
-     *   â†’ onEvent("browser-navigate", { url, surfaceId })   â† sent to renderer
-     *   â†’ Browser.tsx relays to webview / captures screenshot
-     *   â†’ provideBrowserData() resolves the pending promise
-     *   â†’ actual result returned to LLM
+     *   tool result ("BROWSER_NAVIGATE: …")
+     *   → dispatchBrowserCommand()
+     *   → onEvent("browser-navigate", { url, surfaceId })   ← sent to renderer
+     *   → Browser.tsx relays to webview / captures screenshot
+     *   → provideBrowserData() resolves the pending promise
+     *   → actual result returned to LLM
      *
      * @param rawResult  The raw `BROWSER_*` string from ToolService.
      * @param onEvent    The agent-event callback provided by IpcRouter.
@@ -4334,10 +4334,10 @@ Failure to provide a tool call will result in system termination.`;
      */
     private static normalizeBrowserSelector(raw: string): string {
         // Formats handled:
-        //   "12[:V] <input:text> Search"  â†’ "12"
-        //   "[12] INPUT SEARCH"           â†’ "12"
-        //   "12"                          â†’ "12"  (already canonical)
-        //   "input[name='q']"             â†’ pass through (CSS selector)
+        //   "12[:V] <input:text> Search"  → "12"
+        //   "[12] INPUT SEARCH"           → "12"
+        //   "12"                          → "12"  (already canonical)
+        //   "input[name='q']"             → pass through (CSS selector)
         const m = raw.match(/^\[?(\d+)\]?(?:\[|[:, <]|$)/);
         if (m) return m[1];
         return raw;
@@ -4544,7 +4544,7 @@ Failure to provide a tool call will result in system termination.`;
     /**
      * Trigger an immediate memory maintenance analytics run (manual refresh).
      *
-     * Equivalent to a human-requested scheduler tick â€” does not change any
+     * Equivalent to a human-requested scheduler tick — does not change any
      * settings or configurations.  Safe to call from the operator review panel.
      *
      * Returns the run result, or null if the scheduler is not available.
@@ -4673,7 +4673,7 @@ Failure to provide a tool call will result in system termination.`;
 
     public getReflectionSummary(): string {
         try {
-            const memoryDir = resolveDataPath('memory');
+            const memoryDir = resolveStoragePath('memory');
             const reflectionsDir = path.join(memoryDir, 'reflections');
             const proposalsDir = path.join(memoryDir, 'proposals');
 
@@ -4767,7 +4767,7 @@ Failure to provide a tool call will result in system termination.`;
         // Use module-level getActiveMode for a guaranteed cache-only read.
         const mode = getActiveMode(this.settingsPath, 'AgentService.addMemory');
 
-        // P7A: canonical write first â€” get a canonical_memory_id from Postgres before
+        // P7A: canonical write first — get a canonical_memory_id from Postgres before
         // writing to the derived mem0 store. If Postgres is unavailable, the write
         // proceeds but is flagged by the MemoryService P7A guard.
         let canonicalMemoryId: string | null = null;
@@ -4790,7 +4790,7 @@ Failure to provide a tool call will result in system termination.`;
                 console.warn('[AgentService:addMemory] P7A canonical write failed:', result.error);
             }
         } else {
-            console.warn('[AgentService:addMemory] P7A: canonical repository not available â€” derived write will lack canonical_memory_id');
+            console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
         }
 
         return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
@@ -4824,8 +4824,9 @@ Failure to provide a tool call will result in system termination.`;
             engine: instance?.engine || 'unknown',
             source: instance?.source || 'unknown',
             isLowFidelity,
-            warning: isLowFidelity ? "âš ï¸ Low Fidelity Model" : ""
+            warning: isLowFidelity ? "⚠️ Low Fidelity Model" : ""
         };
     }
 }
+
 

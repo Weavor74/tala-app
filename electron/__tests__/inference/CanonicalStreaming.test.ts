@@ -75,8 +75,8 @@ vi.mock('../../services/LocalEngineService', () => ({
     }),
 }));
 
-vi.mock('../../services/LocalInferenceManager', () => ({
-    LocalInferenceManager: vi.fn().mockImplementation(function (this: any) {
+vi.mock('../../services/LocalInferenceOrchestrator', () => ({
+    LocalInferenceOrchestrator: vi.fn().mockImplementation(function (this: any) {
         this.start = vi.fn();
         this.stop = vi.fn();
         this.isReady = vi.fn(() => false);
@@ -422,3 +422,4 @@ describe('InferenceService.executeStream()', () => {
         expect(STREAM_OPEN_TIMEOUT_LOCAL_MS).toBeGreaterThan(STREAM_OPEN_TIMEOUT_CLOUD_MS);
     });
 });
+

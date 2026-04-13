@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { app } from 'electron';
 import { WebContents } from 'electron';
 import { LocalEngineService } from './LocalEngineService';
-import { LocalInferenceManager } from './LocalInferenceManager';
+import { LocalInferenceOrchestrator } from './LocalInferenceOrchestrator';
 import { auditLogger } from './AuditLogger';
 import { telemetry } from './TelemetryService';
 import { InferenceProviderRegistry, type ProviderRegistryConfig } from './inference/InferenceProviderRegistry';
@@ -61,7 +61,7 @@ export interface ScannedProvider {
  * Responsibilities:
  * - Provider registry management (via InferenceProviderRegistry)
  * - Deterministic provider selection and fallback (via ProviderSelectionService)
- * - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceManager)
+ * - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator)
  * - Legacy provider scan API for backward compatibility
  * - Installer flows for external providers (Ollama)
  *
@@ -78,7 +78,7 @@ export class InferenceService {
      * Hardened lifecycle manager for the embedded llama.cpp engine.
      * Authoritative for embedded provider readiness checks, timeouts, and retries.
      */
-    private localInferenceManager: LocalInferenceManager;
+    private localInferenceManager: LocalInferenceOrchestrator;
 
     /** Provider registry — source of truth for all known/detected providers. */
     private registry: InferenceProviderRegistry;
@@ -92,7 +92,7 @@ export class InferenceService {
     private _embeddedVllmChild: import('child_process').ChildProcess | null = null;
 
     constructor(registryConfig?: ProviderRegistryConfig) {
-        this.localInferenceManager = new LocalInferenceManager(this.localEngine);
+        this.localInferenceManager = new LocalInferenceOrchestrator(this.localEngine);
         this.registry = new InferenceProviderRegistry(registryConfig ?? {});
         this.selectionService = new ProviderSelectionService(this.registry);
     }
@@ -705,16 +705,16 @@ export class InferenceService {
     // ─── Public — embedded engine management ─────────────────────────────────
 
     /**
-     * Returns the LocalInferenceManager for the embedded llama.cpp engine.
+     * Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine.
      * IPC handlers and AgentService use this for embedded engine lifecycle.
      */
-    public getLocalInferenceManager(): LocalInferenceManager {
+    public getLocalInferenceOrchestrator(): LocalInferenceOrchestrator {
         return this.localInferenceManager;
     }
 
     /**
      * Returns the legacy LocalEngineService.
-     * @deprecated Prefer getLocalInferenceManager() for state-managed access.
+     * @deprecated Prefer getLocalInferenceOrchestrator() for state-managed access.
      */
     public getLocalEngine(): LocalEngineService {
         return this.localEngine;
@@ -1369,3 +1369,4 @@ export class InferenceService {
         });
     }
 }
+

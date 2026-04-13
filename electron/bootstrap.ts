@@ -26,23 +26,23 @@
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { APP_ROOT, LOCAL_DATA_DIR, DATA_DIRS } from './services/PathResolver';
+import { APP_ROOT, localStorageRootPath, STORAGE_DIRECTORY_PATHS } from './services/PathResolver';
 
 // Create local data directory if it doesn't exist
-if (!fs.existsSync(LOCAL_DATA_DIR)) {
-    fs.mkdirSync(LOCAL_DATA_DIR, { recursive: true });
+if (!fs.existsSync(localStorageRootPath)) {
+    fs.mkdirSync(localStorageRootPath, { recursive: true });
 }
 
 // Override Electron's system paths to stay within the local folder
-console.log(`[Bootstrap] Force local storage directory: ${LOCAL_DATA_DIR}`);
-app.setPath('userData', LOCAL_DATA_DIR);
-app.setPath('appData', LOCAL_DATA_DIR);
-app.setPath('sessionData', path.join(LOCAL_DATA_DIR, 'session'));
+console.log(`[Bootstrap] Force local storage directory: ${localStorageRootPath}`);
+app.setPath('userData', localStorageRootPath);
+app.setPath('appData', localStorageRootPath);
+app.setPath('sessionData', path.join(localStorageRootPath, 'session'));
 
-const DOCUMENTS_DIR = path.join(LOCAL_DATA_DIR, 'documents');
-const TEMP_DIR = path.join(LOCAL_DATA_DIR, 'temp');
-const DOWNLOADS_DIR = path.join(LOCAL_DATA_DIR, 'downloads');
-const SESSION_DIR = path.join(LOCAL_DATA_DIR, 'session');
+const DOCUMENTS_DIR = path.join(localStorageRootPath, 'documents');
+const TEMP_DIR = path.join(localStorageRootPath, 'temp');
+const DOWNLOADS_DIR = path.join(localStorageRootPath, 'downloads');
+const SESSION_DIR = path.join(localStorageRootPath, 'session');
 
 // Ensure standard subdirectories exist within the local data root
 [DOCUMENTS_DIR, TEMP_DIR, DOWNLOADS_DIR, SESSION_DIR].forEach(dir => {
@@ -53,12 +53,12 @@ const SESSION_DIR = path.join(LOCAL_DATA_DIR, 'session');
 
 // Canonical Tala-owned directories under app root.
 [
-    DATA_DIRS.logs,
-    DATA_DIRS.cache,
-    DATA_DIRS.temp,
-    DATA_DIRS.memory,
-    DATA_DIRS.reflection,
-    DATA_DIRS.diagnostics,
+    STORAGE_DIRECTORY_PATHS.logs,
+    STORAGE_DIRECTORY_PATHS.cache,
+    STORAGE_DIRECTORY_PATHS.temp,
+    STORAGE_DIRECTORY_PATHS.memory,
+    STORAGE_DIRECTORY_PATHS.reflection,
+    STORAGE_DIRECTORY_PATHS.diagnostics,
     path.join(APP_ROOT, 'runtime'),
     path.join(APP_ROOT, 'models'),
     path.join(APP_ROOT, 'exports')
@@ -72,4 +72,6 @@ app.setPath('documents', DOCUMENTS_DIR);
 app.setPath('temp', TEMP_DIR);
 app.setPath('downloads', DOWNLOADS_DIR);
 
-export { LOCAL_DATA_DIR, APP_ROOT };
+export { localStorageRootPath, APP_ROOT };
+
+
