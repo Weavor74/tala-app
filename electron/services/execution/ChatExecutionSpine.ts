@@ -912,7 +912,23 @@ export class ChatExecutionSpine {
         const { assembly } = prompt;
         const { input } = assembly;
         const preLoopPolicy = prompt.preLoopToolPolicy ?? this.resolvePreLoopToolPolicyFromPlan(prompt.plan);
-        const output = await this.executeTurnLegacy(
+        telemetry.operational(
+            'execution',
+            'execution.stage_native_loop_active',
+            'info',
+            `turn:${prompt.plan.turnId}`,
+            'Stage-native runExecutionLoop path is active.',
+            'success',
+            {
+                payload: {
+                    turnId: prompt.plan.turnId,
+                    mode: prompt.plan.activeMode,
+                    intent: prompt.plan.routedIntent.intent,
+                    path: prompt.plan.path,
+                },
+            },
+        );
+        const output = await this.executeLiveLoopPath(
             prompt.plan,
             preLoopPolicy,
             input.userMessage,
@@ -931,7 +947,12 @@ export class ChatExecutionSpine {
         return loop.output;
     }
 
-    private async executeTurnLegacy(
+    /**
+     * Transitional helper while stage methods are incrementally widened.
+     * Core loop behavior is invoked from runExecutionLoop(); this helper keeps
+     * low-churn behavior parity until full decomposition is complete.
+     */
+    private async executeLiveLoopPath(
         executionPlan: ExecutionPlan,
         preLoopPolicyFromPlan: PreLoopResolvedToolPolicy,
         userMessage: string,
