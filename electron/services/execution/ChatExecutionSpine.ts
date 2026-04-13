@@ -115,6 +115,51 @@ export type IterationToolRequest = {
     allowedCapabilitiesCount: number;
 };
 
+export type PromptBlockKind =
+    | 'identity'
+    | 'task_policy'
+    | 'memory'
+    | 'docs_retrieval'
+    | 'tools'
+    | 'notebook'
+    | 'astro'
+    | 'reflection';
+
+export type PromptBlockBudget = {
+    kind: PromptBlockKind;
+    maxChars: number;
+};
+
+export type PromptBlockRenderResult = {
+    kind: PromptBlockKind;
+    included: boolean;
+    rendered: boolean;
+    truncated: boolean;
+    originalChars: number;
+    finalChars: number;
+    maxChars: number;
+    content: string;
+};
+
+export type BoundedPromptPacket = {
+    budgets: Record<PromptBlockKind, number>;
+    blocks: PromptBlockRenderResult[];
+    includedBlocks: PromptBlockKind[];
+    renderedBlocks: PromptBlockKind[];
+    truncatedBlocks: PromptBlockKind[];
+    totalChars: number;
+    renderedChars: number;
+    inputs: {
+        systemPromptBase: string;
+        userIdentity: string;
+        dynamicContext: string;
+        memoryContext: string;
+        goalsAndReflections: string;
+        toolSigs: string;
+        notebookGrounded: boolean;
+    };
+};
+
 export type TurnAssemblyResult = {
     plan: ExecutionPlan;
     input: TurnExecutionInput;
@@ -454,6 +499,217 @@ export class ChatExecutionSpine {
         };
     }
 
+    private selectPromptBlockBudgets(params: {
+        activeMode: string;
+        intentClass: string;
+        isGreeting: boolean;
+        isBrowserTask: boolean;
+        toolsEnabled: boolean;
+    }): Record<PromptBlockKind, number> {
+        const { activeMode, intentClass, isGreeting, isBrowserTask, toolsEnabled } = params;
+        const base: Record<PromptBlockKind, number> = {
+            identity: 2600,
+            task_policy: 2800,
+            memory: 3200,
+            docs_retrieval: 2400,
+            tools: toolsEnabled ? 7000 : 0,
+            notebook: 900,
+            astro: 1200,
+            reflection: 1800,
+        };
+
+        if (isGreeting) {
+            return {
+                ...base,
+                task_policy: 1400,
+                memory: 800,
+                docs_retrieval: 400,
+                tools: 0,
+                astro: 400,
+                reflection: 400,
+            };
+        }
+
+        if (activeMode === 'rp') {
+            return {
+                ...base,
+                identity: 3000,
+                task_policy: 3200,
+                tools: 0,
+                reflection: 2400,
+                astro: 1800,
+            };
+        }
+
+        if (isBrowserTask || intentClass === 'browser') {
+            return {
+                ...base,
+                task_policy: 3200,
+                tools: toolsEnabled ? 9000 : 0,
+                memory: 1400,
+                docs_retrieval: 1200,
+                reflection: 700,
+                astro: 600,
+            };
+        }
+
+        if (intentClass === 'coding' || intentClass === 'diagnostics') {
+            return {
+                ...base,
+                task_policy: 3200,
+                tools: toolsEnabled ? 9000 : 0,
+                memory: 1400,
+                docs_retrieval: 1200,
+                reflection: 700,
+                astro: 600,
+            };
+        }
+
+        if (intentClass === 'factual') {
+            return {
+                ...base,
+                memory: 2400,
+                docs_retrieval: 3400,
+                reflection: 900,
+            };
+        }
+
+        return base;
+    }
+
+    private renderPromptBlock(kind: PromptBlockKind, rawContent: string, budget: number, rendered: boolean): PromptBlockRenderResult {
+        const safe = rawContent ?? '';
+        const originalChars = safe.length;
+        const maxChars = Math.max(0, budget);
+        if (maxChars === 0 || originalChars === 0) {
+            return {
+                kind,
+                included: false,
+                rendered,
+                truncated: false,
+                originalChars,
+                finalChars: 0,
+                maxChars,
+                content: '',
+            };
+        }
+        if (originalChars <= maxChars) {
+            return {
+                kind,
+                included: true,
+                rendered,
+                truncated: false,
+                originalChars,
+                finalChars: originalChars,
+                maxChars,
+                content: safe,
+            };
+        }
+        const ellipsis = '\n...[TRUNCATED]';
+        const hardLimit = Math.max(0, maxChars - ellipsis.length);
+        const content = `${safe.slice(0, hardLimit)}${ellipsis}`;
+        return {
+            kind,
+            included: true,
+            rendered,
+            truncated: true,
+            originalChars,
+            finalChars: content.length,
+            maxChars,
+            content,
+        };
+    }
+
+    private buildBoundedPromptPacket(params: {
+        executionPlan: ExecutionPlan;
+        turnObject: any;
+        turnPolicy: any;
+        activeProfileSystemPrompt: string;
+        userIdentity: string;
+        dynamicContext: string;
+        memoryContext: string;
+        docContextText?: string;
+        toolSigs: string;
+        notebookActive: boolean;
+        goalsAndReflections: string;
+        astroState: string;
+    }): BoundedPromptPacket {
+        const {
+            executionPlan,
+            turnObject,
+            turnPolicy,
+            activeProfileSystemPrompt,
+            userIdentity,
+            dynamicContext,
+            memoryContext,
+            docContextText,
+            toolSigs,
+            notebookActive,
+            goalsAndReflections,
+            astroState,
+        } = params;
+        const intentClass = turnObject?.intent?.class || 'unknown';
+        const toolsEnabled = !(turnObject?.blockedCapabilities?.includes('all') || executionPlan.activeMode === 'rp' || turnPolicy?.toolExposureProfile === 'none');
+        const budgets = this.selectPromptBlockBudgets({
+            activeMode: executionPlan.activeMode,
+            intentClass,
+            isGreeting: !!executionPlan.isGreeting,
+            isBrowserTask: !!executionPlan.isBrowserTask,
+            toolsEnabled,
+        });
+        const budgetEntries: PromptBlockBudget[] = (Object.keys(budgets) as PromptBlockKind[]).map((kind) => ({
+            kind,
+            maxChars: budgets[kind],
+        }));
+        const budgetByKind = budgetEntries.reduce((acc, entry) => {
+            acc[entry.kind] = entry.maxChars;
+            return acc;
+        }, {} as Record<PromptBlockKind, number>);
+
+        const notebookText = notebookActive
+            ? `[NOTEBOOK]: Active notebook context is attached. Prioritize grounded references from notebook sources when relevant.`
+            : '';
+
+        const blocks: PromptBlockRenderResult[] = [
+            this.renderPromptBlock('identity', `${activeProfileSystemPrompt || ''}`, budgetByKind.identity, true),
+            this.renderPromptBlock('task_policy', dynamicContext || '', budgetByKind.task_policy, true),
+            this.renderPromptBlock('memory', memoryContext || '', budgetByKind.memory, true),
+            this.renderPromptBlock('docs_retrieval', docContextText || '', budgetByKind.docs_retrieval, false),
+            this.renderPromptBlock('tools', toolSigs || '', budgetByKind.tools, true),
+            this.renderPromptBlock('notebook', notebookText, budgetByKind.notebook, false),
+            this.renderPromptBlock('astro', astroState || '', budgetByKind.astro, false),
+            this.renderPromptBlock('reflection', goalsAndReflections || '', budgetByKind.reflection, true),
+        ];
+
+        const byKind = (kind: PromptBlockKind) => blocks.find(b => b.kind === kind)?.content || '';
+        const inputs = {
+            systemPromptBase: byKind('identity'),
+            userIdentity: this.renderPromptBlock('identity', userIdentity || '', Math.max(400, Math.floor(budgetByKind.identity * 0.5)), true).content,
+            dynamicContext: byKind('task_policy'),
+            memoryContext: byKind('memory'),
+            goalsAndReflections: byKind('reflection'),
+            toolSigs: byKind('tools'),
+            notebookGrounded: notebookActive,
+        };
+
+        const includedBlocks = blocks.filter(b => b.included).map(b => b.kind);
+        const renderedBlocks = blocks.filter(b => b.included && b.rendered).map(b => b.kind);
+        const truncatedBlocks = blocks.filter(b => b.truncated).map(b => b.kind);
+        const totalChars = blocks.reduce((sum, b) => sum + b.finalChars, 0);
+        const renderedChars = blocks.filter(b => b.rendered).reduce((sum, b) => sum + b.finalChars, 0);
+
+        return {
+            budgets: budgetByKind,
+            blocks,
+            includedBlocks,
+            renderedBlocks,
+            truncatedBlocks,
+            totalChars,
+            renderedChars,
+            inputs,
+        };
+    }
+
     private shapeIterationToolRequest(params: {
         executionPlan: ExecutionPlan;
         preLoopPolicy: PreLoopResolvedToolPolicy;
@@ -604,6 +860,8 @@ export class ChatExecutionSpine {
         const memoryContext = orchResult.memoryContextText;
         const hasMemories = orchResult.approvedMemories.length > 0;
         const isGreeting = orchResult.isGreeting;
+        executionPlan.isGreeting = isGreeting;
+        executionPlan.isBrowserTask = turnObject.intent.class === 'browser';
         // Backward-compatible astroState string for legacy prompt paths
         const astroState = turnBehavior.astroLevel === 'off'
             ? '[ASTRO STATE]: Suppressed by turn policy'
@@ -822,20 +1080,69 @@ export class ChatExecutionSpine {
             compactPacket = undefined;
         }
 
+        // --- BOUNDED PROMPT PACKET ASSEMBLY ---
+        const boundedPromptPacket = this.buildBoundedPromptPacket({
+            executionPlan,
+            turnObject,
+            turnPolicy,
+            activeProfileSystemPrompt: activeProfile.systemPrompt,
+            userIdentity,
+            dynamicContext: dynamicContext.replace(/\[ASTRO_STATE\]/g, astroState),
+            memoryContext,
+            docContextText: orchResult.docContextText,
+            toolSigs,
+            notebookActive,
+            goalsAndReflections,
+            astroState,
+        });
+        console.log(
+            `[PromptBounds] turn=${turnId} included=[${boundedPromptPacket.includedBlocks.join(',')}] ` +
+            `truncated=[${boundedPromptPacket.truncatedBlocks.join(',')}] totalChars=${boundedPromptPacket.totalChars} renderedChars=${boundedPromptPacket.renderedChars}`,
+        );
+        telemetry.operational(
+            'cognitive',
+            'execution.prompt_packet_bounded',
+            'info',
+            `turn:${turnId}`,
+            'Bounded prompt packet assembled.',
+            'success',
+            {
+                payload: {
+                    turnId,
+                    mode: activeMode,
+                    intent: turnObject.intent.class,
+                    includedBlocks: boundedPromptPacket.includedBlocks,
+                    renderedBlocks: boundedPromptPacket.renderedBlocks,
+                    truncatedBlocks: boundedPromptPacket.truncatedBlocks,
+                    totalChars: boundedPromptPacket.totalChars,
+                    renderedChars: boundedPromptPacket.renderedChars,
+                    perBlock: boundedPromptPacket.blocks.map(b => ({
+                        kind: b.kind,
+                        included: b.included,
+                        rendered: b.rendered,
+                        truncated: b.truncated,
+                        originalChars: b.originalChars,
+                        finalChars: b.finalChars,
+                        maxChars: b.maxChars,
+                    })),
+                },
+            },
+        );
+
         // --- DYNAMIC PROMPT ASSEMBLY via COMPACT BUILDER ---
         let systemPrompt = CompactPromptBuilder.build({
-            systemPromptBase: activeProfile.systemPrompt,
+            systemPromptBase: boundedPromptPacket.inputs.systemPromptBase,
             activeProfileId: activeProfileId,
             isSmallLocalModel: !!isSmallLocalModel,
             isEngineeringMode: turnObject.intent.class === 'coding' || turnObject.intent.class === 'diagnostics',
             hasMemories: hasMemories,
-            memoryContext: memoryContext,
-            goalsAndReflections: goalsAndReflections,
-            dynamicContext: dynamicContext.replace(/\[ASTRO_STATE\]/g, astroState),
-            toolSigs: toolSigs,
-            userIdentity: userIdentity,
+            memoryContext: boundedPromptPacket.inputs.memoryContext,
+            goalsAndReflections: boundedPromptPacket.inputs.goalsAndReflections,
+            dynamicContext: boundedPromptPacket.inputs.dynamicContext,
+            toolSigs: boundedPromptPacket.inputs.toolSigs,
+            userIdentity: boundedPromptPacket.inputs.userIdentity,
             compactPacket,
-            notebookGrounded: notebookActive,
+            notebookGrounded: boundedPromptPacket.inputs.notebookGrounded,
         });
 
         const enforceCanonRequiredAutobioOverride = agent.shouldApplyCanonRequiredAutobioOverride(turnObject, activeMode);
