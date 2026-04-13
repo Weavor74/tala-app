@@ -45,6 +45,12 @@ export interface NamingContract {
     pathRegex?: string;
     severity?: Severity;
   };
+  toolWorkflowAutomationNaming?: {
+    toolNameRegex?: string;
+    workflowNameRegex?: string;
+    automationArtifactRegex?: string;
+    severity?: Severity;
+  };
 }
 
 export interface Violation {
@@ -72,4 +78,61 @@ export interface NamingExceptionsFile {
   contractVersion: string;
   generatedAt: string;
   exceptions: NamingExceptionEntry[];
+}
+
+export type ArtifactKind =
+  | 'file'
+  | 'class'
+  | 'module'
+  | 'function'
+  | 'variable'
+  | 'event'
+  | 'ipc'
+  | 'api-route'
+  | 'tool'
+  | 'workflow'
+  | 'automation';
+
+export type ArtifactMutability =
+  | 'read'
+  | 'write'
+  | 'transform'
+  | 'validate'
+  | 'execute'
+  | 'schedule'
+  | 'route'
+  | 'register';
+
+export type ArtifactExposure = 'internal' | 'ipc' | 'api' | 'external' | 'contract_facing';
+
+export interface ArtifactClassificationInput {
+  subsystem: string;
+  layer: string;
+  role: string;
+  mutability: string;
+  exposure: string;
+  artifactKind: string;
+}
+
+export interface ArtifactClassification {
+  subsystem: string;
+  layer: string;
+  role: string;
+  mutability: ArtifactMutability;
+  exposure: ArtifactExposure;
+  artifactKind: ArtifactKind;
+  roleSuffix?: string;
+}
+
+export interface ArtifactNameValidationIssue {
+  rule: string;
+  severity: Severity;
+  message: string;
+}
+
+export interface ArtifactNameValidationResult {
+  valid: boolean;
+  classification: ArtifactClassification;
+  name: string;
+  issues: ArtifactNameValidationIssue[];
 }
