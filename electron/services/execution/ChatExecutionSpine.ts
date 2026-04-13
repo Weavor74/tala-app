@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+﻿/* eslint-disable @typescript-eslint/no-explicit-any */
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
@@ -942,7 +942,7 @@ export class ChatExecutionSpine {
                 && !browserTaskHadSuccessfulAction;
             if (stalled) {
                 console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
-                const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
+                const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed â€” no browser action succeeded within the allotted continuation steps.';
                 return {
                     continued: false,
                     browserContinuationStep,
@@ -1014,13 +1014,13 @@ export class ChatExecutionSpine {
             'inference_timeout',
             'warn',
             `turn:${turnId}`,
-            `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
+            `StreamOpenTimeoutError on tool-bearing request â€” retrying without tools`,
             'failure',
             { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
         );
         try {
             if (signal.aborted) {
-                console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
+                console.log(`[AgentService] StreamOpenTimeout fallback skipped â€” signal aborted turn=${turnId}`);
                 return { handled: true };
             }
             const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.agent.currentTurnAuditRecord };
@@ -1193,7 +1193,7 @@ export class ChatExecutionSpine {
     private async runExecutionLoop(prompt: PromptBuildResult): Promise<LoopExecutionResult> {
         const { assembly } = prompt;
         const { input } = assembly;
-        const preLoopPolicy = prompt.preLoopToolPolicy ?? this.resolvePreLoopToolPolicyFromPlan(prompt.plan);
+        const preLoopPolicyFromPlan = prompt.preLoopToolPolicy ?? this.resolvePreLoopToolPolicyFromPlan(prompt.plan);
         telemetry.operational(
             'execution',
             'execution.stage_native_loop_active',
@@ -1210,39 +1210,15 @@ export class ChatExecutionSpine {
                 },
             },
         );
-        const output = await this.executeLiveLoopPath(
-            prompt.plan,
-            preLoopPolicy,
-            input.userMessage,
-            input.onToken,
-            input.onEvent,
-            input.images,
-            input.capabilitiesOverride,
-        );
-        return { output };
-    }
 
-    private async finalizeOutcome(loop: LoopExecutionResult): Promise<AgentTurnOutput> {
-        if (!loop.output) {
-            throw new Error('ChatExecutionSpine finalizeOutcome missing loop output');
-        }
-        return loop.output;
-    }
+        const executionPlan = prompt.plan;
+        const userMessage = input.userMessage;
+        const onToken = input.onToken;
+        const onEvent = input.onEvent;
+        const images = input.images;
+        const capabilitiesOverride = input.capabilitiesOverride;
 
-    /**
-     * Transitional helper while stage methods are incrementally widened.
-     * Core loop behavior is invoked from runExecutionLoop(); this helper keeps
-     * low-churn behavior parity until full decomposition is complete.
-     */
-    private async executeLiveLoopPath(
-        executionPlan: ExecutionPlan,
-        preLoopPolicyFromPlan: PreLoopResolvedToolPolicy,
-        userMessage: string,
-        onToken?: (token: string) => void,
-        onEvent?: (type: string, data: any) => void,
-        images?: string[],
-        capabilitiesOverride?: any
-     ): Promise<AgentTurnOutput> {
+        const output = await (async (): Promise<AgentTurnOutput> => {
         const agent = this.agent;
         const chatStartedAt = executionPlan.chatStartedAt;
         const turnId = executionPlan.turnId;
@@ -1331,22 +1307,22 @@ export class ChatExecutionSpine {
         dynamicContextBlocks.push(`[TURN TONE]: ${turnBehavior.toneProfile}; immersive=${turnBehavior.immersiveStyle}; narrativeAmplification=${turnBehavior.narrativeAmplification}`);
         const dynamicContext = dynamicContextBlocks.join('\n\n');
         const repetitionSafety = [
-            '[STYLE CONSTRAINTS — STRICTLY ENFORCED]:',
+            '[STYLE CONSTRAINTS â€” STRICTLY ENFORCED]:',
             'DO NOT open your response with any of the following banned openers:',
-            '  • Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
-            '  • Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
-            '  • Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
-            '  • Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
+            '  â€¢ Action descriptions: "I shift", "I pause", "I lean", "I settle", "I exhale"',
+            '  â€¢ Environmental intros: "The terminal hums", "The console glows", "A light flickers"',
+            '  â€¢ Age-story openers: "I was [N] when", "There was a time when", "It happened during"',
+            '  â€¢ Emotive stage directions: "Fingers hovering", "Eyes fixed on"',
             'DO NOT start with a first-person action verb followed by a body part or location.',
             'DO NOT use the word "hums" as an opener.',
             'VARY your sentence structure. Do not consistently open responses with "I".',
             'Speak directly. The first sentence must deliver content, not setup.',
             '',
-            '[AGENT EXECUTION CONTRACT — MANDATORY]:',
-            '  • When performing file, terminal, or code actions, you MUST use the corresponding tools.',
-            '  • You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
-            '  • NEVER claim an action was performed unless the tool output confirms it.',
-            '  • If a tool fails, report the error exactly as received.',
+            '[AGENT EXECUTION CONTRACT â€” MANDATORY]:',
+            '  â€¢ When performing file, terminal, or code actions, you MUST use the corresponding tools.',
+            '  â€¢ You MUST provide verifiable evidence (path, exit code, tool summary) in your response for every tool call.',
+            '  â€¢ NEVER claim an action was performed unless the tool output confirms it.',
+            '  â€¢ If a tool fails, report the error exactly as received.',
         ].join('\n');
 
         const agentModes = settings.agentModes || { activeMode: 'hybrid', modes: { assistant: { verbosity: 'normal', autoUseTools: true, safeMode: true, memoryWrites: true, toolsOnlyCodingTurns: true, ollamaTimeoutMs: 600000 } } };
@@ -1654,16 +1630,16 @@ export class ChatExecutionSpine {
         let finalResponse = "";
         let cumulativeUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        // Build the set of allowed tool names for this turn — used for execution-time gating.
+        // Build the set of allowed tool names for this turn â€” used for execution-time gating.
         // filteredTools was computed above from the capability-resolved allowedCapabilities array.
         // This set is computed once from filteredTools and MUST NOT change during retries.
         const allowedToolNames = new Set(filteredTools.map((t: any) => t.function.name));
 
-        // ── Browser-task mode state ───────────────────────────────────────────
+        // â”€â”€ Browser-task mode state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // When intent is 'browser', the turn enters browser-task mode:
-        //   – tool palette is reduced to browser-relevant tools
-        //   – DOM is auto-fetched after every successful mutating browser action
-        //   – multi-step loop continues instead of finalizing on empty retry
+        //   â€“ tool palette is reduced to browser-relevant tools
+        //   â€“ DOM is auto-fetched after every successful mutating browser action
+        //   â€“ multi-step loop continues instead of finalizing on empty retry
         const BROWSER_TASK_TOOL_NAMES = preLoopPolicyFromPlan.browserTaskToolNames;
         // Tools that mutate page state and should trigger an auto DOM refresh.
         const BROWSER_MUTATING_TOOL_NAMES = preLoopPolicyFromPlan.browserMutatingToolNames;
@@ -1677,7 +1653,7 @@ export class ChatExecutionSpine {
         if (isBrowserTask) {
             console.log(`[BrowserTaskMode] activated intent=browser`);
         }
-        // ─────────────────────────────────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         const executionLog: TurnExecutionLog = {
             turnId: `${agent.activeSessionId}_${Date.now()}`,
@@ -1709,10 +1685,10 @@ export class ChatExecutionSpine {
         // Evaluated once per turn before the retry loop. Produces a deterministic
         // gate decision that is preserved across all retry iterations (Rule Group E).
         // Rules applied:
-        //   A — Block mem0_search when lore/memory-grounded context already exists.
-        //   B — Suppress tools with recent failures exceeding the degraded threshold.
-        //   C — Signal directAnswerPreferred when grounded memory is sufficient.
-        //   D — Signal requiresToolUse for coding / browser intents.
+        //   A â€” Block mem0_search when lore/memory-grounded context already exists.
+        //   B â€” Suppress tools with recent failures exceeding the degraded threshold.
+        //   C â€” Signal directAnswerPreferred when grounded memory is sufficient.
+        //   D â€” Signal requiresToolUse for coding / browser intents.
         const gateDecision = toolGatekeeper.evaluate({
             intentClass: turnObject.intent.class,
             activeMode,
@@ -1731,7 +1707,7 @@ export class ChatExecutionSpine {
             );
         }
         if (gateDecision.directAnswerPreferred) {
-            console.log('[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient');
+            console.log('[ToolGatekeeper] directAnswerPreferred=true â€” grounded context is sufficient');
         }
 
         const resolvedBlockedTools = Array.from(new Set([...preLoopPolicyFromPlan.blockedTools, ...gateDecision.blockedTools]));
@@ -1785,9 +1761,9 @@ export class ChatExecutionSpine {
                 // --- HARD TOOL GATE ---
                 // Strip all tools whenever the turn is a greeting or no capabilities are
                 // explicitly allowed. Authorization is derived from intent and the
-                // allowedCapabilities array length — 'tools' is not a valid ToolCapability
+                // allowedCapabilities array length â€” 'tools' is not a valid ToolCapability
                 // value and must not be used in any capability check.
-                // This is the authoritative enforcement point — it fires AFTER all mode-gating
+                // This is the authoritative enforcement point â€” it fires AFTER all mode-gating
                 // so it cannot be bypassed by earlier incomplete checks.
                 const requestedTools = iterationToolRequest.requestedToolCount;
 
@@ -1984,7 +1960,7 @@ export class ChatExecutionSpine {
                 // --- HARDENED ToolRequired Gate ---
                 // Fire the recovery-retry whenever the model skipped structured tool calls
                 // despite tools being available.  The original keyword-only heuristic was
-                // too narrow – it missed browser/web tasks and any non-file-system tool use.
+                // too narrow â€“ it missed browser/web tasks and any non-file-system tool use.
                 // New logic: also trigger when tools *were sent* to the model (toolsToSend
                 // is non-empty) but no structured calls came back.  For non-coding turns
                 // the retry is "best-effort": if it also produces no calls we fall through
@@ -2005,7 +1981,7 @@ export class ChatExecutionSpine {
                 const requiresTool = toolsToSend.length > 0 && (preLoopPolicyFromPlan.requiresToolUse || hasKeywordIndicatingToolUse || calls.length === 0);
 
                 // Guard: never fire the ToolRequired retry for greeting turns or turns where
-                // no tools were authorized — they should produce plain-content responses.
+                // no tools were authorized â€” they should produce plain-content responses.
                 // Also never force tools when ToolGatekeeper blocked them or when grounded
                 // memory context makes a direct answer sufficient (directAnswerPreferred).
                 const toolsBlocked = iterationToolRequest.blockedTools.length > 0;
@@ -2041,7 +2017,7 @@ Failure to provide a tool call will result in system termination.`;
                     // Using filteredTools (the full unfiltered set) would send all 57+ tools on
                     // the retry, which overloads constrained local models (e.g. 8B Ollama) and
                     // reliably causes a second 90s timeout.  toolsToSend already has the correct
-                    // mode-gated subset (e.g. 5–6 tools for hybrid mode).
+                    // mode-gated subset (e.g. 5â€“6 tools for hybrid mode).
                     const retryTools = isBrowserTask
                         ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
                         : toolsToSend;
@@ -2110,7 +2086,7 @@ Failure to provide a tool call will result in system termination.`;
                         }
                         // Non-coding: fall through to plain-content path (calls.length === 0 below).
                     } else {
-                        // Retry produced tool calls — update assistantMsg to use the retry
+                        // Retry produced tool calls â€” update assistantMsg to use the retry
                         // response's content so the committed message is internally consistent
                         // (content and tool_calls come from the same inference call).
                         assistantMsg.content = agent.enforceCanonRequiredAutobioFallbackReply(
@@ -2256,13 +2232,13 @@ Failure to provide a tool call will result in system termination.`;
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
         if (finalResponse && settings.agent?.capabilities?.memory !== false) {
             const storeMemories = async () => {
-                // ── Memory Integrity Policy gate ──────────────────────────────
+                // â”€â”€ Memory Integrity Policy gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 // Evaluate health before any write. If hard-disabled (critical/
                 // disabled state), skip all memory operations and emit an alert.
                 const memHealth = agent.memory.getHealthStatus();
                 if (memHealth.hardDisabled) {
                     console.warn(
-                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED — state=${memHealth.state}. ` +
+                        `[AgentService][MemoryIntegrity] Memory writes BLOCKED â€” state=${memHealth.state}. ` +
                         `Reason: ${memHealth.summary}`,
                     );
                     TelemetryBus.getInstance().emit({
@@ -2367,7 +2343,7 @@ Failure to provide a tool call will result in system termination.`;
                         });
                     }
                 } else {
-                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes are blocked');
+                    console.warn('[AgentService] P7A: canonical memory repository not available â€” derived writes are blocked');
                     TelemetryBus.getInstance().emit({
                         event: 'memory.candidate_deferred',
                         subsystem: 'memory',
@@ -2385,7 +2361,7 @@ Failure to provide a tool call will result in system termination.`;
                 }
 
                 try {
-                    // 1. Mem0 (derived): store interaction — reference canonical_memory_id when available
+                    // 1. Mem0 (derived): store interaction â€” reference canonical_memory_id when available
                     if (!allowMem0Write) {
                         console.log(`[AgentService][MemoryIntegrity] Mem0 write suppressed (mem0Runtime unavailable). state=${memHealth.state}`);
                         // Enqueue extraction work so it can be replayed when extraction recovers
@@ -2449,7 +2425,7 @@ Failure to provide a tool call will result in system termination.`;
 
                 try {
                     // 3. Memory Graph (derived): run extraction pipeline on the full exchange.
-                    // process_memory handles Extract → Validate → Store internally.
+                    // process_memory handles Extract â†’ Validate â†’ Store internally.
                     if (!allowGraphWrite) {
                         console.log(`[AgentService][MemoryIntegrity] Graph write suppressed (extraction/graphProjection unavailable). state=${memHealth.state}`);
                         // Enqueue graph_projection work so it can be replayed when graph recovers
@@ -2558,7 +2534,16 @@ Failure to provide a tool call will result in system termination.`;
         agent.saveSession();
 
         return normalized;
+    
+        })();
+
+        return { output };
     }
 
-
+    private async finalizeOutcome(loop: LoopExecutionResult): Promise<AgentTurnOutput> {
+        if (!loop.output) {
+            throw new Error('ChatExecutionSpine finalizeOutcome missing loop output');
+        }
+        return loop.output;
+    }
 }
