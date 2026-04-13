@@ -55,6 +55,96 @@ type TurnExecutionLog = {
         completion_tokens: number;
     };
 };
+
+type TurnExecutionInput = {
+    userMessage: string;
+    onToken?: (token: string) => void;
+    onEvent?: (type: string, data: any) => void;
+    images?: string[];
+    capabilitiesOverride?: any;
+};
+
+export type ExecutionPlan = {
+    chatStartedAt: number;
+    turnId: string;
+    settings: any;
+    activeMode: string;
+    routedIntent: ReturnType<typeof DeterministicIntentRouter.route>;
+    llmRequired: boolean;
+    plannedBrowserTask: boolean;
+    toolDirection: 'policy_controlled' | 'blocked';
+};
+
+export type TurnAssemblyResult = {
+    plan: ExecutionPlan;
+    input: TurnExecutionInput;
+    assemblyStart: number;
+    activeInstance: any;
+    isSmallLocalModel: boolean;
+    agentId: string;
+    userId: string;
+    notebookActive: boolean;
+    orchResult: any;
+    turnObject: any;
+    turnPolicy: any;
+    turnBehavior: any;
+    memoryContext: string;
+    hasMemories: boolean;
+    isGreeting: boolean;
+    astroState: string;
+    cognitiveContext: any;
+    dynamicContext: string;
+    repetitionSafety: string;
+    modeConfig: any;
+    activeProfileId: string;
+    activeProfile: any;
+    goalsAndReflections: string;
+    userIdentity: string;
+    allowedCapabilities?: string[];
+    policyToolAllowList: Set<string> | null;
+    filteredTools: any[];
+    toolSigs: string;
+    earlyReturn?: AgentTurnOutput;
+};
+
+export type PromptBuildResult = {
+    plan: ExecutionPlan;
+    input: TurnExecutionInput;
+    assembly: TurnAssemblyResult;
+    selectedProvider: any;
+    modelName: string;
+    systemPrompt: string;
+    enforceCanonRequiredAutobioOverride: boolean;
+    messageBudget: number;
+    filteredTools: any[];
+    allowedToolNames: Set<string>;
+    modeConfig: any;
+    turnObject: any;
+    turnPolicy: any;
+    memoryContext: string;
+    hasMemories: boolean;
+    isGreeting: boolean;
+    orchResult: any;
+    chatStartedAt: number;
+    settings: any;
+    transientMessages: ChatMessage[];
+    cumulativeUsage: BrainUsage;
+    executionLog: TurnExecutionLog;
+    turnSeenHashes: Set<string>;
+};
+
+export type LoopExecutionResult = {
+    output?: AgentTurnOutput;
+    plan?: ExecutionPlan;
+    input?: TurnExecutionInput;
+    assembly?: TurnAssemblyResult;
+    prompt?: PromptBuildResult;
+    finalResponse?: string;
+    transientMessages?: ChatMessage[];
+    cumulativeUsage?: BrainUsage;
+    executionLog?: TurnExecutionLog;
+    modelName?: string;
+};
 export type ChatExecutionSpineAgent = {
     settingsPath: string;
     activeSessionId: string;
@@ -147,7 +237,169 @@ export type ChatExecutionSpineAgent = {
     ) => void;
 };
 export class ChatExecutionSpine {
-    public constructor(private readonly agent: ChatExecutionSpineAgent) {}    public async executeTurn(
+    public constructor(private readonly agent: ChatExecutionSpineAgent) {}
+
+    public async executeTurn(
+        userMessage: string,
+        onToken?: (token: string) => void,
+        onEvent?: (type: string, data: any) => void,
+        images?: string[],
+        capabilitiesOverride?: any,
+    ): Promise<AgentTurnOutput> {
+        const input: TurnExecutionInput = { userMessage, onToken, onEvent, images, capabilitiesOverride };
+        const plan = this.planTurn(input);
+        const deterministic = await this.executeDeterministicFastPath(plan, input);
+        if (deterministic) return deterministic;
+        const assembly = await this.assembleContext(plan, input);
+        if (assembly.earlyReturn) return assembly.earlyReturn;
+        const prompt = await this.buildPrompt(assembly);
+        const loop = await this.runExecutionLoop(prompt);
+        return this.finalizeOutcome(loop);
+    }
+
+    private planTurn(input: TurnExecutionInput): ExecutionPlan {
+        const chatStartedAt = Date.now();
+        const correlationId = uuidv4();
+        auditLogger.setCorrelationId(correlationId);
+        console.log('[AgentService] ====== CHAT STARTED ======');
+
+        const turnId = `${this.agent.activeSessionId}_${Date.now()}`;
+        this.agent.activeTurnId = turnId;
+
+        const settings = loadSettings(this.agent.settingsPath);
+        const activeMode = this.agent.getActiveMode(settings);
+        const routedIntent = DeterministicIntentRouter.route(input.userMessage);
+
+        return {
+            chatStartedAt,
+            turnId,
+            settings,
+            activeMode,
+            routedIntent,
+            llmRequired: activeMode === 'rp' || !routedIntent.isDeterministic || routedIntent.requires_llm,
+            plannedBrowserTask: (routedIntent as any).intent === 'browser',
+            toolDirection: activeMode === 'rp' ? 'blocked' : 'policy_controlled',
+        };
+    }
+
+    private async executeDeterministicFastPath(plan: ExecutionPlan, input: TurnExecutionInput): Promise<AgentTurnOutput | null> {
+        const { activeMode, routedIntent, turnId, chatStartedAt } = plan;
+        if (activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
+            console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent}`);
+            const toolName = routedIntent.suggestedTool;
+            if (toolName) {
+                try {
+                    const parsedArgs = routedIntent.extractedArgs || {};
+                    const toolStartTime = Date.now();
+                    const invResult = await this.agent.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
+                        executionId: turnId,
+                        executionType: 'chat_turn',
+                        executionOrigin: 'ipc',
+                        executionMode: activeMode,
+                    });
+                    const rawResult = invResult.data;
+                    const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
+                    return await this.agent.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, input.onToken, input.onEvent);
+                } catch (e: any) {
+                    console.error('[AgentService] FAST PATH FAIL, falling back to LLM:', e);
+                }
+            }
+        }
+        return null;
+    }
+
+    private async assembleContext(plan: ExecutionPlan, input: TurnExecutionInput): Promise<TurnAssemblyResult> {
+        return {
+            plan,
+            input,
+            assemblyStart: 0,
+            activeInstance: null,
+            isSmallLocalModel: false,
+            agentId: '',
+            userId: '',
+            notebookActive: false,
+            orchResult: null,
+            turnObject: null,
+            turnPolicy: null,
+            turnBehavior: null,
+            memoryContext: '',
+            hasMemories: false,
+            isGreeting: false,
+            astroState: '',
+            cognitiveContext: null,
+            dynamicContext: '',
+            repetitionSafety: '',
+            modeConfig: {},
+            activeProfileId: '',
+            activeProfile: null,
+            goalsAndReflections: '',
+            userIdentity: '',
+            allowedCapabilities: undefined,
+            policyToolAllowList: null,
+            filteredTools: [],
+            toolSigs: '',
+        };
+    }
+
+    private async buildPrompt(assembly: TurnAssemblyResult): Promise<PromptBuildResult> {
+        return {
+            assembly,
+            plan: assembly.plan,
+            input: assembly.input,
+            selectedProvider: null,
+            modelName: 'unknown',
+            systemPrompt: '',
+            enforceCanonRequiredAutobioOverride: false,
+            messageBudget: 0,
+            filteredTools: [],
+            allowedToolNames: new Set<string>(),
+            modeConfig: {},
+            turnObject: null,
+            turnPolicy: null,
+            memoryContext: '',
+            hasMemories: false,
+            isGreeting: false,
+            orchResult: null,
+            chatStartedAt: assembly.plan.chatStartedAt,
+            settings: assembly.plan.settings,
+            transientMessages: [],
+            cumulativeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            executionLog: {
+                turnId: assembly.plan.turnId,
+                mode: assembly.plan.activeMode,
+                intent: assembly.plan.routedIntent.intent,
+                usedEnvelope: false,
+                toolCallsPlanned: [],
+                toolCalls: [],
+                executedToolCount: 0,
+                toolsSentCount: 0,
+                timestamp: Date.now(),
+            },
+            turnSeenHashes: new Set<string>(),
+        };
+    }
+
+    private async runExecutionLoop(prompt: PromptBuildResult): Promise<LoopExecutionResult> {
+        const { assembly } = prompt;
+        const { input } = assembly;
+        const output = await this.executeTurnLegacy(
+            input.userMessage,
+            input.onToken,
+            input.onEvent,
+            input.images,
+            input.capabilitiesOverride,
+        );
+        return { output };
+    }
+
+    private async finalizeOutcome(loop: LoopExecutionResult): Promise<AgentTurnOutput> {
+        if (!loop.output) {
+            throw new Error('ChatExecutionSpine finalizeOutcome missing loop output');
+        }
+        return loop.output;
+    }
+
+    private async executeTurnLegacy(
         userMessage: string,
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void,
