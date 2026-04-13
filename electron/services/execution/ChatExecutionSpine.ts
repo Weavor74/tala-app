@@ -70,9 +70,34 @@ export type ExecutionPlan = {
     settings: any;
     activeMode: string;
     routedIntent: ReturnType<typeof DeterministicIntentRouter.route>;
-    llmRequired: boolean;
-    plannedBrowserTask: boolean;
+    path: 'deterministic_fast_path' | 'llm_loop';
+    requiresLlm: boolean;
+    requiresToolUse: boolean;
+    isGreeting: boolean;
+    isBrowserTask: boolean;
+    directAnswerPreferred: boolean;
+    hardBlockAllTools: boolean;
+    toolExposureProfile: 'unresolved' | 'none' | 'technical_strict' | 'factual_narrow' | 'immersive_controlled' | 'balanced';
     toolDirection: 'policy_controlled' | 'blocked';
+};
+
+export type PreLoopResolvedToolPolicy = {
+    isBrowserTask: boolean;
+    requiresToolUse: boolean;
+    hardBlockAllTools: boolean;
+    directAnswerPreferred: boolean;
+    toolExposureProfile: ExecutionPlan['toolExposureProfile'];
+    browserTaskToolNames: Set<string>;
+    browserMutatingToolNames: Set<string>;
+    browserMaxContinuationSteps: number;
+    allowedToolNames: Set<string>;
+    initialToolsToSend: any[];
+    initialToolChoice?: 'required';
+    blockedTools: string[];
+    gatingReasons: string[];
+    toolGateApplied: boolean;
+    strippedToolNames: string[];
+    allowedCapabilitiesCount: number;
 };
 
 export type TurnAssemblyResult = {
@@ -131,6 +156,7 @@ export type PromptBuildResult = {
     cumulativeUsage: BrainUsage;
     executionLog: TurnExecutionLog;
     turnSeenHashes: Set<string>;
+    preLoopToolPolicy?: PreLoopResolvedToolPolicy;
 };
 
 export type LoopExecutionResult = {
@@ -276,15 +302,23 @@ export class ChatExecutionSpine {
             settings,
             activeMode,
             routedIntent,
-            llmRequired: activeMode === 'rp' || !routedIntent.isDeterministic || routedIntent.requires_llm,
-            plannedBrowserTask: (routedIntent as any).intent === 'browser',
+            path: activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm
+                ? 'deterministic_fast_path'
+                : 'llm_loop',
+            requiresLlm: activeMode === 'rp' || !routedIntent.isDeterministic || routedIntent.requires_llm,
+            requiresToolUse: (routedIntent as any).intent === 'coding' || (routedIntent as any).intent === 'browser',
+            isGreeting: (routedIntent as any).intent === 'greeting',
+            isBrowserTask: (routedIntent as any).intent === 'browser',
+            directAnswerPreferred: false,
+            hardBlockAllTools: false,
+            toolExposureProfile: 'unresolved',
             toolDirection: activeMode === 'rp' ? 'blocked' : 'policy_controlled',
         };
     }
 
     private async executeDeterministicFastPath(plan: ExecutionPlan, input: TurnExecutionInput): Promise<AgentTurnOutput | null> {
         const { activeMode, routedIntent, turnId, chatStartedAt } = plan;
-        if (activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
+        if (plan.path === 'deterministic_fast_path' && activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
             console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent}`);
             const toolName = routedIntent.suggestedTool;
             if (toolName) {
@@ -379,10 +413,39 @@ export class ChatExecutionSpine {
         };
     }
 
+    private resolvePreLoopToolPolicyFromPlan(plan: ExecutionPlan): PreLoopResolvedToolPolicy {
+        return {
+            isBrowserTask: plan.isBrowserTask,
+            requiresToolUse: plan.requiresToolUse,
+            hardBlockAllTools: plan.hardBlockAllTools,
+            directAnswerPreferred: plan.directAnswerPreferred,
+            toolExposureProfile: plan.toolExposureProfile,
+            browserTaskToolNames: new Set([
+                'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
+                'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
+            ]),
+            browserMutatingToolNames: new Set([
+                'browse', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll',
+            ]),
+            browserMaxContinuationSteps: 3,
+            allowedToolNames: new Set<string>(),
+            initialToolsToSend: [],
+            initialToolChoice: plan.requiresToolUse ? 'required' : undefined,
+            blockedTools: [],
+            gatingReasons: [],
+            toolGateApplied: false,
+            strippedToolNames: [],
+            allowedCapabilitiesCount: 0,
+        };
+    }
+
     private async runExecutionLoop(prompt: PromptBuildResult): Promise<LoopExecutionResult> {
         const { assembly } = prompt;
         const { input } = assembly;
+        const preLoopPolicy = prompt.preLoopToolPolicy ?? this.resolvePreLoopToolPolicyFromPlan(prompt.plan);
         const output = await this.executeTurnLegacy(
+            prompt.plan,
+            preLoopPolicy,
             input.userMessage,
             input.onToken,
             input.onEvent,
@@ -400,6 +463,8 @@ export class ChatExecutionSpine {
     }
 
     private async executeTurnLegacy(
+        executionPlan: ExecutionPlan,
+        preLoopPolicyFromPlan: PreLoopResolvedToolPolicy,
         userMessage: string,
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void,
@@ -407,43 +472,11 @@ export class ChatExecutionSpine {
         capabilitiesOverride?: any
      ): Promise<AgentTurnOutput> {
         const agent = this.agent;
-        const chatStartedAt = Date.now();
-        const correlationId = uuidv4();
-        auditLogger.setCorrelationId(correlationId);
-        console.log(`[AgentService] ====== CHAT STARTED ======`);
-
-        const turnId = `${agent.activeSessionId}_${Date.now()}`;
-        agent.activeTurnId = turnId;
-
-        // --- TRUE FAST PATH: DETERMINISTIC ROUTING / LLM BYPASS ---
-        // Immediate check before Any state gathering (Astro, Router, Memory, RAG)
-        const routedIntent = DeterministicIntentRouter.route(userMessage);
-        const settings = loadSettings(agent.settingsPath);
-        const activeMode = agent.getActiveMode(settings);
-
-        if (activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
-            console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent}`);
-            const toolName = routedIntent.suggestedTool;
-            if (toolName) {
-                try {
-                    const parsedArgs = routedIntent.extractedArgs || {};
-                    const toolStartTime = Date.now();
-                    const invResult = await agent.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
-                        executionId: turnId,
-                        executionType: 'chat_turn',
-                        executionOrigin: 'ipc',
-                        executionMode: activeMode,
-                        // enforcePolicy omitted: fast path already guards activeMode !== 'rp'
-                    });
-                    const rawResult = invResult.data;
-                    const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
-                    
-                    return await agent.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, onToken, onEvent);
-                } catch (e: any) {
-                    console.error(`[AgentService] FAST PATH FAIL, falling back to LLM:`, e);
-                }
-            }
-        }
+        const chatStartedAt = executionPlan.chatStartedAt;
+        const turnId = executionPlan.turnId;
+        const settings = executionPlan.settings;
+        const activeMode = executionPlan.activeMode;
+        const routedIntent = executionPlan.routedIntent;
 
         const assemblyStart = Date.now();
         let activeInstance = settings.inference?.instances?.find((i: any) => i.id === settings.inference.activeLocalId) || (settings.inference?.instances?.length > 0 ? settings.inference.instances[0] : null);
@@ -808,17 +841,12 @@ export class ChatExecutionSpine {
         //   – tool palette is reduced to browser-relevant tools
         //   – DOM is auto-fetched after every successful mutating browser action
         //   – multi-step loop continues instead of finalizing on empty retry
-        const BROWSER_TASK_TOOL_NAMES = new Set([
-            'browse', 'browser_get_dom', 'browser_click', 'browser_hover',
-            'browser_type', 'browser_scroll', 'browser_press_key', 'browser_screenshot',
-        ]);
+        const BROWSER_TASK_TOOL_NAMES = preLoopPolicyFromPlan.browserTaskToolNames;
         // Tools that mutate page state and should trigger an auto DOM refresh.
-        const BROWSER_MUTATING_TOOL_NAMES = new Set([
-            'browse', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll',
-        ]);
-        const isBrowserTask = turnObject.intent.class === 'browser';
+        const BROWSER_MUTATING_TOOL_NAMES = preLoopPolicyFromPlan.browserMutatingToolNames;
+        const isBrowserTask = preLoopPolicyFromPlan.isBrowserTask;
         // Max extra continuation passes for browser task when model returns no tool calls
-        const BROWSER_MAX_CONTINUATION_STEPS = 3;
+        const BROWSER_MAX_CONTINUATION_STEPS = preLoopPolicyFromPlan.browserMaxContinuationSteps;
         let browserContinuationStep = 0;
         // Tracks whether at least one mutating browser action succeeded this turn.
         // Used to distinguish genuine task completion from loop-exhaustion stalls.
@@ -882,6 +910,14 @@ export class ChatExecutionSpine {
         if (gateDecision.directAnswerPreferred) {
             console.log('[ToolGatekeeper] directAnswerPreferred=true — grounded context is sufficient');
         }
+
+        const resolvedBlockedTools = Array.from(new Set([...preLoopPolicyFromPlan.blockedTools, ...gateDecision.blockedTools]));
+        const resolvedHardBlockAllTools = preLoopPolicyFromPlan.hardBlockAllTools || gateDecision.hardBlockAllTools;
+        const resolvedDirectAnswerPreferred = preLoopPolicyFromPlan.directAnswerPreferred || gateDecision.directAnswerPreferred === true;
+        executionPlan.toolExposureProfile = (turnPolicy.toolExposureProfile ?? executionPlan.toolExposureProfile) as ExecutionPlan['toolExposureProfile'];
+        executionPlan.hardBlockAllTools = resolvedHardBlockAllTools;
+        executionPlan.directAnswerPreferred = resolvedDirectAnswerPreferred;
+        executionPlan.isGreeting = isGreeting;
 
         while (turn < agent.MAX_AGENT_ITERATIONS) {
             if (signal.aborted) break;
@@ -964,18 +1000,18 @@ export class ChatExecutionSpine {
                 // Replaces the previous inline lore/mem0_search suppression block.
                 // gateDecision was computed once before the retry loop; blocked tools
                 // are therefore preserved across every retry iteration (Rule Group E).
-                if (gateDecision.blockedTools.length > 0 && toolsToSend.length > 0) {
+                if (resolvedBlockedTools.length > 0 && toolsToSend.length > 0) {
                     const before = toolsToSend.length;
-                    toolsToSend = toolsToSend.filter((t: any) => !gateDecision.blockedTools.includes(t.function.name));
+                    toolsToSend = toolsToSend.filter((t: any) => !resolvedBlockedTools.includes(t.function.name));
                     if (toolsToSend.length < before) {
                         console.log(
                             `[ToolGatekeeper] applied gate: removed ${before - toolsToSend.length} tool(s) ` +
-                            `blocked=${gateDecision.blockedTools.join(',')} turn=${turn}`
+                            `blocked=${resolvedBlockedTools.join(',')} turn=${turn}`
                         );
                     }
                 }
 
-                if (gateDecision.hardBlockAllTools) {
+                if (resolvedHardBlockAllTools) {
                     toolsToSend = [];
                     delete brainOptions.tool_choice;
                     console.log('[ToolGatekeeper] hardBlockAllTools=true - forcing no-tools request for this turn');
@@ -1125,7 +1161,7 @@ export class ChatExecutionSpine {
 
                 let calls: CanonicalToolCall[] = (activeMode === 'rp') ? [] : (responseToolCalls || []);
 
-                if (gateDecision.hardBlockAllTools) {
+                if (resolvedHardBlockAllTools) {
                     if (calls.length > 0) {
                         console.log(`[ToolGatekeeper] hardBlockAllTools dropped ${calls.length} tool call(s) from model output`);
                     }
@@ -1153,14 +1189,14 @@ export class ChatExecutionSpine {
                 // Do NOT set requiresTool when no tools were authorized (toolsToSend is empty):
                 // this prevents ToolRequired retries for greeting/conversational turns where
                 // the hard tool gate correctly stripped all tools.
-                const requiresTool = toolsToSend.length > 0 && (hasKeywordIndicatingToolUse || calls.length === 0);
+                const requiresTool = toolsToSend.length > 0 && (preLoopPolicyFromPlan.requiresToolUse || hasKeywordIndicatingToolUse || calls.length === 0);
 
                 // Guard: never fire the ToolRequired retry for greeting turns or turns where
                 // no tools were authorized — they should produce plain-content responses.
                 // Also never force tools when ToolGatekeeper blocked them or when grounded
                 // memory context makes a direct answer sufficient (directAnswerPreferred).
-                const toolsBlocked = gateDecision.blockedTools.length > 0;
-                const directAnswerPreferred = gateDecision.directAnswerPreferred === true;
+                const toolsBlocked = resolvedBlockedTools.length > 0;
+                const directAnswerPreferred = resolvedDirectAnswerPreferred;
 
                 const toolRequiredEligible =
                     requiresTool &&
