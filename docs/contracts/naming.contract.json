@@ -1,0 +1,592 @@
+{
+  "contractName": "tala.naming",
+  "version": "1.0.0",
+  "status": "locked",
+  "scope": [
+    "source",
+    "contracts",
+    "schemas",
+    "events",
+    "ipc",
+    "api",
+    "tools",
+    "workflows",
+    "automations"
+  ],
+  "artifactIdentity": {
+    "requiredDimensions": [
+      "subsystem",
+      "layer",
+      "role",
+      "mutability",
+      "exposure"
+    ],
+    "layers": [
+      "ui",
+      "application",
+      "domain",
+      "infrastructure",
+      "integration",
+      "contract"
+    ],
+    "exposureClasses": [
+      "internal",
+      "edge",
+      "contract_facing"
+    ]
+  },
+  "severityLevels": [
+    "error",
+    "warn",
+    "info"
+  ],
+  "fileNaming": {
+    "typescript": {
+      "patterns": [
+        {
+          "name": "pascal_case_primary_module",
+          "regex": "^[A-Z][A-Za-z0-9]*\\.tsx?$",
+          "severity": "warn",
+          "notes": "Primary class/role modules should be PascalCase files."
+        },
+        {
+          "name": "camel_case_types_module",
+          "regex": "^[a-z][A-Za-z0-9]*Types\\.ts$",
+          "severity": "info",
+          "notes": "Shared multi-type contracts may use camelCaseTypes.ts."
+        }
+      ]
+    },
+    "scripts": {
+      "regex": "^[a-z0-9]+(?:-[a-z0-9]+)*\\.(ts|js|py|sh|ps1)$",
+      "severity": "error"
+    },
+    "tests": {
+      "regex": "^[A-Za-z0-9._-]+\\.(test|spec)\\.ts$",
+      "severity": "error"
+    },
+    "contracts": {
+      "regex": "^[a-z0-9]+(?:[.-][a-z0-9]+)*\\.contract\\.json$",
+      "severity": "error"
+    },
+    "schemas": {
+      "regex": "^[a-z0-9]+(?:[.-][a-z0-9]+)*\\.schema\\.json$",
+      "severity": "error"
+    },
+    "configs": {
+      "regex": "^[a-z0-9]+(?:[.-][a-z0-9]+)*\\.config\\.json$",
+      "severity": "error"
+    },
+    "docs": {
+      "regex": "^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$",
+      "severity": "warn",
+      "notes": "Legacy underscores may exist; new docs should prefer kebab-case."
+    }
+  },
+  "allowedSuffixRoles": [
+    {
+      "suffix": "Service",
+      "responsibility": "application capability boundary and orchestration",
+      "usuallyAllowed": [
+        "coordinate_dependencies",
+        "enforce_policy",
+        "emit_telemetry"
+      ],
+      "usuallyNotAllowed": [
+        "ui_rendering",
+        "unbounded_cross_subsystem_mutation"
+      ]
+    },
+    {
+      "suffix": "Repository",
+      "responsibility": "persistence access abstraction",
+      "usuallyAllowed": [
+        "read",
+        "write",
+        "query"
+      ],
+      "usuallyNotAllowed": [
+        "business_orchestration",
+        "policy_decision_ownership"
+      ]
+    },
+    {
+      "suffix": "Provider",
+      "responsibility": "backend or engine capability source",
+      "usuallyAllowed": [
+        "adapt_backend_calls",
+        "expose_capabilities"
+      ],
+      "usuallyNotAllowed": [
+        "workflow_orchestration",
+        "durable_state_governance"
+      ]
+    },
+    {
+      "suffix": "Resolver",
+      "responsibility": "deterministic selection or lookup",
+      "usuallyAllowed": [
+        "resolve",
+        "select",
+        "map"
+      ],
+      "usuallyNotAllowed": [
+        "primary_durable_writes",
+        "long_running_execution"
+      ]
+    },
+    {
+      "suffix": "Registry",
+      "responsibility": "authoritative in-memory index",
+      "usuallyAllowed": [
+        "register",
+        "list",
+        "lookup"
+      ],
+      "usuallyNotAllowed": [
+        "cross_subsystem_orchestration",
+        "direct_runtime_execution"
+      ]
+    },
+    {
+      "suffix": "Validator",
+      "responsibility": "shape and invariant validation",
+      "usuallyAllowed": [
+        "validate",
+        "assert",
+        "check"
+      ],
+      "usuallyNotAllowed": [
+        "durable_writes",
+        "side_effect_execution"
+      ]
+    },
+    {
+      "suffix": "Policy",
+      "responsibility": "allow/deny/prioritization decision rules",
+      "usuallyAllowed": [
+        "evaluate",
+        "classify"
+      ],
+      "usuallyNotAllowed": [
+        "execute_side_effects",
+        "persistence_mutation"
+      ]
+    },
+    {
+      "suffix": "Coordinator",
+      "responsibility": "bounded multi-collaborator coordination",
+      "usuallyAllowed": [
+        "sequence_calls",
+        "gate_transitions"
+      ],
+      "usuallyNotAllowed": [
+        "global_scheduler_ownership",
+        "opaque_monolithic_control"
+      ]
+    },
+    {
+      "suffix": "Orchestrator",
+      "responsibility": "multi-stage lifecycle orchestration",
+      "usuallyAllowed": [
+        "stage_runtime_flow",
+        "manage_retry_boundaries"
+      ],
+      "usuallyNotAllowed": [
+        "collapse_all_subsystem_logic",
+        "unbounded_business_rules"
+      ]
+    },
+    {
+      "suffix": "Scheduler",
+      "responsibility": "time and queue cadence control",
+      "usuallyAllowed": [
+        "schedule",
+        "enqueue",
+        "tick"
+      ],
+      "usuallyNotAllowed": [
+        "payload_business_semantics",
+        "policy_ownership"
+      ]
+    },
+    {
+      "suffix": "Adapter",
+      "responsibility": "interface/protocol translation",
+      "usuallyAllowed": [
+        "map_payloads",
+        "translate_protocols"
+      ],
+      "usuallyNotAllowed": [
+        "governance_policy",
+        "state_authority"
+      ]
+    },
+    {
+      "suffix": "Gateway",
+      "responsibility": "guarded edge boundary",
+      "usuallyAllowed": [
+        "check_access",
+        "invoke_external_boundary"
+      ],
+      "usuallyNotAllowed": [
+        "deep_domain_orchestration",
+        "ui_decisions"
+      ]
+    },
+    {
+      "suffix": "Client",
+      "responsibility": "typed remote caller",
+      "usuallyAllowed": [
+        "marshal_requests",
+        "apply_timeout_retry"
+      ],
+      "usuallyNotAllowed": [
+        "durable_state_governance",
+        "multi_subsystem_orchestration"
+      ]
+    },
+    {
+      "suffix": "Router",
+      "responsibility": "deterministic routing/classification",
+      "usuallyAllowed": [
+        "route",
+        "classify",
+        "dispatch"
+      ],
+      "usuallyNotAllowed": [
+        "heavy_persistence_workflows",
+        "unrelated_business_logic"
+      ]
+    },
+    {
+      "suffix": "Bus",
+      "responsibility": "event transport",
+      "usuallyAllowed": [
+        "publish",
+        "subscribe"
+      ],
+      "usuallyNotAllowed": [
+        "policy_interpretation",
+        "domain_mutation"
+      ]
+    },
+    {
+      "suffix": "Store",
+      "responsibility": "state container with explicit lifecycle",
+      "usuallyAllowed": [
+        "set",
+        "get",
+        "snapshot"
+      ],
+      "usuallyNotAllowed": [
+        "remote_transport_orchestration",
+        "external_policy_ownership"
+      ]
+    },
+    {
+      "suffix": "Schema",
+      "responsibility": "structural data model definition",
+      "usuallyAllowed": [
+        "define_fields",
+        "declare_constraints"
+      ],
+      "usuallyNotAllowed": [
+        "runtime_execution",
+        "side_effect_logic"
+      ]
+    },
+    {
+      "suffix": "Contract",
+      "responsibility": "boundary agreement declaration",
+      "usuallyAllowed": [
+        "declare_interfaces",
+        "declare_rules"
+      ],
+      "usuallyNotAllowed": [
+        "runtime_branching",
+        "state_mutation"
+      ]
+    }
+  ],
+  "bannedTerms": {
+    "artifactNames": [
+      "Helper",
+      "Manager",
+      "Utils",
+      "Util",
+      "Misc",
+      "Common",
+      "Thing",
+      "Stuff",
+      "Data",
+      "Temp",
+      "Obj"
+    ],
+    "functionNames": [
+      "processData",
+      "handleStuff",
+      "doThing"
+    ],
+    "containsTokens": [
+      "generic",
+      "newData",
+      "oldData"
+    ],
+    "severity": "error"
+  },
+  "functionNaming": {
+    "mustBeVerbFirst": true,
+    "verbCategories": {
+      "read": [
+        "get",
+        "list",
+        "find",
+        "read",
+        "fetch",
+        "resolve",
+        "load",
+        "select"
+      ],
+      "write": [
+        "set",
+        "update",
+        "write",
+        "save",
+        "create",
+        "upsert",
+        "delete",
+        "remove",
+        "emit"
+      ],
+      "transform": [
+        "map",
+        "build",
+        "compose",
+        "normalize",
+        "convert",
+        "project",
+        "derive"
+      ],
+      "validate": [
+        "validate",
+        "assert",
+        "check",
+        "verify"
+      ],
+      "execute": [
+        "execute",
+        "run",
+        "apply",
+        "dispatch",
+        "invoke"
+      ],
+      "schedule": [
+        "schedule",
+        "enqueue",
+        "dequeue",
+        "tick",
+        "reschedule"
+      ],
+      "routeEmitRegister": [
+        "route",
+        "register",
+        "unregister",
+        "publish",
+        "subscribe"
+      ]
+    },
+    "restrictedVerbs": [
+      "handle",
+      "process",
+      "manage",
+      "do"
+    ],
+    "restrictedVerbPolicy": {
+      "defaultSeverity": "warn",
+      "escalateToErrorWhen": [
+        "name_is_single_token",
+        "name_contains_banned_term",
+        "artifact_role_is_unknown"
+      ]
+    }
+  },
+  "variableSuffixRules": {
+    "requiredSuffixes": [
+      {
+        "semanticType": "identifier",
+        "suffix": "Id",
+        "severity": "error"
+      },
+      {
+        "semanticType": "timestamp",
+        "suffix": "At",
+        "severity": "error"
+      },
+      {
+        "semanticType": "duration_ms",
+        "suffix": "Ms",
+        "severity": "error"
+      },
+      {
+        "semanticType": "filesystem_path",
+        "suffix": "Path",
+        "severity": "error"
+      },
+      {
+        "semanticType": "url",
+        "suffix": "Url",
+        "severity": "error"
+      },
+      {
+        "semanticType": "payload",
+        "suffix": "Payload",
+        "severity": "error"
+      },
+      {
+        "semanticType": "config",
+        "suffix": "Config",
+        "severity": "error"
+      },
+      {
+        "semanticType": "schema",
+        "suffix": "Schema",
+        "severity": "error"
+      }
+    ],
+    "collectionShapeRules": {
+      "map": [
+        "By<Key>",
+        "Map"
+      ],
+      "set": [
+        "Set"
+      ],
+      "array": [
+        "plural_noun"
+      ]
+    }
+  },
+  "eventNaming": {
+    "format": "dot_separated",
+    "regex": "^[a-z0-9]+(?:\\.[a-z0-9_]+)*\\.[a-z0-9_]+$",
+    "mustDescribeOccurredFact": true,
+    "forbiddenImperativePrefixes": [
+      "do",
+      "run",
+      "execute",
+      "trigger"
+    ],
+    "recommendedTerminalTokens": [
+      "created",
+      "accepted",
+      "updated",
+      "failed",
+      "completed",
+      "triggered",
+      "opened",
+      "closed"
+    ],
+    "severity": "error"
+  },
+  "ipcNaming": {
+    "regex": "^[a-z][a-zA-Z0-9]*:[a-z][a-zA-Z0-9]*$",
+    "namespaceStyle": "camel_or_lower_namespace",
+    "actionStyle": "camelCase_verb_first",
+    "examples": [
+      "reflection:listProposals",
+      "autonomy:getDashboardState",
+      "execution:startRun",
+      "governance:approve"
+    ],
+    "severity": "error"
+  },
+  "apiNaming": {
+    "pathRegex": "^/api/v[0-9]+(?:/[a-z0-9-]+)*(?:/\\{[a-zA-Z][a-zA-Z0-9]*Id\\})?(?:/[a-z0-9-]+)?$",
+    "segmentStyle": "kebab_case_or_numeric",
+    "actionPolicy": "prefer_http_method_for_action; use action subpath only for explicit command semantics",
+    "severity": "warn"
+  },
+  "toolWorkflowAutomationNaming": {
+    "toolNameRegex": "^[a-z0-9]+(?:_[a-z0-9]+)+$",
+    "workflowNameRegex": "^[a-z0-9]+(?:_[a-z0-9]+)+$",
+    "automationArtifactRegex": "^[a-z0-9]+(?:-[a-z0-9]+){2,}$",
+    "toolFormat": "<subsystem>_<verb>_<target>",
+    "workflowFormat": "<domain>_<intent>",
+    "automationFormat": "<domain>-<cadence>-<intent>",
+    "severity": "error"
+  },
+  "generationGuidance": {
+    "requiredSequence": [
+      "classify_artifact_identity",
+      "choose_allowed_role_suffix",
+      "choose_verb_first_name",
+      "reject_banned_or_vague_terms",
+      "confirm_boundary_intent_is_visible"
+    ],
+    "failClosedOnNamingUncertainty": true,
+    "notes": "If no compliant name can be derived, generation must fail with naming_contract_violation."
+  },
+  "futureExceptionMechanism": {
+    "supported": true,
+    "exceptionFile": "docs/contracts/naming.exceptions.json",
+    "requiredFields": [
+      "ruleId",
+      "scopePath",
+      "justification",
+      "expiresAt",
+      "approvedBy"
+    ],
+    "defaultBehaviorWithoutException": "enforce"
+  },
+  "ruleCatalog": [
+    {
+      "id": "NM-001",
+      "category": "file",
+      "description": "Contracts and schemas must use explicit .contract.json or .schema.json filename suffixes.",
+      "severity": "error"
+    },
+    {
+      "id": "NM-002",
+      "category": "suffix",
+      "description": "Class/module role suffix must be from approved role set when role-typed artifact is introduced.",
+      "severity": "error"
+    },
+    {
+      "id": "NM-003",
+      "category": "function",
+      "description": "Function names must be verb-first and avoid banned vague patterns.",
+      "severity": "error"
+    },
+    {
+      "id": "NM-004",
+      "category": "variable",
+      "description": "Semantic variable kinds must use required suffix markers (Id/At/Ms/Path/Url/Payload/Config/Schema).",
+      "severity": "error"
+    },
+    {
+      "id": "NM-005",
+      "category": "event",
+      "description": "Event names must be dot-separated facts, not imperative commands.",
+      "severity": "error"
+    },
+    {
+      "id": "NM-006",
+      "category": "ipc",
+      "description": "IPC channels must use <subsystem>:<verbNoun> naming.",
+      "severity": "error"
+    },
+    {
+      "id": "NM-007",
+      "category": "api",
+      "description": "API routes should use /api/vN + kebab-case resource segments and explicit ID params.",
+      "severity": "warn"
+    },
+    {
+      "id": "NM-008",
+      "category": "generation",
+      "description": "Automated code generation must run classification and banned-name rejection before artifact creation.",
+      "severity": "error"
+    }
+  ]
+}
