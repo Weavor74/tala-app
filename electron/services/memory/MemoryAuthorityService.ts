@@ -29,6 +29,7 @@ import type {
     RankedMemoryCandidate,
     MemoryInvocationContext,
     MemoryOperationResult,
+    CandidateReviewDecision,
 } from '../../../shared/memory/authorityTypes';
 import {
     selectMemoryByAuthority,
@@ -327,6 +328,20 @@ export class MemoryAuthorityService {
 
         console.log(`[MemoryAuthority] Integrity check complete: ${issues.length} issue(s) found`);
 
+        TelemetryBus.getInstance().emit({
+            executionId: `mem-integrity-${Date.now()}`,
+            subsystem: 'memory',
+            event: issues.length > 0 ? 'memory.integrity_drift_detected' : 'memory.integrity_validated',
+            payload: {
+                issue_count: issues.length,
+                orphan_count: orphanRows.rows.length,
+                duplicate_conflict_count: dupConflictRows.rows.length,
+                tombstone_violation_count: tombViolRows.rows.length,
+                absent_projection_count: absentProjectionCount,
+                superseded_active_projection_count: supersededActiveRows.rows.length,
+            },
+        });
+
         return {
             run_at: runAt,
             issues,
@@ -352,6 +367,15 @@ export class MemoryAuthorityService {
         const runAt = new Date().toISOString();
         const actions: RebuildAction[] = [];
         let unreachableCount = 0;
+        const executionId = `mem-rebuild-${Date.now()}`;
+        const bus = TelemetryBus.getInstance();
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: 'memory.derived_rebuild_requested',
+            payload: { target: 'all' },
+        });
 
         // Read all active canonical records in batches to avoid large in-memory loads
         const BATCH_SIZE = 200;
@@ -431,6 +455,18 @@ export class MemoryAuthorityService {
         console.log(
             `[MemoryAuthority] Rebuild scan complete: ${totalRead} canonical record(s) checked, ${actions.filter(a => a.action_kind === 'create').length} projection(s) needed`,
         );
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: 'memory.derived_rebuild_completed',
+            payload: {
+                target: 'all',
+                canonical_records_read: totalRead,
+                projection_actions: actions.length,
+                unreachable_count: unreachableCount,
+            },
+        });
 
         return {
             run_at: runAt,
@@ -517,6 +553,17 @@ export class MemoryAuthorityService {
     }
 
     /**
+     * Canonical create API alias used by authority-governed callers.
+     * Equivalent to tryCreateCanonicalMemory().
+     */
+    async createCanonicalMemory(
+        input: ProposedMemoryInput,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<string>> {
+        return this.tryCreateCanonicalMemory(input, ctx);
+    }
+
+    /**
      * Read a single canonical memory record by its ID.
      * Returns null when the record does not exist.
      */
@@ -548,6 +595,18 @@ export class MemoryAuthorityService {
     }
 
     /**
+     * Canonical update API alias used by authority-governed callers.
+     * Equivalent to tryUpdateCanonicalMemory().
+     */
+    async updateCanonicalMemory(
+        memoryId: string,
+        updates: Partial<Pick<ProposedMemoryInput, 'content_text' | 'content_structured' | 'confidence' | 'valid_to'>>,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<CanonicalMemory>> {
+        return this.tryUpdateCanonicalMemory(memoryId, updates, ctx);
+    }
+
+    /**
      * Delete (tombstone) a canonical memory record.
      *
      * Delegates to {@link _tombstoneMemoryCore}.  All errors (including
@@ -568,6 +627,139 @@ export class MemoryAuthorityService {
     ): Promise<MemoryOperationResult<void>> {
         const writeOperationId = ctx?.executionId ?? `mem-write-${crypto.randomBytes(8).toString('hex')}`;
         return this._tombstoneMemoryCore(memoryId, ctx?.executionMode, writeOperationId);
+    }
+
+    /**
+     * Canonical tombstone API alias used by authority-governed callers.
+     * Equivalent to tryTombstoneMemory().
+     */
+    async tombstoneCanonicalMemory(
+        memoryId: string,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<void>> {
+        return this.tryTombstoneMemory(memoryId, ctx);
+    }
+
+    /**
+     * Canonical integrity validation alias used by authority-governed callers.
+     * Equivalent to validateIntegrity().
+     */
+    async validateAuthorityIntegrity(): Promise<IntegrityReport> {
+        return this.validateIntegrity();
+    }
+
+    /**
+     * Deterministic merge path:
+     * - target memory remains canonical source of truth
+     * - source memory is superseded and tombstoned
+     * - derived projections are marked stale for both records
+     */
+    async mergeCanonicalMemory(
+        sourceMemoryId: string,
+        targetMemoryId: string,
+        mergeReason: string,
+        ctx?: MemoryInvocationContext,
+    ): Promise<MemoryOperationResult<CandidateReviewDecision>> {
+        const executionId = ctx?.executionId ?? `mem-merge-${crypto.randomBytes(8).toString('hex')}`;
+        const bus = TelemetryBus.getInstance();
+        const startTime = Date.now();
+        try {
+            policyGate.assertSideEffect({
+                actionKind: 'memory_write',
+                executionMode: ctx?.executionMode,
+                targetSubsystem: 'MemoryAuthorityService',
+                mutationIntent: 'write',
+            });
+
+            const source = await this._fetchRecord(sourceMemoryId);
+            const target = await this._fetchRecord(targetMemoryId);
+            if (!source) {
+                throw new Error(`[MemoryAuthority] Cannot merge: source memory_id ${sourceMemoryId} not found`);
+            }
+            if (!target) {
+                throw new Error(`[MemoryAuthority] Cannot merge: target memory_id ${targetMemoryId} not found`);
+            }
+            if (source.authority_status === 'tombstoned') {
+                throw new Error(`[MemoryAuthority] Cannot merge tombstoned source memory ${sourceMemoryId}`);
+            }
+            if (target.authority_status === 'tombstoned') {
+                throw new Error(`[MemoryAuthority] Cannot merge into tombstoned target memory ${targetMemoryId}`);
+            }
+
+            const mergedText = target.content_text.includes(source.content_text)
+                ? target.content_text
+                : `${target.content_text}\n\n[MERGED:${source.memory_id}] ${source.content_text}`;
+
+            const mergedStructured: Record<string, unknown> = {
+                ...(target.content_structured ?? {}),
+                merged_from_memory_ids: Array.from(
+                    new Set([
+                        ...(((target.content_structured as Record<string, unknown> | null)?.merged_from_memory_ids as string[]) ?? []),
+                        source.memory_id,
+                    ]),
+                ),
+                merge_reason: mergeReason,
+                merged_at: new Date().toISOString(),
+            };
+
+            const updateResult = await this._updateCanonicalMemoryCore(
+                target.memory_id,
+                {
+                    content_text: mergedText,
+                    content_structured: mergedStructured,
+                    confidence: Math.max(target.confidence, source.confidence),
+                },
+                ctx?.executionMode,
+                executionId,
+            );
+            if (!updateResult.success) {
+                throw new Error(updateResult.error ?? 'merge update failed');
+            }
+
+            await this.pool.query(
+                `UPDATE memory_records
+                 SET authority_status = 'superseded',
+                     supersedes_memory_id = $2,
+                     tombstoned_at = COALESCE(tombstoned_at, NOW()),
+                     updated_at = NOW()
+                 WHERE memory_id = $1`,
+                [source.memory_id, target.memory_id],
+            );
+            await this._markProjectionsStale(source.memory_id);
+
+            const decision: CandidateReviewDecision = {
+                candidate_id: source.memory_id,
+                decision: 'merge',
+                decided_at: new Date().toISOString(),
+                decided_by: 'MemoryAuthorityService',
+                reason: mergeReason,
+                canonical_memory_id: target.memory_id,
+                merged_into_memory_id: target.memory_id,
+            };
+
+            bus.emit({
+                executionId,
+                subsystem: 'memory',
+                event: 'memory.canonical_merged',
+                payload: {
+                    source_memory_id: source.memory_id,
+                    target_memory_id: target.memory_id,
+                    reason: mergeReason,
+                },
+            });
+
+            return { success: true, data: decision, durationMs: Date.now() - startTime };
+        } catch (err) {
+            bus.emit({
+                executionId,
+                subsystem: 'memory',
+                event: 'memory.write_failed',
+                payload: { operation: 'merge', source_memory_id: sourceMemoryId, target_memory_id: targetMemoryId, error: String(err) },
+            });
+            const error = err instanceof Error ? err.message : String(err);
+            const _cause = err instanceof Error ? err : undefined;
+            return { success: false, error, durationMs: Date.now() - startTime, _cause };
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -713,6 +905,19 @@ export class MemoryAuthorityService {
         const startTime = Date.now();
         const bus = TelemetryBus.getInstance();
         try {
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.candidate_proposed',
+                payload: {
+                    source_kind: input.source_kind ?? 'unknown',
+                    source_ref: input.source_ref ?? null,
+                    memory_type: input.memory_type,
+                    subject_type: input.subject_type,
+                    subject_id: input.subject_id,
+                },
+            });
+
             policyGate.assertSideEffect({
                 actionKind: 'memory_write',
                 targetSubsystem: 'MemoryAuthorityService',
@@ -733,6 +938,17 @@ export class MemoryAuthorityService {
                     `[MemoryAuthority] Duplicate detected (${dup.match_kind}, score=${dup.match_score}) → returning existing ${dup.matched_memory_id}`,
                 );
                 await this._recordDuplicate(dup.matched_memory_id, null, hash, dup.match_kind, dup.match_score);
+                bus.emit({
+                    executionId: writeOperationId,
+                    subsystem: 'memory',
+                    event: 'memory.candidate_deferred',
+                    payload: {
+                        reason: 'duplicate',
+                        matched_memory_id: dup.matched_memory_id,
+                        match_kind: dup.match_kind,
+                        match_score: dup.match_score,
+                    },
+                });
                 bus.emit({
                     executionId: writeOperationId,
                     subsystem: 'memory',
@@ -775,11 +991,32 @@ export class MemoryAuthorityService {
             bus.emit({
                 executionId: writeOperationId,
                 subsystem: 'memory',
+                event: 'memory.candidate_accepted',
+                payload: {
+                    memory_id: memoryId,
+                    source_kind: input.source_kind ?? 'unknown',
+                    source_ref: input.source_ref ?? null,
+                    memory_type: input.memory_type,
+                },
+            });
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
                 event: 'memory.write_completed',
                 payload: { operation: 'create', memory_id: memoryId, memory_type: input.memory_type },
             });
             return { success: true, data: memoryId, durationMs: Date.now() - startTime };
         } catch (err) {
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.candidate_rejected',
+                payload: {
+                    reason: String(err),
+                    source_kind: input.source_kind ?? 'unknown',
+                    source_ref: input.source_ref ?? null,
+                },
+            });
             bus.emit({
                 executionId: writeOperationId,
                 subsystem: 'memory',
@@ -879,7 +1116,13 @@ export class MemoryAuthorityService {
             await this._appendLineage(memoryId, null, newVersion, 'update', changedFields, priorHash, newHash, 'system');
             await this._markProjectionsStale(memoryId);
 
-            console.log(`[MemoryAuthority] Record updated: ${memoryId} → v${newVersion}`);
+            console.log(`[MemoryAuthority] Record updated: ${memoryId} -> v${newVersion}`);
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.canonical_updated',
+                payload: { memory_id: memoryId, version: newVersion },
+            });
             bus.emit({
                 executionId: writeOperationId,
                 subsystem: 'memory',
@@ -964,8 +1207,15 @@ export class MemoryAuthorityService {
                 existing.canonical_hash,
                 'system',
             );
+            await this._markProjectionsStale(memoryId);
 
             console.log(`[MemoryAuthority] Record tombstoned: ${memoryId}`);
+            bus.emit({
+                executionId: writeOperationId,
+                subsystem: 'memory',
+                event: 'memory.canonical_tombstoned',
+                payload: { memory_id: memoryId },
+            });
             bus.emit({
                 executionId: writeOperationId,
                 subsystem: 'memory',
@@ -995,6 +1245,15 @@ export class MemoryAuthorityService {
         const runAt = new Date().toISOString();
         const actions: RebuildAction[] = [];
         let unreachableCount = 0;
+        const executionId = `mem-rebuild-${target}-${Date.now()}`;
+        const bus = TelemetryBus.getInstance();
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: 'memory.derived_rebuild_requested',
+            payload: { target },
+        });
 
         const BATCH_SIZE = 200;
         let offset = 0;
@@ -1074,6 +1333,18 @@ export class MemoryAuthorityService {
             `[MemoryAuthority] Rebuild:${target} scan complete: ${totalRead} canonical record(s) checked, ` +
             `${actions.filter(a => a.action_kind === 'create').length} projection(s) needed`,
         );
+
+        bus.emit({
+            executionId,
+            subsystem: 'memory',
+            event: 'memory.derived_rebuild_completed',
+            payload: {
+                target,
+                canonical_records_read: totalRead,
+                projection_actions: actions.length,
+                unreachable_count: unreachableCount,
+            },
+        });
 
         return {
             run_at: runAt,

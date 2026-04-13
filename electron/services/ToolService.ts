@@ -314,6 +314,9 @@ export class ToolService {
                             console.warn('[P7A][ToolService:mem0_add] Could not obtain canonical_memory_id:', e);
                         }
                     }
+                    if (!canonicalMemoryId) {
+                        return 'Memory write blocked: canonical authority acceptance failed (no canonical_memory_id).';
+                    }
                     await memory.add(args.text, { canonical_memory_id: canonicalMemoryId, source: 'tool:mem0_add' });
                     return "Memory stored successfully.";
                 } catch (e: any) { return `Error storing memory: ${e.message} `; }

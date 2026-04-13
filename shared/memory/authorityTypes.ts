@@ -68,6 +68,74 @@ export interface MemoryOperationResult<T = unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Memory lifecycle contracts (authoritative, candidate, and derived states)
+// ---------------------------------------------------------------------------
+
+export type MemoryLifecycleState =
+    | 'observed_event'
+    | 'candidate_proposed'
+    | 'candidate_accepted'
+    | 'candidate_rejected'
+    | 'candidate_deferred'
+    | 'canonical_tombstoned'
+    | 'derived_projected';
+
+export interface CandidateMemoryRecord {
+    candidate_id: string;
+    source_event_ref: string;
+    source_kind: string;
+    memory_type: string;
+    subject_type: string;
+    subject_id: string;
+    content_text: string;
+    content_structured?: Record<string, unknown>;
+    confidence: number;
+    salience: number;
+    proposed_at: string;
+    state: 'candidate_proposed';
+}
+
+export interface CandidateReviewDecision {
+    candidate_id: string;
+    decision: 'accept' | 'reject' | 'merge' | 'defer';
+    decided_at: string;
+    decided_by: string;
+    reason?: string;
+    canonical_memory_id?: string | null;
+    merged_into_memory_id?: string | null;
+}
+
+export interface AcceptedCanonicalMemoryRecord extends CanonicalMemory {
+    state: 'candidate_accepted';
+    accepted_at: string;
+    accepted_from_candidate_id?: string | null;
+}
+
+export interface RejectedOrDeferredCandidateRecord {
+    candidate_id: string;
+    state: 'candidate_rejected' | 'candidate_deferred';
+    decided_at: string;
+    reason: string;
+}
+
+export interface TombstonedCanonicalMemoryRecord {
+    memory_id: string;
+    canonical_hash: string;
+    state: 'canonical_tombstoned';
+    tombstoned_at: string;
+}
+
+export interface DerivedArtifactProjectionState {
+    projection_id: string;
+    memory_id: string;
+    target_system: ProjectionTargetSystem;
+    projection_status: ProjectionStatus;
+    canonical_version: number;
+    projected_version: number | null;
+    state: 'derived_projected';
+}
+
+// ---------------------------------------------------------------------------
 // Proposed input — what callers submit for canonicalisation
 // ---------------------------------------------------------------------------
 

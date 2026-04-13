@@ -1094,13 +1094,14 @@ describe('MemoryAuthorityService', () => {
             });
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
-            expect(memEvents.length).toBe(2);
-            expect(memEvents[0].event).toBe('memory.write_requested');
-            expect(memEvents[0].payload).toMatchObject({ operation: 'create' });
-            expect(memEvents[1].event).toBe('memory.write_completed');
-            expect(memEvents[1].payload).toMatchObject({ operation: 'create', memory_id: MEMORY_ID });
-            // Both events share the same executionId (the write operation ID)
-            expect(memEvents[0].executionId).toBe(memEvents[1].executionId);
+            const requested = memEvents.find(e => e.event === 'memory.write_requested');
+            const completed = memEvents.find(e => e.event === 'memory.write_completed');
+            expect(requested).toBeDefined();
+            expect(requested?.payload).toMatchObject({ operation: 'create' });
+            expect(completed).toBeDefined();
+            expect(completed?.payload).toMatchObject({ operation: 'create', memory_id: MEMORY_ID });
+            // Core write events share executionId even when additional lifecycle telemetry is emitted.
+            expect(requested?.executionId).toBe(completed?.executionId);
         });
 
         it('tryCreateCanonicalMemory emits write_requested then write_completed for a duplicate', async () => {
@@ -1114,10 +1115,11 @@ describe('MemoryAuthorityService', () => {
             });
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
-            expect(memEvents.length).toBe(2);
-            expect(memEvents[0].event).toBe('memory.write_requested');
-            expect(memEvents[1].event).toBe('memory.write_completed');
-            expect(memEvents[1].payload).toMatchObject({ duplicate: true });
+            const requested = memEvents.find(e => e.event === 'memory.write_requested');
+            const completed = memEvents.find(e => e.event === 'memory.write_completed');
+            expect(requested).toBeDefined();
+            expect(completed).toBeDefined();
+            expect(completed?.payload).toMatchObject({ duplicate: true });
         });
 
         it('tryCreateCanonicalMemory emits write_failed when the DB throws', async () => {
@@ -1158,11 +1160,12 @@ describe('MemoryAuthorityService', () => {
             await svc.tryUpdateCanonicalMemory(MEMORY_ID, { content_text: 'updated' });
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
-            expect(memEvents.length).toBe(2);
-            expect(memEvents[0].event).toBe('memory.write_requested');
-            expect(memEvents[0].payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
-            expect(memEvents[1].event).toBe('memory.write_completed');
-            expect(memEvents[1].payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
+            const requested = memEvents.find(e => e.event === 'memory.write_requested');
+            const completed = memEvents.find(e => e.event === 'memory.write_completed');
+            expect(requested).toBeDefined();
+            expect(requested?.payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
+            expect(completed).toBeDefined();
+            expect(completed?.payload).toMatchObject({ operation: 'update', memory_id: MEMORY_ID });
         });
 
         it('tryUpdateCanonicalMemory emits write_failed when record not found', async () => {
@@ -1188,11 +1191,12 @@ describe('MemoryAuthorityService', () => {
             await svc.tryTombstoneMemory(MEMORY_ID);
 
             const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
-            expect(memEvents.length).toBe(2);
-            expect(memEvents[0].event).toBe('memory.write_requested');
-            expect(memEvents[0].payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
-            expect(memEvents[1].event).toBe('memory.write_completed');
-            expect(memEvents[1].payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
+            const requested = memEvents.find(e => e.event === 'memory.write_requested');
+            const completed = memEvents.find(e => e.event === 'memory.write_completed');
+            expect(requested).toBeDefined();
+            expect(requested?.payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
+            expect(completed).toBeDefined();
+            expect(completed?.payload).toMatchObject({ operation: 'delete', memory_id: MEMORY_ID });
         });
 
         it('tryTombstoneMemory emits write_completed (idempotent) when already tombstoned', async () => {
@@ -1235,10 +1239,13 @@ describe('MemoryAuthorityService', () => {
             const svc2 = new MemoryAuthorityService(pool2 as never);
             await svc2.tryCreateCanonicalMemory({ ...input, content_text: 'b' });
 
-            const memEvents = capturedEvents.filter(e => e.subsystem === 'memory');
-            const firstId = memEvents[0].executionId;
-            const thirdId = memEvents[2].executionId;
-            expect(firstId).not.toBe(thirdId);
+            const requestedEvents = capturedEvents.filter(
+                event => event.subsystem === 'memory' && event.event === 'memory.write_requested',
+            );
+            expect(requestedEvents.length).toBe(2);
+            const firstId = requestedEvents[0]?.executionId;
+            const secondId = requestedEvents[1]?.executionId;
+            expect(firstId).not.toBe(secondId);
         });
     });
 

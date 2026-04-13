@@ -73,6 +73,7 @@ export interface MemoryItem {
  *   contextually related memories.
  */
 export class MemoryService {
+    private static readonly UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     /** MCP SDK client instance for communicating with the remote Mem0 server. Null if not connected. */
     private client: Client | null = null;
     /** The stdio transport used to communicate with the Mem0 child process. */
@@ -426,10 +427,19 @@ export class MemoryService {
         let role = metadata.role || 'core';
         if (role === 'system') role = 'core';
 
-        const finalMetadata = { ...metadata, source, role };
+        const canonicalIdFromMetadata = typeof metadata.canonical_memory_id === 'string' ? metadata.canonical_memory_id : null;
+        const canonicalIdFromRecordId = typeof m.id === 'string' && MemoryService.UUID_RE.test(m.id) ? m.id : null;
+        const canonicalMemoryId = canonicalIdFromMetadata ?? canonicalIdFromRecordId;
+
+        const finalMetadata = {
+            ...metadata,
+            source,
+            role,
+            canonical_memory_id: canonicalMemoryId,
+        };
 
         return {
-            id: m.id || Date.now().toString(),
+            id: canonicalMemoryId || m.id || Date.now().toString(),
             text: m.text || "",
             metadata: finalMetadata,
             score: m.score,
@@ -443,6 +453,22 @@ export class MemoryService {
             associations: Array.isArray(m.associations) ? m.associations : [],
             status: m.status || 'active'
         };
+    }
+
+    private hasCanonicalMemoryAnchor(memory: Pick<MemoryItem, 'metadata'>): boolean {
+        const canonicalId = memory.metadata?.canonical_memory_id;
+        return typeof canonicalId === 'string' && MemoryService.UUID_RE.test(canonicalId);
+    }
+
+    private filterCanonicalBackedMemories(memories: MemoryItem[], source: string): MemoryItem[] {
+        const canonicalBacked = memories.filter(memory => this.hasCanonicalMemoryAnchor(memory));
+        const dropped = memories.length - canonicalBacked.length;
+        if (dropped > 0) {
+            console.warn(
+                `[MemoryService] Suppressed ${dropped} non-canonical derived memory item(s) from ${source}.`,
+            );
+        }
+        return canonicalBacked;
     }
 
     /**
@@ -661,13 +687,14 @@ export class MemoryService {
                                 console.warn(`[Memory] Remote search returned error: ${parsed.error}. Falling back to local.`);
                             } else if (Array.isArray(parsed)) {
                                 // Map remote results to normalized MemoryItems
-                                return parsed.map((m: any) => this.normalizeMemory({
+                                const normalized = parsed.map((m: any) => this.normalizeMemory({
                                     id: m.id || 'remote',
                                     text: m.text || String(m),
                                     timestamp: Date.now(),
                                     score: m.score,
                                     metadata: m.metadata || {}
                                 }));
+                                return this.filterCanonicalBackedMemories(normalized, 'mem0_search');
                             }
                         } catch (parseError) {
                             console.warn("[Memory] Failed to parse JSON response:", parseError);
@@ -687,6 +714,7 @@ export class MemoryService {
             // Core modes (assistant/hybrid) only see core memories
             filteredMemories = filteredMemories.filter(m => m.metadata?.role !== 'rp');
         }
+        filteredMemories = this.filterCanonicalBackedMemories(filteredMemories, 'local_memory_store');
 
         const terms = query.toLowerCase().split(' ').filter(t => t.length > 3);
         if (terms.length === 0) return filteredMemories.slice(-limit).reverse(); // Return latest if no terms
@@ -819,19 +847,14 @@ export class MemoryService {
      * @returns {Promise<boolean>} Always returns `true` (local write never fails fatally).
      */
     async add(text: string, metadata: any = {}, mode: string = 'assistant'): Promise<boolean> {
-        // P7A derived write guard: every durable write should carry canonical_memory_id.
-        // MemoryService is a derived system (mem0 abstraction + local JSON). Any durable
-        // write without a canonical_memory_id is a P7A violation — warn (or throw in strict mode).
-        if (!metadata.canonical_memory_id) {
+        // MemoryAuthority invariant: derived durable writes MUST be anchored to canonical IDs.
+        if (!metadata.canonical_memory_id || !MemoryService.UUID_RE.test(String(metadata.canonical_memory_id))) {
             const source = metadata.source ?? 'unknown';
             const message =
                 `[P7A][MemoryService] Derived write without canonical_memory_id (source="${source}"). ` +
                 `Ensure tryCreateCanonicalMemory() or createMemory() is called first and its ID ` +
                 `is passed as canonical_memory_id in metadata.`;
-            if (process.env.NODE_ENV === 'test' && process.env.TALA_STRICT_MEMORY === '1') {
-                throw new Error(message);
-            }
-            console.warn(message);
+            throw new Error(message);
         }
         const role = mode === 'rp' ? 'rp' : 'core';
         const finalMetadata = { ...metadata, role };
@@ -848,7 +871,7 @@ export class MemoryService {
 
         const now = Date.now();
         const newItem: MemoryItem = {
-            id: now.toString(),
+            id: String(metadata.canonical_memory_id),
             text,
             metadata: finalMetadata,
             timestamp: now,
@@ -895,7 +918,7 @@ export class MemoryService {
      * @returns {Promise<MemoryItem[]>} Array of all local memory items.
      */
     public async getAll(): Promise<MemoryItem[]> {
-        return [...this.localMemories].sort((a, b) => b.timestamp - a.timestamp);
+        return this.filterCanonicalBackedMemories([...this.localMemories], 'getAll').sort((a, b) => b.timestamp - a.timestamp);
     }
 
     /**
@@ -904,7 +927,13 @@ export class MemoryService {
      * @returns {Promise<boolean>} True if found and deleted, false otherwise.
      */
     public async delete(id: string): Promise<boolean> {
-        const index = this.localMemories.findIndex(m => m.id === id);
+        return this.deleteByCanonicalMemoryId(id);
+    }
+
+    public async deleteByCanonicalMemoryId(canonicalMemoryId: string): Promise<boolean> {
+        const index = this.localMemories.findIndex(
+            memory => memory.metadata?.canonical_memory_id === canonicalMemoryId || memory.id === canonicalMemoryId,
+        );
         if (index !== -1) {
             this.localMemories.splice(index, 1);
             this.saveLocal();
@@ -921,7 +950,13 @@ export class MemoryService {
      * @returns {Promise<boolean>} True if found and updated, false otherwise.
      */
     public async update(id: string, text: string): Promise<boolean> {
-        const item = this.localMemories.find(m => m.id === id);
+        return this.updateByCanonicalMemoryId(id, text);
+    }
+
+    public async updateByCanonicalMemoryId(canonicalMemoryId: string, text: string): Promise<boolean> {
+        const item = this.localMemories.find(
+            memory => memory.metadata?.canonical_memory_id === canonicalMemoryId || memory.id === canonicalMemoryId,
+        );
         if (item) {
             item.text = text;
             item.timestamp = Date.now();

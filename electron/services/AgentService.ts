@@ -3613,6 +3613,17 @@ Failure to provide a tool call will result in system termination.`;
                     const ts = new Date().toISOString().slice(0, 16);
                     const contentText = `[${ts}] User: "${userMessage.slice(0, 200)}" | Tala: "${finalResponse.slice(0, 300)}"`;
 
+                    TelemetryBus.getInstance().emit({
+                        event: 'memory.candidate_proposed',
+                        subsystem: 'memory',
+                        executionId: turnId,
+                        payload: {
+                            source_kind: 'conversation',
+                            source_ref: `turn:${turnId}`,
+                            memory_type: 'interaction',
+                        },
+                    });
+
                     const writeResult = await authorityService.tryCreateCanonicalMemory({
                         memory_type: 'interaction',
                         subject_type: 'conversation',
@@ -3652,9 +3663,32 @@ Failure to provide a tool call will result in system termination.`;
                         }
                     } else {
                         console.warn('[AgentService] P7A canonical write failed:', writeResult.error);
+                        TelemetryBus.getInstance().emit({
+                            event: 'memory.candidate_deferred',
+                            subsystem: 'memory',
+                            executionId: turnId,
+                            payload: {
+                                reason: writeResult.error ?? 'canonical write failed',
+                                source_kind: 'conversation',
+                            },
+                        });
                     }
                 } else {
-                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes will proceed without canonical ID');
+                    console.warn('[AgentService] P7A: canonical memory repository not available — derived writes are blocked');
+                    TelemetryBus.getInstance().emit({
+                        event: 'memory.candidate_deferred',
+                        subsystem: 'memory',
+                        executionId: turnId,
+                        payload: {
+                            reason: 'canonical repository unavailable',
+                            source_kind: 'conversation',
+                        },
+                    });
+                }
+
+                if (!canonicalMemoryId) {
+                    console.warn('[AgentService] P7A: skipping derived memory writes because canonical acceptance did not succeed.');
+                    return;
                 }
 
                 try {
@@ -3681,7 +3715,7 @@ Failure to provide a tool call will result in system termination.`;
                     if (runtimeSafety.isDuplicateMemory(memEntry)) {
                         console.log(`[AgentService] MEMORY_DUPLICATE_SKIPPED: mem0`);
                     } else {
-                        const memId = canonicalMemoryId ?? `MEM-${Date.now().toString(36).toUpperCase()}`;
+                        const memId = canonicalMemoryId;
                         // FIX 5: Mode Persistence Writeback Correctness
                         // We use the activeMode captured at the top of the turn (line 1512)
                         await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId, canonical_memory_id: canonicalMemoryId }, activeMode);
@@ -4775,6 +4809,16 @@ Failure to provide a tool call will result in system termination.`;
         if (repo) {
             const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
             const authorityService = new MemoryAuthorityService(pool);
+            TelemetryBus.getInstance().emit({
+                event: 'memory.candidate_proposed',
+                subsystem: 'memory',
+                executionId: `add-memory-${Date.now()}`,
+                payload: {
+                    source_kind: 'explicit',
+                    source_ref: 'addMemory',
+                    memory_type: 'explicit_fact',
+                },
+            });
             const result = await authorityService.tryCreateCanonicalMemory({
                 memory_type: 'explicit_fact',
                 subject_type: 'user',
@@ -4788,9 +4832,23 @@ Failure to provide a tool call will result in system termination.`;
                 canonicalMemoryId = result.data ?? null;
             } else {
                 console.warn('[AgentService:addMemory] P7A canonical write failed:', result.error);
+                TelemetryBus.getInstance().emit({
+                    event: 'memory.candidate_rejected',
+                    subsystem: 'memory',
+                    executionId: `add-memory-${Date.now()}`,
+                    payload: {
+                        reason: result.error ?? 'canonical write failed',
+                        source_kind: 'explicit',
+                    },
+                });
             }
         } else {
-            console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write will lack canonical_memory_id');
+            console.warn('[AgentService:addMemory] P7A: canonical repository not available — derived write is blocked');
+            return false;
+        }
+
+        if (!canonicalMemoryId) {
+            return false;
         }
 
         return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
@@ -4801,14 +4859,54 @@ Failure to provide a tool call will result in system termination.`;
     }
 
     public async deleteMemory(id: string) {
-        return this.memory.delete(id);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+            console.warn(`[AgentService:deleteMemory] Refusing non-canonical memory id: ${id}`);
+            return false;
+        }
+
+        const repo = getCanonicalMemoryRepository();
+        if (!repo) {
+            console.warn('[AgentService:deleteMemory] Canonical repository unavailable');
+            return false;
+        }
+
+        const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+        const authorityService = new MemoryAuthorityService(pool);
+        const result = await authorityService.tryTombstoneMemory(id);
+        if (!result.success) {
+            console.warn('[AgentService:deleteMemory] Canonical tombstone failed:', result.error);
+            return false;
+        }
+
+        await this.memory.deleteByCanonicalMemoryId(id);
+        return true;
     }
 
     /**
      * Updates a memory item by ID.
      */
     public async updateMemory(id: string, text: string) {
-        return this.memory.update(id, text);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+            console.warn(`[AgentService:updateMemory] Refusing non-canonical memory id: ${id}`);
+            return false;
+        }
+
+        const repo = getCanonicalMemoryRepository();
+        if (!repo) {
+            console.warn('[AgentService:updateMemory] Canonical repository unavailable');
+            return false;
+        }
+
+        const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+        const authorityService = new MemoryAuthorityService(pool);
+        const result = await authorityService.tryUpdateCanonicalMemory(id, { content_text: text });
+        if (!result.success) {
+            console.warn('[AgentService:updateMemory] Canonical update failed:', result.error);
+            return false;
+        }
+
+        await this.memory.updateByCanonicalMemoryId(id, text);
+        return true;
     }
 
     /**
