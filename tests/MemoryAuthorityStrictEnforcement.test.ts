@@ -6,6 +6,11 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/tala-test' },
 }));
 
+const repoState = vi.hoisted(() => ({ repo: null as any }));
+vi.mock('../electron/services/db/initMemoryStore', () => ({
+  getCanonicalMemoryRepository: () => repoState.repo,
+}));
+
 const NOW = new Date('2026-01-01T00:00:00.000Z');
 
 function makeMemoryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -35,13 +40,28 @@ function makeMemoryRow(overrides: Record<string, unknown> = {}): Record<string, 
 describe('Memory authority strict enforcement', () => {
   beforeEach(() => {
     process.env.TALA_STRICT_MEMORY = '1';
+    repoState.repo = null;
   });
 
-  it('blocks derived memory write when canonical_memory_id is missing', async () => {
+  it('blocks legacy MemoryService.add durable mutation API', async () => {
     const memoryService = new MemoryService();
     await expect(
       memoryService.add('orphan write', { source: 'test' }, 'assistant'),
-    ).rejects.toThrow('Derived write without canonical_memory_id');
+    ).rejects.toThrow('Durable mutation API blocked');
+  });
+
+  it('blocks legacy MemoryService.update durable mutation API', async () => {
+    const memoryService = new MemoryService();
+    await expect(
+      memoryService.update('00000000-0000-0000-0000-000000000001', 'updated'),
+    ).rejects.toThrow('update() is blocked');
+  });
+
+  it('blocks legacy MemoryService.delete durable mutation API', async () => {
+    const memoryService = new MemoryService();
+    await expect(
+      memoryService.delete('00000000-0000-0000-0000-000000000001'),
+    ).rejects.toThrow('delete() is blocked');
   });
 
   it('suppresses non-canonical local memories from recall', async () => {
@@ -107,5 +127,70 @@ describe('Memory authority strict enforcement', () => {
     expect(
       issuedSql.some(sql => sql.includes("SET authority_status = 'superseded'")),
     ).toBe(true);
+  });
+
+  it('allows canonical-anchored derived projection sync from authority-routed flow', async () => {
+    const canonicalId = '00000000-0000-0000-0000-000000000001';
+    const pool = {
+      query: vi.fn().mockImplementation((sql: string, params?: unknown[]) => {
+        if (sql.includes('SELECT authority_status') && sql.includes('FROM memory_records')) {
+          return Promise.resolve({ rows: [{ authority_status: 'canonical' }] });
+        }
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    repoState.repo = {
+      getSharedPool: () => pool,
+    };
+
+    const memoryService = new MemoryService();
+    const ok = await memoryService.syncDerivedProjectionFromCanonical({
+      canonicalMemoryId: canonicalId,
+      text: 'authority-derived memory projection',
+      metadata: { source: 'test' },
+      source: 'test',
+    });
+
+    expect(ok).toBe(true);
+    const all = await memoryService.getAll();
+    expect(all.some(m => m.metadata?.canonical_memory_id === canonicalId)).toBe(true);
+  });
+
+  it('allows canonical-anchored derived projection removal for tombstoned canonical memory', async () => {
+    const canonicalId = '00000000-0000-0000-0000-0000000000aa';
+    const pool = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('SELECT authority_status') && sql.includes('FROM memory_records')) {
+          return Promise.resolve({ rows: [{ authority_status: 'tombstoned' }] });
+        }
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    repoState.repo = {
+      getSharedPool: () => pool,
+    };
+
+    const memoryService = new MemoryService();
+    (memoryService as unknown as { localMemories: Array<{ id: string; text: string; metadata: { canonical_memory_id: string }; timestamp: number; salience: number; confidence: number; created_at: number; last_accessed_at: number | null; last_reinforced_at: number | null; access_count: number; associations: Array<{ target_id: string; type: 'related_to' | 'contradicts' | 'supersedes'; weight: number }>; status: 'active' | 'contested' | 'superseded' | 'archived' }> }).localMemories = [
+      {
+        id: canonicalId,
+        text: 'to remove',
+        metadata: { canonical_memory_id: canonicalId },
+        timestamp: Date.now(),
+        salience: 0.5,
+        confidence: 0.9,
+        created_at: Date.now(),
+        last_accessed_at: null,
+        last_reinforced_at: Date.now(),
+        access_count: 0,
+        associations: [],
+        status: 'active',
+      },
+    ];
+
+    const removed = await memoryService.removeDerivedProjectionForCanonical(canonicalId);
+    expect(removed).toBe(true);
+    const all = await memoryService.getAll();
+    expect(all).toHaveLength(0);
   });
 });

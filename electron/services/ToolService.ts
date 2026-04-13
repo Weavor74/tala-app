@@ -317,7 +317,12 @@ export class ToolService {
                     if (!canonicalMemoryId) {
                         return 'Memory write blocked: canonical authority acceptance failed (no canonical_memory_id).';
                     }
-                    await memory.add(args.text, { canonical_memory_id: canonicalMemoryId, source: 'tool:mem0_add' });
+                    await memory.syncDerivedProjectionFromCanonical({
+                        canonicalMemoryId,
+                        text: args.text,
+                        metadata: { source: 'tool:mem0_add' },
+                        source: 'tool:mem0_add',
+                    });
                     return "Memory stored successfully.";
                 } catch (e: any) { return `Error storing memory: ${e.message} `; }
             }

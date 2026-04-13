@@ -10,6 +10,8 @@ import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService'
 import type { MemoryHealthStatus, MemoryHealthTransition, MemoryIntegrityMode } from '../../shared/memory/MemoryHealthStatus';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import { resolveStoragePath } from './PathResolver';
+import { getCanonicalMemoryRepository } from './db/initMemoryStore';
+import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 
 /**
  * Association
@@ -471,6 +473,44 @@ export class MemoryService {
         return canonicalBacked;
     }
 
+    private _emitBypassBlocked(operation: string, reason: string): void {
+        TelemetryBus.getInstance().emit({
+            event: 'memory.authority_bypass_blocked',
+            subsystem: 'memory',
+            executionId: `mem-bypass-${Date.now()}`,
+            payload: { operation, reason },
+        });
+    }
+
+    private async _assertCanonicalRecordState(
+        canonicalMemoryId: string,
+        allowedStatuses: Array<'canonical' | 'superseded' | 'tombstoned'>,
+        operation: string,
+    ): Promise<void> {
+        const repo = getCanonicalMemoryRepository();
+        if (!repo) {
+            this._emitBypassBlocked(operation, 'canonical repository unavailable');
+            throw new Error('[MemoryService] Canonical repository unavailable');
+        }
+        const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
+        const result = await pool.query<{ authority_status: string }>(
+            `SELECT authority_status
+             FROM memory_records
+             WHERE memory_id = $1
+             LIMIT 1`,
+            [canonicalMemoryId],
+        );
+        if (result.rows.length === 0) {
+            this._emitBypassBlocked(operation, `canonical record not found: ${canonicalMemoryId}`);
+            throw new Error(`[MemoryService] Canonical memory not found: ${canonicalMemoryId}`);
+        }
+        const status = String(result.rows[0].authority_status) as 'canonical' | 'superseded' | 'tombstoned';
+        if (!allowedStatuses.includes(status)) {
+            this._emitBypassBlocked(operation, `canonical status ${status} not allowed`);
+            throw new Error(`[MemoryService] Canonical status ${status} is not allowed for ${operation}`);
+        }
+    }
+
     /**
      * Persists the current in-memory `localMemories` array to the JSON file on disk.
      * 
@@ -830,87 +870,115 @@ export class MemoryService {
     }
 
     /**
-     * Adds a new memory to both the local store and the remote MCP server.
-     * 
-     * The memory is always saved to the local JSON file first (for redundancy),
-     * then an attempt is made to push it to the remote Mem0 server if connected.
-     * If the remote write fails, the memory still persists locally.
-     * 
-     * A unique ID is generated using the current Unix timestamp in milliseconds.
-     * 
-     * @param {string} text - The memory text content to store
-     *   (e.g., "User prefers dark mode", "Steve's birthday is March 15").
-     * @param {any} [metadata] - Optional metadata to attach to the memory.
-     *   Common fields include `source`, `category`, `user_id`, etc.
-     *   When sent to the remote server, metadata properties are spread into
-     *   the tool arguments alongside the text.
-     * @returns {Promise<boolean>} Always returns `true` (local write never fails fatally).
+     * Legacy mutation API intentionally hard-locked.
+     * Durable memory authority must route through MemoryAuthorityService.
      */
-    async add(text: string, metadata: any = {}, mode: string = 'assistant'): Promise<boolean> {
-        // MemoryAuthority invariant: derived durable writes MUST be anchored to canonical IDs.
-        if (!metadata.canonical_memory_id || !MemoryService.UUID_RE.test(String(metadata.canonical_memory_id))) {
-            const source = metadata.source ?? 'unknown';
-            const message =
-                `[P7A][MemoryService] Derived write without canonical_memory_id (source="${source}"). ` +
-                `Ensure tryCreateCanonicalMemory() or createMemory() is called first and its ID ` +
-                `is passed as canonical_memory_id in metadata.`;
-            throw new Error(message);
-        }
-        const role = mode === 'rp' ? 'rp' : 'core';
-        const finalMetadata = { ...metadata, role };
+    async add(_text: string, _metadata: any = {}, _mode: string = 'assistant'): Promise<boolean> {
+        this._emitBypassBlocked('add', 'MemoryService.add is blocked; use MemoryAuthorityService + syncDerivedProjectionFromCanonical');
+        throw new Error(
+            '[MemoryService] Durable mutation API blocked: use MemoryAuthorityService for canonical writes and syncDerivedProjectionFromCanonical() for derived projection updates.',
+        );
+    }
 
-        // --- POLICY GATE: memory write pre-check ---
-        // Fires before any local or remote write mutation.
-        // PolicyDeniedError propagates to the caller; no writes occur on block.
+    /**
+     * Canonical-anchored derived projection synchronization.
+     * This is the only allowed MemoryService write surface.
+     */
+    public async syncDerivedProjectionFromCanonical(input: {
+        canonicalMemoryId: string;
+        text: string;
+        metadata?: Record<string, unknown>;
+        mode?: string;
+        source: string;
+    }): Promise<boolean> {
+        const canonicalMemoryId = input.canonicalMemoryId;
+        if (!MemoryService.UUID_RE.test(canonicalMemoryId)) {
+            this._emitBypassBlocked('syncDerivedProjectionFromCanonical', `invalid canonical id: ${canonicalMemoryId}`);
+            throw new Error(`[MemoryService] Invalid canonical memory ID: ${canonicalMemoryId}`);
+        }
+
+        await this._assertCanonicalRecordState(canonicalMemoryId, ['canonical', 'superseded'], 'syncDerivedProjectionFromCanonical');
+
+        const mode = input.mode ?? 'assistant';
+        const role = mode === 'rp' ? 'rp' : 'core';
+        const finalMetadata = {
+            ...(input.metadata ?? {}),
+            canonical_memory_id: canonicalMemoryId,
+            source: input.source,
+            role,
+        };
+
         policyGate.assertSideEffect({
             actionKind: 'memory_write',
             executionMode: mode,
             targetSubsystem: 'MemoryService',
-            mutationIntent: 'derived_memory_write',
+            mutationIntent: 'derived_projection_sync',
         });
 
         const now = Date.now();
-        const newItem: MemoryItem = {
-            id: String(metadata.canonical_memory_id),
-            text,
-            metadata: finalMetadata,
-            timestamp: now,
-            salience: 0.5,
-            confidence: finalMetadata.source === 'explicit' ? 0.9 : 0.7,
-            created_at: now,
-            last_accessed_at: null,
-            last_reinforced_at: now,
-            access_count: 0,
-            associations: [],
-            status: 'active'
-        };
-        this.localMemories.push(newItem);
-        await this.handleContradiction(newItem);
+        const existing = this.localMemories.find(
+            memory => memory.metadata?.canonical_memory_id === canonicalMemoryId || memory.id === canonicalMemoryId,
+        );
+
+        if (existing) {
+            existing.text = input.text;
+            existing.metadata = { ...existing.metadata, ...finalMetadata };
+            existing.timestamp = now;
+            existing.last_reinforced_at = now;
+        } else {
+            const newItem: MemoryItem = {
+                id: canonicalMemoryId,
+                text: input.text,
+                metadata: finalMetadata,
+                timestamp: now,
+                salience: 0.5,
+                confidence: finalMetadata.source === 'explicit' ? 0.9 : 0.7,
+                created_at: now,
+                last_accessed_at: null,
+                last_reinforced_at: now,
+                access_count: 0,
+                associations: [],
+                status: 'active',
+            };
+            this.localMemories.push(newItem);
+            await this.handleContradiction(newItem);
+        }
+
         this.saveLocal();
 
         if (this.client && RuntimeFlags.ENABLE_MEM0_REMOTE) {
             try {
                 const result = await this.client.callTool({
-                    name: "mem0_add",
-                    arguments: { text, metadata: finalMetadata }
+                    name: 'mem0_add',
+                    arguments: { text: input.text, metadata: finalMetadata },
                 });
                 if (result && result.content && Array.isArray(result.content)) {
                     const textContent = result.content.find((c: any) => c.type === 'text');
-                    if (textContent && textContent.text) {
+                    if (textContent?.text) {
                         try {
                             const parsed = JSON.parse(textContent.text);
                             if (parsed.error) {
                                 console.warn(`[Memory] Remote add reported error: ${parsed.error}`);
                             }
-                        } catch (e) {
-                            // Non-JSON response (legacy compat), ignore
+                        } catch {
+                            // Non-JSON response (legacy compat), ignore.
                         }
                     }
                 }
-            } catch (e) {
-                console.warn("[Memory] Remote add failed");
+            } catch {
+                console.warn('[Memory] Remote add failed');
             }
         }
+
+        TelemetryBus.getInstance().emit({
+            event: 'memory.derived_projection_synced',
+            subsystem: 'memory',
+            executionId: `mem-sync-${Date.now()}`,
+            payload: {
+                canonical_memory_id: canonicalMemoryId,
+                source: input.source,
+            },
+        });
         return true;
     }
     /**
@@ -927,17 +995,35 @@ export class MemoryService {
      * @returns {Promise<boolean>} True if found and deleted, false otherwise.
      */
     public async delete(id: string): Promise<boolean> {
-        return this.deleteByCanonicalMemoryId(id);
+        this._emitBypassBlocked('delete', `legacy delete API called for id=${id}`);
+        throw new Error('[MemoryService] delete() is blocked. Use MemoryAuthorityService.tryTombstoneMemory().');
     }
 
     public async deleteByCanonicalMemoryId(canonicalMemoryId: string): Promise<boolean> {
+        this._emitBypassBlocked('deleteByCanonicalMemoryId', `legacy deleteByCanonicalMemoryId API called for id=${canonicalMemoryId}`);
+        throw new Error('[MemoryService] deleteByCanonicalMemoryId() is blocked. Use removeDerivedProjectionForCanonical().');
+    }
+
+    public async removeDerivedProjectionForCanonical(canonicalMemoryId: string): Promise<boolean> {
+        if (!MemoryService.UUID_RE.test(canonicalMemoryId)) {
+            this._emitBypassBlocked('removeDerivedProjectionForCanonical', `invalid canonical id=${canonicalMemoryId}`);
+            throw new Error(`[MemoryService] Invalid canonical memory ID: ${canonicalMemoryId}`);
+        }
+
+        await this._assertCanonicalRecordState(canonicalMemoryId, ['tombstoned', 'superseded'], 'removeDerivedProjectionForCanonical');
+
         const index = this.localMemories.findIndex(
             memory => memory.metadata?.canonical_memory_id === canonicalMemoryId || memory.id === canonicalMemoryId,
         );
         if (index !== -1) {
             this.localMemories.splice(index, 1);
             this.saveLocal();
-            // TODO: Delete from remote Mem0 when API is available
+            TelemetryBus.getInstance().emit({
+                event: 'memory.derived_projection_removed',
+                subsystem: 'memory',
+                executionId: `mem-delete-${Date.now()}`,
+                payload: { canonical_memory_id: canonicalMemoryId },
+            });
             return true;
         }
         return false;
@@ -950,22 +1036,13 @@ export class MemoryService {
      * @returns {Promise<boolean>} True if found and updated, false otherwise.
      */
     public async update(id: string, text: string): Promise<boolean> {
-        return this.updateByCanonicalMemoryId(id, text);
+        this._emitBypassBlocked('update', `legacy update API called for id=${id}`);
+        throw new Error('[MemoryService] update() is blocked. Use MemoryAuthorityService.tryUpdateCanonicalMemory().');
     }
 
     public async updateByCanonicalMemoryId(canonicalMemoryId: string, text: string): Promise<boolean> {
-        const item = this.localMemories.find(
-            memory => memory.metadata?.canonical_memory_id === canonicalMemoryId || memory.id === canonicalMemoryId,
-        );
-        if (item) {
-            item.text = text;
-            item.timestamp = Date.now();
-            item.last_reinforced_at = Date.now();
-            this.saveLocal();
-            // TODO: Update remote Mem0 when API is available
-            return true;
-        }
-        return false;
+        this._emitBypassBlocked('updateByCanonicalMemoryId', `legacy updateByCanonicalMemoryId API called for id=${canonicalMemoryId}`);
+        throw new Error('[MemoryService] updateByCanonicalMemoryId() is blocked. Use syncDerivedProjectionFromCanonical().');
     }
 
     /**

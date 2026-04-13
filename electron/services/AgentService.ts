@@ -3718,7 +3718,13 @@ Failure to provide a tool call will result in system termination.`;
                         const memId = canonicalMemoryId;
                         // FIX 5: Mode Persistence Writeback Correctness
                         // We use the activeMode captured at the top of the turn (line 1512)
-                        await this.memory.add(memEntry, { source: 'conversation', category: 'interaction', mem_id: memId, canonical_memory_id: canonicalMemoryId }, activeMode);
+                        await this.memory.syncDerivedProjectionFromCanonical({
+                            canonicalMemoryId,
+                            text: memEntry,
+                            metadata: { source: 'conversation', category: 'interaction', mem_id: memId },
+                            mode: activeMode,
+                            source: 'conversation',
+                        });
                         console.log(`[AgentService] Stored interaction to Mem0 (${memId}) under mode: ${activeMode}`);
                         // Phase 3A: emit post-turn memory write telemetry
                         telemetry.operational(
@@ -4851,7 +4857,13 @@ Failure to provide a tool call will result in system termination.`;
             return false;
         }
 
-        return this.memory.add(text, { canonical_memory_id: canonicalMemoryId, source: 'explicit' }, mode);
+        return this.memory.syncDerivedProjectionFromCanonical({
+            canonicalMemoryId,
+            text,
+            metadata: { source: 'explicit' },
+            mode,
+            source: 'explicit',
+        });
     }
 
     public async getAllMemories() {
@@ -4878,7 +4890,7 @@ Failure to provide a tool call will result in system termination.`;
             return false;
         }
 
-        await this.memory.deleteByCanonicalMemoryId(id);
+        await this.memory.removeDerivedProjectionForCanonical(id);
         return true;
     }
 
@@ -4905,7 +4917,13 @@ Failure to provide a tool call will result in system termination.`;
             return false;
         }
 
-        await this.memory.updateByCanonicalMemoryId(id, text);
+        await this.memory.syncDerivedProjectionFromCanonical({
+            canonicalMemoryId: id,
+            text,
+            metadata: { source: 'explicit' },
+            mode: getActiveMode(this.settingsPath, 'AgentService.updateMemory'),
+            source: 'explicit',
+        });
         return true;
     }
 

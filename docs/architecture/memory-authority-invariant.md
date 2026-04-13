@@ -4,6 +4,8 @@
 - PostgreSQL `memory_records` is Tala's only canonical durable memory authority.
 - No memory is authoritative unless accepted and committed to canonical Postgres with a canonical `memory_id`.
 - mem0, graph, vectors, summaries, caches, and retrieval projections are derived layers only.
+- `MemoryAuthorityService` is the only allowed durable mutation boundary.
+- `MemoryService` is hard-locked against legacy durable mutation APIs (`add`, `update`, `delete`).
 
 ## Lifecycle
 1. Event observed.
@@ -17,6 +19,7 @@ Rejected or deferred candidates must not be surfaced as durable truth.
 ## Enforcement
 - Durable memory writes must go through `MemoryAuthorityService`.
 - Derived writes require canonical anchors (`canonical_memory_id`).
+- `MemoryService` derived mutation surfaces are canonical-status validated and scoped to projection sync/removal only.
 - Tombstones originate from canonical state and propagate outward.
 - Authoritative recall must resolve to canonical IDs.
 - Derived layers are rebuildable from canonical Postgres state.

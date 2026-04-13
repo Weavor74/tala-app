@@ -273,4 +273,5 @@ shared/memory/authorityTypes.ts
 - mem0, graph, and RAG are **derived** — they cannot originate authoritative memory
 - Duplicate detection runs **before** every canonical commit
 - Tombstoned records are **never** deleted — required for lineage integrity and rebuild
+- `MemoryService` legacy mutation APIs are blocked; only canonical-anchored derived projection sync/removal is allowed.
 
