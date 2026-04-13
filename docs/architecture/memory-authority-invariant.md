@@ -23,4 +23,15 @@ Rejected or deferred candidates must not be surfaced as durable truth.
 
 ## Operational Checks
 - Integrity validation detects orphan projections, stale projections, duplicate canonical conflicts, and tombstone violations.
-- Rebuild flows regenerate mem0/graph/vector projection plans from canonical state.
+- Rebuild flows execute canonical-to-derived synchronization for `mem0`, `graph`, and `vector` projection metadata in `memory_projections`.
+- Rebuild supports scoped execution by canonical ID, canonical ID list, stale-only mode, and full rebuild mode.
+- Tombstoned/superseded canonical records are propagated as stale derived projections and are never restored as active truth.
+
+## Current Rebuild Coverage
+- Executable now:
+  - `memory_projections` synchronization for `mem0`, `graph`, and `vector`
+  - stale marker clearing on successful projection synchronization
+  - tombstone/superseded propagation to derived projection state
+- Still no-op/reporting only:
+  - external adapter writes beyond `memory_projections` metadata (for example, external vector service writes)
+  - non-existent derived sinks that do not yet have concrete repository writers

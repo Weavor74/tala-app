@@ -311,13 +311,43 @@ export interface IntegrityReport {
 // RebuildReport — result of rebuildDerivedState()
 // ---------------------------------------------------------------------------
 
+export interface RebuildRequest {
+    /** Rebuild only one canonical memory ID. */
+    canonicalMemoryId?: string;
+    /** Rebuild an explicit list of canonical memory IDs. */
+    canonicalMemoryIds?: string[];
+    /** Rebuild only items that are stale/missing/out-of-sync in derived projections. */
+    staleOnly?: boolean;
+    /** Rebuild all canonical records, including tombstoned ones for propagation. */
+    fullRebuild?: boolean;
+}
+
+export interface RebuildFailure {
+    memory_id: string;
+    target_system: ProjectionTargetSystem;
+    reason: string;
+}
+
+export interface RebuildScopeSummary {
+    canonical_memory_ids: string[] | 'all';
+    stale_only: boolean;
+    full_rebuild: boolean;
+}
+
 export interface RebuildReport {
     run_at: string;             // ISO-8601
+    request_scope: RebuildScopeSummary;
     canonical_records_read: number;
-    /** Actions that would be taken (or were taken) to rebuild derived systems */
+    canonical_ids_processed: string[];
+    /** Actions taken (or skipped) during derived rebuild execution */
     actions: RebuildAction[];
+    projections_rebuilt: number;
+    projections_skipped: number;
+    failures: RebuildFailure[];
+    partial_failure: boolean;
     /** Any records that could not be reached / had errors */
     unreachable_count: number;
+    duration_ms: number;
 }
 
 export interface RebuildAction {

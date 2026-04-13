@@ -251,8 +251,13 @@ AgentService.storeMemories()
 `MemoryAuthorityService.rebuildDerivedState()`:
 
 - Reads all non-tombstoned canonical records in batches of 200
-- Identifies which derived system projections are missing or stale
-- Logs rebuild actions without performing them (full implementation deferred)
+- Can scope execution by:
+  - single `canonicalMemoryId`
+  - `canonicalMemoryIds` list
+  - `staleOnly`
+  - `fullRebuild`
+- Rebuilds derived projection state by synchronizing `memory_projections` rows from canonical `memory_records`
+- Marks tombstoned/superseded canonical memories as stale in derived projections (never active)
 - Verifies no canonical records have NULL content_text (unreachable)
 
 ### Service Location

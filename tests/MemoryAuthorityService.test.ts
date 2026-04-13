@@ -356,6 +356,7 @@ describe('MemoryAuthorityService', () => {
                                     subject_id: 'turn-1',
                                     version: 1,
                                     authority_status: 'canonical',
+                                    content_text: 'canonical rebuild source',
                                 }],
                             });
                         }
