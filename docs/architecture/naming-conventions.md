@@ -594,3 +594,21 @@ These canonical names are approved reference patterns for Tala self-modification
 - Workflow: `memory_repair_cycle`
 - Workflow: `docs_selfheal`
 - Automation artifact: `reflection-daily-health-check`
+
+### 18.7 Telemetry event catalog and payload examples
+
+- Event catalog/resolver module: `TelemetryExecutionGroupResolver`
+- Event grouping function: `deriveExecutionGroupsByExecutionId()`
+- Duration payload derivation: `deriveDurationMsFromEvents()`
+- Failure payload derivation: `deriveFailureReasonFromEvents()`
+- Filter function: `selectExecutionGroups()`
+- Payload field examples: `durationMs`, `failureReason`, `executionId`, `startedAt`
+
+### 18.8 Execution and policy-gate examples
+
+- Execution factory module: `ExecutionRuntimeFactory`
+- Phase transition function: `updateExecutionStatePhase()`
+- Terminal transition function: `setExecutionTerminalState()`
+- Policy config factory: `buildDefaultGuardrailPolicyConfig()`
+- Execution state holder: `ExecutionStateStore`
+- Runtime policy enforcer: `PolicyGate`

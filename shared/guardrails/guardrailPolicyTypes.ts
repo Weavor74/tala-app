@@ -317,7 +317,7 @@ export interface GuardrailPolicyConfig {
  * Creates a minimal valid GuardrailPolicyConfig with three built-in profiles
  * and no rules. Use this to initialise a new config in DEFAULT_SETTINGS.
  */
-export function makeDefaultGuardrailPolicyConfig(): GuardrailPolicyConfig {
+export function buildDefaultGuardrailPolicyConfig(): GuardrailPolicyConfig {
     const now = new Date().toISOString();
     return {
         version: 1,
@@ -426,3 +426,4 @@ export const VALIDATOR_PROVIDER_REGISTRY: ValidatorProviderMeta[] = [
         optionalFields: ['timeoutMs', 'failOpen', 'priority'],
     },
 ];
+

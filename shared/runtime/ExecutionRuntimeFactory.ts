@@ -1,5 +1,5 @@
 /**
- * executionHelpers.ts — Shared Runtime Execution Factory Helpers
+ * ExecutionRuntimeFactory.ts — Shared Runtime Execution Factory Helpers
  *
  * Lightweight factory functions for creating canonical execution contracts.
  * Keeps construction logic DRY across callers that produce ExecutionRequest
@@ -101,7 +101,7 @@ export function createInitialExecutionState(
  * Returns a shallow copy of `state` with `status`, `phase`, and `updatedAt` updated.
  * Use this for mid-execution phase transitions.
  */
-export function advanceExecutionState(
+export function updateExecutionStatePhase(
     state: ExecutionState,
     status: RuntimeExecutionStatus,
     phase: string
@@ -113,7 +113,7 @@ export function advanceExecutionState(
  * Returns a shallow copy of `state` marked as terminal (completed or failed).
  * Sets `completedAt` and `updatedAt` to the current instant.
  */
-export function finalizeExecutionState(
+export function setExecutionTerminalState(
     state: ExecutionState,
     outcome: {
         status: RuntimeExecutionStatus;
@@ -133,3 +133,4 @@ export function finalizeExecutionState(
         ...(outcome.blockedReason !== undefined ? { blockedReason: outcome.blockedReason } : {}),
     };
 }
+

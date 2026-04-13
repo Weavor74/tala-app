@@ -1,5 +1,5 @@
 /**
- * telemetryEventUtils.ts
+ * TelemetryExecutionGroupResolver.ts
  *
  * Pure utility functions for grouping and analyzing RuntimeEvent arrays
  * from the TelemetryBus ring buffer.
@@ -97,7 +97,7 @@ export function getTerminalState(events: RuntimeEvent[]): ExecutionTerminalState
  * Returns the durationMs from the terminal event payload, if present.
  * Looks from the end of the list (terminal events carry durationMs).
  */
-export function extractDurationMs(events: RuntimeEvent[]): number | undefined {
+export function deriveDurationMsFromEvents(events: RuntimeEvent[]): number | undefined {
     for (let i = events.length - 1; i >= 0; i--) {
         const verb = events[i].event.split('.').pop() ?? '';
         if (TERMINAL_VERBS.has(verb) || verb === 'finalizing') {
@@ -111,7 +111,7 @@ export function extractDurationMs(events: RuntimeEvent[]): number | undefined {
 /**
  * Returns the failureReason from the failed event payload, if present.
  */
-export function extractFailureReason(events: RuntimeEvent[]): string | undefined {
+export function deriveFailureReasonFromEvents(events: RuntimeEvent[]): string | undefined {
     for (let i = events.length - 1; i >= 0; i--) {
         const verb = events[i].event.split('.').pop() ?? '';
         if (verb === 'failed') {
@@ -134,7 +134,7 @@ export function extractFailureReason(events: RuntimeEvent[]): string | undefined
  *
  * This function is pure: it does not mutate the input array.
  */
-export function groupEventsByExecution(events: RuntimeEvent[]): ExecutionGroup[] {
+export function deriveExecutionGroupsByExecutionId(events: RuntimeEvent[]): ExecutionGroup[] {
     // Build a map from executionId → events
     const map = new Map<string, RuntimeEvent[]>();
     for (const ev of events) {
@@ -159,8 +159,8 @@ export function groupEventsByExecution(events: RuntimeEvent[]): ExecutionGroup[]
             startedAt: sorted[0].timestamp,
             lastEventAt: sorted[sorted.length - 1].timestamp,
             terminalState: getTerminalState(sorted),
-            durationMs: extractDurationMs(sorted),
-            failureReason: extractFailureReason(sorted),
+            durationMs: deriveDurationMsFromEvents(sorted),
+            failureReason: deriveFailureReasonFromEvents(sorted),
             events: sorted,
         });
     }
@@ -189,7 +189,7 @@ export const DEFAULT_FILTER: ExecutionGroupFilter = { origin: 'all', state: 'all
  * Applies the given filter to a list of ExecutionGroups.
  * Returns a new array (does not mutate input).
  */
-export function filterGroups(
+export function selectExecutionGroups(
     groups: ExecutionGroup[],
     filter: ExecutionGroupFilter,
 ): ExecutionGroup[] {
@@ -199,3 +199,4 @@ export function filterGroups(
         return true;
     });
 }
+

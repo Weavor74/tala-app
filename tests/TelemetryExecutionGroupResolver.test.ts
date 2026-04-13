@@ -1,17 +1,17 @@
 /**
- * TelemetryEventUtils.test.ts
+ * TelemetryExecutionGroupResolver.test.ts
  *
  * Unit tests for the pure grouping, filtering, and derivation helpers in
- * src/renderer/utils/telemetryEventUtils.ts.
+ * src/renderer/utils/TelemetryExecutionGroupResolver.ts.
  *
  * Test groups:
  *   TEU1  getEventOrigin         — chat / autonomy / unknown classification
  *   TEU2  getGroupOrigin         — dominant origin for a group of events
  *   TEU3  getTerminalState       — completed / failed / in_progress
- *   TEU4  extractDurationMs      — durationMs from terminal-event payload
- *   TEU5  extractFailureReason   — failureReason from failed-event payload
- *   TEU6  groupEventsByExecution — grouping, ordering, sorting
- *   TEU7  filterGroups           — origin and state filtering
+ *   TEU4  deriveDurationMsFromEvents      — durationMs from terminal-event payload
+ *   TEU5  deriveFailureReasonFromEvents   — failureReason from failed-event payload
+ *   TEU6  deriveExecutionGroupsByExecutionId — grouping, ordering, sorting
+ *   TEU7  selectExecutionGroups           — origin and state filtering
  *   TEU8  mixed schema           — chat and autonomy events co-exist in one list
  */
 
@@ -20,12 +20,12 @@ import {
     getEventOrigin,
     getGroupOrigin,
     getTerminalState,
-    extractDurationMs,
-    extractFailureReason,
-    groupEventsByExecution,
-    filterGroups,
+    deriveDurationMsFromEvents,
+    deriveFailureReasonFromEvents,
+    deriveExecutionGroupsByExecutionId,
+    selectExecutionGroups,
     DEFAULT_FILTER,
-} from '../src/renderer/utils/telemetryEventUtils';
+} from '../src/renderer/utils/TelemetryExecutionGroupResolver';
 import type { RuntimeEvent } from '../shared/runtimeEventTypes';
 
 // ─── Factories ────────────────────────────────────────────────────────────────
@@ -153,58 +153,58 @@ describe('TEU3: getTerminalState', () => {
     });
 });
 
-// ─── TEU4: extractDurationMs ──────────────────────────────────────────────────
+// ─── TEU4: deriveDurationMsFromEvents ──────────────────────────────────────────────────
 
-describe('TEU4: extractDurationMs', () => {
+describe('TEU4: deriveDurationMsFromEvents', () => {
     it('extracts durationMs from execution.completed payload', () => {
-        expect(extractDurationMs(makeChatLifecycle('x'))).toBe(310);
+        expect(deriveDurationMsFromEvents(makeChatLifecycle('x'))).toBe(310);
     });
 
     it('extracts durationMs from execution.failed payload when present', () => {
         const events = [
             makeEvent({ event: 'execution.failed', payload: { durationMs: 75, failureReason: 'oops' } }),
         ];
-        expect(extractDurationMs(events)).toBe(75);
+        expect(deriveDurationMsFromEvents(events)).toBe(75);
     });
 
     it('returns undefined when no terminal event has durationMs', () => {
         const events = [makeEvent({ event: 'execution.created' })];
-        expect(extractDurationMs(events)).toBeUndefined();
+        expect(deriveDurationMsFromEvents(events)).toBeUndefined();
     });
 
     it('prefers terminal event over finalizing event', () => {
         // Both finalizing (210ms) and completed (310ms) carry durationMs;
         // completed is later so it should win (scan from end).
-        expect(extractDurationMs(makeChatLifecycle('x'))).toBe(310);
+        expect(deriveDurationMsFromEvents(makeChatLifecycle('x'))).toBe(310);
     });
 });
 
-// ─── TEU5: extractFailureReason ───────────────────────────────────────────────
+// ─── TEU5: deriveFailureReasonFromEvents ───────────────────────────────────────────────
 
-describe('TEU5: extractFailureReason', () => {
+describe('TEU5: deriveFailureReasonFromEvents', () => {
     it('returns failureReason from failed event', () => {
-        expect(extractFailureReason(makeFailedLifecycle('x'))).toBe('inference timeout');
+        expect(deriveFailureReasonFromEvents(makeFailedLifecycle('x'))).toBe('inference timeout');
     });
 
     it('returns undefined when no failed event is present', () => {
-        expect(extractFailureReason(makeChatLifecycle('x'))).toBeUndefined();
+        expect(deriveFailureReasonFromEvents(makeChatLifecycle('x'))).toBeUndefined();
     });
 
     it('returns undefined when failed event has no failureReason', () => {
         const events = [makeEvent({ event: 'execution.failed', payload: {} })];
-        expect(extractFailureReason(events)).toBeUndefined();
+        expect(deriveFailureReasonFromEvents(events)).toBeUndefined();
     });
 });
 
-// ─── TEU6: groupEventsByExecution ────────────────────────────────────────────
+// ─── TEU6: deriveExecutionGroupsByExecutionId ────────────────────────────────────────────
 
-describe('TEU6: groupEventsByExecution', () => {
+describe('TEU6: deriveExecutionGroupsByExecutionId', () => {
     it('produces one group per executionId', () => {
         const events = [
             ...makeChatLifecycle('exec-1', 0),
             ...makeAutonomyLifecycle('exec-2', 10_000),
         ];
-        const groups = groupEventsByExecution(events);
+        const groups = deriveExecutionGroupsByExecutionId(events);
         expect(groups).toHaveLength(2);
     });
 
@@ -212,7 +212,7 @@ describe('TEU6: groupEventsByExecution', () => {
         // Supply events in reverse order for exec-1
         const chatEvents = makeChatLifecycle('exec-1');
         const shuffled = [...chatEvents].reverse();
-        const groups = groupEventsByExecution(shuffled);
+        const groups = deriveExecutionGroupsByExecutionId(shuffled);
         const g = groups.find((x) => x.executionId === 'exec-1')!;
         expect(g.events[0].event).toBe('execution.created');
         expect(g.events[g.events.length - 1].event).toBe('execution.completed');
@@ -223,7 +223,7 @@ describe('TEU6: groupEventsByExecution', () => {
             ...makeChatLifecycle('exec-old', 0),
             ...makeAutonomyLifecycle('exec-new', 100_000),
         ];
-        const groups = groupEventsByExecution(events);
+        const groups = deriveExecutionGroupsByExecutionId(events);
         expect(groups[0].executionId).toBe('exec-new');
         expect(groups[1].executionId).toBe('exec-old');
     });
@@ -233,7 +233,7 @@ describe('TEU6: groupEventsByExecution', () => {
             ...makeChatLifecycle('exec-ok', 0),
             ...makeFailedLifecycle('exec-fail', 10_000),
         ];
-        const groups = groupEventsByExecution(events);
+        const groups = deriveExecutionGroupsByExecutionId(events);
         const ok   = groups.find((g) => g.executionId === 'exec-ok')!;
         const fail = groups.find((g) => g.executionId === 'exec-fail')!;
         expect(ok.terminalState).toBe('completed');
@@ -241,30 +241,30 @@ describe('TEU6: groupEventsByExecution', () => {
     });
 
     it('sets durationMs on each group from terminal event payload', () => {
-        const groups = groupEventsByExecution(makeChatLifecycle('exec-dur'));
+        const groups = deriveExecutionGroupsByExecutionId(makeChatLifecycle('exec-dur'));
         expect(groups[0].durationMs).toBe(310);
     });
 
     it('sets failureReason on failed groups', () => {
-        const groups = groupEventsByExecution(makeFailedLifecycle('exec-f'));
+        const groups = deriveExecutionGroupsByExecutionId(makeFailedLifecycle('exec-f'));
         expect(groups[0].failureReason).toBe('inference timeout');
     });
 
     it('does not mutate the input array', () => {
         const events = makeChatLifecycle('exec-immut');
         const len = events.length;
-        groupEventsByExecution(events);
+        deriveExecutionGroupsByExecutionId(events);
         expect(events).toHaveLength(len);
     });
 
     it('returns empty array for empty input', () => {
-        expect(groupEventsByExecution([])).toEqual([]);
+        expect(deriveExecutionGroupsByExecutionId([])).toEqual([]);
     });
 });
 
-// ─── TEU7: filterGroups ───────────────────────────────────────────────────────
+// ─── TEU7: selectExecutionGroups ───────────────────────────────────────────────────────
 
-describe('TEU7: filterGroups', () => {
+describe('TEU7: selectExecutionGroups', () => {
     const events = [
         ...makeChatLifecycle('exec-chat-ok',   0),
         ...makeAutonomyLifecycle('exec-auto-ok', 10_000),
@@ -272,49 +272,49 @@ describe('TEU7: filterGroups', () => {
     ];
 
     it('DEFAULT_FILTER returns all groups', () => {
-        const groups = groupEventsByExecution(events);
-        expect(filterGroups(groups, DEFAULT_FILTER)).toHaveLength(3);
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        expect(selectExecutionGroups(groups, DEFAULT_FILTER)).toHaveLength(3);
     });
 
     it('origin=chat returns only chat groups', () => {
-        const groups = groupEventsByExecution(events);
-        const filtered = filterGroups(groups, { origin: 'chat', state: 'all' });
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        const filtered = selectExecutionGroups(groups, { origin: 'chat', state: 'all' });
         expect(filtered).toHaveLength(2);
         expect(filtered.every((g) => g.origin === 'chat')).toBe(true);
     });
 
     it('origin=autonomy returns only autonomy groups', () => {
-        const groups = groupEventsByExecution(events);
-        const filtered = filterGroups(groups, { origin: 'autonomy', state: 'all' });
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        const filtered = selectExecutionGroups(groups, { origin: 'autonomy', state: 'all' });
         expect(filtered).toHaveLength(1);
         expect(filtered[0].origin).toBe('autonomy');
     });
 
     it('state=failed returns only failed groups', () => {
-        const groups = groupEventsByExecution(events);
-        const filtered = filterGroups(groups, { origin: 'all', state: 'failed' });
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        const filtered = selectExecutionGroups(groups, { origin: 'all', state: 'failed' });
         expect(filtered).toHaveLength(1);
         expect(filtered[0].terminalState).toBe('failed');
     });
 
     it('state=completed returns only completed groups', () => {
-        const groups = groupEventsByExecution(events);
-        const filtered = filterGroups(groups, { origin: 'all', state: 'completed' });
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        const filtered = selectExecutionGroups(groups, { origin: 'all', state: 'completed' });
         expect(filtered).toHaveLength(2);
         expect(filtered.every((g) => g.terminalState === 'completed')).toBe(true);
     });
 
     it('combined origin+state filter works', () => {
-        const groups = groupEventsByExecution(events);
-        const filtered = filterGroups(groups, { origin: 'chat', state: 'failed' });
+        const groups = deriveExecutionGroupsByExecutionId(events);
+        const filtered = selectExecutionGroups(groups, { origin: 'chat', state: 'failed' });
         expect(filtered).toHaveLength(1);
         expect(filtered[0].executionId).toBe('exec-chat-fail');
     });
 
     it('does not mutate the input groups array', () => {
-        const groups = groupEventsByExecution(events);
+        const groups = deriveExecutionGroupsByExecutionId(events);
         const len = groups.length;
-        filterGroups(groups, { origin: 'chat', state: 'all' });
+        selectExecutionGroups(groups, { origin: 'chat', state: 'all' });
         expect(groups).toHaveLength(len);
     });
 });
@@ -323,8 +323,8 @@ describe('TEU7: filterGroups', () => {
 
 describe('TEU8: mixed chat+autonomy schema parity', () => {
     it('chat and autonomy events produce identically shaped ExecutionGroups', () => {
-        const chatGroup   = groupEventsByExecution(makeChatLifecycle('exec-c'))[0];
-        const autoGroup   = groupEventsByExecution(makeAutonomyLifecycle('exec-a'))[0];
+        const chatGroup   = deriveExecutionGroupsByExecutionId(makeChatLifecycle('exec-c'))[0];
+        const autoGroup   = deriveExecutionGroupsByExecutionId(makeAutonomyLifecycle('exec-a'))[0];
 
         // Both have all required fields
         expect(typeof chatGroup.executionId).toBe('string');
@@ -347,7 +347,7 @@ describe('TEU8: mixed chat+autonomy schema parity', () => {
             if (chatEvents[i]) interleaved.push(chatEvents[i]);
             if (autoEvents[i]) interleaved.push(autoEvents[i]);
         }
-        const groups = groupEventsByExecution(interleaved);
+        const groups = deriveExecutionGroupsByExecutionId(interleaved);
         expect(groups).toHaveLength(2);
         const c = groups.find((g) => g.executionId === 'exec-c')!;
         const a = groups.find((g) => g.executionId === 'exec-a')!;
@@ -358,3 +358,4 @@ describe('TEU8: mixed chat+autonomy schema parity', () => {
         expect(a.events.every((e) => e.executionId === 'exec-a')).toBe(true);
     });
 });
+

@@ -20,6 +20,7 @@ export type {
 export {
     createExecutionRequest,
     createInitialExecutionState,
-    advanceExecutionState,
-    finalizeExecutionState,
-} from './executionHelpers';
+    updateExecutionStatePhase,
+    setExecutionTerminalState,
+} from './ExecutionRuntimeFactory';
+

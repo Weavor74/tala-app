@@ -19,7 +19,14 @@
       "selectMemoryByAuthority",
       "assertMemoryWriteAnchoredToAuthority",
       "executeRepairCampaign",
-      "scheduleRepairTick"
+      "scheduleRepairTick",
+      "deriveExecutionGroupsByExecutionId",
+      "deriveDurationMsFromEvents",
+      "deriveFailureReasonFromEvents",
+      "selectExecutionGroups",
+      "updateExecutionStatePhase",
+      "setExecutionTerminalState",
+      "buildDefaultGuardrailPolicyConfig"
     ],
     "events": [
       "execution.created",
@@ -51,6 +58,18 @@
       ],
       "automationArtifacts": [
         "reflection-daily-health-check"
+      ]
+    },
+    "telemetryExecutionPolicyModules": {
+      "telemetry": [
+        "TelemetryExecutionGroupResolver"
+      ],
+      "execution": [
+        "ExecutionRuntimeFactory",
+        "ExecutionStateStore"
+      ],
+      "policy": [
+        "PolicyGate"
       ]
     }
   }

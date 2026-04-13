@@ -4,7 +4,7 @@
  * Unit tests for the GuardrailPolicyConfig model.
  *
  * Validates:
- *   - makeDefaultGuardrailPolicyConfig() produces a valid, serialisable config.
+ *   - buildDefaultGuardrailPolicyConfig() produces a valid, serialisable config.
  *   - All required fields are populated in the default config.
  *   - The default config has three built-in profiles.
  *   - GuardrailPolicyConfig is round-trip serialisable through JSON.
@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    makeDefaultGuardrailPolicyConfig,
+    buildDefaultGuardrailPolicyConfig,
     VALIDATOR_PROVIDER_REGISTRY,
     type GuardrailPolicyConfig,
     type GuardrailProfile,
@@ -60,26 +60,26 @@ function makeBinding(overrides: Partial<ValidatorBinding> = {}): ValidatorBindin
     };
 }
 
-// ─── makeDefaultGuardrailPolicyConfig() ──────────────────────────────────────
+// ─── buildDefaultGuardrailPolicyConfig() ──────────────────────────────────────
 
-describe('makeDefaultGuardrailPolicyConfig()', () => {
+describe('buildDefaultGuardrailPolicyConfig()', () => {
     it('GPT1: returns a config with version=1', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(cfg.version).toBe(1);
     });
 
     it('GPT2: has activeProfileId set to "balanced"', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(cfg.activeProfileId).toBe('balanced');
     });
 
     it('GPT3: has exactly three built-in profiles', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(cfg.profiles).toHaveLength(3);
     });
 
     it('GPT4: profile IDs are permissive, balanced, locked_down', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         const ids = cfg.profiles.map(p => p.id);
         expect(ids).toContain('permissive');
         expect(ids).toContain('balanced');
@@ -87,37 +87,37 @@ describe('makeDefaultGuardrailPolicyConfig()', () => {
     });
 
     it('GPT5: all built-in profiles have readonly=true', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         for (const p of cfg.profiles) {
             expect(p.readonly).toBe(true);
         }
     });
 
     it('GPT6: all profiles start with empty ruleIds', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         for (const p of cfg.profiles) {
             expect(p.ruleIds).toEqual([]);
         }
     });
 
     it('GPT7: rules array starts empty', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(cfg.rules).toEqual([]);
     });
 
     it('GPT8: validatorBindings array starts empty', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(cfg.validatorBindings).toEqual([]);
     });
 
     it('GPT9: updatedAt is a valid ISO-8601 timestamp', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         expect(() => new Date(cfg.updatedAt)).not.toThrow();
         expect(new Date(cfg.updatedAt).toISOString()).toBe(cfg.updatedAt);
     });
 
     it('GPT10: all profiles have non-empty name and description', () => {
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         for (const p of cfg.profiles) {
             expect(p.name.length).toBeGreaterThan(0);
             expect(p.description!.length).toBeGreaterThan(0);
@@ -129,7 +129,7 @@ describe('makeDefaultGuardrailPolicyConfig()', () => {
 
 describe('GuardrailPolicyConfig — JSON round-trip', () => {
     it('GPT11: default config survives JSON.stringify → JSON.parse unchanged', () => {
-        const original = makeDefaultGuardrailPolicyConfig();
+        const original = buildDefaultGuardrailPolicyConfig();
         const roundTripped: GuardrailPolicyConfig = JSON.parse(JSON.stringify(original));
         expect(roundTripped).toEqual(original);
     });
@@ -138,7 +138,7 @@ describe('GuardrailPolicyConfig — JSON round-trip', () => {
         const rule = makeRule();
         const binding = makeBinding();
         const cfg: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [{ ...rule, validatorBindings: [binding] }],
             validatorBindings: [binding],
         };
@@ -152,10 +152,10 @@ describe('GuardrailPolicyConfig — JSON round-trip', () => {
     it('GPT13: profiles survive round-trip with ruleIds', () => {
         const rule = makeRule();
         const cfg: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [rule],
             profiles: [
-                ...makeDefaultGuardrailPolicyConfig().profiles.map(p =>
+                ...buildDefaultGuardrailPolicyConfig().profiles.map(p =>
                     p.id === 'balanced' ? { ...p, ruleIds: [rule.id] } : p
                 ),
             ],
@@ -345,3 +345,4 @@ describe('VALIDATOR_PROVIDER_REGISTRY', () => {
         }
     });
 });
+

@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PolicyGate, PolicyDeniedError } from '../electron/services/policy/PolicyGate';
 import { ValidatorRegistry } from '../electron/services/guardrails/ValidatorRegistry';
 import { TelemetryBus } from '../electron/services/telemetry/TelemetryBus';
-import { makeDefaultGuardrailPolicyConfig } from '../shared/guardrails/guardrailPolicyTypes';
+import { buildDefaultGuardrailPolicyConfig } from '../shared/guardrails/guardrailPolicyTypes';
 import type {
     GuardrailPolicyConfig,
     GuardrailRule,
@@ -674,14 +674,14 @@ describe('Telemetry events', () => {
 describe('No regression with default permissive profile', () => {
     it('PGI34: default GuardrailPolicyConfig (balanced) with no rules → allow all non-rp', async () => {
         const { gate } = makePolicyGate();
-        gate.setConfig(makeDefaultGuardrailPolicyConfig());
+        gate.setConfig(buildDefaultGuardrailPolicyConfig());
         const result = await gate.evaluateAsync({ action: 'tool_invoke', mode: 'assistant' });
         expect(result.allowed).toBe(true);
     });
 
     it('PGI35: default config with no rules → allows tool_invoke, memory_write, etc.', async () => {
         const { gate } = makePolicyGate();
-        gate.setConfig(makeDefaultGuardrailPolicyConfig());
+        gate.setConfig(buildDefaultGuardrailPolicyConfig());
         for (const action of ['tool_invoke', 'memory_write', 'workflow_action', 'autonomy_action']) {
             const result = await gate.evaluateAsync({ action, mode: 'assistant' });
             expect(result.allowed).toBe(true);
@@ -777,7 +777,7 @@ describe('Hardcoded rules fire first even when config is set', () => {
 
     it('PGI43: autonomy_action in rp mode blocked by hardcoded rule regardless of config', async () => {
         const { gate } = makePolicyGate();
-        gate.setConfig(makeDefaultGuardrailPolicyConfig());
+        gate.setConfig(buildDefaultGuardrailPolicyConfig());
         const result = await gate.evaluateAsync({ action: 'autonomy_action', mode: 'rp' });
         expect(result.allowed).toBe(false);
         expect(result.code).toBe('POLICY_AUTONOMY_RP_BLOCK');
@@ -790,3 +790,4 @@ describe('Hardcoded rules fire first even when config is set', () => {
         ).toThrow(PolicyDeniedError);
     });
 });
+

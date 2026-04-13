@@ -25,9 +25,9 @@ import { ExecutionStateStore } from '../electron/services/kernel/ExecutionStateS
 import {
     createExecutionRequest,
     createInitialExecutionState,
-    advanceExecutionState,
-    finalizeExecutionState,
-} from '../shared/runtime/executionHelpers';
+    updateExecutionStatePhase,
+    setExecutionTerminalState,
+} from '../shared/runtime/ExecutionRuntimeFactory';
 import type { ExecutionState } from '../shared/runtime/executionTypes';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ describe('ESS1: upsert', () => {
     it('replaces an existing entry', () => {
         const s = makeState();
         store.upsert(s);
-        const advanced = advanceExecutionState(s, 'executing', 'tool_dispatch');
+        const advanced = updateExecutionStatePhase(s, 'executing', 'tool_dispatch');
         store.upsert(advanced);
         expect(store.size).toBe(1);
         expect(store.get(s.executionId)?.status).toBe('executing');
@@ -182,7 +182,7 @@ describe('ESS5: getByStatus', () => {
     it('filters by a single status', () => {
         const a = makeState();
         const b = makeState();
-        const bExecuting = advanceExecutionState(b, 'executing', 'tool_dispatch');
+        const bExecuting = updateExecutionStatePhase(b, 'executing', 'tool_dispatch');
         store.upsert(a);
         store.upsert(bExecuting);
         expect(store.getByStatus('accepted')).toHaveLength(1);
@@ -192,7 +192,7 @@ describe('ESS5: getByStatus', () => {
     it('filters by multiple statuses', () => {
         const a = makeState();
         const b = makeState();
-        const bDone = finalizeExecutionState(b, { status: 'completed' });
+        const bDone = setExecutionTerminalState(b, { status: 'completed' });
         store.upsert(a);
         store.upsert(bDone);
         const results = store.getByStatus('accepted', 'completed');
@@ -269,7 +269,7 @@ describe('ESS8: size', () => {
     it('does not increment on upsert of existing key', () => {
         const s = makeState();
         store.upsert(s);
-        store.upsert(advanceExecutionState(s, 'executing', 'p'));
+        store.upsert(updateExecutionStatePhase(s, 'executing', 'p'));
         expect(store.size).toBe(1);
     });
 
@@ -535,3 +535,4 @@ describe('ESS14: failExecution', () => {
         expect(store.get(s.executionId)?.status).toBe('failed');
     });
 });
+

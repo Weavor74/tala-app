@@ -35,7 +35,7 @@ import type {
     GuardrailValidationResult,
 } from '../electron/services/guardrails/types';
 import type { ValidatorBinding, GuardrailPolicyConfig } from '../shared/guardrails/guardrailPolicyTypes';
-import { makeDefaultGuardrailPolicyConfig } from '../shared/guardrails/guardrailPolicyTypes';
+import { buildDefaultGuardrailPolicyConfig } from '../shared/guardrails/guardrailPolicyTypes';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -546,7 +546,7 @@ describe('OPA response parsing', () => {
 describe('runRuleBindings — config-based rule lookup', () => {
     function makeConfig(ruleBindings: ValidatorBinding[]): GuardrailPolicyConfig {
         const now = new Date().toISOString();
-        const cfg = makeDefaultGuardrailPolicyConfig();
+        const cfg = buildDefaultGuardrailPolicyConfig();
         return {
             ...cfg,
             rules: [{
@@ -588,7 +588,7 @@ describe('runRuleBindings — config-based rule lookup', () => {
         const registry = new ValidatorRegistry();
         const now = new Date().toISOString();
         const cfg: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [{
                 id: 'rule-disabled',
                 name: 'Disabled Rule',
@@ -641,3 +641,4 @@ describe('Custom adapter override', () => {
         expect(result.results[0].validatorName).toBe('My Binding Name');
     });
 });
+

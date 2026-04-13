@@ -20,7 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_SETTINGS, migrateSettings } from '../src/renderer/settingsData';
 import {
-    makeDefaultGuardrailPolicyConfig,
+    buildDefaultGuardrailPolicyConfig,
     type GuardrailPolicyConfig,
     type GuardrailRule,
     type ValidatorBinding,
@@ -110,9 +110,9 @@ describe('migrateSettings() — guardrailPolicy', () => {
     it('GPS7: preserves a valid guardrailPolicy from loaded settings', () => {
         const rule = makeTestRule();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [rule],
-            profiles: makeDefaultGuardrailPolicyConfig().profiles.map(p =>
+            profiles: buildDefaultGuardrailPolicyConfig().profiles.map(p =>
                 p.id === 'balanced' ? { ...p, ruleIds: [rule.id] } : p
             ),
         };
@@ -140,7 +140,7 @@ describe('migrateSettings() — guardrailPolicy', () => {
     it('GPS10: preserves rules array through migration', () => {
         const rule = makeTestRule();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [rule],
         };
         const result = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -152,7 +152,7 @@ describe('migrateSettings() — guardrailPolicy', () => {
         const localBinding = makeLocalBinding();
         const remoteBinding = makeRemoteBinding();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [localBinding, remoteBinding],
         };
         const result = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -171,7 +171,7 @@ describe('Builder save/load — round-trip serialisation', () => {
         const policy: GuardrailPolicyConfig = {
             version: 1,
             activeProfileId: 'locked_down',
-            profiles: makeDefaultGuardrailPolicyConfig().profiles.map(p =>
+            profiles: buildDefaultGuardrailPolicyConfig().profiles.map(p =>
                 p.id === 'locked_down' ? { ...p, ruleIds: [rule.id] } : p
             ),
             rules: [ruleWithBindings],
@@ -192,7 +192,7 @@ describe('Builder save/load — round-trip serialisation', () => {
     it('GPS13: local validator binding fields survive settings round-trip', () => {
         const binding = makeLocalBinding();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [binding],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -206,7 +206,7 @@ describe('Builder save/load — round-trip serialisation', () => {
     it('GPS14: remote validator binding fields survive settings round-trip', () => {
         const binding = makeRemoteBinding();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [binding],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -220,9 +220,9 @@ describe('Builder save/load — round-trip serialisation', () => {
     it('GPS15: profile ruleIds survive settings round-trip', () => {
         const rule = makeTestRule();
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [rule],
-            profiles: makeDefaultGuardrailPolicyConfig().profiles.map(p =>
+            profiles: buildDefaultGuardrailPolicyConfig().profiles.map(p =>
                 p.id === 'balanced' ? { ...p, ruleIds: [rule.id] } : p
             ),
         };
@@ -233,7 +233,7 @@ describe('Builder save/load — round-trip serialisation', () => {
 
     it('GPS16: activeProfileId change survives settings round-trip', () => {
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             activeProfileId: 'locked_down',
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -256,7 +256,7 @@ describe('Builder save/load — round-trip serialisation', () => {
             priority: 2,
         };
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [binding],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -279,7 +279,7 @@ describe('Builder save/load — round-trip serialisation', () => {
             priority: 0,
         };
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [binding],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -301,7 +301,7 @@ describe('Builder save/load — round-trip serialisation', () => {
             priority: 0,
         };
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             validatorBindings: [binding],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
@@ -313,10 +313,11 @@ describe('Builder save/load — round-trip serialisation', () => {
         const rule = makeTestRule();
         const disabled = { ...rule, enabled: false };
         const policy: GuardrailPolicyConfig = {
-            ...makeDefaultGuardrailPolicyConfig(),
+            ...buildDefaultGuardrailPolicyConfig(),
             rules: [disabled],
         };
         const loaded = migrateSettings({ ...DEFAULT_SETTINGS, guardrailPolicy: policy });
         expect(loaded.guardrailPolicy?.rules[0].enabled).toBe(false);
     });
 });
+

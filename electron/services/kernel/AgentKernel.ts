@@ -8,7 +8,7 @@ import type {
     ExecutionRequest,
     ExecutionState,
 } from '../../../shared/runtime/executionTypes';
-import { createInitialExecutionState, createExecutionRequest, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
+import { createInitialExecutionState, createExecutionRequest, setExecutionTerminalState } from '../../../shared/runtime/ExecutionRuntimeFactory';
 import { ExecutionStateStore } from './ExecutionStateStore';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
@@ -335,7 +335,7 @@ export class AgentKernel {
         // Seal the terminal state as 'completed'. Fall back to a freshly-constructed
         // state only in the unlikely case the store entry was evicted externally.
         const executionState = this._stateStore.completeExecution(meta.executionId)
-            ?? finalizeExecutionState(
+            ?? setExecutionTerminalState(
                 createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
                 { status: 'completed' }
             );
@@ -407,3 +407,4 @@ export class AgentKernel {
         }
     }
 }
+

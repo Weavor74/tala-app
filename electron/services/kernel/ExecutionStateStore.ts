@@ -16,12 +16,12 @@
  * - No side-effects: no IPC, no telemetry, no logging from within the store
  *
  * Callers that need to advance execution state should use the helper
- * functions in `shared/runtime/executionHelpers.ts` to produce the updated
+ * functions in `shared/runtime/ExecutionRuntimeFactory.ts` to produce the updated
  * state value, then pass it to upsert().
  */
 
 import type { ExecutionRequest, ExecutionState, RuntimeExecutionStatus } from '../../../shared/runtime/executionTypes';
-import { createInitialExecutionState, advanceExecutionState, finalizeExecutionState } from '../../../shared/runtime/executionHelpers';
+import { createInitialExecutionState, updateExecutionStatePhase, setExecutionTerminalState } from '../../../shared/runtime/ExecutionRuntimeFactory';
 
 // ─── Bounds ───────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ const MAX_STORE_SIZE = 2000;
  * Low-level usage (still supported):
  *   store.upsert(initialState);
  *   const state = store.get(executionId);
- *   store.upsert(advanceExecutionState(state!, 'executing', 'tool_dispatch'));
+ *   store.upsert(updateExecutionStatePhase(state!, 'executing', 'tool_dispatch'));
  *   store.delete(executionId);
  */
 export class ExecutionStateStore {
@@ -158,7 +158,7 @@ export class ExecutionStateStore {
     advancePhase(executionId: string, status: RuntimeExecutionStatus, phase: string): ExecutionState | undefined {
         const current = this._store.get(executionId);
         if (!current) return undefined;
-        const updated = advanceExecutionState(current, status, phase);
+        const updated = updateExecutionStatePhase(current, status, phase);
         this._store.set(executionId, structuredClone(updated));
         return structuredClone(updated);
     }
@@ -178,7 +178,7 @@ export class ExecutionStateStore {
     ): ExecutionState | undefined {
         const current = this._store.get(executionId);
         if (!current) return undefined;
-        const finalized = finalizeExecutionState(current, { status: 'completed', ...outcome });
+        const finalized = setExecutionTerminalState(current, { status: 'completed', ...outcome });
         this._store.set(executionId, structuredClone(finalized));
         return structuredClone(finalized);
     }
@@ -195,7 +195,7 @@ export class ExecutionStateStore {
     blockExecution(executionId: string, reason: string): ExecutionState | undefined {
         const current = this._store.get(executionId);
         if (!current) return undefined;
-        const finalized = finalizeExecutionState(current, { status: 'blocked', blockedReason: reason });
+        const finalized = setExecutionTerminalState(current, { status: 'blocked', blockedReason: reason });
         this._store.set(executionId, structuredClone(finalized));
         return structuredClone(finalized);
     }
@@ -212,7 +212,7 @@ export class ExecutionStateStore {
     failExecution(executionId: string, reason: string): ExecutionState | undefined {
         const current = this._store.get(executionId);
         if (!current) return undefined;
-        const finalized = finalizeExecutionState(current, { status: 'failed', failureReason: reason });
+        const finalized = setExecutionTerminalState(current, { status: 'failed', failureReason: reason });
         this._store.set(executionId, structuredClone(finalized));
         return structuredClone(finalized);
     }
@@ -244,3 +244,4 @@ export class ExecutionStateStore {
         return this._store.size;
     }
 }
+

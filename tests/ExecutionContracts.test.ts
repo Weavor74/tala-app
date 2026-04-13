@@ -7,8 +7,8 @@
  *   EC1  ExecutionType, Origin, Mode, Status shape correctness
  *   EC2  createExecutionRequest factory
  *   EC3  createInitialExecutionState factory
- *   EC4  advanceExecutionState immutability and transition
- *   EC5  finalizeExecutionState terminal marking
+ *   EC4  updateExecutionStatePhase immutability and transition
+ *   EC5  setExecutionTerminalState terminal marking
  *   EC6  AutonomousRun runtime vocabulary stamps
  *   EC7  PlanRun runtime vocabulary stamp
  *   EC8  AgentKernel request forwarding via KernelRequest fields
@@ -32,9 +32,9 @@ import type {
 import {
     createExecutionRequest,
     createInitialExecutionState,
-    advanceExecutionState,
-    finalizeExecutionState,
-} from '../shared/runtime/executionHelpers';
+    updateExecutionStatePhase,
+    setExecutionTerminalState,
+} from '../shared/runtime/ExecutionRuntimeFactory';
 import type { AutonomousRun } from '../shared/autonomyTypes';
 import type { PlanRun } from '../shared/reflectionPlanTypes';
 import { AgentKernel } from '../electron/services/kernel/AgentKernel';
@@ -205,13 +205,13 @@ describe('EC3: createInitialExecutionState', () => {
     });
 });
 
-// ─── EC4: advanceExecutionState ──────────────────────────────────────────────
+// ─── EC4: updateExecutionStatePhase ──────────────────────────────────────────────
 
-describe('EC4: advanceExecutionState', () => {
+describe('EC4: updateExecutionStatePhase', () => {
     it('returns a new object (immutable)', () => {
         const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
         const initial = createInitialExecutionState(req);
-        const advanced = advanceExecutionState(initial, 'executing', 'delegated_flow');
+        const advanced = updateExecutionStatePhase(initial, 'executing', 'delegated_flow');
         expect(advanced).not.toBe(initial);
         expect(initial.status).toBe('accepted');  // original unchanged
     });
@@ -219,7 +219,7 @@ describe('EC4: advanceExecutionState', () => {
     it('updates status and phase', () => {
         const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
         const initial = createInitialExecutionState(req);
-        const advanced = advanceExecutionState(initial, 'executing', 'delegated_flow');
+        const advanced = updateExecutionStatePhase(initial, 'executing', 'delegated_flow');
         expect(advanced.status).toBe('executing');
         expect(advanced.phase).toBe('delegated_flow');
     });
@@ -227,14 +227,14 @@ describe('EC4: advanceExecutionState', () => {
     it('updates updatedAt timestamp', () => {
         const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
         const initial = createInitialExecutionState(req);
-        const advanced = advanceExecutionState(initial, 'finalizing', 'cleanup');
+        const advanced = updateExecutionStatePhase(initial, 'finalizing', 'cleanup');
         expect(advanced.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
     it('preserves all other fields', () => {
         const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'rp', actor: 'user', input: null });
         const initial = createInitialExecutionState(req, 'AgentKernel');
-        const advanced = advanceExecutionState(initial, 'executing', 'tool_dispatch');
+        const advanced = updateExecutionStatePhase(initial, 'executing', 'tool_dispatch');
         expect(advanced.executionId).toBe(req.executionId);
         expect(advanced.origin).toBe('ipc');
         expect(advanced.mode).toBe('rp');
@@ -243,45 +243,45 @@ describe('EC4: advanceExecutionState', () => {
     });
 });
 
-// ─── EC5: finalizeExecutionState ─────────────────────────────────────────────
+// ─── EC5: setExecutionTerminalState ─────────────────────────────────────────────
 
-describe('EC5: finalizeExecutionState', () => {
+describe('EC5: setExecutionTerminalState', () => {
     const req = createExecutionRequest({ type: 'chat_turn', origin: 'ipc', mode: 'assistant', actor: 'user', input: null });
     const initial = createInitialExecutionState(req, 'AgentKernel');
 
     it('marks completed terminal state', () => {
-        const final = finalizeExecutionState(initial, { status: 'completed' });
+        const final = setExecutionTerminalState(initial, { status: 'completed' });
         expect(final.status).toBe('completed');
         expect(final.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
         expect(final.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
     it('marks failed terminal state with reason', () => {
-        const final = finalizeExecutionState(initial, { status: 'failed', failureReason: 'llm_timeout' });
+        const final = setExecutionTerminalState(initial, { status: 'failed', failureReason: 'llm_timeout' });
         expect(final.status).toBe('failed');
         expect(final.failureReason).toBe('llm_timeout');
     });
 
     it('marks blocked terminal state with reason', () => {
-        const final = finalizeExecutionState(initial, { status: 'blocked', blockedReason: 'governance_gate' });
+        const final = setExecutionTerminalState(initial, { status: 'blocked', blockedReason: 'governance_gate' });
         expect(final.status).toBe('blocked');
         expect(final.blockedReason).toBe('governance_gate');
     });
 
     it('marks degraded when outcome includes degraded=true', () => {
-        const final = finalizeExecutionState(initial, { status: 'degraded', degraded: true });
+        const final = setExecutionTerminalState(initial, { status: 'degraded', degraded: true });
         expect(final.status).toBe('degraded');
         expect(final.degraded).toBe(true);
     });
 
     it('returns a new object (immutable)', () => {
-        const final = finalizeExecutionState(initial, { status: 'completed' });
+        const final = setExecutionTerminalState(initial, { status: 'completed' });
         expect(final).not.toBe(initial);
         expect(initial.status).toBe('accepted');
     });
 
     it('does not set failureReason when not provided', () => {
-        const final = finalizeExecutionState(initial, { status: 'completed' });
+        const final = setExecutionTerminalState(initial, { status: 'completed' });
         expect(final.failureReason).toBeUndefined();
     });
 });
@@ -402,7 +402,7 @@ describe('EC9: Cross-seam ID correlation', () => {
         expect(state.mode).toBe(req.mode);
     });
 
-    it('finalizeExecutionState preserves executionId through the full lifecycle', () => {
+    it('setExecutionTerminalState preserves executionId through the full lifecycle', () => {
         const req = createExecutionRequest({
             type: 'reflection_task',
             origin: 'system',
@@ -411,8 +411,8 @@ describe('EC9: Cross-seam ID correlation', () => {
             input: null,
         });
         const initial = createInitialExecutionState(req);
-        const running = advanceExecutionState(initial, 'executing', 'planning');
-        const final = finalizeExecutionState(running, { status: 'completed' });
+        const running = updateExecutionStatePhase(initial, 'executing', 'planning');
+        const final = setExecutionTerminalState(running, { status: 'completed' });
         expect(final.executionId).toBe(req.executionId);
     });
 });
@@ -1175,3 +1175,4 @@ describe('EC14: Lifecycle parity across execution paths', () => {
         expect(finalizing?.payload?.durationMs).toBe(completed?.payload?.durationMs);
     });
 });
+

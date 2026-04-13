@@ -27,7 +27,7 @@ import { WORKFLOW_TEMPLATES } from './catalog/WorkflowTemplates';
 import { LogViewerPanel } from './components/LogViewerPanel';
 import { SelfModelPanel } from './components/SelfModelPanel';
 import {
-    makeDefaultGuardrailPolicyConfig,
+    buildDefaultGuardrailPolicyConfig,
     VALIDATOR_PROVIDER_REGISTRY,
     type GuardrailPolicyConfig,
     type GuardrailRule,
@@ -4505,7 +4505,7 @@ function makeDraftBinding(): ValidatorBinding {
 
 function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const getPolicy = (): GuardrailPolicyConfig =>
-        settings?.guardrailPolicy ?? makeDefaultGuardrailPolicyConfig();
+        settings?.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig();
 
     const [policy, setPolicy] = useState<GuardrailPolicyConfig>(getPolicy);
     const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
@@ -5829,5 +5829,6 @@ class ${selected.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, '')}(Validato
         </div>
     );
 }
+
 
 

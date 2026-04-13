@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { RuntimeEvent } from '../../../shared/runtimeEventTypes';
 import {
-    groupEventsByExecution,
-    filterGroups,
+    deriveExecutionGroupsByExecutionId,
+    selectExecutionGroups,
     DEFAULT_FILTER,
-} from '../utils/telemetryEventUtils';
+} from '../utils/TelemetryExecutionGroupResolver';
 import type {
     ExecutionGroup,
     ExecutionGroupFilter,
     ExecutionOrigin,
     ExecutionTerminalState,
-} from '../utils/telemetryEventUtils';
+} from '../utils/TelemetryExecutionGroupResolver';
 
 /**
  * TelemetryEventsPanel
@@ -261,7 +261,7 @@ const TelemetryEventsPanel: React.FC = () => {
             setError(null);
             const api = (window as any).tala; // established codebase pattern — all renderer components use (window as any).tala
             const result: RuntimeEvent[] = await api.telemetry.getRecentEvents();
-            setAllGroups(groupEventsByExecution(result));
+            setAllGroups(deriveExecutionGroupsByExecutionId(result));
             setLastFetched(new Date());
         } catch (e: any) {
             setError(e?.message ?? 'Failed to fetch events');
@@ -279,7 +279,7 @@ const TelemetryEventsPanel: React.FC = () => {
         };
     }, [fetchEvents]);
 
-    const visibleGroups = filterGroups(allGroups, filter);
+    const visibleGroups = selectExecutionGroups(allGroups, filter);
 
     return (
         <section style={{ animation: 'fadeIn 0.2s ease-out' }}>
@@ -377,3 +377,4 @@ const TelemetryEventsPanel: React.FC = () => {
 };
 
 export default TelemetryEventsPanel;
+

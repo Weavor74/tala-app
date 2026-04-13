@@ -55,7 +55,7 @@ import { AutonomyDashboardBridge } from './AutonomyDashboardBridge';
 import { telemetry } from '../TelemetryService';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { ExecutionStateStore } from '../kernel/ExecutionStateStore';
-import { createExecutionRequest } from '../../../shared/runtime/executionHelpers';
+import { createExecutionRequest } from '../../../shared/runtime/ExecutionRuntimeFactory';
 // ── Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) ──
 import type { RecoveryPackRegistry } from './recovery/RecoveryPackRegistry';
 import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
@@ -2399,3 +2399,4 @@ export class AutonomousRunOrchestrator {
         ).length;
     }
 }
+
