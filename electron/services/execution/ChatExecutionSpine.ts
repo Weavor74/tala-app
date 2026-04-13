@@ -100,6 +100,21 @@ export type PreLoopResolvedToolPolicy = {
     allowedCapabilitiesCount: number;
 };
 
+export type IterationToolRequest = {
+    toolsToSend: any[];
+    toolChoice?: 'required';
+    blockedTools: string[];
+    hardBlockAllTools: boolean;
+    directAnswerPreferred: boolean;
+    browserTaskActive: boolean;
+    browserPaletteFiltered: boolean;
+    toolGateApplied: boolean;
+    strippedToolNames: string[];
+    requestedToolCount: number;
+    blockedToolsAppliedCount: number;
+    allowedCapabilitiesCount: number;
+};
+
 export type TurnAssemblyResult = {
     plan: ExecutionPlan;
     input: TurnExecutionInput;
@@ -436,6 +451,94 @@ export class ChatExecutionSpine {
             toolGateApplied: false,
             strippedToolNames: [],
             allowedCapabilitiesCount: 0,
+        };
+    }
+
+    private shapeIterationToolRequest(params: {
+        executionPlan: ExecutionPlan;
+        preLoopPolicy: PreLoopResolvedToolPolicy;
+        turnPolicy: any;
+        activeMode: string;
+        intentClass: string;
+        isGreeting: boolean;
+        allowedCapabilities?: string[];
+        policyToolAllowList: Set<string> | null;
+        filteredTools: any[];
+    }): IterationToolRequest {
+        const {
+            executionPlan,
+            preLoopPolicy,
+            turnPolicy,
+            activeMode,
+            intentClass,
+            isGreeting,
+            allowedCapabilities,
+            policyToolAllowList,
+            filteredTools,
+        } = params;
+        const resolvedActiveMode = executionPlan.activeMode || activeMode;
+
+        let toolsToSend = filteredTools;
+        let browserPaletteFiltered = false;
+
+        if (turnPolicy.toolExposureProfile === 'none' || resolvedActiveMode === 'rp') {
+            toolsToSend = [];
+        } else if (policyToolAllowList) {
+            toolsToSend = toolsToSend.filter((t: any) => policyToolAllowList.has(t.function.name));
+        } else if (preLoopPolicy.isBrowserTask) {
+            toolsToSend = toolsToSend.filter((t: any) => preLoopPolicy.browserTaskToolNames.has(t.function.name));
+            browserPaletteFiltered = true;
+        }
+
+        let toolChoice: 'required' | undefined;
+        if ((intentClass === 'coding' || preLoopPolicy.isBrowserTask) && turnPolicy.toolExposureProfile !== 'none' && resolvedActiveMode !== 'rp') {
+            toolChoice = 'required';
+        } else if (intentClass === 'conversation' || turnPolicy.toolExposureProfile === 'none' || resolvedActiveMode === 'rp') {
+            toolsToSend = [];
+        }
+
+        const requestedTools = toolsToSend;
+        const allowedCaps = allowedCapabilities ?? [];
+        const authorizedTools =
+            isGreeting || intentClass === 'greeting' || allowedCaps.length === 0
+                ? []
+                : requestedTools;
+        const toolGateApplied = authorizedTools.length !== requestedTools.length;
+        const strippedToolNames = requestedTools
+            .filter((t: any) => !authorizedTools.includes(t))
+            .map((t: any) => t.function?.name ?? (t as any).name)
+            .filter(Boolean);
+
+        toolsToSend = authorizedTools;
+        if (toolsToSend.length === 0) {
+            toolChoice = undefined;
+        }
+
+        let blockedToolsAppliedCount = 0;
+        if (preLoopPolicy.blockedTools.length > 0 && toolsToSend.length > 0) {
+            const before = toolsToSend.length;
+            toolsToSend = toolsToSend.filter((t: any) => !preLoopPolicy.blockedTools.includes(t.function.name));
+            blockedToolsAppliedCount = before - toolsToSend.length;
+        }
+
+        if (preLoopPolicy.hardBlockAllTools) {
+            toolsToSend = [];
+            toolChoice = undefined;
+        }
+
+        return {
+            toolsToSend,
+            toolChoice,
+            blockedTools: preLoopPolicy.blockedTools,
+            hardBlockAllTools: preLoopPolicy.hardBlockAllTools,
+            directAnswerPreferred: preLoopPolicy.directAnswerPreferred,
+            browserTaskActive: preLoopPolicy.isBrowserTask,
+            browserPaletteFiltered,
+            toolGateApplied,
+            strippedToolNames,
+            requestedToolCount: requestedTools.length,
+            blockedToolsAppliedCount,
+            allowedCapabilitiesCount: allowedCaps.length,
         };
     }
 
@@ -932,23 +1035,31 @@ export class ChatExecutionSpine {
 
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: agent.currentTurnAuditRecord };
-                let toolsToSend = filteredTools; // Re-declare toolsToSend
-                if (turnPolicy.toolExposureProfile === 'none' || activeMode === 'rp') {
-                    toolsToSend = [];
-                } else if (policyToolAllowList) {
-                    toolsToSend = toolsToSend.filter((t: any) => policyToolAllowList.has(t.function.name));
-                } else if (isBrowserTask) {
-                    // Browser-task mode: reduce tool palette to browser-relevant tools only.
-                    // This prevents the model from being overwhelmed by unrelated tools and
-                    // makes browser actions much more deterministic.
-                    toolsToSend = toolsToSend.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name));
-                    console.log(`[BrowserTaskMode] toolsFiltered count=${toolsToSend.length}`);
-                }
-
-                if ((turnObject.intent.class === 'coding' || isBrowserTask) && turnPolicy.toolExposureProfile !== 'none' && activeMode !== 'rp') {
+                const iterationToolRequest = this.shapeIterationToolRequest({
+                    executionPlan,
+                    preLoopPolicy: {
+                        ...preLoopPolicyFromPlan,
+                        blockedTools: resolvedBlockedTools,
+                        hardBlockAllTools: resolvedHardBlockAllTools,
+                        directAnswerPreferred: resolvedDirectAnswerPreferred,
+                        toolExposureProfile: executionPlan.toolExposureProfile,
+                    },
+                    turnPolicy,
+                    activeMode,
+                    intentClass: turnObject.intent.class,
+                    isGreeting,
+                    allowedCapabilities,
+                    policyToolAllowList,
+                    filteredTools,
+                });
+                let toolsToSend = iterationToolRequest.toolsToSend;
+                if (iterationToolRequest.toolChoice === 'required') {
                     brainOptions.tool_choice = 'required';
-                } else if (turnObject.intent.class === 'conversation' || turnPolicy.toolExposureProfile === 'none' || activeMode === 'rp') {
-                    toolsToSend = [];
+                } else {
+                    delete brainOptions.tool_choice;
+                }
+                if (iterationToolRequest.browserPaletteFiltered) {
+                    console.log(`[BrowserTaskMode] toolsFiltered count=${toolsToSend.length}`);
                 }
 
                 // --- HARD TOOL GATE ---
@@ -958,62 +1069,44 @@ export class ChatExecutionSpine {
                 // value and must not be used in any capability check.
                 // This is the authoritative enforcement point — it fires AFTER all mode-gating
                 // so it cannot be bypassed by earlier incomplete checks.
-                const requestedTools = toolsToSend;
-                const allowedCaps = allowedCapabilities ?? [];
+                const requestedTools = iterationToolRequest.requestedToolCount;
 
-                const authorizedTools =
-                    isGreeting || turnObject.intent.class === 'greeting' || allowedCaps.length === 0
-                        ? []
-                        : requestedTools;
-
-                const toolGateApplied = authorizedTools.length !== requestedTools.length;
-                const strippedToolNames = requestedTools
-                    .filter((t: any) => !authorizedTools.includes(t))
-                    .map((t: any) => t.function?.name ?? (t as any).name)
-                    .filter(Boolean);
-
-                const finalTools = authorizedTools;
-                const finalToolChoice = finalTools.length > 0 ? brainOptions.tool_choice : undefined;
-
-                if (toolGateApplied && requestedTools.length > 0) {
+                if (iterationToolRequest.toolGateApplied && requestedTools > 0) {
                     console.log(
                         `[ToolGate] stripped tools for turn=${turnId} intent=${turnObject.intent.class}` +
-                        ` isGreeting=${isGreeting} allowed=${allowedCaps.length}` +
-                        ` toolCount=${requestedTools.length}`
+                        ` isGreeting=${isGreeting} allowed=${iterationToolRequest.allowedCapabilitiesCount}` +
+                        ` toolCount=${requestedTools}`
                     );
                     telemetry.operational(
                         'cognitive',
                         'capability_gated',
                         'info',
                         `turn:${turnId}`,
-                        `[ToolGate] stripped ${requestedTools.length} tool(s): intent=${turnObject.intent.class} isGreeting=${isGreeting}`,
+                        `[ToolGate] stripped ${requestedTools} tool(s): intent=${turnObject.intent.class} isGreeting=${isGreeting}`,
                         'success',
-                        { payload: { intent: turnObject.intent.class, isGreeting, strippedTools: strippedToolNames, toolCount: requestedTools.length } }
+                        {
+                            payload: {
+                                intent: turnObject.intent.class,
+                                isGreeting,
+                                strippedTools: iterationToolRequest.strippedToolNames,
+                                toolCount: requestedTools,
+                            },
+                        }
                     );
-                }
-                toolsToSend = finalTools;
-                if (finalToolChoice === undefined) {
-                    delete brainOptions.tool_choice;
                 }
 
                 // --- TOOL GATEKEEPER: apply blocked tools (Rules A, B, E) ---
                 // Replaces the previous inline lore/mem0_search suppression block.
                 // gateDecision was computed once before the retry loop; blocked tools
                 // are therefore preserved across every retry iteration (Rule Group E).
-                if (resolvedBlockedTools.length > 0 && toolsToSend.length > 0) {
-                    const before = toolsToSend.length;
-                    toolsToSend = toolsToSend.filter((t: any) => !resolvedBlockedTools.includes(t.function.name));
-                    if (toolsToSend.length < before) {
-                        console.log(
-                            `[ToolGatekeeper] applied gate: removed ${before - toolsToSend.length} tool(s) ` +
-                            `blocked=${resolvedBlockedTools.join(',')} turn=${turn}`
-                        );
-                    }
+                if (iterationToolRequest.blockedToolsAppliedCount > 0) {
+                    console.log(
+                        `[ToolGatekeeper] applied gate: removed ${iterationToolRequest.blockedToolsAppliedCount} tool(s) ` +
+                        `blocked=${iterationToolRequest.blockedTools.join(',')} turn=${turn}`
+                    );
                 }
 
-                if (resolvedHardBlockAllTools) {
-                    toolsToSend = [];
-                    delete brainOptions.tool_choice;
+                if (iterationToolRequest.hardBlockAllTools) {
                     console.log('[ToolGatekeeper] hardBlockAllTools=true - forcing no-tools request for this turn');
                 }
 
@@ -1195,8 +1288,8 @@ export class ChatExecutionSpine {
                 // no tools were authorized — they should produce plain-content responses.
                 // Also never force tools when ToolGatekeeper blocked them or when grounded
                 // memory context makes a direct answer sufficient (directAnswerPreferred).
-                const toolsBlocked = resolvedBlockedTools.length > 0;
-                const directAnswerPreferred = resolvedDirectAnswerPreferred;
+                const toolsBlocked = iterationToolRequest.blockedTools.length > 0;
+                const directAnswerPreferred = iterationToolRequest.directAnswerPreferred;
 
                 const toolRequiredEligible =
                     requiresTool &&
