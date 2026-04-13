@@ -9,7 +9,7 @@ import type { ToolResult } from '../ToolService';
 import { loadSettings } from '../SettingsManager';
 import { promptAuditService, type PromptAuditRecord } from '../PromptAuditService';
 import { auditLogger } from '../AuditLogger';
-import { DeterministicIntentRouter } from '../router/DeterministicIntentRouter';
+import { DeterministicIntentRouter, type DeterministicOperation } from '../router/DeterministicIntentRouter';
 import { CognitiveTurnAssembler } from '../cognitive/CognitiveTurnAssembler';
 import { promptProfileSelector } from '../cognitive/PromptProfileSelector';
 import { cognitiveContextCompactor } from '../cognitive/CognitiveContextCompactor';
@@ -79,6 +79,7 @@ export type ExecutionPlan = {
     hardBlockAllTools: boolean;
     toolExposureProfile: 'unresolved' | 'none' | 'technical_strict' | 'factual_narrow' | 'immersive_controlled' | 'balanced';
     toolDirection: 'policy_controlled' | 'blocked';
+    deterministicOperation: DeterministicOperation | null;
 };
 
 export type PreLoopResolvedToolPolicy = {
@@ -323,6 +324,9 @@ export type ChatExecutionSpineAgent = {
     ) => void;
 };
 export class ChatExecutionSpine {
+    private deterministicBypassOpportunityCount = 0;
+    private deterministicBypassExecutedCount = 0;
+
     public constructor(private readonly agent: ChatExecutionSpineAgent) {}
 
     public async executeTurn(
@@ -355,6 +359,34 @@ export class ChatExecutionSpine {
         const settings = loadSettings(this.agent.settingsPath);
         const activeMode = this.agent.getActiveMode(settings);
         const routedIntent = DeterministicIntentRouter.route(input.userMessage);
+        const deterministicOperation = routedIntent.deterministicOperation ??
+            (routedIntent.suggestedTool
+                ? {
+                    kind: routedIntent.intent as DeterministicOperation['kind'],
+                    toolName: routedIntent.suggestedTool,
+                    args: routedIntent.extractedArgs || {},
+                    requiresLlm: false as const,
+                }
+                : null);
+        const deterministicCandidate = activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm && !!deterministicOperation;
+        if (routedIntent.isDeterministic && !routedIntent.requires_llm && !deterministicCandidate) {
+            telemetry.operational(
+                'execution',
+                'execution.deterministic_path_fallback',
+                'info',
+                `turn:${turnId}`,
+                'Deterministic routing detected but full execution loop retained.',
+                'partial',
+                {
+                    payload: {
+                        turnId,
+                        intent: routedIntent.intent,
+                        activeMode,
+                        reason: activeMode === 'rp' ? 'rp_mode_tools_blocked' : 'missing_operation_contract',
+                    },
+                },
+            );
+        }
 
         return {
             chatStartedAt,
@@ -362,28 +394,69 @@ export class ChatExecutionSpine {
             settings,
             activeMode,
             routedIntent,
-            path: activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm
+            path: deterministicCandidate
                 ? 'deterministic_fast_path'
                 : 'llm_loop',
-            requiresLlm: activeMode === 'rp' || !routedIntent.isDeterministic || routedIntent.requires_llm,
-            requiresToolUse: (routedIntent as any).intent === 'coding' || (routedIntent as any).intent === 'browser',
+            requiresLlm: !deterministicCandidate,
+            requiresToolUse: (routedIntent as any).intent === 'coding' || (routedIntent as any).intent === 'browser' || (routedIntent as any).intent === 'browser_navigate',
             isGreeting: (routedIntent as any).intent === 'greeting',
-            isBrowserTask: (routedIntent as any).intent === 'browser',
+            isBrowserTask: (routedIntent as any).intent === 'browser' || (routedIntent as any).intent === 'browser_navigate',
             directAnswerPreferred: false,
             hardBlockAllTools: false,
             toolExposureProfile: 'unresolved',
             toolDirection: activeMode === 'rp' ? 'blocked' : 'policy_controlled',
+            deterministicOperation,
         };
     }
 
     private async executeDeterministicFastPath(plan: ExecutionPlan, input: TurnExecutionInput): Promise<AgentTurnOutput | null> {
-        const { activeMode, routedIntent, turnId, chatStartedAt } = plan;
-        if (plan.path === 'deterministic_fast_path' && activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm) {
-            console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent}`);
-            const toolName = routedIntent.suggestedTool;
+        const { activeMode, routedIntent, turnId, chatStartedAt, deterministicOperation } = plan;
+        const deterministicCandidate = plan.path === 'deterministic_fast_path' && activeMode !== 'rp' && routedIntent.isDeterministic && !routedIntent.requires_llm;
+        if (deterministicCandidate) {
+            this.deterministicBypassOpportunityCount += 1;
+            telemetry.operational(
+                'execution',
+                'execution.deterministic_opportunity_detected',
+                'info',
+                `turn:${turnId}`,
+                `Deterministic opportunity detected for intent=${routedIntent.intent}.`,
+                'success',
+                {
+                    payload: {
+                        turnId,
+                        intent: routedIntent.intent,
+                        mode: activeMode,
+                        deterministicBypassOpportunityCount: this.deterministicBypassOpportunityCount,
+                        deterministicBypassExecutedCount: this.deterministicBypassExecutedCount,
+                        operationKind: deterministicOperation?.kind ?? null,
+                    },
+                },
+            );
+        }
+        if (deterministicCandidate) {
+            if (!deterministicOperation) {
+                telemetry.operational(
+                    'execution',
+                    'execution.deterministic_path_fallback',
+                    'warn',
+                    `turn:${turnId}`,
+                    'Deterministic path candidate had no operation contract. Falling back to full loop.',
+                    'partial',
+                    {
+                        payload: {
+                            turnId,
+                            intent: routedIntent.intent,
+                            reason: 'missing_operation_contract',
+                        },
+                    },
+                );
+                return null;
+            }
+            console.log(`[AgentService] TRUE FAST PATH: Deterministic bypass triggered: ${routedIntent.intent} operation=${deterministicOperation.kind}`);
+            const toolName = deterministicOperation.toolName;
             if (toolName) {
                 try {
-                    const parsedArgs = routedIntent.extractedArgs || {};
+                    const parsedArgs = deterministicOperation.args || {};
                     const toolStartTime = Date.now();
                     const invResult = await this.agent.coordinator.executeTool(toolName, parsedArgs, new Set([toolName]), {
                         executionId: turnId,
@@ -393,9 +466,46 @@ export class ChatExecutionSpine {
                     });
                     const rawResult = invResult.data;
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
+                    this.deterministicBypassExecutedCount += 1;
+                    telemetry.operational(
+                        'execution',
+                        'execution.deterministic_path_selected',
+                        'info',
+                        `turn:${turnId}`,
+                        `Deterministic operation executed: ${deterministicOperation.kind} via ${toolName}.`,
+                        'success',
+                        {
+                            payload: {
+                                turnId,
+                                intent: routedIntent.intent,
+                                operationKind: deterministicOperation.kind,
+                                toolName,
+                                deterministicBypassOpportunityCount: this.deterministicBypassOpportunityCount,
+                                deterministicBypassExecutedCount: this.deterministicBypassExecutedCount,
+                            },
+                        },
+                    );
                     return await this.agent.completeToolOnlyTurn(result as ToolResult, turnId, routedIntent.intent, activeMode, toolName, parsedArgs, toolStartTime, chatStartedAt, input.onToken, input.onEvent);
                 } catch (e: any) {
                     console.error('[AgentService] FAST PATH FAIL, falling back to LLM:', e);
+                    telemetry.operational(
+                        'execution',
+                        'execution.deterministic_path_fallback',
+                        'warn',
+                        `turn:${turnId}`,
+                        'Deterministic operation execution failed; falling back to full loop.',
+                        'partial',
+                        {
+                            payload: {
+                                turnId,
+                                intent: routedIntent.intent,
+                                operationKind: deterministicOperation.kind,
+                                toolName,
+                                reason: 'tool_execution_failed',
+                                error: String(e?.message || e),
+                            },
+                        },
+                    );
                 }
             }
         }
