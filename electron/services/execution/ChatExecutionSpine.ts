@@ -908,6 +908,288 @@ export class ChatExecutionSpine {
         };
     }
 
+    private handleNoToolCallsIteration(params: {
+        isBrowserTask: boolean;
+        activeMode: string;
+        browserContinuationStep: number;
+        browserMaxContinuationSteps: number;
+        transientMessages: ChatMessage[];
+        browserTaskHadSuccessfulAction: boolean;
+        responseContent: string;
+        enforceCanonRequiredAutobioOverride: boolean;
+    }): { continued: boolean; browserContinuationStep: number; finalResponse: string } {
+        const {
+            isBrowserTask,
+            activeMode,
+            browserContinuationStep,
+            browserMaxContinuationSteps,
+            transientMessages,
+            browserTaskHadSuccessfulAction,
+            responseContent,
+            enforceCanonRequiredAutobioOverride,
+        } = params;
+
+        if (isBrowserTask && activeMode !== 'rp' && browserContinuationStep < browserMaxContinuationSteps) {
+            const nextStep = browserContinuationStep + 1;
+            const browserHint = `[BROWSER_TASK_CONTINUATION] The browser task is not yet complete. You must continue using browser tools. Available tools: browse, browser_get_dom, browser_click, browser_type, browser_scroll, browser_press_key. Call the next appropriate browser tool now. Do NOT respond with prose.`;
+            transientMessages.push({ role: 'user', content: browserHint });
+            console.log(`[AgentService] browser task incomplete, continuing tool loop step=${nextStep}`);
+            return { continued: true, browserContinuationStep: nextStep, finalResponse: '' };
+        }
+
+        if (isBrowserTask) {
+            const stalled = browserContinuationStep >= browserMaxContinuationSteps
+                && !browserTaskHadSuccessfulAction;
+            if (stalled) {
+                console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
+                const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
+                return {
+                    continued: false,
+                    browserContinuationStep,
+                    finalResponse: `${incompleteNote}\n\n${this.agent.enforceCanonRequiredAutobioFallbackReply(
+                        responseContent || '',
+                        enforceCanonRequiredAutobioOverride,
+                    )}`.trim(),
+                };
+            }
+            console.log(`[AgentService] finalizing browser task complete=true hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
+        }
+
+        return {
+            continued: false,
+            browserContinuationStep,
+            finalResponse: this.agent.enforceCanonRequiredAutobioFallbackReply(
+                responseContent || '',
+                enforceCanonRequiredAutobioOverride,
+            ),
+        };
+    }
+
+    private async handleIterationTimeoutFallback(params: {
+        error: any;
+        toolsSentThisIteration: any[];
+        turn: number;
+        turnId: string;
+        signal: AbortSignal;
+        truncated: ChatMessage[];
+        systemPrompt: string;
+        onToken?: (token: string) => void;
+        turnObject: any;
+        enforceCanonRequiredAutobioOverride: boolean;
+        executionLog: TurnExecutionLog;
+        transientMessages: ChatMessage[];
+        turnSeenHashes: Set<string>;
+        activeMode: string;
+    }): Promise<{ handled: boolean; finalResponse?: string }> {
+        const {
+            error,
+            toolsSentThisIteration,
+            turn,
+            turnId,
+            signal,
+            truncated,
+            systemPrompt,
+            onToken,
+            turnObject,
+            enforceCanonRequiredAutobioOverride,
+            executionLog,
+            transientMessages,
+            turnSeenHashes,
+            activeMode,
+        } = params;
+
+        const isStreamOpenTimeout =
+            error?.name === 'StreamOpenTimeoutError' ||
+            (typeof error?.message === 'string' && error.message.includes('Stream open timeout'));
+        if (!(isStreamOpenTimeout && toolsSentThisIteration.length > 0 && turn === 1)) {
+            return { handled: false };
+        }
+
+        console.warn(
+            `[AgentService] StreamOpenTimeoutError with tools=${toolsSentThisIteration.length}.` +
+            ` Retrying once without tools. turn=${turnId}`
+        );
+        telemetry.operational(
+            'cognitive',
+            'inference_timeout',
+            'warn',
+            `turn:${turnId}`,
+            `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
+            'failure',
+            { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
+        );
+        try {
+            if (signal.aborted) {
+                console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
+                return { handled: true };
+            }
+            const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: this.agent.currentTurnAuditRecord };
+            const fallbackResponse = await this.agent.streamWithBrain(
+                this.agent.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
+            );
+            const finalResponse = this.agent.enforceCanonRequiredAutobioFallbackReply(
+                fallbackResponse.content || "",
+                enforceCanonRequiredAutobioOverride,
+            );
+            const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
+            this.agent.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
+            console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
+            return { handled: true, finalResponse };
+        } catch (fallbackErr: any) {
+            console.error(`[AgentService] StreamOpenTimeout fallback also failed turn=${turnId}:`, fallbackErr?.message);
+            return { handled: true };
+        }
+    }
+
+    private async executeToolCallsIteration(params: {
+        calls: CanonicalToolCall[];
+        allowedToolNames: Set<string>;
+        activeMode: string;
+        turnId: string;
+        capabilitiesOverride?: any;
+        executionLog: TurnExecutionLog;
+        transientMessages: ChatMessage[];
+        onEvent?: (type: string, data: any) => void;
+        isBrowserTask: boolean;
+        browserTaskToolNames: Set<string>;
+        browserMutatingToolNames: Set<string>;
+        browserTaskHadSuccessfulAction: boolean;
+    }): Promise<{ browserTaskHadSuccessfulAction: boolean }> {
+        const {
+            calls,
+            allowedToolNames,
+            activeMode,
+            turnId,
+            capabilitiesOverride,
+            executionLog,
+            transientMessages,
+            onEvent,
+            isBrowserTask,
+            browserTaskToolNames,
+            browserMutatingToolNames,
+        } = params;
+        let browserTaskHadSuccessfulAction = params.browserTaskHadSuccessfulAction;
+
+        for (const call of calls) {
+            const toolName = call.function?.name || (call as any).name;
+            const toolArgs = call.function?.arguments || (call as any).arguments;
+            if (!allowedToolNames.has(toolName)) {
+                console.log(`[AgentService] rejected tool not allowed this turn: ${toolName} allowed=[${[...allowedToolNames].join(',')}]`);
+                transientMessages.push({ role: 'tool', content: `Error: Tool '${toolName}' is not permitted for this turn. Allowed: [${[...allowedToolNames].join(', ')}]`, tool_call_id: call.id, name: toolName });
+                continue;
+            }
+
+            console.log(`[AgentService] executing tool: ${toolName}`);
+            if (runtimeSafety.isToolCooldownActive(toolName)) {
+                console.warn(`[AgentService] TOOL_BLOCKED_COOLDOWN: ${toolName}`);
+                transientMessages.push({
+                    role: 'tool',
+                    content: `Error: Tool '${toolName}' cooldown active. Do not repeat diagnostics or tests automatically.`,
+                    tool_call_id: call.id,
+                    name: toolName
+                });
+                continue;
+            }
+
+            const timeoutMs = this.agent.getToolTimeout(toolName);
+            const startTime = Date.now();
+            try {
+                const executePromise = (async () => {
+                    const args = this.agent.parseToolArguments(toolName, toolArgs);
+                    this.agent.validateToolArguments(toolName, args);
+
+                    const argStr = JSON.stringify(args);
+                    console.log(`[AgentService] args: ${argStr.length > 200 ? argStr.slice(0, 200) + '...' : argStr}`);
+                    if (activeMode === 'hybrid' && toolName === 'fs_write_text' && !capabilitiesOverride?.allowWritesThisTurn) {
+                        throw new Error("Action Blocked: File writes in Hybrid mode require per-turn UI authorization. Please check 'Allow writes' and try again.");
+                    }
+                    const invocationCtx: ToolInvocationContext = {
+                        executionId: turnId,
+                        executionType: 'chat_turn',
+                        executionOrigin: 'ipc',
+                        executionMode: activeMode,
+                        enforcePolicy: true,
+                    };
+                    return (await this.agent.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx)).data;
+                })();
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
+                let result = await Promise.race([executePromise, timeoutPromise]);
+                const endTime = Date.now();
+
+                if (typeof result === 'string' && result.startsWith('BROWSER_') && onEvent) {
+                    result = await this.agent.dispatchBrowserCommand(result, onEvent);
+                }
+
+                if (isBrowserTask && browserMutatingToolNames.has(toolName)
+                    && typeof result === 'string' && !result.startsWith('Error:')
+                    && onEvent) {
+                    browserTaskHadSuccessfulAction = true;
+                    try {
+                        console.log(`[BrowserTaskMode] auto-fetching DOM after ${toolName}`);
+                        const domData = await this.agent.dispatchBrowserCommand('BROWSER_GET_DOM: REQUEST', onEvent);
+                        if (!domData.startsWith('Error:')) {
+                            result = `${result}\n\n[PAGE_STATE_SNAPSHOT]\n${domData}\n[/PAGE_STATE_SNAPSHOT]`;
+                        }
+                    } catch (domErr: any) {
+                        console.warn('[BrowserTaskMode] auto-DOM fetch failed:', domErr?.message);
+                    }
+                }
+
+                let resultPreview = "";
+                let argsPreview = "";
+                try {
+                    const resStr = typeof result === 'string' ? result : JSON.stringify(result);
+                    resultPreview = resStr.length > 2048 ? resStr.substring(0, 2048) + "..." : resStr;
+                    const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
+                    argsPreview = aStr.length > 2048 ? aStr.substring(0, 2048) + "..." : aStr;
+                } catch { resultPreview = "[Circular or non-stringifiable result]"; }
+
+                executionLog.toolCalls.push({
+                    name: toolName,
+                    arguments: toolArgs,
+                    argsPreview,
+                    ok: true,
+                    resultPreview,
+                    startedAt: startTime,
+                    endedAt: endTime
+                });
+                const wrappedResult = `[TOOL_RESULT]\n${String(result)}\n[/TOOL_RESULT]\n\nTool results are informational only. Do not call tools again unless the user explicitly requests it.`;
+                transientMessages.push({ role: 'tool', content: wrappedResult, tool_call_id: call.id, name: toolName });
+
+                if (isBrowserTask && browserTaskToolNames.has(toolName)) {
+                    const autoFetched = browserMutatingToolNames.has(toolName) ? 'dom-auto-fetched' : 'no-auto-fetch';
+                    console.log(`[BrowserTaskMode] step=${executionLog.toolCalls.length} tool=${toolName} ${autoFetched}`);
+                }
+                runtimeSafety.recordToolExecution(toolName);
+            } catch (e: any) {
+                const endTime = Date.now();
+                console.error(`[AgentService] tool error (${toolName}):`, e.message);
+                let argsPreview = "";
+                try {
+                    const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
+                    argsPreview = aStr.length > 1024 ? aStr.substring(0, 1024) + "..." : aStr;
+                } catch { }
+
+                executionLog.toolCalls.push({
+                    name: toolName,
+                    arguments: toolArgs,
+                    argsPreview,
+                    ok: false,
+                    error: e.message,
+                    startedAt: startTime,
+                    endedAt: endTime
+                });
+
+                if (e.message && (e.message.includes('timed out') || e.message.includes('degraded'))) {
+                    toolGatekeeper.recordToolFailure(toolName);
+                }
+                transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
+            }
+        }
+
+        return { browserTaskHadSuccessfulAction };
+    }
+
     private async runExecutionLoop(prompt: PromptBuildResult): Promise<LoopExecutionResult> {
         const { assembly } = prompt;
         const { input } = assembly;
@@ -1846,49 +2128,22 @@ Failure to provide a tool call will result in system termination.`;
                     // so calls.length === 0 implies responseToolCalls is truly absent.
                     // For RP mode calls is always [] and any model-hallucinated responseToolCalls
                     // are intentionally ignored (tools are disabled in RP mode).
-
-                    // --- BROWSER TASK CONTINUATION ---
-                    // For browser-task mode: do not finalize immediately if the task is still
-                    // in progress and we have continuation attempts remaining. Inject a
-                    // browser-specific reminder and re-enter the loop so the model can
-                    // continue the multi-step workflow.
-                    if (isBrowserTask && activeMode !== 'rp' && browserContinuationStep < BROWSER_MAX_CONTINUATION_STEPS) {
-                        browserContinuationStep++;
-                        const browserHint = `[BROWSER_TASK_CONTINUATION] The browser task is not yet complete. You must continue using browser tools. Available tools: browse, browser_get_dom, browser_click, browser_type, browser_scroll, browser_press_key. Call the next appropriate browser tool now. Do NOT respond with prose.`;
-                        transientMessages.push({ role: 'user', content: browserHint });
-                        console.log(`[AgentService] browser task incomplete, continuing tool loop step=${browserContinuationStep}`);
+                    console.log(`[AgentService] finalizing plain content hasToolCalls=false responseToolCalls=${responseToolCalls?.length ?? 0} mode=${activeMode}`);
+                    const noToolOutcome = this.handleNoToolCallsIteration({
+                        isBrowserTask,
+                        activeMode,
+                        browserContinuationStep,
+                        browserMaxContinuationSteps: BROWSER_MAX_CONTINUATION_STEPS,
+                        transientMessages,
+                        browserTaskHadSuccessfulAction,
+                        responseContent: response.content || "",
+                        enforceCanonRequiredAutobioOverride,
+                    });
+                    browserContinuationStep = noToolOutcome.browserContinuationStep;
+                    if (noToolOutcome.continued) {
                         continue;
                     }
-
-                    console.log(`[AgentService] finalizing plain content hasToolCalls=false responseToolCalls=${responseToolCalls?.length ?? 0} mode=${activeMode}`);
-                    if (isBrowserTask) {
-                        // Distinguish genuine completion from loop-exhaustion stall.
-                        // A stall means: the continuation limit was reached AND no mutating
-                        // browser action succeeded during this turn.
-                        const stalled = browserContinuationStep >= BROWSER_MAX_CONTINUATION_STEPS
-                            && !browserTaskHadSuccessfulAction;
-                        if (stalled) {
-                            console.log(`[AgentService] finalizing browser task complete=false reason=stalled hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
-                            // Prepend an incomplete notice to the model's response so the caller
-                            // can surface the reason to the user.
-                            const incompleteNote = '[BROWSER_TASK_INCOMPLETE] The browser task could not be completed — no browser action succeeded within the allotted continuation steps.';
-                            finalResponse = `${incompleteNote}\n\n${agent.enforceCanonRequiredAutobioFallbackReply(
-                                response.content || '',
-                                enforceCanonRequiredAutobioOverride,
-                            )}`.trim();
-                        } else {
-                            console.log(`[AgentService] finalizing browser task complete=true hadSuccessfulAction=${browserTaskHadSuccessfulAction}`);
-                            finalResponse = agent.enforceCanonRequiredAutobioFallbackReply(
-                                response.content || "",
-                                enforceCanonRequiredAutobioOverride,
-                            );
-                        }
-                    } else {
-                        finalResponse = agent.enforceCanonRequiredAutobioFallbackReply(
-                            response.content || "",
-                            enforceCanonRequiredAutobioOverride,
-                        );
-                    }
+                    finalResponse = noToolOutcome.finalResponse;
                     agent.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
                     break;
                 }
@@ -1911,198 +2166,40 @@ Failure to provide a tool call will result in system termination.`;
                 agent.commitAssistantMessage(transientMessages, assistantMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
 
                 // --- HARDENED Tool Execution with Timeouts + Execution-Time Gate ---
-                for (const call of calls) {
-                    const toolName = call.function?.name || (call as any).name;
-                    const toolArgs = call.function?.arguments || (call as any).arguments;
-
-                    // --- EXECUTION-TIME ALLOWED-TOOL GATE ---
-                    // Reject any tool call whose name is not in the set we passed to the brain.
-                    if (!allowedToolNames.has(toolName)) {
-                        console.log(`[AgentService] rejected tool not allowed this turn: ${toolName} allowed=[${[...allowedToolNames].join(',')}]`);
-                        transientMessages.push({ role: 'tool', content: `Error: Tool '${toolName}' is not permitted for this turn. Allowed: [${[...allowedToolNames].join(', ')}]`, tool_call_id: call.id, name: toolName });
-                        continue;
-                    }
-
-                    console.log(`[AgentService] executing tool: ${toolName}`);
-
-                    // --- LOOP PROTECTION: Tool Cooldown ---
-                    if (runtimeSafety.isToolCooldownActive(toolName)) {
-                        console.warn(`[AgentService] TOOL_BLOCKED_COOLDOWN: ${toolName}`);
-                        transientMessages.push({
-                            role: 'tool',
-                            content: `Error: Tool '${toolName}' cooldown active. Do not repeat diagnostics or tests automatically.`,
-                            tool_call_id: call.id,
-                            name: toolName
-                        });
-                        continue;
-                    }
-
-                    const timeoutMs = agent.getToolTimeout(toolName);
-                    const startTime = Date.now();
-
-                    try {
-                        const executePromise = (async () => {
-                            const args = agent.parseToolArguments(toolName, toolArgs);
-                            agent.validateToolArguments(toolName, args);
-
-                            const argStr = JSON.stringify(args);
-                            console.log(`[AgentService] args: ${argStr.length > 200 ? argStr.slice(0, 200) + '...' : argStr}`);
-
-                            // --- HYBRID WRITE OVERRIDE ---
-                            if (activeMode === 'hybrid' && toolName === 'fs_write_text' && !capabilitiesOverride?.allowWritesThisTurn) {
-                                throw new Error("Action Blocked: File writes in Hybrid mode require per-turn UI authorization. Please check 'Allow writes' and try again.");
-                            }
-
-                            // --- POLICY GATE: owned by ToolExecutionCoordinator ---
-                            // enforcePolicy:true delegates the PolicyGate.assertSideEffect() call
-                            // into the coordinator so it is the single pre-execution enforcement seam.
-                            const invocationCtx: ToolInvocationContext = {
-                                executionId: turnId,
-                                executionType: 'chat_turn',
-                                executionOrigin: 'ipc',
-                                executionMode: activeMode,
-                                enforcePolicy: true,
-                            };
-                            return (await agent.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx)).data;
-                        })();
-
-                        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Tool ${toolName} timed out after ${timeoutMs / 1000}s`)), timeoutMs));
-
-                        let result = await Promise.race([executePromise, timeoutPromise]);
-                        const endTime = Date.now();
-
-                        // --- BROWSER COMMAND INTERCEPTION ---
-                        // Browser tools return BROWSER_* prefix strings that must be
-                        // dispatched as agent-events to the built-in workspace browser
-                        // panel and resolved with the actual browser response.
-                        if (typeof result === 'string' && result.startsWith('BROWSER_') && onEvent) {
-                            result = await agent.dispatchBrowserCommand(result, onEvent);
-                        }
-
-                        // --- AUTO DOM FETCH AFTER MUTATING BROWSER ACTIONS (Browser-task mode) ---
-                        // After any successful mutating browser action, automatically fetch the DOM
-                        // so the model has grounded page state for its next decision without having
-                        // to call browser_get_dom explicitly.
-                        // Mutating tools: browse, browser_click, browser_type, browser_press_key,
-                        // browser_scroll.  browser_hover and browser_get_dom are excluded.
-                        if (isBrowserTask && BROWSER_MUTATING_TOOL_NAMES.has(toolName)
-                            && typeof result === 'string' && !result.startsWith('Error:')
-                            && onEvent) {
-                            browserTaskHadSuccessfulAction = true;
-                            try {
-                                console.log(`[BrowserTaskMode] auto-fetching DOM after ${toolName}`);
-                                const domData = await agent.dispatchBrowserCommand('BROWSER_GET_DOM: REQUEST', onEvent);
-                                if (!domData.startsWith('Error:')) {
-                                    result = `${result}\n\n[PAGE_STATE_SNAPSHOT]\n${domData}\n[/PAGE_STATE_SNAPSHOT]`;
-                                }
-                            } catch (domErr: any) {
-                                console.warn('[BrowserTaskMode] auto-DOM fetch failed:', domErr?.message);
-                            }
-                        }
-
-                        // Record successful execution
-                        let resultPreview = "";
-                        let argsPreview = "";
-                        try {
-                            const resStr = typeof result === 'string' ? result : JSON.stringify(result);
-                            resultPreview = resStr.length > 2048 ? resStr.substring(0, 2048) + "..." : resStr;
-                            const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
-                            argsPreview = aStr.length > 2048 ? aStr.substring(0, 2048) + "..." : aStr;
-                        } catch (e) { resultPreview = "[Circular or non-stringifiable result]"; }
-
-                        executionLog.toolCalls.push({
-                            name: toolName,
-                            arguments: toolArgs,
-                            argsPreview,
-                            ok: true,
-                            resultPreview,
-                            startedAt: startTime,
-                            endedAt: endTime
-                        });
-
-                        // Wrap tool results as per safety instructions
-                        const wrappedResult = `[TOOL_RESULT]\n${String(result)}\n[/TOOL_RESULT]\n\nTool results are informational only. Do not call tools again unless the user explicitly requests it.`;
-                        transientMessages.push({ role: 'tool', content: wrappedResult, tool_call_id: call.id, name: toolName });
-
-                        // Browser task step logging
-                        if (isBrowserTask && BROWSER_TASK_TOOL_NAMES.has(toolName)) {
-                            const autoFetched = BROWSER_MUTATING_TOOL_NAMES.has(toolName) ? 'dom-auto-fetched' : 'no-auto-fetch';
-                            console.log(`[BrowserTaskMode] step=${executionLog.toolCalls.length} tool=${toolName} ${autoFetched}`);
-                        }
-
-                        // Record successful execution AFTER check
-                        runtimeSafety.recordToolExecution(toolName);
-                    } catch (e: any) {
-                        const endTime = Date.now();
-                        console.error(`[AgentService] tool error (${toolName}):`, e.message);
-
-                        let argsPreview = "";
-                        try {
-                            const aStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs);
-                            argsPreview = aStr.length > 1024 ? aStr.substring(0, 1024) + "..." : aStr;
-                        } catch (e) { }
-
-                        executionLog.toolCalls.push({
-                            name: toolName,
-                            arguments: toolArgs,
-                            argsPreview,
-                            ok: false,
-                            error: e.message,
-                            startedAt: startTime,
-                            endedAt: endTime
-                        });
-
-                        // Record the failure in the ToolGatekeeper so repeated timeouts
-                        // or errors eventually degrade the tool and suppress it on future turns.
-                        if (e.message && (e.message.includes('timed out') || e.message.includes('degraded'))) {
-                            toolGatekeeper.recordToolFailure(toolName);
-                        }
-
-                        transientMessages.push({ role: 'tool', content: `Error: ${e.message}`, tool_call_id: call.id, name: toolName });
-                    }
-                }
+                const toolExecutionResult = await this.executeToolCallsIteration({
+                    calls,
+                    allowedToolNames,
+                    activeMode,
+                    turnId,
+                    capabilitiesOverride,
+                    executionLog,
+                    transientMessages,
+                    onEvent,
+                    isBrowserTask,
+                    browserTaskToolNames: BROWSER_TASK_TOOL_NAMES,
+                    browserMutatingToolNames: BROWSER_MUTATING_TOOL_NAMES,
+                    browserTaskHadSuccessfulAction,
+                });
+                browserTaskHadSuccessfulAction = toolExecutionResult.browserTaskHadSuccessfulAction;
             } catch (e: any) {
-                // --- STREAM OPEN TIMEOUT FALLBACK ---
-                // If Ollama stalled on stream open and we sent tools, retry once without
-                // tools so the model can still produce a plain-content response.  Only
-                // attempt the fallback on the first iteration to avoid recursion.
-                const isStreamOpenTimeout =
-                    e?.name === 'StreamOpenTimeoutError' ||
-                    (typeof e?.message === 'string' && e.message.includes('Stream open timeout'));
-                if (isStreamOpenTimeout && toolsSentThisIteration.length > 0 && turn === 1) {
-                    console.warn(
-                        `[AgentService] StreamOpenTimeoutError with tools=${toolsSentThisIteration.length}.` +
-                        ` Retrying once without tools. turn=${turnId}`
-                    );
-                    telemetry.operational(
-                        'cognitive',
-                        'inference_timeout',
-                        'warn',
-                        `turn:${turnId}`,
-                        `StreamOpenTimeoutError on tool-bearing request — retrying without tools`,
-                        'failure',
-                        { payload: { turnId, toolCount: toolsSentThisIteration.length, intent: turnObject.intent.class } }
-                    );
-                    try {
-                        // Only attempt fallback if the user hasn't already aborted the request.
-                        if (signal.aborted) {
-                            console.log(`[AgentService] StreamOpenTimeout fallback skipped — signal aborted turn=${turnId}`);
-                        } else {
-                            const fallbackBrainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: agent.currentTurnAuditRecord };
-                            const fallbackResponse = await agent.streamWithBrain(
-                                agent.brain, truncated, systemPrompt, onToken || (() => { }), signal, [], fallbackBrainOptions
-                            );
-                            finalResponse = agent.enforceCanonRequiredAutobioFallbackReply(
-                                fallbackResponse.content || "",
-                                enforceCanonRequiredAutobioOverride,
-                            );
-                            const fallbackMsg: ChatMessage = { role: 'assistant', content: finalResponse };
-                            agent.commitAssistantMessage(transientMessages, fallbackMsg, turnObject.intent.class, executionLog.toolCalls.length, turnSeenHashes, activeMode);
-                            console.log(`[AgentService] StreamOpenTimeout fallback succeeded turn=${turnId}`);
-                        }
-                    } catch (fallbackErr: any) {
-                        console.error(`[AgentService] StreamOpenTimeout fallback also failed turn=${turnId}:`, fallbackErr?.message);
-                    }
+                const timeoutHandled = await this.handleIterationTimeoutFallback({
+                    error: e,
+                    toolsSentThisIteration,
+                    turn,
+                    turnId,
+                    signal,
+                    truncated,
+                    systemPrompt,
+                    onToken,
+                    turnObject,
+                    enforceCanonRequiredAutobioOverride,
+                    executionLog,
+                    transientMessages,
+                    turnSeenHashes,
+                    activeMode,
+                });
+                if (timeoutHandled.finalResponse) {
+                    finalResponse = timeoutHandled.finalResponse;
                 }
                 break;
             }
@@ -2465,4 +2562,3 @@ Failure to provide a tool call will result in system termination.`;
 
 
 }
-
