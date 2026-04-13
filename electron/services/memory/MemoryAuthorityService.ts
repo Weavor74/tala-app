@@ -31,7 +31,7 @@ import type {
     MemoryOperationResult,
 } from '../../../shared/memory/authorityTypes';
 import {
-    rankMemoryByAuthority,
+    selectMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from './derivedWriteGuards';
 import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
@@ -658,10 +658,10 @@ export class MemoryAuthorityService {
      * Order: canonical > verified_derived > transient > speculative
      * This is deterministic — no ML judgment.
      */
-    rankMemoryByAuthority(
-        candidates: Parameters<typeof rankMemoryByAuthority>[0],
+    selectMemoryByAuthority(
+        candidates: Parameters<typeof selectMemoryByAuthority>[0],
     ): RankedMemoryCandidate[] {
-        return rankMemoryByAuthority(candidates);
+        return selectMemoryByAuthority(candidates);
     }
 
     /**

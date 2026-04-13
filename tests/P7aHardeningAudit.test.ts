@@ -7,10 +7,10 @@
  *     - assertDerivedMemoryAnchor throws in strict mode when anchor missing
  *     - assertDerivedMemoryAnchor passes when anchor present
  *     - assertCanonicalReferencePresent validates UUID format
- *     - rejectAuthoritativeWriteOutsideMemoryAuthority defers to anchor guard
+ *     - assertMemoryWriteAnchoredToAuthority defers to anchor guard
  *     - Guards pass through for transient (non-durable) writes
  *
- *  B. rankMemoryByAuthority
+ *  B. selectMemoryByAuthority
  *     - Canonical sources rank priority 1
  *     - Verified derived (UUID anchor) rank priority 2
  *     - Transient rank priority 3
@@ -38,8 +38,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     assertDerivedMemoryAnchor,
     assertCanonicalReferencePresent,
-    rejectAuthoritativeWriteOutsideMemoryAuthority,
-    rankMemoryByAuthority,
+    assertMemoryWriteAnchoredToAuthority,
+    selectMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from '../electron/services/memory/derivedWriteGuards';
 
@@ -159,7 +159,7 @@ describe('derivedWriteGuards — assertCanonicalReferencePresent', () => {
     });
 });
 
-describe('derivedWriteGuards — rejectAuthoritativeWriteOutsideMemoryAuthority', () => {
+describe('derivedWriteGuards — assertMemoryWriteAnchoredToAuthority', () => {
     let origNodeEnv: string | undefined;
     let origStrictMemory: string | undefined;
 
@@ -178,7 +178,7 @@ describe('derivedWriteGuards — rejectAuthoritativeWriteOutsideMemoryAuthority'
         process.env.TALA_STRICT_MEMORY = '1';
 
         expect(() =>
-            rejectAuthoritativeWriteOutsideMemoryAuthority(
+            assertMemoryWriteAnchoredToAuthority(
                 { canonical_memory_id: null },
                 'direct-mem0-write',
                 true,
@@ -191,7 +191,7 @@ describe('derivedWriteGuards — rejectAuthoritativeWriteOutsideMemoryAuthority'
         process.env.TALA_STRICT_MEMORY = '1';
 
         expect(() =>
-            rejectAuthoritativeWriteOutsideMemoryAuthority(
+            assertMemoryWriteAnchoredToAuthority(
                 { canonical_memory_id: null },
                 'session-cache',
                 false,
@@ -201,12 +201,12 @@ describe('derivedWriteGuards — rejectAuthoritativeWriteOutsideMemoryAuthority'
 });
 
 // ---------------------------------------------------------------------------
-// B. rankMemoryByAuthority
+// B. selectMemoryByAuthority
 // ---------------------------------------------------------------------------
 
-describe('derivedWriteGuards — rankMemoryByAuthority', () => {
+describe('derivedWriteGuards — selectMemoryByAuthority', () => {
     it('ranks canonical source first', () => {
-        const ranked = rankMemoryByAuthority([
+        const ranked = selectMemoryByAuthority([
             { content: 'canonical', source_description: 'postgres', is_canonical_source: true },
             { content: 'speculative', source_description: 'unknown' },
         ]);
@@ -216,7 +216,7 @@ describe('derivedWriteGuards — rankMemoryByAuthority', () => {
     });
 
     it('ranks verified derived second (UUID anchor, non-canonical)', () => {
-        const ranked = rankMemoryByAuthority([
+        const ranked = selectMemoryByAuthority([
             { content: 'derived', source_description: 'mem0', canonical_memory_id: VALID_UUID },
             { content: 'canonical', source_description: 'postgres', is_canonical_source: true },
         ]);
@@ -227,7 +227,7 @@ describe('derivedWriteGuards — rankMemoryByAuthority', () => {
     });
 
     it('ranks transient third', () => {
-        const ranked = rankMemoryByAuthority([
+        const ranked = selectMemoryByAuthority([
             { content: 'transient', source_description: 'session', is_transient: true },
             { content: 'canonical', source_description: 'postgres', is_canonical_source: true },
         ]);
@@ -238,7 +238,7 @@ describe('derivedWriteGuards — rankMemoryByAuthority', () => {
     });
 
     it('ranks speculative last', () => {
-        const ranked = rankMemoryByAuthority([
+        const ranked = selectMemoryByAuthority([
             { content: 'speculative', source_description: 'unknown' },
             { content: 'canonical', source_description: 'postgres', is_canonical_source: true },
         ]);
@@ -248,7 +248,7 @@ describe('derivedWriteGuards — rankMemoryByAuthority', () => {
     });
 
     it('non-UUID synthetic id is classified as speculative', () => {
-        const ranked = rankMemoryByAuthority([
+        const ranked = selectMemoryByAuthority([
             { content: 'synthetic-id mem', source_description: 'mem0-fallback', canonical_memory_id: INVALID_ID },
         ]);
 
@@ -263,14 +263,14 @@ describe('derivedWriteGuards — rankMemoryByAuthority', () => {
             { content: 'c', source_description: 'c', is_transient: true },
         ];
 
-        const r1 = rankMemoryByAuthority(input);
-        const r2 = rankMemoryByAuthority(input);
+        const r1 = selectMemoryByAuthority(input);
+        const r2 = selectMemoryByAuthority(input);
 
         expect(r1.map(r => r.tier)).toEqual(r2.map(r => r.tier));
     });
 
     it('returns empty array for empty input', () => {
-        expect(rankMemoryByAuthority([])).toEqual([]);
+        expect(selectMemoryByAuthority([])).toEqual([]);
     });
 });
 
@@ -405,3 +405,4 @@ describe('ToolService — mem0_add canonical routing', () => {
         );
     });
 });
+

@@ -886,10 +886,10 @@ describe('MemoryAuthorityService', () => {
     // -----------------------------------------------------------------------
     // 16. authority ranking and conflict resolution
     // -----------------------------------------------------------------------
-    describe('rankMemoryByAuthority', () => {
+    describe('selectMemoryByAuthority', () => {
         it('ranks canonical source first, speculative last', () => {
             const svc = new MemoryAuthorityService({} as never);
-            const ranked = svc.rankMemoryByAuthority([
+            const ranked = svc.selectMemoryByAuthority([
                 { content: 'speculative fact', source_description: 'unknown-source', is_transient: false },
                 { content: 'canonical fact', source_description: 'postgres', is_canonical_source: true },
                 { content: 'transient fact', source_description: 'session', is_transient: true },
@@ -904,7 +904,7 @@ describe('MemoryAuthorityService', () => {
 
         it('returns empty array for empty input', () => {
             const svc = new MemoryAuthorityService({} as never);
-            expect(svc.rankMemoryByAuthority([])).toEqual([]);
+            expect(svc.selectMemoryByAuthority([])).toEqual([]);
         });
     });
 
@@ -1998,3 +1998,4 @@ describe('MemoryAuthorityService', () => {
         });
     });
 });
+

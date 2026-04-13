@@ -2299,47 +2299,7 @@
       "file": "electron/preload.ts",
       "rule": "naming/ipc-pattern",
       "symbol": "ipcRenderer.invoke",
-      "value": "reflection:approve-proposal",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/preload.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcRenderer.invoke",
-      "value": "reflection:force-tick",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/preload.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcRenderer.invoke",
-      "value": "reflection:get-metrics",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/preload.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcRenderer.invoke",
       "value": "reflection:get-proposals",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/preload.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcRenderer.invoke",
-      "value": "reflection:get-reflections",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/preload.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcRenderer.invoke",
-      "value": "reflection:reject-proposal",
       "reason": "legacy violation - baseline tracking",
       "addedAt": "2026-04-13T16:32:45.405Z"
     },
@@ -4745,22 +4705,6 @@
       "addedAt": "2026-04-13T16:32:45.405Z"
     },
     {
-      "file": "electron/services/memory/derivedWriteGuards.ts",
-      "rule": "naming/function-verb",
-      "symbol": "rankMemoryByAuthority",
-      "value": "rankMemoryByAuthority",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/memory/derivedWriteGuards.ts",
-      "rule": "naming/function-verb",
-      "symbol": "rejectAuthoritativeWriteOutsideMemoryAuthority",
-      "value": "rejectAuthoritativeWriteOutsideMemoryAuthority",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
       "file": "electron/services/memory/MemoryProviderResolver.ts",
       "rule": "naming/function-verb",
       "symbol": "compareRankedCandidates",
@@ -4999,54 +4943,6 @@
       "rule": "naming/exported-class-role",
       "symbol": "ProposalEngine",
       "value": "ProposalEngine",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:approve-proposal",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:clean-proposals",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:force-tick",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:get-metrics",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:get-reflections",
-      "reason": "legacy violation - baseline tracking",
-      "addedAt": "2026-04-13T16:32:45.405Z"
-    },
-    {
-      "file": "electron/services/reflection/ReflectionAppService.ts",
-      "rule": "naming/ipc-pattern",
-      "symbol": "ipcMain.handle",
-      "value": "reflection:reject-proposal",
       "reason": "legacy violation - baseline tracking",
       "addedAt": "2026-04-13T16:32:45.405Z"
     },

@@ -198,11 +198,11 @@ export class ReflectionAppService {
             this.executeWithTelemetry('rollbackPromotion', async () => ({ success: false, message: 'Not yet implemented' }))
         );
 
-        ipcMain.handle('reflection:get-reflections', () =>
+        ipcMain.handle('reflection:getReflections', () =>
             this.executeWithTelemetry('get-reflections', async () => [])
         );
 
-        ipcMain.handle('reflection:approve-proposal', (_, proposalId: string) =>
+        ipcMain.handle('reflection:approveProposal', (_, proposalId: string) =>
             this.executeWithTelemetry('approve-proposal', async () => {
                 const patch = this.reflectionService.getActivePatches().get(proposalId);
                 if (!patch) throw new Error('Patch not found');
@@ -214,7 +214,7 @@ export class ReflectionAppService {
             })
         );
 
-        ipcMain.handle('reflection:reject-proposal', (_, proposalId: string) =>
+        ipcMain.handle('reflection:rejectProposal', (_, proposalId: string) =>
             this.executeWithTelemetry('reject-proposal', async () => {
                 const patch = this.reflectionService.getActivePatches().get(proposalId);
                 if (!patch) throw new Error('Patch not found');
@@ -223,14 +223,14 @@ export class ReflectionAppService {
             })
         );
 
-        ipcMain.handle('reflection:force-tick', () =>
+        ipcMain.handle('reflection:forceTick', () =>
             this.executeWithTelemetry('force-tick', async () => {
                 await this.reflectionService.runReflectionCycle('ui_manual_tick');
                 return { success: true };
             })
         );
 
-        ipcMain.handle('reflection:clean-proposals', () =>
+        ipcMain.handle('reflection:cleanProposals', () =>
             this.executeWithTelemetry('clean-proposals', async () => {
                 const map = this.reflectionService.getActivePatches();
                 map.clear();
@@ -238,7 +238,7 @@ export class ReflectionAppService {
             })
         );
 
-        ipcMain.handle('reflection:get-metrics', () =>
+        ipcMain.handle('reflection:getMetrics', () =>
             this.executeWithTelemetry('get-metrics', async () => {
                 const map = this.reflectionService.getActivePatches();
                 return {

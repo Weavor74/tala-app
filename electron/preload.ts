@@ -488,17 +488,17 @@ contextBridge.exposeInMainWorld('tala', {
     promotePlannedProposal: (proposalId: string) => ipcRenderer.invoke('planning:promoteProposal', proposalId),
 
     /** Gets reflection system metrics (legacy). */
-    getReflectionMetrics: () => ipcRenderer.invoke('reflection:get-metrics'),
+    getReflectionMetrics: () => ipcRenderer.invoke('reflection:getMetrics'),
     /** Lists pending proposals awaiting approval (legacy). */
     getReflectionProposals: (status?: string) => ipcRenderer.invoke('reflection:get-proposals', status),
     /** Lists historical reflection events (legacy). */
-    getReflectionEvents: () => ipcRenderer.invoke('reflection:get-reflections'),
+    getReflectionEvents: () => ipcRenderer.invoke('reflection:getReflections'),
     /** Approves a proposal by ID (legacy). */
-    approveProposal: (id: string) => ipcRenderer.invoke('reflection:approve-proposal', id),
+    approveProposal: (id: string) => ipcRenderer.invoke('reflection:approveProposal', id),
     /** Rejects a proposal by ID (legacy). */
-    rejectProposal: (id: string) => ipcRenderer.invoke('reflection:reject-proposal', id),
+    rejectProposal: (id: string) => ipcRenderer.invoke('reflection:rejectProposal', id),
     /** Forces a heartbeat tick (debug). */
-    forceHeartbeat: () => ipcRenderer.invoke('reflection:force-tick'),
+    forceHeartbeat: () => ipcRenderer.invoke('reflection:forceTick'),
     /** Subscribes to new proposal notifications. Returns cleanup function. */
     onProposalCreated: (callback: (data: any) => void) => {
         const listener = (event: any, data: any) => callback(data);

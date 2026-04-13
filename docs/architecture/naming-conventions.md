@@ -539,3 +539,58 @@ Generation gate rule:
 ## 17. Locked Contract Status
 
 This document is a locked architecture contract. Deviations require explicit contract update in `docs/contracts/naming.contract.json` and accompanying architecture review.
+
+## 18. Canonical Tala Examples
+
+These canonical names are approved reference patterns for Tala self-modification, Codex-assisted edits, and admin-authored artifacts.
+
+### 18.1 Core role examples
+
+- Service: `MemoryRepairExecutionService`
+- Repository: `PostgresMemoryRepository`
+- Provider: `LocalEmbeddingProvider`
+- Resolver: `InferenceProviderResolver`
+- Validator: `PortableRootPathValidator`
+- Policy: `MaintenancePolicy`
+- Coordinator: `ToolExecutionCoordinator`
+- Orchestrator: `PreInferenceContextOrchestrator`
+- Scheduler: `ReflectionScheduler`
+
+### 18.2 Function examples (verb-first + intent clear)
+
+- `validatePortableRootPath()` — validation boundary
+- `resolveProviderSelection()` — deterministic selection
+- `selectMemoryByAuthority()` — authority-tier read/ordering
+- `assertMemoryWriteAnchoredToAuthority()` — write gate assertion
+- `executeRepairCampaign()` — explicit execution action
+- `scheduleRepairTick()` — cadence control
+
+### 18.3 Event examples (facts that happened)
+
+- `execution.created`
+- `execution.completed`
+- `memory.repair_triggered`
+- `reflection.proposal_promoted`
+- `telemetry.flush_failed`
+
+### 18.4 IPC examples (subsystem:verbNoun)
+
+- `reflection:getDashboardState`
+- `reflection:getMetrics`
+- `reflection:approveProposal`
+- `execution:startRun`
+- `autonomy:getDashboardState`
+
+### 18.5 API route examples (resource-oriented)
+
+- `GET /api/v1/memory/records`
+- `POST /api/v1/reflection/proposals/{proposalId}/approve`
+- `POST /api/v1/execution/runs`
+
+### 18.6 Tool / workflow / automation examples
+
+- Tool: `memory_search_records`
+- Tool: `path_resolve_portable_root`
+- Workflow: `memory_repair_cycle`
+- Workflow: `docs_selfheal`
+- Automation artifact: `reflection-daily-health-check`

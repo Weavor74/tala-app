@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "source": "docs/architecture/naming-conventions.md",
+  "examples": {
+    "roles": {
+      "service": "MemoryRepairExecutionService",
+      "repository": "PostgresMemoryRepository",
+      "provider": "LocalEmbeddingProvider",
+      "resolver": "InferenceProviderResolver",
+      "validator": "PortableRootPathValidator",
+      "policy": "MaintenancePolicy",
+      "coordinator": "ToolExecutionCoordinator",
+      "orchestrator": "PreInferenceContextOrchestrator",
+      "scheduler": "ReflectionScheduler"
+    },
+    "functions": [
+      "validatePortableRootPath",
+      "resolveProviderSelection",
+      "selectMemoryByAuthority",
+      "assertMemoryWriteAnchoredToAuthority",
+      "executeRepairCampaign",
+      "scheduleRepairTick"
+    ],
+    "events": [
+      "execution.created",
+      "execution.completed",
+      "memory.repair_triggered",
+      "reflection.proposal_promoted",
+      "telemetry.flush_failed"
+    ],
+    "ipcChannels": [
+      "reflection:getDashboardState",
+      "reflection:getMetrics",
+      "reflection:approveProposal",
+      "execution:startRun",
+      "autonomy:getDashboardState"
+    ],
+    "apiRoutes": [
+      "GET /api/v1/memory/records",
+      "POST /api/v1/reflection/proposals/{proposalId}/approve",
+      "POST /api/v1/execution/runs"
+    ],
+    "toolWorkflowAutomation": {
+      "tools": [
+        "memory_search_records",
+        "path_resolve_portable_root"
+      ],
+      "workflows": [
+        "memory_repair_cycle",
+        "docs_selfheal"
+      ],
+      "automationArtifacts": [
+        "reflection-daily-health-check"
+      ]
+    }
+  }
+}

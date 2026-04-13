@@ -16,7 +16,7 @@
  *     flagged for later integrity audit.
  *
  * Integration points:
- *   - MemoryService.add()       → rejectAuthoritativeWriteOutsideMemoryAuthority()
+ *   - MemoryService.add()       → assertMemoryWriteAnchoredToAuthority()
  *   - ToolService mem0_add tool → assertDerivedMemoryAnchor()
  *   - AgentService.addMemory()  → canonicalises before deriving (write gate)
  *   - Any future derived store  → assertDerivedMemoryAnchor() at write site
@@ -110,7 +110,7 @@ export function assertCanonicalReferencePresent(
 }
 
 // ---------------------------------------------------------------------------
-// rejectAuthoritativeWriteOutsideMemoryAuthority
+// assertMemoryWriteAnchoredToAuthority
 // ---------------------------------------------------------------------------
 
 /**
@@ -124,7 +124,7 @@ export function assertCanonicalReferencePresent(
  * @param source   - Human-readable calling site (for diagnostics).
  * @param isDurable - Default true. Set false for intentionally transient writes.
  */
-export function rejectAuthoritativeWriteOutsideMemoryAuthority(
+export function assertMemoryWriteAnchoredToAuthority(
     anchor: DerivedWriteAnchor,
     source: string,
     isDurable: boolean = true,
@@ -134,7 +134,7 @@ export function rejectAuthoritativeWriteOutsideMemoryAuthority(
 }
 
 // ---------------------------------------------------------------------------
-// rankMemoryByAuthority
+// selectMemoryByAuthority
 // ---------------------------------------------------------------------------
 
 /**
@@ -149,7 +149,7 @@ export function rejectAuthoritativeWriteOutsideMemoryAuthority(
  * @param candidates - Unordered candidate items from various sources.
  * @returns           Ranked list, highest authority first.
  */
-export function rankMemoryByAuthority(
+export function selectMemoryByAuthority(
     candidates: Array<{
         content: string;
         source_description: string;

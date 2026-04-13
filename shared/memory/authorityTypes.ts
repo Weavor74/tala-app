@@ -176,7 +176,7 @@ export interface DerivedWriteAnchor {
 }
 
 // ---------------------------------------------------------------------------
-// MemoryAuthorityRanking — priority-ordered result from rankMemoryByAuthority()
+// MemoryAuthorityRanking — priority-ordered result from selectMemoryByAuthority()
 // ---------------------------------------------------------------------------
 
 export type MemoryAuthorityTier =
