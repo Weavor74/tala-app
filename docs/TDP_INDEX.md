@@ -289,6 +289,7 @@
 - [Service: SelfMaintenanceService.ts](subsystems/service-SelfMaintenanceService.md)
 - [Service: SettingsManager.ts](subsystems/service-SettingsManager.md)
 - [Service: SmartRouterService.ts](subsystems/service-SmartRouterService.md)
+- [Service: SystemModeManager.ts](subsystems/service-SystemModeManager.md)
 - [Service: SystemService.ts](subsystems/service-SystemService.md)
 - [Service: TelemetryService.ts](subsystems/service-TelemetryService.md)
 - [Service: TerminalService.ts](subsystems/service-TerminalService.md)

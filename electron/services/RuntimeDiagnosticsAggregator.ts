@@ -6,10 +6,14 @@ import type {
     CognitiveDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
+    SystemCapability,
+    SystemDegradationFlag,
+    SystemModeContract,
     SystemHealthOverallStatus,
     SystemHealthSnapshot,
     SystemHealthSubsystemSnapshot,
 } from '../../shared/system-health-types';
+import { SystemModeManager, type SystemModeSnapshot } from './SystemModeManager';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
 import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
@@ -70,6 +74,7 @@ export interface SystemHealthAdapterDeps {
 export class RuntimeDiagnosticsAggregator {
     private lastCognitiveMeta?: CognitiveTurnMeta;
     private readonly subsystemLastChange = new Map<string, { status: SystemHealthOverallStatus; changedAt: string }>();
+    private readonly systemModeManager = new SystemModeManager();
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -127,6 +132,37 @@ export class RuntimeDiagnosticsAggregator {
 
     public getSystemHealthSnapshot(sessionId?: string): SystemHealthSnapshot {
         return this.getSnapshot(sessionId).systemHealth;
+    }
+
+    public getSystemModeSnapshot(sessionId?: string): {
+        effective_mode: string;
+        active_degradation_flags: SystemDegradationFlag[];
+        mode_contract: SystemModeContract;
+        recent_mode_transitions: import('../../shared/system-health-types').SystemModeTransition[];
+    } {
+        const health = this.getSystemHealthSnapshot(sessionId);
+        return {
+            effective_mode: health.effective_mode,
+            active_degradation_flags: health.active_degradation_flags,
+            mode_contract: health.mode_contract,
+            recent_mode_transitions: health.recent_mode_transitions,
+        };
+    }
+
+    public isCapabilityAllowed(
+        capability: SystemCapability,
+        sessionId?: string,
+    ): { allowed: boolean; effective_mode: string; reason: string } {
+        const modeSnapshot = this.getSystemModeSnapshot(sessionId);
+        const allowed = modeSnapshot.mode_contract.allowed_capabilities.includes(capability)
+            && !modeSnapshot.mode_contract.blocked_capabilities.includes(capability);
+        return {
+            allowed,
+            effective_mode: modeSnapshot.effective_mode,
+            reason: allowed
+                ? 'allowed_by_mode_contract'
+                : `blocked_by_mode_contract:${modeSnapshot.effective_mode}`,
+        };
     }
 
     public getInferenceStatus(): InferenceDiagnosticsState {
@@ -245,8 +281,11 @@ export class RuntimeDiagnosticsAggregator {
         const toolFailed = events.filter(e => e.event === 'tool.failed').length;
         const toolCompleted = events.filter(e => e.event === 'tool.completed').length;
         const policyDenied = events.filter(e => e.event === 'policy.rule_denied' || e.event === 'execution.blocked').length;
-        const memoryRepairPending = events.filter(e => e.event === 'memory.repair_trigger').length
-            - events.filter(e => e.event === 'memory.repair_completed').length;
+        const memoryRepairPending = Math.max(
+            0,
+            events.filter(e => e.event === 'memory.repair_trigger').length
+                - events.filter(e => e.event === 'memory.repair_completed').length,
+        );
 
         const activeFallbacks: string[] = [];
         if (inference.fallbackApplied) activeFallbacks.push('inference_provider_fallback');
@@ -430,7 +469,9 @@ export class RuntimeDiagnosticsAggregator {
                 : ['Load and validate the active guardrail policy profile.'],
         });
 
-        const reflectionStatus: SystemHealthOverallStatus = memoryRepairPending > 0
+        const reflectionInRecovery = memoryRepairPending > 0
+            && (reflectionSummary.length > 0 || recentFailures.count > 0 || dbStatus !== 'healthy');
+        const reflectionStatus: SystemHealthOverallStatus = reflectionInRecovery
             ? 'recovery'
             : (reflectionSummary.length > 0 ? 'degraded' : 'healthy');
         addSubsystem({
@@ -567,6 +608,17 @@ export class RuntimeDiagnosticsAggregator {
             || queueStatus === 'impaired'
             || trustScore < 0.6;
 
+        const modeSnapshotWithAttention: SystemModeSnapshot = this.systemModeManager.evaluate({
+            timestamp: now,
+            overallStatus,
+            degradedCapabilities,
+            blockedCapabilities,
+            pendingRepairs,
+            activeFallbacks,
+            operatorAttentionRequired,
+            trustScore,
+        });
+
         return {
             timestamp: now,
             overall_status: overallStatus,
@@ -577,7 +629,11 @@ export class RuntimeDiagnosticsAggregator {
             active_fallbacks: activeFallbacks,
             active_incidents: activeIncidents,
             pending_repairs: pendingRepairs,
-            current_mode: currentMode,
+            current_mode: modeSnapshotWithAttention.effectiveMode,
+            effective_mode: modeSnapshotWithAttention.effectiveMode,
+            active_degradation_flags: modeSnapshotWithAttention.activeFlags,
+            mode_contract: modeSnapshotWithAttention.modeContract,
+            recent_mode_transitions: modeSnapshotWithAttention.recentTransitions,
             operator_attention_required: operatorAttentionRequired,
         };
     }

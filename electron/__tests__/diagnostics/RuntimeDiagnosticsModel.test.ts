@@ -1,5 +1,5 @@
-/**
- * RuntimeDiagnosticsModel Tests — Priority 2A Objective A
+﻿/**
+ * RuntimeDiagnosticsModel Tests â€” Priority 2A Objective A
  *
  * Validates the canonical runtime diagnostics types and the
  * RuntimeDiagnosticsAggregator snapshot shape.
@@ -17,7 +17,23 @@ import { InferenceDiagnosticsService } from '../../services/InferenceDiagnostics
 import { RuntimeDiagnosticsAggregator } from '../../services/RuntimeDiagnosticsAggregator';
 import type { McpInventoryDiagnostics, McpServiceDiagnostics } from '../../../shared/runtimeDiagnosticsTypes';
 
-// ─── Mock McpLifecycleManager ─────────────────────────────────────────────────
+vi.mock('../../services/db/initMemoryStore', () => ({
+    getLastDbHealth: () => ({
+        reachable: true,
+        authenticated: true,
+        databaseExists: true,
+        pgvectorInstalled: true,
+        migrationsApplied: true,
+    }),
+}));
+
+vi.mock('../../services/policy/PolicyGate', () => ({
+    policyGate: {
+        getActiveProfileId: () => 'test-profile',
+    },
+}));
+
+// â”€â”€â”€ Mock McpLifecycleManager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeEmptyMcpInventory(): McpInventoryDiagnostics {
     return {
@@ -38,9 +54,9 @@ function makeMockMcpLifecycle(inventory: McpInventoryDiagnostics = makeEmptyMcpI
     };
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describe('RuntimeDiagnosticsAggregator — snapshot shape', () => {
+describe('RuntimeDiagnosticsAggregator â€” snapshot shape', () => {
     let inferenceDiag: InferenceDiagnosticsService;
 
     beforeEach(() => {
@@ -100,7 +116,7 @@ describe('RuntimeDiagnosticsAggregator — snapshot shape', () => {
     });
 });
 
-describe('RuntimeDiagnosticsAggregator — degraded subsystem detection', () => {
+describe('RuntimeDiagnosticsAggregator â€” degraded subsystem detection', () => {
     it('marks inference as degraded when last stream failed', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
 
@@ -154,7 +170,7 @@ describe('RuntimeDiagnosticsAggregator — degraded subsystem detection', () => 
     });
 });
 
-describe('RuntimeDiagnosticsAggregator — failure summary', () => {
+describe('RuntimeDiagnosticsAggregator â€” failure summary', () => {
     it('failure summary is empty when no failures have occurred', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
         const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
@@ -216,7 +232,7 @@ describe('RuntimeDiagnosticsAggregator — failure summary', () => {
     });
 });
 
-describe('RuntimeDiagnosticsAggregator — status serialization', () => {
+describe('RuntimeDiagnosticsAggregator â€” status serialization', () => {
     it('snapshot is JSON-serializable without circular references', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
         const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
@@ -240,3 +256,98 @@ describe('RuntimeDiagnosticsAggregator — status serialization', () => {
         expect(Array.isArray(status.services)).toBe(true);
     });
 });
+
+describe('RuntimeDiagnosticsAggregator — degraded mode framework', () => {
+    const markPrimaryProviderReady = (inferenceDiag: InferenceDiagnosticsService) => {
+        inferenceDiag.updateFromInventory({
+            selectedProviderId: 'primary',
+            providers: [
+                {
+                    providerId: 'primary',
+                    displayName: 'Primary',
+                    providerType: 'ollama',
+                    scope: 'local',
+                    transport: 'http',
+                    endpoint: 'http://localhost:11434',
+                    configured: true,
+                    detected: true,
+                    ready: true,
+                    health: 'healthy',
+                    status: 'ready',
+                    priority: 1,
+                    capabilities: {
+                        supportsStreaming: true,
+                        supportsTools: true,
+                        supportsVision: false,
+                        supportsJsonMode: true,
+                    },
+                    models: ['llama3'],
+                },
+            ],
+        } as any);
+    };
+
+    it('reports NORMAL mode when runtime is healthy', () => {
+        const inferenceDiag = new InferenceDiagnosticsService();
+        markPrimaryProviderReady(inferenceDiag);
+        const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
+        const snap = aggregator.getSnapshot();
+        expect(snap.systemHealth.effective_mode).toBe('NORMAL');
+        expect(snap.systemHealth.current_mode).toBe('NORMAL');
+        expect(snap.systemHealth.mode_contract.mode).toBe('NORMAL');
+    });
+
+    it('reports DEGRADED_INFERENCE when inference fallback is active', () => {
+        const inferenceDiag = new InferenceDiagnosticsService();
+        inferenceDiag.recordStreamResult({
+            success: true,
+            content: 'ok',
+            streamStatus: 'completed',
+            fallbackApplied: true,
+            attemptedProviders: ['primary', 'fallback'],
+            providerId: 'fallback',
+            providerType: 'ollama',
+            modelName: 'llama3',
+            turnId: 'turn-fallback',
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            durationMs: 120,
+            isPartial: false,
+        });
+        const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
+        const snap = aggregator.getSnapshot();
+        expect(snap.systemHealth.effective_mode).toBe('DEGRADED_INFERENCE');
+        expect(snap.systemHealth.active_degradation_flags).toContain('DEGRADED_INFERENCE');
+    });
+
+    it('tracks deterministic mode transitions in snapshot history', () => {
+        const inferenceDiag = new InferenceDiagnosticsService();
+        markPrimaryProviderReady(inferenceDiag);
+        const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
+        const initial = aggregator.getSnapshot();
+        expect(initial.systemHealth.recent_mode_transitions.length).toBe(0);
+
+        inferenceDiag.recordStreamResult({
+            success: true,
+            content: 'ok',
+            streamStatus: 'completed',
+            fallbackApplied: true,
+            attemptedProviders: ['primary', 'fallback'],
+            providerId: 'fallback',
+            providerType: 'ollama',
+            modelName: 'llama3',
+            turnId: 'turn-fallback',
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            durationMs: 120,
+            isPartial: false,
+        });
+        const degraded = aggregator.getSnapshot();
+        expect(degraded.systemHealth.effective_mode).toBe('DEGRADED_INFERENCE');
+        expect(degraded.systemHealth.recent_mode_transitions.length).toBe(1);
+        expect(degraded.systemHealth.recent_mode_transitions[0]?.from_mode).toBe('NORMAL');
+        expect(degraded.systemHealth.recent_mode_transitions[0]?.to_mode).toBe('DEGRADED_INFERENCE');
+    });
+});
+
+

@@ -53,6 +53,7 @@ import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrails
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
 import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
+import type { SystemCapability } from '../../shared/system-health-types';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,

@@ -44,6 +44,7 @@
 - [SelfMaintenanceService.ts](./service-SelfMaintenanceService.md)
 - [SettingsManager.ts](./service-SettingsManager.md)
 - [SmartRouterService.ts](./service-SmartRouterService.md)
+- [SystemModeManager.ts](./service-SystemModeManager.md)
 - [SystemService.ts](./service-SystemService.md)
 - [TelemetryService.ts](./service-TelemetryService.md)
 - [TerminalService.ts](./service-TerminalService.md)

@@ -26,6 +26,16 @@
 **Returns**: `SystemHealthSnapshot`
 
 ---
+#### `getSystemModeSnapshot`
+**Arguments**: `sessionId?: string`
+**Returns**: ``
+
+---
+#### `isCapabilityAllowed`
+**Arguments**: `capability: SystemCapability, sessionId?: string,`
+**Returns**: ``
+
+---
 #### `getInferenceStatus`
 **Arguments**: ``
 **Returns**: `InferenceDiagnosticsState`

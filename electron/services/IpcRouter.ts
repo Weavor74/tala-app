@@ -53,6 +53,7 @@ import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrails
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
 import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
+import type { SystemCapability } from '../../shared/system-health-types';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
@@ -134,6 +135,33 @@ export class IpcRouter {
     // Helper to simulate mutable let from main.ts
     const getSettingsPath = () => this.ctx.getSettingsPath();
     const setSettingsPath = (p: string) => this.ctx.setSettingsPath(p);
+    const resolveEffectiveExecutionMode = (rawMode: string, effectiveMode: string): RuntimeExecutionMode => {
+      const safeModeOverride = effectiveMode === 'SAFE_MODE'
+        || effectiveMode === 'READ_ONLY'
+        || effectiveMode === 'RECOVERY'
+        || effectiveMode === 'MAINTENANCE';
+      if (safeModeOverride) return 'assistant';
+      return VALID_EXECUTION_MODES.has(rawMode) ? (rawMode as RuntimeExecutionMode) : 'assistant';
+    };
+    const enforceModeCapability = (capability: SystemCapability, source: string): { mode: string } => {
+      const check = this.ctx.diagnosticsAggregator.isCapabilityAllowed(capability);
+      if (!check.allowed) {
+        TelemetryBus.getInstance().emit({
+          executionId: `${source}-${Date.now()}`,
+          subsystem: 'router',
+          event: 'execution.blocked',
+          phase: 'mode_contract',
+          payload: {
+            source,
+            capability,
+            mode: check.effective_mode,
+            reason: check.reason,
+          },
+        });
+        throw new Error(`Blocked by runtime mode ${check.effective_mode}: capability ${capability} is not permitted.`);
+      }
+      return { mode: check.effective_mode };
+    };
 
     // Phase 3A: Wire the diagnostics aggregator into AgentService so cognitive
     // contexts are recorded after each turn without exposing it in the constructor.
@@ -750,15 +778,14 @@ export class IpcRouter {
      * Start node is auto-detected (first trigger node).
      */
     ipcMain.handle('execute-workflow', async (event, { workflowId, input }) => {
+      const modeGate = enforceModeCapability('workflow_execute', 'IpcRouter.execute-workflow');
       const workflows = workflowService.listWorkflows();
       const wf = workflows.find((w: any) => w.id === workflowId);
       if (!wf) throw new Error('Workflow not found');
 
       const runId = Date.now().toString();
       const rawMode = getActiveMode(getSettingsPath(), 'IpcRouter.execute-workflow');
-      const wfExecutionMode: RuntimeExecutionMode = VALID_EXECUTION_MODES.has(rawMode)
-        ? (rawMode as RuntimeExecutionMode)
-        : 'assistant';
+      const wfExecutionMode: RuntimeExecutionMode = resolveEffectiveExecutionMode(rawMode, modeGate.mode);
       const result = await workflowEngine.executeWorkflow(wf, undefined, input, wfExecutionMode);
 
       // Save Run Log
@@ -1397,6 +1424,7 @@ export class IpcRouter {
      */
     ipcMain.on('chat-message', async (event, payload) => {
       try {
+        const modeGate = enforceModeCapability('chat_inference', 'IpcRouter.chat-message');
         console.log("[DEBUG] ipcMain 'chat-message' triggered with payload:", payload);
         let fullResponse = '';
         let text = "";
@@ -1416,9 +1444,7 @@ export class IpcRouter {
         // Resolve the active mode at dispatch time so the kernel stamps the correct
         // RuntimeExecutionMode on this turn's execution metadata.
         const rawMode = getActiveMode(getSettingsPath(), 'IpcRouter.chat-message');
-        const executionMode: RuntimeExecutionMode = VALID_EXECUTION_MODES.has(rawMode)
-          ? (rawMode as RuntimeExecutionMode)
-          : 'assistant';
+        const executionMode: RuntimeExecutionMode = resolveEffectiveExecutionMode(rawMode, modeGate.mode);
         const result = await this._kernel.execute(
           { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride, origin: 'ipc', executionMode },
           (token: string) => {
@@ -2209,6 +2235,11 @@ export class IpcRouter {
      */
     ipcMain.handle('diagnostics:getRuntimeSnapshot', async () => {
       return diagnosticsAggregator.getSnapshot();
+    });
+
+    /** Returns the canonical effective runtime operating mode and contract. */
+    ipcMain.handle('diagnostics:getSystemModeSnapshot', async () => {
+      return diagnosticsAggregator.getSystemModeSnapshot();
     });
 
     /**

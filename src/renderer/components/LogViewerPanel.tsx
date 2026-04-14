@@ -448,6 +448,10 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
                             <span style={{ fontSize: '9px', opacity: 0.7 }}>OVERALL</span>
                             {healthBadge(healthSnapshot.overall_status)}
                         </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '9px', opacity: 0.7 }}>MODE</span>
+                            <span style={{ fontSize: '10px', color: '#ddd' }}>{healthSnapshot.effective_mode}</span>
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', rowGap: '2px' }}>
                             {healthSnapshot.subsystem_entries.map((subsystem) => (
                                 <div key={subsystem.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>

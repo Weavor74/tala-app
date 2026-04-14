@@ -13,6 +13,55 @@ export type SystemHealthOverallStatus =
     | 'maintenance'
     | 'failed';
 
+export type SystemOperatingMode =
+    | 'NORMAL'
+    | 'DEGRADED_INFERENCE'
+    | 'DEGRADED_MEMORY'
+    | 'DEGRADED_TOOLS'
+    | 'DEGRADED_AUTONOMY'
+    | 'SAFE_MODE'
+    | 'READ_ONLY'
+    | 'RECOVERY'
+    | 'MAINTENANCE';
+
+export type SystemDegradationFlag = Exclude<SystemOperatingMode, 'NORMAL'>;
+
+export type SystemCapability =
+    | 'chat_inference'
+    | 'workflow_execute'
+    | 'tool_execute_read'
+    | 'tool_execute_write'
+    | 'tool_execute_diagnostic'
+    | 'memory_canonical_read'
+    | 'memory_canonical_write'
+    | 'memory_promotion'
+    | 'autonomy_execute'
+    | 'repair_execute'
+    | 'repair_promotion'
+    | 'self_modify';
+
+export interface SystemModeContract {
+    mode: SystemOperatingMode;
+    entry_conditions: string[];
+    exit_conditions: string[];
+    allowed_capabilities: SystemCapability[];
+    blocked_capabilities: SystemCapability[];
+    fallback_behavior: string[];
+    user_facing_behavior_changes: string[];
+    telemetry_expectations: string[];
+    operator_actions_allowed: string[];
+    autonomy_allowed: boolean;
+    writes_allowed: boolean;
+    operator_approval_required_for: string[];
+}
+
+export interface SystemModeTransition {
+    from_mode: SystemOperatingMode;
+    to_mode: SystemOperatingMode;
+    transitioned_at: string;
+    reason_codes: string[];
+}
+
 export type SystemHealthSubsystemSeverity = 'info' | 'warning' | 'error' | 'critical';
 
 export type SystemHealthAutoActionState =
@@ -47,5 +96,9 @@ export interface SystemHealthSnapshot {
     active_incidents: string[];
     pending_repairs: string[];
     current_mode: string;
+    effective_mode: SystemOperatingMode;
+    active_degradation_flags: SystemDegradationFlag[];
+    mode_contract: SystemModeContract;
+    recent_mode_transitions: SystemModeTransition[];
     operator_attention_required: boolean;
 }

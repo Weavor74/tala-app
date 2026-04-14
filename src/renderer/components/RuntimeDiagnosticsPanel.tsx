@@ -286,6 +286,14 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                         trust: {Math.round(systemHealth.trust_score * 100)}%
                     </span>
                 </div>
+                <div style={{ fontSize: 12, color: '#d1d5db', marginBottom: 8 }}>
+                    effective mode: <strong>{systemHealth.effective_mode}</strong>
+                </div>
+                {systemHealth.active_degradation_flags.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 8 }}>
+                        flags: {systemHealth.active_degradation_flags.join(', ')}
+                    </div>
+                )}
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>
                     {systemHealth.subsystem_entries.filter((s) => s.status !== 'healthy').slice(0, 4).map((s) => (
                         <div key={s.name}>{s.name}: {s.status}</div>
@@ -294,6 +302,11 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                         <div>All canonical health adapters are healthy.</div>
                     )}
                 </div>
+                {systemHealth.mode_contract.blocked_capabilities.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#fca5a5', marginTop: 8 }}>
+                        blocked capabilities: {systemHealth.mode_contract.blocked_capabilities.join(', ')}
+                    </div>
+                )}
             </Section>
             {/* Inference section */}
             <Section title="Inference">
