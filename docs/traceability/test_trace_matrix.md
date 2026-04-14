@@ -1,5 +1,24 @@
 # Test Traceability Matrix — Tala System
 
+## Phase C Integration Proof Layer
+
+Phase C is an enforceable integration proof layer, not a smoke-test layer. It keeps five deterministic suites wired together so maintainers can validate real startup, tool loop, memory authority, inference fallback, and autonomy governance behavior under healthy and degraded conditions.
+
+Local commands:
+- `npm run test:phase-c`
+- `npm run test:phase-c:watch`
+
+CI enforcement:
+- GitHub Actions workflow: `.github/workflows/phase-c-integration.yml`
+- CI command: `npm run test:phase-c`
+
+Phase C suite set:
+- `tests/StartupResilienceIntegration.test.ts`
+- `tests/ToolExecutionRuntimeLoop.integration.test.ts`
+- `tests/MemoryAuthorityStrictEnforcement.test.ts`
+- `tests/InferenceProviderFallback.integration.test.ts`
+- `tests/autonomy/AutonomyCycleIntegration.test.ts`
+
 | Requirement ID | Validation Method | Test Location / Proof |
 |:---|:---|:---|
 | **REQ-SYS-001** | Demonstration | System startup logs showing "Local Mode" active. |
