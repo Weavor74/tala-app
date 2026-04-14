@@ -10,7 +10,7 @@ GuardrailService.ts A GuardrailsAI-compatible guardrail system for Tala. Impl
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { app } from 'electron';
+import { resolveStoragePath } from './PathResolver';
 
 // ═══════════════════════════════════════════════════════════════
 // Types

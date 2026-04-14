@@ -22,6 +22,7 @@
 - [Copilot Rules — Tala](architecture/COPILOT_RULES.md)
 - [Data Flow](architecture/data_flow.md)
 - [Deployment Topology](architecture/deployment_topology.md)
+- [Memory Authority Invariant](architecture/memory-authority-invariant.md)
 - [Memory Bootstrap — Native-First Local PostgreSQL Runtime](architecture/memory_bootstrap.md)
 - [Memory Operator Review Surface](architecture/memory_operator_review_surface.md)
 - [Memory Repair Scheduled Loop](architecture/memory_repair_scheduler.md)
@@ -49,6 +50,7 @@
 - [Semantic Retrieval Architecture](architecture/semantic_retrieval.md)
 - [Service Interactions](architecture/service_interactions.md)
 - [System Architecture Overview](architecture/overview.md)
+- [Tala Naming Conventions (Locked Architecture Contract)](architecture/naming-conventions.md)
 - [Tala System Overview](architecture/system_overview.md)
 - [Technology Stack](architecture/technology_stack.md)
 
@@ -124,6 +126,7 @@
 - [Contract: userProfile.ts](contracts/userProfile.md)
 - [Contract: worldModelTypes.ts](contracts/worldModelTypes.md)
 - [Shared Contracts Index](contracts/README.md)
+- [Tala Code Generation Rules (Naming Contract Enforcement)](contracts/code-generation-rules.md)
 
 ## contributing
 
@@ -190,6 +193,11 @@
 - [Traceability Generation Log — Tala System](traceability/logs/traceability_generation_log.md)
 - [Unresolved Items Log](audit/logs/unresolved_items.md)
 
+## operations
+
+- [Tala Gatekeeper Naming Policy (Initial Operational Pass)](operations/gatekeeper-naming-policy.md)
+- [Tala Naming Maintenance Protocol (Post-Rollout)](operations/naming-maintenance-protocol.md)
+
 ## requirements
 
 - [Nonfunctional Requirements — Tala System](requirements/nonfunctional_requirements.md)
@@ -199,6 +207,7 @@
 ## review
 
 - [Cross-Reference Matrix — Tala System](review/cross_reference_matrix.md)
+- [Doclock Impact Report](review/doclock-impact.md)
 - [Documentation Alignment Report — Tala System](review/documentation_alignment_report.md)
 - [Documentation Gaps — Tala System](review/documentation_gaps.md)
 - [Inconsistency Log — Tala System](review/inconsistency_log.md)
@@ -259,7 +268,9 @@
 - [Service: IpcRouter.ts](subsystems/service-IpcRouter.md)
 - [Service: LocalEngineService.ts](subsystems/service-LocalEngineService.md)
 - [Service: LocalInferenceManager.ts](subsystems/service-LocalInferenceManager.md)
+- [Service: LocalInferenceOrchestrator.ts](subsystems/service-LocalInferenceOrchestrator.md)
 - [Service: log_redact.ts](subsystems/service-log_redact.md)
+- [Service: LogLifecycleService.ts](subsystems/service-LogLifecycleService.md)
 - [Service: LogViewerService.ts](subsystems/service-LogViewerService.md)
 - [Service: McpLifecycleManager.ts](subsystems/service-McpLifecycleManager.md)
 - [Service: McpService.ts](subsystems/service-McpService.md)

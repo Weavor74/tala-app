@@ -38,6 +38,14 @@ export interface MemoryItem {
     status: 'active' | 'contested' | 'superseded' | 'archived';
 }
 
+export interface LegacyMemoryBackfillCandidate {
+    legacy_memory_id: string;
+    text: string;
+    metadata: Record<string, unknown>;
+    timestamp: number;
+    status: MemoryItem['status'];
+}
+
 /** Fact-Based Conversational Memory Engine.  The `MemoryService` provides episodic and semantic memory for the agent,  specializing in short-term facts, preferences, and state. It implements  a high-reliability dual-storage strategy.  **Architecture:** - **Primary (Remote)**: Mem0 MCP server (`mem0-core/server.py`) for AI-powered    extraction and graph-based relationships. - **Fallback (Local)**: Synchronous JSON persistence at `tala_memory.json`    for instant recovery and redundancy.  **Key Features:** - **Composite Scoring**: Reranks memories using semantic similarity,    salience, recency, and confidence. - **Contradiction Detection**: Automatically marks old facts as contested    or superseded when new information conflicts. - **Association Expansion**: Performs one-hop graph walks to retrieve    contextually related memories.
 
 ### Methods
@@ -103,6 +111,26 @@ Normalizes a memory item to ensure it has all required metadata fields. This ha
 **Returns**: `MemoryItem`
 
 ---
+#### `hasCanonicalMemoryAnchor`
+**Arguments**: `memory: Pick<MemoryItem, 'metadata'>`
+**Returns**: `boolean`
+
+---
+#### `filterCanonicalBackedMemories`
+**Arguments**: `memories: MemoryItem[], source: string`
+**Returns**: `MemoryItem[]`
+
+---
+#### `_emitBypassBlocked`
+**Arguments**: `operation: string, reason: string`
+**Returns**: `void`
+
+---
+#### `_assertCanonicalRecordState`
+**Arguments**: `canonicalMemoryId: string, allowedStatuses: Array<'canonical' | 'superseded' | 'tombstoned'>, operation: string,`
+**Returns**: `Promise<void>`
+
+---
 #### `saveLocal`
 Persists the current in-memory `localMemories` array to the JSON file on disk.  Called after every `add()` operation to ensure local persistence. The file is written with pretty-printed JSON (2-space indentation) for debuggability. Write errors are caught and logged but do not throw — memory persistence failures are non-fatal.  @private @returns {void}/
 
@@ -147,9 +175,11 @@ Calculates recency score using exponential decay./
 
 ---
 #### `add`
-Adds a new memory to both the local store and the remote MCP server.  The memory is always saved to the local JSON file first (for redundancy), then an attempt is made to push it to the remote Mem0 server if connected. If the remote write fails, the memory still persists locally.  A unique ID is generated using the current Unix timestamp in milliseconds.  @param {string} text - The memory text content to store   (e.g., "User prefers dark mode", "Steve's birthday is March 15"). @param {any} [metadata] - Optional metadata to attach to the memory.   Common fields include `source`, `category`, `user_id`, etc.   When sent to the remote server, metadata properties are spread into   the tool arguments alongside the text. @returns {Promise<boolean>} Always returns `true` (local write never fails fatally)./
+Legacy mutation API intentionally hard-locked.
+ Durable memory authority must route through MemoryAuthorityService.
+/
 
-**Arguments**: `text: string, metadata: any = {}, mode: string = 'assistant'`
+**Arguments**: `_text: string, _metadata: any = {}, _mode: string = 'assistant'`
 **Returns**: `Promise<boolean>`
 
 ---
@@ -160,17 +190,49 @@ Retrieves all locally stored memories. @returns {Promise<MemoryItem[]>} Array o
 **Returns**: `Promise<MemoryItem[]>`
 
 ---
+#### `anchorLegacyMemoryToCanonical`
+**Arguments**: `legacyMemoryId: string, canonicalMemoryId: string`
+**Returns**: `Promise<boolean>`
+
+---
+#### `quarantineLegacyMemoryForBackfill`
+**Arguments**: `legacyMemoryId: string, reason: string`
+**Returns**: `boolean`
+
+---
 #### `delete`
-Deletes a memory item by ID. @param {string} id - The ID of the memory to delete. @returns {Promise<boolean>} True if found and deleted, false otherwise./
+Deletes a memory item by ID.
+ @param {string} id - The ID of the memory to delete.
+ @returns {Promise<boolean>} True if found and deleted, false otherwise.
+/
 
 **Arguments**: `id: string`
 **Returns**: `Promise<boolean>`
 
 ---
+#### `deleteByCanonicalMemoryId`
+**Arguments**: `canonicalMemoryId: string`
+**Returns**: `Promise<boolean>`
+
+---
+#### `removeDerivedProjectionForCanonical`
+**Arguments**: `canonicalMemoryId: string`
+**Returns**: `Promise<boolean>`
+
+---
 #### `update`
-Updates the text of a memory item. @param {string} id - The ID of the memory to update. @param {string} text - The new text content. @returns {Promise<boolean>} True if found and updated, false otherwise./
+Updates the text of a memory item.
+ @param {string} id - The ID of the memory to update.
+ @param {string} text - The new text content.
+ @returns {Promise<boolean>} True if found and updated, false otherwise.
+/
 
 **Arguments**: `id: string, text: string`
+**Returns**: `Promise<boolean>`
+
+---
+#### `updateByCanonicalMemoryId`
+**Arguments**: `canonicalMemoryId: string, text: string`
 **Returns**: `Promise<boolean>`
 
 ---

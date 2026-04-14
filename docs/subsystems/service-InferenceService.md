@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import { app } from 'electron';
 import { WebContents } from 'electron';
 import { LocalEngineService } from './LocalEngineService';
-import { LocalInferenceManager } from './LocalInferenceManager';
+import { LocalInferenceOrchestrator } from './LocalInferenceOrchestrator';
 import { auditLogger } from './AuditLogger';
 import { telemetry } from './TelemetryService';
 import { InferenceProviderRegistry, type ProviderRegistryConfig } from './inference/InferenceProviderRegistry';
@@ -39,6 +39,8 @@ import type {
 import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
 import { inferenceDiagnostics } from './InferenceDiagnosticsService';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
+import { PolicyDeniedError } from './policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -49,7 +51,7 @@ export interface ScannedProvider {
     models: string[];
 }
 
-/** InferenceService — Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceManager) - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
+/** InferenceService — Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator) - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
 
 ### Methods
 
@@ -95,15 +97,15 @@ Executes a streaming inference request through the canonical path. This is the
 **Returns**: `Promise<StreamInferenceResult>`
 
 ---
-#### `getLocalInferenceManager`
-Returns the LocalInferenceManager for the embedded llama.cpp engine. IPC handlers and AgentService use this for embedded engine lifecycle./
+#### `getLocalInferenceOrchestrator`
+Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine. IPC handlers and AgentService use this for embedded engine lifecycle./
 
 **Arguments**: ``
-**Returns**: `LocalInferenceManager`
+**Returns**: `LocalInferenceOrchestrator`
 
 ---
 #### `getLocalEngine`
-Returns the legacy LocalEngineService. @deprecated Prefer getLocalInferenceManager() for state-managed access./
+Returns the legacy LocalEngineService. @deprecated Prefer getLocalInferenceOrchestrator() for state-managed access./
 
 **Arguments**: ``
 **Returns**: `LocalEngineService`

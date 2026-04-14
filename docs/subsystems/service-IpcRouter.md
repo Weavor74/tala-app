@@ -47,6 +47,16 @@ import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
+import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
+import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
+import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
+import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
+import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
+import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
+import {
+  buildDefaultGuardrailPolicyConfig,
+  normalizeGuardrailPolicyConfig,
+} from '../../shared/guardrails/guardrailPolicyTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
