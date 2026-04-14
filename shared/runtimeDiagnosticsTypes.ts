@@ -327,6 +327,43 @@ export interface OperatorActionResultContract {
     details?: Record<string, unknown>;
 }
 
+export type OperatorActionCategory =
+    | 'runtime_control'
+    | 'recovery_control'
+    | 'governance_control'
+    | 'visibility_control';
+
+export type OperatorActionRiskLevel = 'low' | 'medium' | 'high';
+
+/**
+ * Canonical operator action availability contract for dashboard controls.
+ * Produced by backend policy/mode evaluation to avoid renderer-local heuristics.
+ */
+export interface OperatorActionAvailability {
+    action: OperatorActionId;
+    label: string;
+    category: OperatorActionCategory;
+    risk_level: OperatorActionRiskLevel;
+    recommended: boolean;
+    allowed: boolean;
+    reason: string;
+    requires_explicit_approval: boolean;
+    affected_subsystems: string[];
+}
+
+export interface OperatorActionStateSnapshot {
+    actions: OperatorActionResultContract[];
+    auto_actions: OperatorActionResultContract[];
+    visibility: {
+        acknowledged_incidents: string[];
+        muted_duplicate_alert_keys: string[];
+        pinned_issue: string | null;
+        self_improvement_locked: boolean;
+        high_risk_human_approval_required: boolean;
+    };
+    available_actions: OperatorActionAvailability[];
+}
+
 // ─── Provider health score ─────────────────────────────────────────────────────
 
 /**

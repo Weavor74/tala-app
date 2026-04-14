@@ -189,6 +189,35 @@ interface OperatorActionResultContract {
     }
 ```
 
+### `OperatorActionAvailability`
+```typescript
+interface OperatorActionAvailability {
+    action: OperatorActionId;
+    label: string;
+    category: OperatorActionCategory;
+    risk_level: OperatorActionRiskLevel;
+    recommended: boolean;
+    allowed: boolean;
+    reason: string;
+    requires_explicit_approval: boolean;
+    affected_subsystems: string[];
+}
+```
+
+### `OperatorActionStateSnapshot`
+```typescript
+interface OperatorActionStateSnapshot {
+    actions: OperatorActionResultContract[];
+    auto_actions: OperatorActionResultContract[];
+    visibility: {
+        acknowledged_incidents: string[];
+        muted_duplicate_alert_keys: string[];
+        pinned_issue: string | null;
+        self_improvement_locked: boolean;
+        high_risk_human_approval_required: boolean;
+    }
+```
+
 ### `ProviderHealthScore`
 ```typescript
 interface ProviderHealthScore {
@@ -313,5 +342,19 @@ type OperatorActionId =
 ### `OperatorActionSource`
 ```typescript
 type OperatorActionSource =  'operator' | 'auto_repair';
+```
+
+### `OperatorActionCategory`
+```typescript
+type OperatorActionCategory = 
+    | 'runtime_control'
+    | 'recovery_control'
+    | 'governance_control'
+    | 'visibility_control';
+```
+
+### `OperatorActionRiskLevel`
+```typescript
+type OperatorActionRiskLevel =  'low' | 'medium' | 'high';
 ```
 

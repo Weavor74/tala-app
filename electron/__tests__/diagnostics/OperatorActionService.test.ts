@@ -222,4 +222,81 @@ describe('OperatorActionService', () => {
         expect(service.getAutoRepairHistory().length).toBe(1);
         expect(service.getActionHistory().length).toBe(0);
     });
+
+    it('computes backend action availability with deterministic recommendations', async () => {
+        const health = makeHealth({
+            subsystem_entries: [
+                {
+                    name: 'inference_service',
+                    status: 'degraded',
+                    severity: 'warning',
+                    last_checked_at: new Date().toISOString(),
+                    last_changed_at: new Date().toISOString(),
+                    reason_codes: ['inference_fallback_active'],
+                    evidence: [],
+                    operator_impact: 'reduced',
+                    auto_action_state: 'fallback_active',
+                    recommended_actions: [],
+                },
+            ],
+            mode_contract: {
+                ...makeHealth().mode_contract,
+                mode: 'DEGRADED_INFERENCE',
+                operator_actions_allowed: ['probe_providers', 'restart_provider', 'force_provider_selection'],
+            },
+            effective_mode: 'DEGRADED_INFERENCE',
+            current_mode: 'DEGRADED_INFERENCE',
+        });
+        const diagnosticsAggregator: any = {
+            getSystemHealthSnapshot: () => health,
+            setOperatorModeOverride: vi.fn(),
+            getOperatorModeOverride: vi.fn(() => null),
+            getSnapshot: () => ({ inference: {}, mcp: { services: [] } }),
+        };
+        const runtimeControl: any = {
+            probeProviders: vi.fn(async () => ({ success: true })),
+            probeMcpServices: vi.fn(() => ({ success: true })),
+            restartMcpService: vi.fn(async () => ({ success: true })),
+        };
+        const service = new OperatorActionService({
+            diagnosticsAggregator,
+            runtimeControl,
+            getSettingsPath: () => 'D:/tmp/not-used-settings.json',
+        });
+
+        const actions = service.getAvailableActions();
+        const retryProbe = actions.find((a) => a.action === 'retry_inference_probe');
+        expect(retryProbe?.recommended).toBe(true);
+        expect(retryProbe?.allowed).toBe(true);
+    });
+
+    it('marks high-risk actions as approval-required when policy is enabled', async () => {
+        const diagnosticsAggregator: any = {
+            getSystemHealthSnapshot: () => makeHealth(),
+            setOperatorModeOverride: vi.fn(),
+            getOperatorModeOverride: vi.fn(() => null),
+            getSnapshot: () => ({ inference: {}, mcp: { services: [] } }),
+        };
+        const runtimeControl: any = {
+            probeProviders: vi.fn(async () => ({ success: true })),
+            probeMcpServices: vi.fn(() => ({ success: true })),
+            restartMcpService: vi.fn(async () => ({ success: true })),
+        };
+        const service = new OperatorActionService({
+            diagnosticsAggregator,
+            runtimeControl,
+            getSettingsPath: () => 'D:/tmp/not-used-settings.json',
+        });
+
+        await service.executeAction({
+            action: 'require_human_approval_high_risk',
+            requested_by: 'test_operator',
+            params: { required: true },
+        });
+        const actions = service.getAvailableActions();
+        const exitSafe = actions.find((a) => a.action === 'exit_safe_mode');
+        expect(exitSafe?.requires_explicit_approval).toBe(true);
+        expect(exitSafe?.allowed).toBe(false);
+        expect(exitSafe?.reason).toContain('human_approval_required_for_high_risk_action');
+    });
 });

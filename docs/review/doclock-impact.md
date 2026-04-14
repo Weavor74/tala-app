@@ -10,13 +10,18 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 | `electron/services/IpcRouter.ts` | `docs/architecture/service_interactions.md`<br>`docs/interfaces/ipc_interface_control.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `ipc-inventory`, `service-ownership-map` | auto |
 | `electron/services/OperatorActionService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 | `shared/runtimeDiagnosticsTypes.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
+| `src/renderer/components/RuntimeDiagnosticsDashboardModel.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
+| `src/renderer/components/RuntimeDiagnosticsPanel.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
+| `tests/runtimeDiagnosticsDashboardModel.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
 
-Summary: total_changed=7, impact_candidates=4, mapped=3, unmapped=1, manual_review=1.
+Summary: total_changed=10, impact_candidates=7, mapped=4, unmapped=3, manual_review=3.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
 <!-- REVIEW_REQUIRED:start -->
 - [x] `shared/runtimeDiagnosticsTypes.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
+- [x] `src/renderer/components/RuntimeDiagnosticsDashboardModel.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
+- [x] `src/renderer/components/RuntimeDiagnosticsPanel.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
 
 Rule: unresolved `[ ]` items block `docs:validate`.
 <!-- REVIEW_REQUIRED:end -->

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type {
+    OperatorActionStateSnapshot,
     RuntimeDiagnosticsSnapshot,
     McpServiceDiagnostics,
 } from '../../../shared/runtimeDiagnosticsTypes';
+import { buildDashboardActionViews } from './RuntimeDiagnosticsDashboardModel';
 
 /**
  * RuntimeDiagnosticsPanel — Phase 2B Minimal Diagnostics Panel
@@ -29,8 +31,7 @@ function statusColor(status: string): string {
         case 'healthy': return '#22c55e';
         case 'maintenance':
         case 'recovery': return '#f59e0b';
-        case 'impaired':
-        case 'failed': return '#ef4444';
+        case 'impaired': return '#ef4444';
         case 'ready': return '#22c55e';
         case 'starting':
         case 'recovering': return '#f59e0b';
@@ -190,7 +191,7 @@ function ControlButton({ label, title, onClick, disabled }: { label: string; tit
 
 const RuntimeDiagnosticsPanel: React.FC = () => {
     const [snapshot, setSnapshot] = useState<RuntimeDiagnosticsSnapshot | null>(null);
-    const [operatorState, setOperatorState] = useState<any | null>(null);
+    const [operatorState, setOperatorState] = useState<OperatorActionStateSnapshot | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState(false);
@@ -275,32 +276,12 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
     const latestOperator = operatorState?.actions?.slice?.(-5)?.reverse?.() ?? [];
     const latestAuto = operatorState?.auto_actions?.slice?.(-3)?.reverse?.() ?? [];
     const fallbackChain = (systemHealth.active_fallbacks ?? []).join(' -> ') || 'none';
-    const nonHealthySubsystems = systemHealth.subsystem_entries.filter((s) => s.status !== 'healthy');
-    const hasInferenceIssue = nonHealthySubsystems.some((s) => s.name === 'inference_service');
-    const hasDbOrMemoryIssue = nonHealthySubsystems.some((s) => s.name === 'db_health_service' || s.name === 'memory_authority_service');
-    const contextActions: Array<{ id: string; label: string; params?: Record<string, unknown> }> = [];
-    if (hasInferenceIssue) {
-        contextActions.push(
-            { id: 'retry_subsystem_health_check', label: 'Retry Provider Probe', params: { subsystem: 'inference' } },
-            { id: 'restart_inference_adapter', label: 'Restart Inference Adapter' },
-            { id: 'enter_safe_mode', label: 'Enter Safe Mode' },
-            { id: 'pause_autonomy', label: 'Pause Autonomy' },
-        );
-    }
-    if (hasDbOrMemoryIssue) {
-        contextActions.push(
-            { id: 'rerun_db_health_validation', label: 'Re-run DB Validation' },
-            { id: 'revalidate_memory_authority', label: 'Revalidate Memory Authority' },
-            { id: 'enter_maintenance_mode', label: 'Enter Maintenance Mode' },
-            { id: 'require_human_approval_high_risk', label: 'Require High-Risk Approval', params: { required: true } },
-        );
-    }
-    if (contextActions.length === 0) {
-        contextActions.push(
-            { id: 'retry_subsystem_health_check', label: 'Retry Health Checks' },
-            { id: 'export_health_snapshot', label: 'Export Health Snapshot' },
-        );
-    }
+    const { contextActions, groupedActions } = buildDashboardActionViews(snapshot, operatorState);
+    const actionParams: Record<string, Record<string, unknown>> = {
+        exit_safe_mode: { operator_approved: true },
+        clear_maintenance_mode: { operator_approved: true },
+        require_human_approval_high_risk: { required: true },
+    };
 
     return (
         <div style={{ padding: '14px 16px', fontFamily: 'system-ui, sans-serif', color: '#e5e7eb', maxWidth: 560, fontSize: 13 }}>
@@ -433,9 +414,9 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                         <ControlButton
                             key={`${a.id}-${a.label}`}
                             label={a.label}
-                            title={a.label}
-                            onClick={() => runOperatorAction(a.id, a.label, a.params)}
-                            disabled={actionBusy}
+                            title={a.allowed ? a.label : `${a.label}: ${a.reason}`}
+                            onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
+                            disabled={actionBusy || !a.allowed}
                         />
                     ))}
                 </div>
@@ -467,16 +448,15 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
 
             <Section title="Operator Controls">
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                    <ControlButton label="Pause Autonomy" title="Pause autonomy" onClick={() => runOperatorAction('pause_autonomy', 'Pause autonomy')} disabled={actionBusy} />
-                    <ControlButton label="Resume Autonomy" title="Resume autonomy" onClick={() => runOperatorAction('resume_autonomy', 'Resume autonomy')} disabled={actionBusy} />
-                    <ControlButton label="Safe Mode" title="Enter safe mode" onClick={() => runOperatorAction('enter_safe_mode', 'Enter safe mode')} disabled={actionBusy} />
-                    <ControlButton label="Exit Safe" title="Exit safe mode" onClick={() => runOperatorAction('exit_safe_mode', 'Exit safe mode', { operator_approved: true })} disabled={actionBusy} />
-                    <ControlButton label="Maintenance" title="Enter maintenance mode" onClick={() => runOperatorAction('enter_maintenance_mode', 'Enter maintenance mode')} disabled={actionBusy} />
-                    <ControlButton label="Clear Maint." title="Clear maintenance mode" onClick={() => runOperatorAction('clear_maintenance_mode', 'Clear maintenance mode', { operator_approved: true })} disabled={actionBusy} />
-                    <ControlButton label="Retry Health" title="Retry subsystem health checks" onClick={() => runOperatorAction('retry_subsystem_health_check', 'Retry health checks')} disabled={actionBusy} />
-                    <ControlButton label="Revalidate DB" title="Re-run DB health validation" onClick={() => runOperatorAction('rerun_db_health_validation', 'Revalidate DB')} disabled={actionBusy} />
-                    <ControlButton label="Revalidate Memory" title="Revalidate memory authority" onClick={() => runOperatorAction('revalidate_memory_authority', 'Revalidate memory')} disabled={actionBusy} />
-                    <ControlButton label="Export Health" title="Export health snapshot" onClick={() => runOperatorAction('export_health_snapshot', 'Export health snapshot')} disabled={actionBusy} />
+                    {[...groupedActions.runtime_control, ...groupedActions.recovery_control, ...groupedActions.governance_control, ...groupedActions.visibility_control].map((a) => (
+                        <ControlButton
+                            key={`control-${a.id}`}
+                            label={a.label}
+                            title={a.allowed ? `${a.label}${a.requiresApproval ? ' (approval required)' : ''}` : `${a.label}: ${a.reason}`}
+                            onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
+                            disabled={actionBusy || !a.allowed}
+                        />
+                    ))}
                 </div>
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>
                     self-improvement locked: {operatorState?.visibility?.self_improvement_locked ? 'yes' : 'no'}

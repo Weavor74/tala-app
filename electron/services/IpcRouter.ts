@@ -2366,12 +2366,14 @@ export class IpcRouter {
             self_improvement_locked: false,
             high_risk_human_approval_required: false,
           },
+          available_actions: [],
         };
       }
       return {
         actions: svc.getActionHistory(),
         auto_actions: svc.getAutoRepairHistory(),
         visibility: svc.getVisibilityState(),
+        available_actions: svc.getAvailableActions(),
       };
     });
 

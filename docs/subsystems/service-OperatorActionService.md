@@ -31,6 +31,15 @@
 **Returns**: ``
 
 ---
+#### `getAvailableActions`
+Returns backend-evaluated operator action availability for the dashboard.
+ Invariant: computed from canonical health/mode/policy state only.
+/
+
+**Arguments**: ``
+**Returns**: `OperatorActionAvailability[]`
+
+---
 #### `_buildDeniedResult`
 **Arguments**: `action: OperatorActionId, requestedBy: string, executedAt: string, before: SystemHealthSnapshot, reason: string, affectedSubsystems: string[], actionExecutionId: string = uuidv4(), source: OperatorActionSource = 'operator',`
 **Returns**: `OperatorActionResultContract`

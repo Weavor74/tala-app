@@ -11,6 +11,8 @@ import { loadSettings } from './SettingsManager';
 import { auditLogger } from './AuditLogger';
 import type { McpServerConfig } from '../../shared/settings';
 import type {
+    OperatorActionAvailability,
+    OperatorActionCategory,
     OperatorActionId,
     OperatorActionSource,
     OperatorActionRequest,
@@ -35,6 +37,41 @@ const HIGH_RISK_ACTIONS = new Set<OperatorActionId>([
     'approve_repair_proposal',
     'unlock_self_improvement',
 ]);
+
+interface ActionCatalogEntry {
+    action: OperatorActionId;
+    label: string;
+    category: OperatorActionCategory;
+    riskLevel: 'low' | 'medium' | 'high';
+}
+
+const ACTION_CATALOG: ActionCatalogEntry[] = [
+    { action: 'pause_autonomy', label: 'Pause Autonomy', category: 'runtime_control', riskLevel: 'low' },
+    { action: 'resume_autonomy', label: 'Resume Autonomy', category: 'runtime_control', riskLevel: 'medium' },
+    { action: 'enter_safe_mode', label: 'Enter Safe Mode', category: 'runtime_control', riskLevel: 'low' },
+    { action: 'exit_safe_mode', label: 'Exit Safe Mode', category: 'runtime_control', riskLevel: 'high' },
+    { action: 'enter_maintenance_mode', label: 'Enter Maintenance Mode', category: 'runtime_control', riskLevel: 'medium' },
+    { action: 'clear_maintenance_mode', label: 'Clear Maintenance Mode', category: 'runtime_control', riskLevel: 'high' },
+    { action: 'retry_subsystem_health_check', label: 'Retry Health Check', category: 'recovery_control', riskLevel: 'low' },
+    { action: 'retry_inference_probe', label: 'Retry Inference Probe', category: 'recovery_control', riskLevel: 'low' },
+    { action: 'restart_inference_adapter', label: 'Restart Inference Adapter', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'rerun_db_health_validation', label: 'Re-run DB Validation', category: 'recovery_control', riskLevel: 'low' },
+    { action: 'revalidate_memory_authority', label: 'Revalidate Memory Authority', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'rerun_derived_rebuild', label: 'Re-run Derived Rebuild', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'flush_or_restart_stalled_queues', label: 'Flush Stalled Queues', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'retry_tool_connector_initialization', label: 'Retry Tool Connector Init', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'approve_repair_proposal', label: 'Approve Repair Proposal', category: 'governance_control', riskLevel: 'high' },
+    { action: 'reject_repair_proposal', label: 'Reject Repair Proposal', category: 'governance_control', riskLevel: 'medium' },
+    { action: 'defer_proposal', label: 'Defer Proposal', category: 'governance_control', riskLevel: 'low' },
+    { action: 'lock_self_improvement', label: 'Lock Self-Improvement', category: 'governance_control', riskLevel: 'low' },
+    { action: 'unlock_self_improvement', label: 'Unlock Self-Improvement', category: 'governance_control', riskLevel: 'high' },
+    { action: 'require_human_approval_high_risk', label: 'Require High-Risk Approval', category: 'governance_control', riskLevel: 'low' },
+    { action: 'acknowledge_incident', label: 'Acknowledge Incident', category: 'visibility_control', riskLevel: 'low' },
+    { action: 'mute_duplicate_alerts', label: 'Mute Duplicate Alerts', category: 'visibility_control', riskLevel: 'low' },
+    { action: 'pin_active_issue', label: 'Pin Active Issue', category: 'visibility_control', riskLevel: 'low' },
+    { action: 'open_evidence_log_trail', label: 'Open Evidence Trail', category: 'visibility_control', riskLevel: 'low' },
+    { action: 'export_health_snapshot', label: 'Export Health Snapshot', category: 'visibility_control', riskLevel: 'low' },
+];
 
 export class OperatorActionService {
     private actionHistory: OperatorActionResultContract[] = [];
@@ -414,6 +451,118 @@ export class OperatorActionService {
             self_improvement_locked: this.selfImprovementLocked,
             high_risk_human_approval_required: this.highRiskApprovalRequired,
         };
+    }
+
+    /**
+     * Returns backend-evaluated operator action availability for the dashboard.
+     * Invariant: computed from canonical health/mode/policy state only.
+     */
+    public getAvailableActions(): OperatorActionAvailability[] {
+        const health = this.deps.diagnosticsAggregator.getSystemHealthSnapshot();
+        const nonHealthy = health.subsystem_entries.filter((s) => s.status !== 'healthy').map((s) => s.name);
+        const hasInferenceIssue = nonHealthy.includes('inference_service');
+        const hasDbOrMemoryIssue = nonHealthy.includes('db_health_service') || nonHealthy.includes('memory_authority_service');
+        const hasToolingIssue = nonHealthy.includes('mcp_tool_availability') || nonHealthy.includes('tool_execution_coordinator');
+        const hasQueueIssue = nonHealthy.includes('queue_backlog_pressure');
+        const hasIncidents = (health.active_incident_entries?.length ?? 0) > 0 || health.active_incidents.length > 0;
+
+        const recommendedByContext = new Set<OperatorActionId>(['retry_subsystem_health_check', 'export_health_snapshot']);
+        if (hasInferenceIssue) {
+            recommendedByContext.add('retry_inference_probe');
+            recommendedByContext.add('restart_inference_adapter');
+            recommendedByContext.add('enter_safe_mode');
+            recommendedByContext.add('pause_autonomy');
+        }
+        if (hasDbOrMemoryIssue) {
+            recommendedByContext.add('rerun_db_health_validation');
+            recommendedByContext.add('revalidate_memory_authority');
+            recommendedByContext.add('enter_maintenance_mode');
+            recommendedByContext.add('require_human_approval_high_risk');
+        }
+        if (hasToolingIssue) {
+            recommendedByContext.add('retry_tool_connector_initialization');
+        }
+        if (hasQueueIssue) {
+            recommendedByContext.add('flush_or_restart_stalled_queues');
+        }
+        if (hasIncidents) {
+            recommendedByContext.add('acknowledge_incident');
+            recommendedByContext.add('mute_duplicate_alerts');
+            recommendedByContext.add('pin_active_issue');
+            recommendedByContext.add('open_evidence_log_trail');
+        }
+
+        return ACTION_CATALOG.map((entry): OperatorActionAvailability => {
+            const allowedByMode = this._checkModeAllowance(entry.action, health);
+            if (!allowedByMode.allowed) {
+                return {
+                    action: entry.action,
+                    label: entry.label,
+                    category: entry.category,
+                    risk_level: entry.riskLevel,
+                    recommended: recommendedByContext.has(entry.action),
+                    allowed: false,
+                    reason: allowedByMode.reason,
+                    requires_explicit_approval: false,
+                    affected_subsystems: allowedByMode.affectedSubsystems,
+                };
+            }
+
+            const policyDecision = policyGate.checkSideEffect({
+                actionKind: 'workflow_action',
+                executionOrigin: 'operator_dashboard',
+                executionMode: 'assistant',
+                capability: `operator_action:${entry.action}`,
+                targetSubsystem: 'OperatorActionService',
+                mutationIntent: entry.action,
+            });
+            if (!policyDecision.allowed) {
+                return {
+                    action: entry.action,
+                    label: entry.label,
+                    category: entry.category,
+                    risk_level: entry.riskLevel,
+                    recommended: recommendedByContext.has(entry.action),
+                    allowed: false,
+                    reason: `policy_denied:${policyDecision.reason}`,
+                    requires_explicit_approval: false,
+                    affected_subsystems: ['policy_gate'],
+                };
+            }
+
+            if (this.selfImprovementLocked && this._isSelfImprovementAction(entry.action)) {
+                return {
+                    action: entry.action,
+                    label: entry.label,
+                    category: entry.category,
+                    risk_level: entry.riskLevel,
+                    recommended: recommendedByContext.has(entry.action),
+                    allowed: false,
+                    reason: 'self_improvement_locked',
+                    requires_explicit_approval: false,
+                    affected_subsystems: ['reflection_service', 'autonomy_orchestrator'],
+                };
+            }
+
+            const requiresApproval = this.highRiskApprovalRequired && HIGH_RISK_ACTIONS.has(entry.action);
+            return {
+                action: entry.action,
+                label: entry.label,
+                category: entry.category,
+                risk_level: entry.riskLevel,
+                recommended: recommendedByContext.has(entry.action),
+                allowed: !requiresApproval,
+                reason: requiresApproval
+                    ? 'human_approval_required_for_high_risk_action'
+                    : 'available',
+                requires_explicit_approval: requiresApproval,
+                affected_subsystems: [],
+            };
+        }).sort((a, b) => {
+            if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+            if (a.allowed !== b.allowed) return a.allowed ? -1 : 1;
+            return a.label.localeCompare(b.label);
+        });
     }
 
     private _buildDeniedResult(
