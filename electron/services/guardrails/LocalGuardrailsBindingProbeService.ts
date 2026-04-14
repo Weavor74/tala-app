@@ -1,6 +1,7 @@
 import type { ValidatorBinding } from '../../../shared/guardrails/guardrailPolicyTypes';
 import {
     LOCAL_GUARDRAILS_VALIDATOR_CATALOG,
+    applyLocalGuardrailsCatalogDefaults,
     type LocalGuardrailsValidatorCatalogEntry,
 } from '../../../shared/guardrails/localGuardrailsValidatorCatalog';
 import type {
@@ -78,7 +79,10 @@ export class LocalGuardrailsBindingProbeService {
             executionScopes: binding.executionScopes ?? [],
             supportedActions: binding.supportedActions ?? ['require_validation'],
             validatorName,
-            validatorArgs: binding.validatorArgs ?? {},
+            validatorArgs: applyLocalGuardrailsCatalogDefaults(
+                validatorName,
+                binding.validatorArgs,
+            ),
             failOpen: binding.failOpen ?? false,
             priority: binding.priority ?? 0,
             timeoutMs: binding.timeoutMs ?? 5000,

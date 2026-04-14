@@ -36,7 +36,11 @@ import {
     type GuardrailSeverity,
     type ValidatorProviderKind,
 } from '../../shared/guardrails/guardrailPolicyTypes';
-import type { LocalGuardrailsValidatorCatalogEntry } from '../../shared/guardrails/localGuardrailsValidatorCatalog';
+import {
+    applyLocalGuardrailsCatalogDefaults,
+    type LocalGuardrailsValidatorArgSchema,
+    type LocalGuardrailsValidatorCatalogEntry,
+} from '../../shared/guardrails/localGuardrailsValidatorCatalog';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -4409,6 +4413,8 @@ function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
     const [subTab, setSubTab] = useState<'guards' | 'validators' | 'policy'>('guards');
     const [runtimeReadiness, setRuntimeReadiness] = useState<any | null>(null);
     const [runtimeReadinessError, setRuntimeReadinessError] = useState<string | null>(null);
+    const [runtimeSmoke, setRuntimeSmoke] = useState<any | null>(null);
+    const [runtimeSmokeBusy, setRuntimeSmokeBusy] = useState(false);
 
     const refreshRuntimeReadiness = useCallback(async () => {
         if (!api?.getLocalGuardrailsRuntimeReadiness) return;
@@ -4424,6 +4430,23 @@ function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
     useEffect(() => {
         refreshRuntimeReadiness();
     }, [refreshRuntimeReadiness]);
+
+    const runRuntimeSmoke = useCallback(async () => {
+        if (!api?.runLocalGuardrailsRuntimeSmoke) return;
+        setRuntimeSmokeBusy(true);
+        try {
+            const result = await api.runLocalGuardrailsRuntimeSmoke();
+            setRuntimeSmoke(result);
+        } catch (err: any) {
+            setRuntimeSmoke({
+                ready: false,
+                skipped: true,
+                skipReason: err?.message ?? 'Smoke validation failed',
+            });
+        } finally {
+            setRuntimeSmokeBusy(false);
+        }
+    }, [api]);
 
     const pill = (id: 'guards' | 'validators' | 'policy', emoji: string, label: string) => (
         <button
@@ -4491,6 +4514,34 @@ function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
                 >
                     Refresh
                 </button>
+            </div>
+            <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                    onClick={runRuntimeSmoke}
+                    disabled={runtimeSmokeBusy}
+                    style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        color: '#cfcfcf',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        borderRadius: 6,
+                        padding: '6px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: runtimeSmokeBusy ? 'not-allowed' : 'pointer',
+                        opacity: runtimeSmokeBusy ? 0.6 : 1,
+                    }}
+                >
+                    {runtimeSmokeBusy ? 'Running Smoke...' : 'Run Runtime Smoke'}
+                </button>
+                {runtimeSmoke && (
+                    <span style={{ fontSize: 11, color: runtimeSmoke.ready ? '#4ec9b0' : '#d79921' }}>
+                        {runtimeSmoke.skipped
+                            ? `skipped (${runtimeSmoke.skipReason ?? 'runtime unavailable'})`
+                            : runtimeSmoke.ready
+                                ? 'smoke passed'
+                                : 'smoke failed'}
+                    </span>
+                )}
             </div>
             {/* Sub-tab switcher */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
@@ -4577,6 +4628,9 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
 
     const selectedRule = policy.rules.find(r => r.id === selectedRuleId) ?? null;
     const selectedBinding = policy.validatorBindings.find(b => b.id === selectedBindingId) ?? null;
+    const selectedCuratedEntry = localValidatorCatalog.find(
+        c => c.validatorName === (selectedBinding?.validatorName ?? ''),
+    );
 
     useEffect(() => {
         const loadCatalog = async () => {
@@ -4702,11 +4756,28 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const applyCatalogSelection = (catalogId: string) => {
         const selected = localValidatorCatalog.find(c => c.id === catalogId);
         if (!selected) return;
+        const normalizedArgs = applyLocalGuardrailsCatalogDefaults(
+            selected.validatorName,
+            selected.defaultArgs,
+        );
         patchBinding({
             providerKind: 'local_guardrails_ai',
             validatorName: selected.validatorName,
-            validatorArgs: selected.defaultArgs,
+            validatorArgs: normalizedArgs,
         });
+    };
+
+    const patchCuratedArg = (schema: LocalGuardrailsValidatorArgSchema, rawValue: unknown) => {
+        if (!selectedBinding) return;
+        const currentArgs = (selectedBinding.validatorArgs ?? {}) as Record<string, unknown>;
+        const nextArgs = applyLocalGuardrailsCatalogDefaults(
+            selectedBinding.validatorName,
+            {
+                ...currentArgs,
+                [schema.key]: rawValue,
+            },
+        );
+        patchBinding({ validatorArgs: nextArgs });
     };
 
     const runBindingProbe = async () => {
@@ -5151,9 +5222,7 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                                                     <select
                                                         style={sel}
                                                         value={
-                                                            localValidatorCatalog.find(
-                                                                c => c.validatorName === (selectedBinding.validatorName ?? ''),
-                                                            )?.id ?? ''
+                                                            selectedCuratedEntry?.id ?? ''
                                                         }
                                                         onChange={e => applyCatalogSelection(e.target.value)}
                                                     >
@@ -5164,13 +5233,9 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                                                             </option>
                                                         ))}
                                                     </select>
-                                                    {localValidatorCatalog.find(
-                                                        c => c.validatorName === (selectedBinding.validatorName ?? ''),
-                                                    )?.notes && (
+                                                    {selectedCuratedEntry?.notes && (
                                                         <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
-                                                            {localValidatorCatalog.find(
-                                                                c => c.validatorName === (selectedBinding.validatorName ?? ''),
-                                                            )?.notes}
+                                                            {selectedCuratedEntry.notes}
                                                         </div>
                                                     )}
                                                 </div>
@@ -5184,6 +5249,73 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                                                     onChange={e => patchBinding({ validatorName: e.target.value || undefined })}
                                                 />
                                             </div>
+                                            {selectedBinding.providerKind === 'local_guardrails_ai'
+                                                && selectedCuratedEntry?.argsSchema
+                                                && selectedCuratedEntry.argsSchema.length > 0 && (
+                                                    <div
+                                                        style={{
+                                                            marginBottom: 12,
+                                                            border: '1px solid rgba(255,255,255,0.06)',
+                                                            borderRadius: 6,
+                                                            padding: 10,
+                                                            background: 'rgba(255,255,255,0.02)',
+                                                        }}
+                                                    >
+                                                        <label style={lbl9}>Curated Validator Args</label>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 9 }}>
+                                                            {selectedCuratedEntry.argsSchema.map(arg => {
+                                                                const args = (selectedBinding.validatorArgs ?? {}) as Record<string, unknown>;
+                                                                const value = args[arg.key];
+                                                                const stringValue = arg.type === 'string_array'
+                                                                    ? Array.isArray(value) ? value.join(', ') : ''
+                                                                    : String(value ?? '');
+                                                                const numericValue = typeof value === 'number'
+                                                                    ? value
+                                                                    : Number(value);
+                                                                const safeNumericValue = Number.isFinite(numericValue)
+                                                                    ? numericValue
+                                                                    : Number(arg.defaultValue);
+                                                                return (
+                                                                    <div key={arg.key}>
+                                                                        <label style={lbl9}>{arg.label}</label>
+                                                                        {arg.type === 'number' && (
+                                                                            <input
+                                                                                type="number"
+                                                                                style={inp}
+                                                                                min={arg.min}
+                                                                                max={arg.max}
+                                                                                value={safeNumericValue}
+                                                                                onChange={e => patchCuratedArg(arg, e.target.value)}
+                                                                            />
+                                                                        )}
+                                                                        {arg.type === 'boolean' && (
+                                                                            <label style={{ fontSize: 11, color: '#ccc', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={Boolean(value)}
+                                                                                    onChange={e => patchCuratedArg(arg, e.target.checked)}
+                                                                                />
+                                                                                Enabled
+                                                                            </label>
+                                                                        )}
+                                                                        {(arg.type === 'string' || arg.type === 'string_array') && (
+                                                                            <input
+                                                                                style={{ ...inp, fontFamily: arg.type === 'string' ? 'monospace' : undefined }}
+                                                                                value={stringValue}
+                                                                                onChange={e => patchCuratedArg(arg, e.target.value)}
+                                                                            />
+                                                                        )}
+                                                                        {arg.description && (
+                                                                            <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                                                                                {arg.description}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             <div style={{ marginBottom: 12 }}>
                                                 <label style={lbl9}>Validator Args (JSON)</label>
                                                 <textarea

@@ -50,6 +50,7 @@ import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
 import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
+import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -602,6 +603,11 @@ export class IpcRouter {
         binding: payload?.binding ?? {},
         sampleContent: payload?.sampleContent ?? '',
       });
+    });
+
+    /** Runs a packaged/runtime smoke validation against local guardrails runtime seams. */
+    ipcMain.handle('guardrail:run-local-runtime-smoke', async (_e, payload?: { sampleContent?: string }) => {
+      return localGuardrailsRuntimeSmokeService.runSmokeValidation(payload?.sampleContent);
     });
 
 

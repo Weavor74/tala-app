@@ -369,6 +369,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Runs a local non-enforcement probe for a binding against sample content. */
     testLocalGuardrailsBinding: (binding: any, sampleContent: string) =>
         ipcRenderer.invoke('guardrail:test-binding', { binding, sampleContent }),
+    /** Runs a local runtime smoke validation flow for packaged/dev trust checks. */
+    runLocalGuardrailsRuntimeSmoke: (sampleContent?: string) =>
+        ipcRenderer.invoke('guardrail:run-local-runtime-smoke', { sampleContent }),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */
