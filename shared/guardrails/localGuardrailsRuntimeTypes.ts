@@ -16,5 +16,15 @@ export interface LocalGuardrailsRuntimeReadiness {
         version?: string;
         pythonVersion?: string;
         error?: string;
+        diagnostics?: {
+            sysExecutable?: string;
+            sysVersion?: string;
+            cwd?: string;
+            sysPath?: string[];
+            pythonhome?: string;
+            pythonpath?: string;
+            guardrailsImportSucceeded?: boolean;
+            guardrailsImportError?: string;
+        };
     };
 }

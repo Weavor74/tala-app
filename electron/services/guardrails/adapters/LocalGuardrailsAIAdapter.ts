@@ -22,6 +22,7 @@ import { makeErrorResult, makePassResult, makeViolationResult } from '../types';
 import { APP_ROOT } from '../../PathResolver';
 import { SystemService } from '../../SystemService';
 import {
+    buildLocalGuardrailsPythonEnv,
     resolveLocalGuardrailsPythonPath,
     resolveLocalGuardrailsRunnerPath,
 } from '../LocalGuardrailsRuntime';
@@ -130,10 +131,15 @@ export class LocalGuardrailsAIAdapter implements IGuardrailAdapter {
         };
 
         return new Promise<RawGuardrailsAIResult>((resolve, reject) => {
+            const env = buildLocalGuardrailsPythonEnv(process.env);
+            console.info(
+                `[LocalGuardrailsAIAdapter] Spawning runner with python="${pythonPath}" runner="${runnerPath}" ` +
+                `cwd="${APP_ROOT}" PYTHONHOME="${env.PYTHONHOME ?? ''}" PYTHONPATH="${env.PYTHONPATH ?? ''}"`,
+            );
             const child = spawn(pythonPath, [runnerPath], {
                 cwd: APP_ROOT,
                 stdio: 'pipe',
-                env: this._systemService.getMcpEnv(process.env as Record<string, string>),
+                env,
             });
 
             let stdout = '';

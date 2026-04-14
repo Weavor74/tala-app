@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import traceback
 from typing import Any, Dict, Optional, Tuple
@@ -48,10 +49,21 @@ def _read_payload(file_arg: Optional[str] = None) -> Dict[str, Any]:
 
 
 def _build_health() -> Dict[str, Any]:
+    diagnostics: Dict[str, Any] = {
+        "sys_executable": sys.executable,
+        "sys_version": sys.version,
+        "cwd": os.getcwd(),
+        "sys_path": list(sys.path),
+        "pythonhome": os.environ.get("PYTHONHOME"),
+        "pythonpath": os.environ.get("PYTHONPATH"),
+        "guardrails_import_succeeded": False,
+    }
+
     health: Dict[str, Any] = {
         "guardrails_importable": False,
         "python_version": sys.version.split()[0],
         "python_executable": sys.executable,
+        "diagnostics": diagnostics,
     }
 
     try:
@@ -59,9 +71,11 @@ def _build_health() -> Dict[str, Any]:
 
         health["guardrails_importable"] = True
         health["guardrails_version"] = getattr(guardrails, "__version__", None)
+        diagnostics["guardrails_import_succeeded"] = True
     except Exception as err:
         health["guardrails_importable"] = False
         health["error"] = f"{err.__class__.__name__}: {err}"
+        diagnostics["guardrails_import_error"] = health["error"]
 
     return health
 

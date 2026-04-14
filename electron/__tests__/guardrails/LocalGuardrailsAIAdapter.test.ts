@@ -184,4 +184,51 @@ describe('LocalGuardrailsAIAdapter', () => {
         expect(result.resolvedByFailOpen).toBe(true);
         expect(result.error).toContain('No Python interpreter found');
     });
+
+    it('preserves existing PYTHONHOME/PYTHONPATH in subprocess env', async () => {
+        const adapter = new LocalGuardrailsAIAdapter();
+        const runnerPath = path.join(process.cwd(), 'runtime', 'guardrails', 'local_guardrails_runner.py');
+        vi.spyOn(adapter as any, '_resolvePythonExecutable').mockResolvedValue('python-local');
+        vi.spyOn(adapter as any, '_resolveRunnerPath').mockReturnValue(runnerPath);
+
+        const priorHome = process.env.PYTHONHOME;
+        const priorPath = process.env.PYTHONPATH;
+        process.env.PYTHONHOME = 'C:/py-home';
+        process.env.PYTHONPATH = 'C:/py-path';
+
+        const child = createMockChildProcess();
+        spawnMock.mockReturnValue(child);
+
+        try {
+            const promise = adapter.execute(makeBinding(), makeRequest());
+            await Promise.resolve();
+
+            child.stdout.emit('data', JSON.stringify({
+                ok: true,
+                result: {
+                    passed: true,
+                    validator_name: 'ToxicLanguage',
+                },
+            }));
+            child.emit('close', 0, null);
+            await promise;
+
+            expect(spawnMock).toHaveBeenCalledWith(
+                'python-local',
+                [runnerPath],
+                expect.objectContaining({
+                    env: expect.objectContaining({
+                        PYTHONHOME: 'C:/py-home',
+                        PYTHONPATH: 'C:/py-path',
+                        PYTHONUNBUFFERED: '1',
+                    }),
+                }),
+            );
+        } finally {
+            if (priorHome === undefined) delete process.env.PYTHONHOME;
+            else process.env.PYTHONHOME = priorHome;
+            if (priorPath === undefined) delete process.env.PYTHONPATH;
+            else process.env.PYTHONPATH = priorPath;
+        }
+    });
 });

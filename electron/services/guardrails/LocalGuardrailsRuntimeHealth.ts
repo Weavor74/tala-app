@@ -4,6 +4,7 @@ import type { LocalGuardrailsRuntimeReadiness } from '../../../shared/guardrails
 import { SystemService } from '../SystemService';
 import { APP_ROOT } from '../PathResolver';
 import {
+    buildLocalGuardrailsPythonEnv,
     resolveLocalGuardrailsPythonPath,
     resolveLocalGuardrailsRunnerPath,
 } from './LocalGuardrailsRuntime';
@@ -14,12 +15,40 @@ interface RunnerHealthEnvelope {
         guardrails_importable?: boolean;
         guardrails_version?: string;
         python_version?: string;
+        diagnostics?: RunnerHealthDiagnostics;
         error?: string;
     };
     error?: {
         code?: string;
         type?: string;
         message?: string;
+    };
+}
+
+interface RunnerHealthDiagnostics {
+    sys_executable?: string;
+    sys_version?: string;
+    cwd?: string;
+    sys_path?: string[];
+    pythonhome?: string | null;
+    pythonpath?: string | null;
+    guardrails_import_succeeded?: boolean;
+    guardrails_import_error?: string;
+}
+
+function normalizeDiagnostics(
+    diagnostics: RunnerHealthDiagnostics | undefined,
+): LocalGuardrailsRuntimeReadiness['guardrails']['diagnostics'] | undefined {
+    if (!diagnostics) return undefined;
+    return {
+        sysExecutable: diagnostics.sys_executable,
+        sysVersion: diagnostics.sys_version,
+        cwd: diagnostics.cwd,
+        sysPath: diagnostics.sys_path,
+        pythonhome: diagnostics.pythonhome ?? undefined,
+        pythonpath: diagnostics.pythonpath ?? undefined,
+        guardrailsImportSucceeded: diagnostics.guardrails_import_succeeded,
+        guardrailsImportError: diagnostics.guardrails_import_error,
     };
 }
 
@@ -96,6 +125,7 @@ export class LocalGuardrailsRuntimeHealth {
                 guardrails: {
                     importable: false,
                     error: message,
+                    diagnostics: normalizeDiagnostics(healthEnvelope.health?.diagnostics),
                 },
             };
         }
@@ -109,6 +139,7 @@ export class LocalGuardrailsRuntimeHealth {
                 version: healthEnvelope.health?.guardrails_version,
                 pythonVersion: healthEnvelope.health?.python_version,
                 error: healthEnvelope.health?.error,
+                diagnostics: normalizeDiagnostics(healthEnvelope.health?.diagnostics),
             },
         };
     }
@@ -119,10 +150,15 @@ export class LocalGuardrailsRuntimeHealth {
         timeoutMs: number,
     ): Promise<RunnerHealthEnvelope> {
         return new Promise<RunnerHealthEnvelope>((resolve) => {
+            const env = buildLocalGuardrailsPythonEnv(process.env);
+            console.info(
+                `[LocalGuardrailsRuntimeHealth] Spawning runner with python="${pythonPath}" runner="${runnerPath}" ` +
+                `cwd="${APP_ROOT}" PYTHONHOME="${env.PYTHONHOME ?? ''}" PYTHONPATH="${env.PYTHONPATH ?? ''}"`,
+            );
             const child = this._spawnProcess(pythonPath, [runnerPath, '--health'], {
                 cwd: APP_ROOT,
                 stdio: 'pipe',
-                env: this._systemService.getMcpEnv(process.env as Record<string, string>),
+                env,
             });
 
             let stdout = '';
