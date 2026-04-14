@@ -36,6 +36,7 @@ import {
     type GuardrailSeverity,
     type ValidatorProviderKind,
 } from '../../shared/guardrails/guardrailPolicyTypes';
+import type { LocalGuardrailsValidatorCatalogEntry } from '../../shared/guardrails/localGuardrailsValidatorCatalog';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -4568,9 +4569,34 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
     const [status, setPolicyStatus] = useState('');
     const [section, setSection] = useState<'rules' | 'bindings'>('rules');
+    const [localValidatorCatalog, setLocalValidatorCatalog] = useState<LocalGuardrailsValidatorCatalogEntry[]>([]);
+    const [bindingSampleContent, setBindingSampleContent] = useState('This is sample text for validator testing.');
+    const [bindingProbeResult, setBindingProbeResult] = useState<any | null>(null);
+    const [bindingProbeBusy, setBindingProbeBusy] = useState(false);
+    const [bindingArgsDraft, setBindingArgsDraft] = useState('{}');
 
     const selectedRule = policy.rules.find(r => r.id === selectedRuleId) ?? null;
     const selectedBinding = policy.validatorBindings.find(b => b.id === selectedBindingId) ?? null;
+
+    useEffect(() => {
+        const loadCatalog = async () => {
+            if (!api?.getLocalGuardrailsValidatorCatalog) return;
+            try {
+                const catalog = await api.getLocalGuardrailsValidatorCatalog();
+                if (Array.isArray(catalog)) {
+                    setLocalValidatorCatalog(catalog as LocalGuardrailsValidatorCatalogEntry[]);
+                }
+            } catch {
+                setLocalValidatorCatalog([]);
+            }
+        };
+        loadCatalog();
+    }, [api]);
+
+    useEffect(() => {
+        setBindingArgsDraft(JSON.stringify(selectedBinding?.validatorArgs ?? {}, null, 2));
+        setBindingProbeResult(null);
+    }, [selectedBindingId, selectedBinding?.validatorArgs]);
 
     const flash = (msg: string) => { setPolicyStatus(msg); setTimeout(() => setPolicyStatus(''), 3000); };
 
@@ -4671,6 +4697,32 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
             ),
         };
         savePolicy(updated);
+    };
+
+    const applyCatalogSelection = (catalogId: string) => {
+        const selected = localValidatorCatalog.find(c => c.id === catalogId);
+        if (!selected) return;
+        patchBinding({
+            providerKind: 'local_guardrails_ai',
+            validatorName: selected.validatorName,
+            validatorArgs: selected.defaultArgs,
+        });
+    };
+
+    const runBindingProbe = async () => {
+        if (!selectedBinding || !api?.testLocalGuardrailsBinding) return;
+        setBindingProbeBusy(true);
+        try {
+            const result = await api.testLocalGuardrailsBinding(selectedBinding, bindingSampleContent);
+            setBindingProbeResult(result);
+        } catch (err: any) {
+            setBindingProbeResult({
+                success: false,
+                error: err?.message ?? 'Binding probe failed',
+            });
+        } finally {
+            setBindingProbeBusy(false);
+        }
     };
 
     const toggleBindingOnRule = (bindingId: string, include: boolean) => {
@@ -5092,15 +5144,67 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
 
                                     {/* GuardrailsAI-specific */}
                                     {(selectedBinding.providerKind === 'local_guardrails_ai' || selectedBinding.providerKind === 'remote_guardrails_service') && (
-                                        <div style={{ marginBottom: 12 }}>
-                                            <label style={lbl9}>Validator Name (GuardrailsAI class)</label>
-                                            <input
-                                                style={inp}
-                                                value={selectedBinding.validatorName ?? ''}
-                                                placeholder="e.g. ToxicLanguage"
-                                                onChange={e => patchBinding({ validatorName: e.target.value || undefined })}
-                                            />
-                                        </div>
+                                        <>
+                                            {selectedBinding.providerKind === 'local_guardrails_ai' && localValidatorCatalog.length > 0 && (
+                                                <div style={{ marginBottom: 12 }}>
+                                                    <label style={lbl9}>Curated Local Validator</label>
+                                                    <select
+                                                        style={sel}
+                                                        value={
+                                                            localValidatorCatalog.find(
+                                                                c => c.validatorName === (selectedBinding.validatorName ?? ''),
+                                                            )?.id ?? ''
+                                                        }
+                                                        onChange={e => applyCatalogSelection(e.target.value)}
+                                                    >
+                                                        <option value="">Select curated validator...</option>
+                                                        {localValidatorCatalog.map(item => (
+                                                            <option key={item.id} value={item.id}>
+                                                                {item.label} ({item.validatorName})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {localValidatorCatalog.find(
+                                                        c => c.validatorName === (selectedBinding.validatorName ?? ''),
+                                                    )?.notes && (
+                                                        <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                                                            {localValidatorCatalog.find(
+                                                                c => c.validatorName === (selectedBinding.validatorName ?? ''),
+                                                            )?.notes}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <div style={{ marginBottom: 12 }}>
+                                                <label style={lbl9}>Validator Name (GuardrailsAI class)</label>
+                                                <input
+                                                    style={inp}
+                                                    value={selectedBinding.validatorName ?? ''}
+                                                    placeholder="e.g. ToxicLanguage"
+                                                    onChange={e => patchBinding({ validatorName: e.target.value || undefined })}
+                                                />
+                                            </div>
+                                            <div style={{ marginBottom: 12 }}>
+                                                <label style={lbl9}>Validator Args (JSON)</label>
+                                                <textarea
+                                                    style={{ ...inp, minHeight: 76, resize: 'vertical', fontFamily: 'monospace' }}
+                                                    value={bindingArgsDraft}
+                                                    onChange={e => {
+                                                        const next = e.target.value;
+                                                        setBindingArgsDraft(next);
+                                                        try {
+                                                            const parsed = JSON.parse(next || '{}');
+                                                            patchBinding({ validatorArgs: parsed });
+                                                        } catch {
+                                                            // Wait for valid JSON before updating state
+                                                        }
+                                                    }}
+                                                />
+                                                <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                                                    Provide constructor args for the selected validator.
+                                                </div>
+                                            </div>
+                                        </>
                                     )}
 
                                     {/* Presidio-specific */}
@@ -5177,6 +5281,56 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                                             </label>
                                         </div>
                                     </div>
+
+                                    {selectedBinding.providerKind === 'local_guardrails_ai' && (
+                                        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                                            <label style={lbl9}>Test This Binding (Local Probe)</label>
+                                            <textarea
+                                                style={{ ...inp, minHeight: 82, resize: 'vertical', marginBottom: 8 }}
+                                                value={bindingSampleContent}
+                                                placeholder="Enter sample content to run through the local validator..."
+                                                onChange={e => setBindingSampleContent(e.target.value)}
+                                            />
+                                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                                                <button
+                                                    style={btnP}
+                                                    onClick={runBindingProbe}
+                                                    disabled={bindingProbeBusy}
+                                                >
+                                                    {bindingProbeBusy ? 'TESTING...' : 'TEST BINDING'}
+                                                </button>
+                                                <span style={{ fontSize: 10, color: '#555' }}>
+                                                    Runs local-only non-enforcement probe via Electron.
+                                                </span>
+                                            </div>
+                                            {bindingProbeResult && (
+                                                <div
+                                                    style={{
+                                                        background: 'rgba(0,0,0,0.3)',
+                                                        border: '1px solid rgba(255,255,255,0.06)',
+                                                        borderRadius: 4,
+                                                        padding: '8px 10px',
+                                                        fontSize: 11,
+                                                        color: bindingProbeResult.success
+                                                            ? (bindingProbeResult.passed ? '#4ec9b0' : '#d79921')
+                                                            : '#cc241d',
+                                                    }}
+                                                >
+                                                    <div style={{ marginBottom: 4 }}>
+                                                        Result: {bindingProbeResult.success
+                                                            ? (bindingProbeResult.passed ? 'PASS' : 'FAIL')
+                                                            : 'ERROR'}
+                                                    </div>
+                                                    {bindingProbeResult.error && (
+                                                        <div style={{ marginBottom: 4 }}>{bindingProbeResult.error}</div>
+                                                    )}
+                                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#888', fontSize: 10 }}>
+                                                        {JSON.stringify(bindingProbeResult, null, 2)}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </>
                         )}

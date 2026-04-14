@@ -364,6 +364,11 @@ contextBridge.exposeInMainWorld('tala', {
     exportGuardToPython: (guardId: string) => ipcRenderer.invoke('guardrail:export-to-python', guardId),
     /** Returns local runtime readiness for local_guardrails_ai. */
     getLocalGuardrailsRuntimeReadiness: () => ipcRenderer.invoke('guardrail:get-local-runtime-readiness'),
+    /** Returns curated local validator options for local_guardrails_ai. */
+    getLocalGuardrailsValidatorCatalog: () => ipcRenderer.invoke('guardrail:get-local-validator-catalog'),
+    /** Runs a local non-enforcement probe for a binding against sample content. */
+    testLocalGuardrailsBinding: (binding: any, sampleContent: string) =>
+        ipcRenderer.invoke('guardrail:test-binding', { binding, sampleContent }),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */

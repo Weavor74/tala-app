@@ -49,6 +49,7 @@ import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
+import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -588,6 +589,19 @@ export class IpcRouter {
     /** Returns local runtime readiness for the local_guardrails_ai provider. */
     ipcMain.handle('guardrail:get-local-runtime-readiness', async () => {
       return localGuardrailsRuntimeHealth.checkReadiness();
+    });
+
+    /** Returns the curated local validator catalog for local_guardrails_ai bindings. */
+    ipcMain.handle('guardrail:get-local-validator-catalog', async () => {
+      return localGuardrailsBindingProbeService.getCatalog();
+    });
+
+    /** Runs a non-enforcement local binding probe against sample content. */
+    ipcMain.handle('guardrail:test-binding', async (_e, payload: { binding: any; sampleContent: string }) => {
+      return localGuardrailsBindingProbeService.testBinding({
+        binding: payload?.binding ?? {},
+        sampleContent: payload?.sampleContent ?? '',
+      });
     });
 
 
