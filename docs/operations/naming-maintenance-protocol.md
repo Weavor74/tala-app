@@ -42,6 +42,19 @@ Before release:
 - Confirm `NEW=0` and `STALE=0`.
 - If generated artifacts are part of the release, validate generated naming before artifact write and before merge.
 
+## 6A. Documentation Enforcement Lifecycle (Plain Language)
+- Treat documentation drift as a repository failure, not a suggestion.
+- Regenerate deterministic docs with `npm run docs:regen` when code-backed docs (architecture/contracts/indexes) need refresh.
+- Run `npm run docs:heal` to update deterministic doclock impact blocks.
+- Run `npm run docs:heal-and-validate` before merge for qualifying changes. This is the canonical completion gate.
+- `docs:heal-and-validate` enforces:
+  - drift validation (`docs:verify`)
+  - naming contract validation (`docs:validate:naming`)
+  - doclock validation (`docs:validate:doclock`)
+- `docs-lock` CI reruns healing and fails if healed output is not committed, then reruns validation and naming gatekeeper checks.
+- `docs:selfheal` is a compatibility alias for operational workflows; it runs `docs:regen` and then `docs:heal-and-validate`.
+- Do not merge when `docs/review/doclock-impact.md` or other generated doc outputs still differ from the enforced command results.
+
 ## 7. Exception Burn-Down Model
 Exception classes:
 - High priority:

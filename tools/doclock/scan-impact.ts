@@ -260,7 +260,7 @@ type ParsedArgs = {
 };
 
 function toPosix(input: string): string {
-  return input.replace(/\\/g, '/');
+  return input.replace(/^\uFEFF/, '').replace(/\\/g, '/');
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -361,7 +361,12 @@ function resolveChangedFiles(parsed: ParsedArgs): string[] {
     }
   }
 
-  if (out.size > 0) return Array.from(out).sort();
+  if (out.size > 0) {
+    return Array.from(out)
+      .map(normalizeRepoPath)
+      .filter(isLikelyRepositoryPath)
+      .sort();
+  }
 
   const gitSources = [
     ['diff', '--name-only', '--cached'],
@@ -383,15 +388,13 @@ function resolveChangedFiles(parsed: ParsedArgs): string[] {
     const status = runGit(['status', '--porcelain']);
     const lines = status.split(/\r?\n/).filter(Boolean);
     for (const line of lines) {
-      if (line.startsWith('?? ')) {
-        const file = line.slice(3).trim();
-        if (file) addPathOrDirectoryFiles(file);
-        continue;
-      }
-      if (line.length > 3) {
-        const file = line.slice(3).trim();
-        if (file) addPathOrDirectoryFiles(file);
-      }
+      const normalizedLine = line.replace(/^\uFEFF/, '');
+      const match = normalizedLine.match(/^[^\s]{1,2}\s+(.*)$/);
+      if (!match) continue;
+      const file = match[1]?.trim();
+      if (!file) continue;
+      const renamedTarget = file.includes(' -> ') ? file.split(' -> ').pop() : file;
+      if (renamedTarget) addPathOrDirectoryFiles(renamedTarget.trim());
     }
   } catch {
     // Best-effort; existing set is still usable.

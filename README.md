@@ -1,6 +1,6 @@
 # Tala — Autonomous Local Agent
 
-Tala is a secure, local-first autonomous AI assistant built on Electron, React, and the Model Context Protocol (MCP). It provides a conversational interface backed by a multi-process architecture: a TypeScript/React desktop shell, multiple Python microservices, and support for both local (Ollama / llama.cpp) and cloud LLM inference.
+Tala is a secure, local-first autonomous AI assistant built on Electron, React, and the Model Context Protocol (MCP). It provides a conversational interface backed by a multi-process architecture: a TypeScript/React desktop shell, multiple Python microservices, and deterministic local-first inference fallback (Ollama -> vLLM -> llama.cpp -> KoboldCpp -> embedded providers -> cloud).
 
 ---
 
@@ -27,7 +27,7 @@ Key subsystems:
 | Shell | `electron/` | App lifecycle, IPC bridge, service orchestration |
 | UI | `src/` | React chat interface, settings, reflection dashboard |
 | Agent | `electron/services/AgentService.ts` | LLM reasoning loop, tool dispatch |
-| Memory | `electron/services/HybridMemoryManager.ts` | Short + long-term memory (Mem0/RAG) |
+| Memory | `electron/services/memory/MemoryAuthorityService.ts` | Canonical durable memory authority (PostgreSQL-backed IDs) |
 | Astro Engine | `mcp-servers/astro-engine/` | Emotional state / persona modulation |
 | Router | `electron/services/router/` | Mode-aware context assembly |
 | Audit | `electron/services/AuditLogger.ts` | Immutable decision trail |
@@ -78,6 +78,10 @@ This starts the Vite dev server, Electron window, and local inference server con
 | `npm run lint` | ESLint validation |
 | `npm run test` | Run unit tests (Vitest) |
 | `npm run test:watch` | Watch mode for tests |
+| `npm run docs:regen` | Deterministically regenerate architecture/contracts/index docs |
+| `npm run docs:heal` | Heal deterministic doclock impact output |
+| `npm run docs:validate` | Validate doc drift + naming contract + doclock checks |
+| `npm run docs:heal-and-validate` | Canonical docs completion gate for qualifying changes |
 
 ---
 
@@ -135,4 +139,3 @@ Full technical documentation is in [`docs/`](docs/TDP_INDEX.md):
 - [Interface Matrix](docs/interfaces/interface_matrix.md)
 - [Security Overview](docs/security/security_overview.md)
 - [Requirements Trace Matrix](docs/traceability/requirements_trace_matrix.md)
-

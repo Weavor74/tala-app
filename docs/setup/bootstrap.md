@@ -193,6 +193,25 @@ The script exits with code `0` on all-pass, `1` if any critical check fails.
 
 ---
 
+## Contributor Documentation Checks
+
+For qualifying changes (behavior, contracts, architecture, workflows, guardrails, operations, setup), run:
+
+```bash
+npm run docs:heal-and-validate
+```
+
+When code-backed docs are out of date, regenerate first:
+
+```bash
+npm run docs:regen
+npm run docs:heal-and-validate
+```
+
+`npm run docs:selfheal` is kept as a compatibility alias and runs the same enforcement path after regeneration.
+
+---
+
 ## Local Inference (llama.cpp)
 
 TALA's local inference engine uses `llama-cpp-python` (not a compiled `llama.cpp` binary

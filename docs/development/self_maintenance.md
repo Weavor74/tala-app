@@ -15,7 +15,7 @@ The orchestrator operates in three descending modes of caution:
 ### 1. Documentation Lane (`--docs-only`)
 **Responsibilities**: Rebuild architecture docs, extract service contracts, regenerate the TDP Index, and validate for drift.
 - **Allowed Actions**: `apply-safe` (fully recreates `docs/*`), `audit` (verifies drift).
-- **Autoheal**: Yes. Run `npm run docs:selfheal` to trigger `apply-safe`.
+- **Autoheal**: Yes. Use `npm run docs:heal-and-validate` as the canonical enforcement command. `npm run docs:selfheal` remains a compatibility alias that runs `docs:regen` first, then `docs:heal-and-validate`.
 
 ### 2. Code Hygiene Lane (`--code-only`)
 **Responsibilities**: Ensure repo structural integrity and subsystem boundaries are maintained.

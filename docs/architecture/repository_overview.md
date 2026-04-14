@@ -21,7 +21,7 @@ The repository is organized following a clear concern-separation pattern:
 - **Core Runtime**: Electron (Node.js + Chromium), TypeScript.
 - **UI Stack**: React, ReactFlow (for graph visualization), Tailwind CSS.
 - **Persistence**: PostgreSQL with `pgvector` (RAG), SQLite (metadata), and local file system.
-- **Inference**: Support for Ollama, llama-cpp-python, and cloud providers (OpenAI, Anthropic).
+- **Inference**: Deterministic provider selection with local-first fallback (`ollama` -> `vllm` -> `llamacpp` -> `koboldcpp` -> `embedded_vllm` -> `embedded_llamacpp` -> `cloud`) via `InferenceService` + `ProviderSelectionService`.
 - **Extensibility**: Model Context Protocol (MCP) for tool and service abstraction.
 
 ## Cognitive & Memory Systems (P7B/P7D)
@@ -38,7 +38,15 @@ Tala implements a sophisticated cognitive flow:
 - **Adding a Service**: Place in `electron/services/` and register in `electron/services/IpcRouter.ts`.
 - **Defining Types**: Use `shared/` for any type crossing the IPC boundary.
 - **Modifying the UI**: Focus on `src/renderer/` and `A2UIWorkspaceSurface.tsx` for structured surfaces.
-- **Running Diagnostics**: Use `npm run repo:fullcheck` or `npm run docs:selfheal`.
+- **Running Diagnostics**: Use `npm run repo:fullcheck` for full repository checks and `npm run docs:heal-and-validate` for documentation enforcement.
+
+## Documentation Enforcement (Current Lifecycle)
+
+- Deterministic regeneration: `npm run docs:regen`
+- Deterministic doclock healing: `npm run docs:heal`
+- Full validation gate: `npm run docs:validate`
+- Canonical completion gate: `npm run docs:heal-and-validate`
+- Compatibility alias: `npm run docs:selfheal` (runs regen, then canonical completion gate)
 
 ---
 *This document is maintained by the documentation self-healing script (`scripts/diagnostics/maintenance/docs_maintenance.ts`).*

@@ -66,7 +66,7 @@ This document describes the Tala system as a collection of interacting component
 - **Purpose**: Deterministic MCP-triggered workflow executor. Maintains a registry of named multi-step `WorkflowDefinition`s and executes them sequentially via `ToolService`. Returns a Markdown summary log per run.
 - **Inputs**: Workflow ID, optional initial args, optional `executionMode` (defaults to `'system'`).
 - **Outputs**: Markdown string summary of the execution.
-- **Pre-registered workflows**: `repo_audit` (runs `npm run repo:check` + `npm run code:check` via `shell_run`), `docs_selfheal` (runs `npm run docs:selfheal` via `shell_run`).
+- **Pre-registered workflows**: `repo_audit` (runs `npm run repo:check` + `npm run code:check` via `shell_run`), `docs_selfheal` (runs `npm run docs:selfheal` via `shell_run`, which resolves to `docs:regen` + `docs:heal-and-validate`).
 - **Policy gate**: `policyGate.assertSideEffect({ actionKind: 'workflow_action', executionMode, targetSubsystem: 'workflow', mutationIntent: 'mcp_node_execute:<tool>' })` is called before every step's `toolDef.execute()`. `PolicyDeniedError` is re-thrown from the per-step catch block so callers receive the denial directly.
 - **executionMode default**: Defaults to `'system'` because MCP-triggered workflows run outside any user chat session and have no ambient runtime mode. Callers with a real mode (e.g. from `getActiveMode()`) should pass it explicitly to enable accurate policy evaluation.
 - **Failure behaviour**: First step failure halts the loop (subsequent steps are skipped). `PolicyDeniedError` is not treated as a step failure and always propagates.
