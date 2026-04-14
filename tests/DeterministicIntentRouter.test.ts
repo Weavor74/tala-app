@@ -10,6 +10,13 @@ describe('DeterministicIntentRouter expanded deterministic coverage', () => {
         expect(routed.deterministicOperation?.args).toEqual({ url: 'https://example.com/docs' });
     });
 
+    it('keeps ambiguous open/navigation phrasing on llm path', () => {
+        const routed = DeterministicIntentRouter.route('open router docs and explain the flow');
+        expect(routed.requires_llm).toBe(true);
+        expect(routed.isDeterministic).toBe(false);
+        expect(routed.deterministicOperation).toBeUndefined();
+    });
+
     it('routes memory add to mem0_add deterministic operation', () => {
         const routed = DeterministicIntentRouter.route('remember I prefer concise commit messages');
         expect(routed.intent).toBe('memory_add');
