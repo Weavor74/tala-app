@@ -17,7 +17,7 @@
  * - Supports "Global" vs "Workspace" scoping via a deep-merge strategy.
  * - Persists all changes to disk on-demand via the `Save` flow.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { DEFAULT_SETTINGS, migrateSettings } from './settingsData';
 import type { AppSettings, InferenceInstance, SourceControlProvider, AgentProfile, McpServerConfig } from './settingsData';
 import 'xterm/css/xterm.css';
@@ -4406,6 +4406,23 @@ function GuardBuilderPanel({ api }: { settings: any; api: any }) {
 // ═══════════════════════════════════════════════════════════════
 function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
     const [subTab, setSubTab] = useState<'guards' | 'validators' | 'policy'>('guards');
+    const [runtimeReadiness, setRuntimeReadiness] = useState<any | null>(null);
+    const [runtimeReadinessError, setRuntimeReadinessError] = useState<string | null>(null);
+
+    const refreshRuntimeReadiness = useCallback(async () => {
+        if (!api?.getLocalGuardrailsRuntimeReadiness) return;
+        try {
+            const status = await api.getLocalGuardrailsRuntimeReadiness();
+            setRuntimeReadiness(status);
+            setRuntimeReadinessError(null);
+        } catch (err: any) {
+            setRuntimeReadinessError(err?.message ?? 'Failed to load local runtime readiness');
+        }
+    }, [api]);
+
+    useEffect(() => {
+        refreshRuntimeReadiness();
+    }, [refreshRuntimeReadiness]);
 
     const pill = (id: 'guards' | 'validators' | 'policy', emoji: string, label: string) => (
         <button
@@ -4435,6 +4452,45 @@ function GuardrailsTab({ settings, api }: { settings: any; api: any }) {
 
     return (
         <div style={{ fontFamily: "'Inter','Segoe UI',sans-serif" }}>
+            <div
+                style={{
+                    marginBottom: 12,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                }}
+            >
+                <div style={{ fontSize: 11, color: '#bbb' }}>
+                    <strong style={{ color: '#ddd' }}>Local Guardrails Runtime:</strong>{' '}
+                    {runtimeReadinessError
+                        ? `error (${runtimeReadinessError})`
+                        : runtimeReadiness
+                            ? runtimeReadiness.ready
+                                ? `ready (guardrails ${runtimeReadiness.guardrails?.version ?? 'installed'})`
+                                : `not ready (${runtimeReadiness.guardrails?.error ?? runtimeReadiness.python?.error ?? 'missing dependency'})`
+                            : 'checking...'}
+                </div>
+                <button
+                    onClick={refreshRuntimeReadiness}
+                    style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        color: '#cfcfcf',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                        borderRadius: 6,
+                        padding: '6px 10px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                    }}
+                >
+                    Refresh
+                </button>
+            </div>
             {/* Sub-tab switcher */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
                 {pill('guards', '🛡', 'Guard Builder')}

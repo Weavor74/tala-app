@@ -362,6 +362,8 @@ contextBridge.exposeInMainWorld('tala', {
     getValidatorRegistry: () => ipcRenderer.invoke('guardrail:get-validators'),
     /** Exports a Guard to a standalone Python script via save dialog. */
     exportGuardToPython: (guardId: string) => ipcRenderer.invoke('guardrail:export-to-python', guardId),
+    /** Returns local runtime readiness for local_guardrails_ai. */
+    getLocalGuardrailsRuntimeReadiness: () => ipcRenderer.invoke('guardrail:get-local-runtime-readiness'),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */

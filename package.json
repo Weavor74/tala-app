@@ -96,6 +96,13 @@
           "!**/*.pyc"
         ]
       },
+      {
+        "from": "runtime/guardrails",
+        "to": "runtime/guardrails",
+        "filter": [
+          "**/*"
+        ]
+      },
       "start_local_inference.bat",
       "launch-inference.bat",
       "PORTABLE_BUILD_README.txt"

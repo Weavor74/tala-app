@@ -48,6 +48,7 @@ import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTyp
 import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
+import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -582,6 +583,11 @@ export class IpcRouter {
       } catch (e: any) {
         return { error: e.message };
       }
+    });
+
+    /** Returns local runtime readiness for the local_guardrails_ai provider. */
+    ipcMain.handle('guardrail:get-local-runtime-readiness', async () => {
+      return localGuardrailsRuntimeHealth.checkReadiness();
     });
 
 

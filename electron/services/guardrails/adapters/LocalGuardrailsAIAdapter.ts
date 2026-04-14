@@ -9,7 +9,6 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { spawn } from 'child_process';
 import type { ValidatorBinding } from '../../../../shared/guardrails/guardrailPolicyTypes';
 import type {
@@ -20,8 +19,12 @@ import type {
     GuardrailEvidence,
 } from '../types';
 import { makeErrorResult, makePassResult, makeViolationResult } from '../types';
-import { APP_ROOT, resolveAppPath } from '../../PathResolver';
+import { APP_ROOT } from '../../PathResolver';
 import { SystemService } from '../../SystemService';
+import {
+    resolveLocalGuardrailsPythonPath,
+    resolveLocalGuardrailsRunnerPath,
+} from '../LocalGuardrailsRuntime';
 
 interface RawGuardrailsAIResult {
     passed: boolean;
@@ -270,7 +273,7 @@ export class LocalGuardrailsAIAdapter implements IGuardrailAdapter {
     }
 
     private _resolveRunnerPath(): string {
-        return resolveAppPath(path.join('runtime', 'guardrails', 'local_guardrails_runner.py'));
+        return resolveLocalGuardrailsRunnerPath(APP_ROOT);
     }
 
     private async _resolvePythonExecutable(): Promise<string | undefined> {
@@ -281,37 +284,7 @@ export class LocalGuardrailsAIAdapter implements IGuardrailAdapter {
     }
 
     private async _resolvePythonExecutableOnce(): Promise<string | undefined> {
-        const isWin = process.platform === 'win32';
-        const localCandidates = [
-            path.join(APP_ROOT, 'local-inference', 'venv', 'Scripts', 'python.exe'),
-            path.join(APP_ROOT, 'local-inference', 'venv', 'bin', 'python3'),
-            path.join(APP_ROOT, 'local-inference', 'venv', 'bin', 'python'),
-            path.join(APP_ROOT, 'venv', 'Scripts', 'python.exe'),
-            path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe'),
-            path.join(APP_ROOT, 'venv', 'bin', 'python3'),
-            path.join(APP_ROOT, '.venv', 'bin', 'python3'),
-            path.join(APP_ROOT, 'mcp-servers', 'tala-core', 'venv', 'Scripts', 'python.exe'),
-            path.join(APP_ROOT, 'mcp-servers', 'tala-core', 'venv', 'bin', 'python3'),
-            path.join(APP_ROOT, 'bin', 'python-win', 'python.exe'),
-            path.join(APP_ROOT, 'bin', 'python-mac', 'bin', 'python3'),
-            path.join(APP_ROOT, 'bin', 'python-linux', 'bin', 'python3'),
-            path.join(APP_ROOT, 'bin', 'python-portable', isWin ? 'python.exe' : 'python3'),
-            path.join(APP_ROOT, 'bin', 'python-portable', isWin ? 'python.exe' : path.join('bin', 'python3')),
-        ];
-
-        const projectLocal = localCandidates.find(candidate => fs.existsSync(candidate));
-        if (projectLocal) {
-            return projectLocal;
-        }
-
-        const info = await this._systemService.detectEnv(APP_ROOT);
-        if (info.pythonEnvPath && fs.existsSync(info.pythonEnvPath)) {
-            return info.pythonEnvPath;
-        }
-        if (info.pythonPath && info.pythonPath !== 'Not Found') {
-            return info.pythonPath;
-        }
-        return undefined;
+        return resolveLocalGuardrailsPythonPath(this._systemService, APP_ROOT);
     }
 }
 

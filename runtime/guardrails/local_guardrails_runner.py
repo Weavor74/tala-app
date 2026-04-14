@@ -36,15 +36,34 @@ def _fail(code: str, message: str, err_type: Optional[str] = None, details: Opti
     _emit(error_payload)
 
 
-def _read_payload() -> Dict[str, Any]:
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+def _read_payload(file_arg: Optional[str] = None) -> Dict[str, Any]:
+    if file_arg:
+        with open(file_arg, "r", encoding="utf-8") as f:
             return json.load(f)
 
     raw = sys.stdin.read()
     if not raw.strip():
         raise ValueError("input payload is empty")
     return json.loads(raw)
+
+
+def _build_health() -> Dict[str, Any]:
+    health: Dict[str, Any] = {
+        "guardrails_importable": False,
+        "python_version": sys.version.split()[0],
+        "python_executable": sys.executable,
+    }
+
+    try:
+        import guardrails  # type: ignore
+
+        health["guardrails_importable"] = True
+        health["guardrails_version"] = getattr(guardrails, "__version__", None)
+    except Exception as err:
+        health["guardrails_importable"] = False
+        health["error"] = f"{err.__class__.__name__}: {err}"
+
+    return health
 
 
 def _load_validator_class(validator_name: str):
@@ -122,7 +141,13 @@ def _extract_result(raw_result: Any) -> Tuple[bool, Optional[str], Optional[str]
 
 def main() -> int:
     try:
-        payload = _read_payload()
+        args = [arg for arg in sys.argv[1:] if arg]
+        if "--health" in args:
+            _emit({"ok": True, "health": _build_health()})
+            return 0
+
+        file_arg = next((arg for arg in args if arg != "--health"), None)
+        payload = _read_payload(file_arg)
 
         validator_name = payload.get("validator_name")
         if not isinstance(validator_name, str) or not validator_name.strip():
