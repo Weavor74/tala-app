@@ -32,6 +32,16 @@
 - Document any new invariant or boundary rule introduced.
 - End each task with changed files, behavior impact, and remaining gaps/risk.
 
+## Documentation Completion Law (Binding)
+- Documentation is a hard completion gate for qualifying code changes.
+- Qualifying changes include behavior, architecture, contracts, workflows, telemetry, setup, policies, runtime guardrails, reflection, tools, memory, inference, MCP services, and operator instructions.
+- REQUIRED COMMAND: run `npm run docs:heal-and-validate` for any qualifying change before task completion.
+- A task is not complete while documentation drift remains or `REVIEW_REQUIRED` checklist items are unresolved.
+- Keep documentation diffs narrow and directly tied to the changed code paths.
+- Prefer deterministic regeneration and bounded generated blocks over freeform prose edits.
+- Use manual narrative edits only where generated blocks are not appropriate.
+- If a required doc cannot be safely auto-regenerated, use a bounded `REVIEW_REQUIRED` section rather than speculative prose.
+
 ## Retrieval and Derived State Rules
 - RAG is retrieval support, not durable truth storage.
 - mem0, graph, embeddings, and summaries are supportive derived layers, not authorities.

@@ -73,7 +73,7 @@ function checkDrift() {
   });
 
   if (driftDetected) {
-    console.log('\n❌ Documentation drift detected! Please run "npm run docs:generate" and commit the changes.');
+    console.log('\n❌ Documentation drift detected! Please run "npm run docs:regen" and commit the changes.');
     process.exit(1);
   } else {
     console.log('\n✅ Documentation is up to date.');
@@ -82,3 +82,4 @@ function checkDrift() {
 }
 
 checkDrift();
+
