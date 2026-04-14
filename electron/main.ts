@@ -55,6 +55,7 @@ import { LogViewerService } from './services/LogViewerService';
 import { McpLifecycleManager } from './services/McpLifecycleManager';
 import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './services/RuntimeControlService';
+import { OperatorActionService } from './services/OperatorActionService';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository, getEmbeddingsRepository } from './services/db/initMemoryStore';
@@ -644,6 +645,14 @@ const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(
     getReflectionSummary: () => agent.getReflectionSummary(),
   },
 );
+const operatorActionService = new OperatorActionService({
+  diagnosticsAggregator,
+  runtimeControl,
+  getSettingsPath: () => SETTINGS_PATH,
+  autonomyOrchestrator: autonomousRunOrchestrator,
+  reflectionService,
+  logViewerService,
+});
 
 // ─── World Model Assembler (Phase 4A) ─────────────────────────────────────────
 const worldModelAssembler = new WorldModelAssembler({ includeRepoState: true });
@@ -892,6 +901,7 @@ const ipcRouter = new IpcRouter({
   userProfileService,
   diagnosticsAggregator,
   runtimeControl,
+  operatorActionService,
   getSettingsPath: () => SETTINGS_PATH,
   setSettingsPath: (p) => { SETTINGS_PATH = p; },
   USER_DATA_DIR,

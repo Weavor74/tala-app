@@ -190,6 +190,12 @@ const MODE_CONTRACTS: Record<SystemOperatingMode, Omit<SystemModeContract, 'mode
 export class SystemModeManager {
     private currentMode: SystemOperatingMode = 'NORMAL';
     private recentTransitions: SystemModeTransition[] = [];
+    private operatorModeOverride: {
+        mode: Exclude<SystemOperatingMode, 'NORMAL'>;
+        setAt: string;
+        reason?: string;
+        requestedBy?: string;
+    } | null = null;
 
     public evaluate(input: ModeInput): SystemModeSnapshot {
         const activeFlags = this.deriveFlags(input);
@@ -223,6 +229,31 @@ export class SystemModeManager {
             && !snapshot.modeContract.blocked_capabilities.includes(capability);
     }
 
+    public setOperatorModeOverride(
+        mode: Exclude<SystemOperatingMode, 'NORMAL'> | null,
+        meta?: { reason?: string; requestedBy?: string; timestamp?: string },
+    ): void {
+        if (!mode) {
+            this.operatorModeOverride = null;
+            return;
+        }
+        this.operatorModeOverride = {
+            mode,
+            setAt: meta?.timestamp ?? new Date().toISOString(),
+            reason: meta?.reason,
+            requestedBy: meta?.requestedBy,
+        };
+    }
+
+    public getOperatorModeOverride(): {
+        mode: Exclude<SystemOperatingMode, 'NORMAL'>;
+        setAt: string;
+        reason?: string;
+        requestedBy?: string;
+    } | null {
+        return this.operatorModeOverride ? { ...this.operatorModeOverride } : null;
+    }
+
     private deriveFlags(input: ModeInput): SystemDegradationFlag[] {
         const flags = new Set<SystemDegradationFlag>();
         const has = (value: string) => input.degradedCapabilities.includes(value) || input.blockedCapabilities.includes(value);
@@ -235,11 +266,15 @@ export class SystemModeManager {
         if (input.overallStatus === 'maintenance') flags.add('MAINTENANCE');
         if (input.overallStatus === 'failed' || input.operatorAttentionRequired || input.trustScore < 0.6) flags.add('SAFE_MODE');
         if (has('memory_authority_service') && input.overallStatus !== 'healthy') flags.add('READ_ONLY');
+        if (this.operatorModeOverride) flags.add(this.operatorModeOverride.mode);
 
         return Array.from(flags.values()).sort();
     }
 
     private resolveEffectiveMode(input: ModeInput, flags: SystemDegradationFlag[]): SystemOperatingMode {
+        if (this.operatorModeOverride) {
+            return this.operatorModeOverride.mode;
+        }
         const has = (flag: SystemDegradationFlag) => flags.includes(flag);
         const hasMemoryFailure = input.blockedCapabilities.includes('memory_authority_service');
 

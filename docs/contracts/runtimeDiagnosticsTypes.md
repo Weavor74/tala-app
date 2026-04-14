@@ -226,6 +226,30 @@ interface OperatorActionRecord {
 }
 ```
 
+### `OperatorActionRequest`
+```typescript
+interface OperatorActionRequest {
+    action: OperatorActionId;
+    requested_by: string;
+    params?: Record<string, unknown>;
+}
+```
+
+### `OperatorActionResultContract`
+```typescript
+interface OperatorActionResultContract {
+    action_id: OperatorActionId;
+    requested_by: string;
+    executed_at: string;
+    allowed: boolean;
+    reason: string;
+    affected_subsystems: string[];
+    resulting_mode_change: {
+        from_mode: string;
+        to_mode: string;
+    }
+```
+
 ### `ProviderHealthScore`
 ```typescript
 interface ProviderHealthScore {
@@ -378,5 +402,39 @@ type StreamDiagnosticsStatus =
     | 'aborted'      // Stream cancelled (abort signal or user action)
     | 'timed_out'    // Stream open or completion timed out
     | 'failed';
+```
+
+### `OperatorActionId`
+```typescript
+type OperatorActionId = 
+    | 'pause_autonomy'
+    | 'resume_autonomy'
+    | 'enter_safe_mode'
+    | 'exit_safe_mode'
+    | 'enter_maintenance_mode'
+    | 'clear_maintenance_mode'
+    | 'retry_subsystem_health_check'
+    | 'restart_inference_adapter'
+    | 'rerun_db_health_validation'
+    | 'revalidate_memory_authority'
+    | 'rerun_derived_rebuild'
+    | 'flush_or_restart_stalled_queues'
+    | 'retry_tool_connector_initialization'
+    | 'approve_repair_proposal'
+    | 'reject_repair_proposal'
+    | 'defer_proposal'
+    | 'lock_self_improvement'
+    | 'unlock_self_improvement'
+    | 'require_human_approval_high_risk'
+    | 'acknowledge_incident'
+    | 'mute_duplicate_alerts'
+    | 'pin_active_issue'
+    | 'open_evidence_log_trail'
+    | 'export_health_snapshot';
+```
+
+### `OperatorActionSource`
+```typescript
+type OperatorActionSource =  'operator' | 'auto_repair';
 ```
 

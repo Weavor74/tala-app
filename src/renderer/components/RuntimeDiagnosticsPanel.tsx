@@ -187,6 +187,7 @@ function ControlButton({ label, title, onClick, disabled }: { label: string; tit
 
 const RuntimeDiagnosticsPanel: React.FC = () => {
     const [snapshot, setSnapshot] = useState<RuntimeDiagnosticsSnapshot | null>(null);
+    const [operatorState, setOperatorState] = useState<any | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [actionBusy, setActionBusy] = useState(false);
@@ -202,6 +203,10 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
             }
             const snap = await api.getRuntimeSnapshot();
             setSnapshot(snap);
+            if (api?.getOperatorActionState) {
+                const opState = await api.getOperatorActionState();
+                setOperatorState(opState);
+            }
             setError(null);
         } catch (e: any) {
             setError(`Failed to load snapshot: ${e.message}`);
@@ -234,6 +239,17 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
         }
     }
 
+    async function runOperatorAction(action: string, label: string, params?: Record<string, unknown>) {
+        return runAction(
+            () => api.executeOperatorAction?.({
+                action,
+                requested_by: 'dashboard_operator',
+                params,
+            }),
+            label,
+        );
+    }
+
     if (loading) {
         return <div style={{ padding: 20, color: '#9ca3af', fontSize: 13 }}>Loading runtime diagnostics…</div>;
     }
@@ -249,6 +265,8 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
 
     const { inference, mcp, recentFailures, providerHealthScores, suppressedProviders, operatorActions, recentProviderRecoveries, systemHealth } = snapshot;
     const selectedId = inference.selectedProviderId;
+    const latestOperator = operatorState?.actions?.slice?.(-5)?.reverse?.() ?? [];
+    const latestAuto = operatorState?.auto_actions?.slice?.(-3)?.reverse?.() ?? [];
 
     return (
         <div style={{ padding: '14px 16px', fontFamily: 'system-ui, sans-serif', color: '#e5e7eb', maxWidth: 560, fontSize: 13 }}>
@@ -307,6 +325,27 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                         blocked capabilities: {systemHealth.mode_contract.blocked_capabilities.join(', ')}
                     </div>
                 )}
+            </Section>
+
+            <Section title="Operator Controls">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                    <ControlButton label="Pause Autonomy" title="Pause autonomy" onClick={() => runOperatorAction('pause_autonomy', 'Pause autonomy')} disabled={actionBusy} />
+                    <ControlButton label="Resume Autonomy" title="Resume autonomy" onClick={() => runOperatorAction('resume_autonomy', 'Resume autonomy')} disabled={actionBusy} />
+                    <ControlButton label="Safe Mode" title="Enter safe mode" onClick={() => runOperatorAction('enter_safe_mode', 'Enter safe mode')} disabled={actionBusy} />
+                    <ControlButton label="Exit Safe" title="Exit safe mode" onClick={() => runOperatorAction('exit_safe_mode', 'Exit safe mode', { operator_approved: true })} disabled={actionBusy} />
+                    <ControlButton label="Maintenance" title="Enter maintenance mode" onClick={() => runOperatorAction('enter_maintenance_mode', 'Enter maintenance mode')} disabled={actionBusy} />
+                    <ControlButton label="Clear Maint." title="Clear maintenance mode" onClick={() => runOperatorAction('clear_maintenance_mode', 'Clear maintenance mode', { operator_approved: true })} disabled={actionBusy} />
+                    <ControlButton label="Retry Health" title="Retry subsystem health checks" onClick={() => runOperatorAction('retry_subsystem_health_check', 'Retry health checks')} disabled={actionBusy} />
+                    <ControlButton label="Revalidate DB" title="Re-run DB health validation" onClick={() => runOperatorAction('rerun_db_health_validation', 'Revalidate DB')} disabled={actionBusy} />
+                    <ControlButton label="Revalidate Memory" title="Revalidate memory authority" onClick={() => runOperatorAction('revalidate_memory_authority', 'Revalidate memory')} disabled={actionBusy} />
+                    <ControlButton label="Export Health" title="Export health snapshot" onClick={() => runOperatorAction('export_health_snapshot', 'Export health snapshot')} disabled={actionBusy} />
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                    self-improvement locked: {operatorState?.visibility?.self_improvement_locked ? 'yes' : 'no'}
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                    high-risk approval required: {operatorState?.visibility?.high_risk_human_approval_required ? 'yes' : 'no'}
+                </div>
             </Section>
             {/* Inference section */}
             <Section title="Inference">
@@ -418,6 +457,27 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                             <span style={{ color: '#9ca3af' }}>{a.action}</span>
                             <span style={{ color: '#e5e7eb' }}>{a.entityId}</span>
                             {a.newState && <span style={{ color: statusColor(a.newState) }}>→ {a.newState}</span>}
+                        </div>
+                    ))}
+                </Section>
+            )}
+
+            {(latestOperator.length > 0 || latestAuto.length > 0) && (
+                <Section title="Action Contract Audit">
+                    {latestOperator.map((a: any, i: number) => (
+                        <div key={`op-${i}`} style={{ display: 'flex', gap: 8, padding: '3px 0', borderBottom: '1px solid #2d3748', fontSize: 11 }}>
+                            <span style={{ color: '#6b7280', minWidth: 90 }}>{new Date(a.executed_at).toLocaleTimeString()}</span>
+                            <span style={{ color: a.allowed ? '#22c55e' : '#ef4444' }}>{a.allowed ? 'allowed' : 'denied'}</span>
+                            <span style={{ color: '#9ca3af' }}>{a.action_id}</span>
+                            <span style={{ color: '#e5e7eb' }}>{a.reason}</span>
+                        </div>
+                    ))}
+                    {latestAuto.map((a: any, i: number) => (
+                        <div key={`auto-${i}`} style={{ display: 'flex', gap: 8, padding: '3px 0', borderBottom: '1px solid #2d3748', fontSize: 11 }}>
+                            <span style={{ color: '#6b7280', minWidth: 90 }}>{new Date(a.executed_at).toLocaleTimeString()}</span>
+                            <span style={{ color: '#f59e0b' }}>auto</span>
+                            <span style={{ color: '#9ca3af' }}>{a.action_id}</span>
+                            <span style={{ color: '#e5e7eb' }}>{a.reason}</span>
                         </div>
                     ))}
                 </Section>

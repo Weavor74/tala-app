@@ -320,6 +320,68 @@ export interface OperatorActionRecord {
     correlationId?: string;
 }
 
+/**
+ * Canonical operator action identifiers used by the unified dashboard action contract.
+ */
+export type OperatorActionId =
+    | 'pause_autonomy'
+    | 'resume_autonomy'
+    | 'enter_safe_mode'
+    | 'exit_safe_mode'
+    | 'enter_maintenance_mode'
+    | 'clear_maintenance_mode'
+    | 'retry_subsystem_health_check'
+    | 'restart_inference_adapter'
+    | 'rerun_db_health_validation'
+    | 'revalidate_memory_authority'
+    | 'rerun_derived_rebuild'
+    | 'flush_or_restart_stalled_queues'
+    | 'retry_tool_connector_initialization'
+    | 'approve_repair_proposal'
+    | 'reject_repair_proposal'
+    | 'defer_proposal'
+    | 'lock_self_improvement'
+    | 'unlock_self_improvement'
+    | 'require_human_approval_high_risk'
+    | 'acknowledge_incident'
+    | 'mute_duplicate_alerts'
+    | 'pin_active_issue'
+    | 'open_evidence_log_trail'
+    | 'export_health_snapshot';
+
+export type OperatorActionSource = 'operator' | 'auto_repair';
+
+export interface OperatorActionRequest {
+    action: OperatorActionId;
+    requested_by: string;
+    params?: Record<string, unknown>;
+}
+
+export interface OperatorActionResultContract {
+    action_id: OperatorActionId;
+    requested_by: string;
+    executed_at: string;
+    allowed: boolean;
+    reason: string;
+    affected_subsystems: string[];
+    resulting_mode_change: {
+        from_mode: string;
+        to_mode: string;
+    } | null;
+    resulting_health_delta: {
+        overall_before: SystemHealthOverallStatus;
+        overall_after: SystemHealthOverallStatus;
+        trust_score_before: number;
+        trust_score_after: number;
+        trust_score_delta: number;
+        new_incidents: string[];
+        resolved_incidents: string[];
+    };
+    rollback_availability: 'none' | 'manual' | 'automatic';
+    source: OperatorActionSource;
+    details?: Record<string, unknown>;
+}
+
 // ─── Provider health score ─────────────────────────────────────────────────────
 
 /**

@@ -33,6 +33,7 @@
 - [McpLifecycleManager.ts](./service-McpLifecycleManager.md)
 - [McpService.ts](./service-McpService.md)
 - [MemoryService.ts](./service-MemoryService.md)
+- [OperatorActionService.ts](./service-OperatorActionService.md)
 - [OrchestratorService.ts](./service-OrchestratorService.md)
 - [PathResolver.ts](./service-PathResolver.md)
 - [PromptAuditService.ts](./service-PromptAuditService.md)

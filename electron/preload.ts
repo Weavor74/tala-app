@@ -786,7 +786,25 @@ contextBridge.exposeInMainWorld('tala', {
             ipcRenderer.invoke('logs:getCorrelationEntries', args),
     },
 
-    // ─── A2UI Workspace Surfaces (Phase 4C) ──────────────────────
+    // Runtime Diagnostics & Operator Actions
+    getRuntimeSnapshot: () => ipcRenderer.invoke('diagnostics:getRuntimeSnapshot'),
+    getSystemModeSnapshot: () => ipcRenderer.invoke('diagnostics:getSystemModeSnapshot'),
+    getInferenceStatus: () => ipcRenderer.invoke('diagnostics:getInferenceStatus'),
+    getMcpStatus: () => ipcRenderer.invoke('diagnostics:getMcpStatus'),
+    restartProvider: (providerId: string) => ipcRenderer.invoke('diagnostics:restartProvider', providerId),
+    probeProviders: () => ipcRenderer.invoke('diagnostics:probeProviders'),
+    disableProvider: (providerId: string, reason?: string) => ipcRenderer.invoke('diagnostics:disableProvider', providerId, reason),
+    enableProvider: (providerId: string, reason?: string) => ipcRenderer.invoke('diagnostics:enableProvider', providerId, reason),
+    forceProviderSelection: (providerId: string, reason?: string) =>
+        ipcRenderer.invoke('diagnostics:forceProviderSelection', providerId, reason),
+    restartMcpService: (serviceId: string) => ipcRenderer.invoke('diagnostics:restartMcpService', serviceId),
+    disableMcpService: (serviceId: string) => ipcRenderer.invoke('diagnostics:disableMcpService', serviceId),
+    enableMcpService: (serviceId: string) => ipcRenderer.invoke('diagnostics:enableMcpService', serviceId),
+    probeMcpServices: () => ipcRenderer.invoke('diagnostics:probeMcpServices'),
+    executeOperatorAction: (request: any) => ipcRenderer.invoke('operator:executeAction', request),
+    getOperatorActionState: () => ipcRenderer.invoke('operator:getActionState'),
+
+    // A2UI Workspace Surfaces (Phase 4C)
     a2ui: {
         /**
          * Opens or refreshes a named A2UI workspace surface in the document/editor pane.
@@ -862,3 +880,4 @@ contextBridge.exposeInMainWorld('tala', {
         getRecentEvents: () => ipcRenderer.invoke('telemetry:getRecentEvents'),
     },
 });
+

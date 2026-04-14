@@ -16,6 +16,11 @@
 **Returns**: `boolean`
 
 ---
+#### `getOperatorModeOverride`
+**Arguments**: ``
+**Returns**: ``
+
+---
 #### `deriveFlags`
 **Arguments**: `input: ModeInput`
 **Returns**: `SystemDegradationFlag[]`

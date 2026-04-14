@@ -12,6 +12,7 @@ import type {
     SystemHealthOverallStatus,
     SystemHealthSnapshot,
     SystemHealthSubsystemSnapshot,
+    SystemOperatingMode,
 } from '../../shared/system-health-types';
 import { SystemModeManager, type SystemModeSnapshot } from './SystemModeManager';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
@@ -163,6 +164,22 @@ export class RuntimeDiagnosticsAggregator {
                 ? 'allowed_by_mode_contract'
                 : `blocked_by_mode_contract:${modeSnapshot.effective_mode}`,
         };
+    }
+
+    public setOperatorModeOverride(
+        mode: Exclude<SystemOperatingMode, 'NORMAL'> | null,
+        meta?: { reason?: string; requestedBy?: string; timestamp?: string },
+    ): void {
+        this.systemModeManager.setOperatorModeOverride(mode, meta);
+    }
+
+    public getOperatorModeOverride(): {
+        mode: Exclude<SystemOperatingMode, 'NORMAL'>;
+        setAt: string;
+        reason?: string;
+        requestedBy?: string;
+    } | null {
+        return this.systemModeManager.getOperatorModeOverride();
     }
 
     public getInferenceStatus(): InferenceDiagnosticsState {

@@ -28,6 +28,7 @@ import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
 import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './RuntimeControlService';
+import type { OperatorActionService } from './OperatorActionService';
 import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
 import { A2UIActionBridge } from './A2UIActionBridge';
@@ -48,6 +49,7 @@ import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTyp
 import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
+import type { OperatorActionRequest } from '../../shared/runtimeDiagnosticsTypes';
 import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
 import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
@@ -84,6 +86,8 @@ export interface IpcRouterContext {
   diagnosticsAggregator: RuntimeDiagnosticsAggregator;
   /** Runtime control service — Phase 2B operational controls for providers and MCP. */
   runtimeControl: RuntimeControlService;
+  /** Unified operator action service — central policy-gated dashboard actions. */
+  operatorActionService?: OperatorActionService;
   /** World model assembler — Phase 4A canonical world-model builder. */
   worldModelAssembler?: WorldModelAssembler;
   /** Maintenance loop service — Phase 4B self-maintenance foundation. */
@@ -2327,6 +2331,61 @@ export class IpcRouter {
      */
     ipcMain.handle('diagnostics:probeMcpServices', async () => {
       return runtimeControl.probeMcpServices();
+    });
+
+    /**
+     * Unified operator action entrypoint.
+     * Every dashboard control should resolve to this command contract so policy,
+     * audit, and health delta behavior remains deterministic.
+     */
+    ipcMain.handle('operator:executeAction', async (_e, request: OperatorActionRequest) => {
+      const svc = this.ctx.operatorActionService;
+      if (!svc) {
+        return {
+          action_id: request?.action ?? 'retry_subsystem_health_check',
+          requested_by: request?.requested_by ?? 'operator',
+          executed_at: new Date().toISOString(),
+          allowed: false,
+          reason: 'operator_action_service_not_initialized',
+          affected_subsystems: ['diagnostics'],
+          resulting_mode_change: null,
+          resulting_health_delta: {
+            overall_before: diagnosticsAggregator.getSystemHealthSnapshot().overall_status,
+            overall_after: diagnosticsAggregator.getSystemHealthSnapshot().overall_status,
+            trust_score_before: diagnosticsAggregator.getSystemHealthSnapshot().trust_score,
+            trust_score_after: diagnosticsAggregator.getSystemHealthSnapshot().trust_score,
+            trust_score_delta: 0,
+            new_incidents: [],
+            resolved_incidents: [],
+          },
+          rollback_availability: 'none',
+          source: 'operator',
+        };
+      }
+      return svc.executeAction(request);
+    });
+
+    /** Returns recent operator actions and visibility-state controls. */
+    ipcMain.handle('operator:getActionState', async () => {
+      const svc = this.ctx.operatorActionService;
+      if (!svc) {
+        return {
+          actions: [],
+          auto_actions: [],
+          visibility: {
+            acknowledged_incidents: [],
+            muted_duplicate_alert_keys: [],
+            pinned_issue: null,
+            self_improvement_locked: false,
+            high_risk_human_approval_required: false,
+          },
+        };
+      }
+      return {
+        actions: svc.getActionHistory(),
+        auto_actions: svc.getAutoRepairHistory(),
+        visibility: svc.getVisibilityState(),
+      };
     });
 
     // ─── Phase 4A: World Model diagnostics ────────────────────────────────────

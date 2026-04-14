@@ -28,6 +28,7 @@ import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
 import { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './RuntimeControlService';
+import type { OperatorActionService } from './OperatorActionService';
 import type { WorldModelAssembler } from './world/WorldModelAssembler';
 import { A2UIWorkspaceRouter } from './A2UIWorkspaceRouter';
 import { A2UIActionBridge } from './A2UIActionBridge';
@@ -48,6 +49,7 @@ import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTyp
 import { AgentKernel } from './kernel/AgentKernel';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
+import type { OperatorActionRequest } from '../../shared/runtimeDiagnosticsTypes';
 import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
 import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
@@ -84,6 +86,8 @@ export interface IpcRouterContext {
   diagnosticsAggregator: RuntimeDiagnosticsAggregator;
   /** Runtime control service — Phase 2B operational controls for providers and MCP. */
   runtimeControl: RuntimeControlService;
+  /** Unified operator action service — central policy-gated dashboard actions. */
+  operatorActionService?: OperatorActionService;
   /** World model assembler — Phase 4A canonical world-model builder. */
   worldModelAssembler?: WorldModelAssembler;
   /** Maintenance loop service — Phase 4B self-maintenance foundation. */

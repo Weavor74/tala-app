@@ -36,6 +36,11 @@
 **Returns**: ``
 
 ---
+#### `getOperatorModeOverride`
+**Arguments**: ``
+**Returns**: ``
+
+---
 #### `getInferenceStatus`
 **Arguments**: ``
 **Returns**: `InferenceDiagnosticsState`

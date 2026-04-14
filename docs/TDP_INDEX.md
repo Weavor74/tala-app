@@ -278,6 +278,7 @@
 - [Service: McpService.ts](subsystems/service-McpService.md)
 - [Service: MemoryRepairExecutionService.ts](subsystems/service-MemoryRepairExecutionService.md)
 - [Service: MemoryService.ts](subsystems/service-MemoryService.md)
+- [Service: OperatorActionService.ts](subsystems/service-OperatorActionService.md)
 - [Service: OrchestratorService.ts](subsystems/service-OrchestratorService.md)
 - [Service: PathResolver.ts](subsystems/service-PathResolver.md)
 - [Service: PromptAuditService.ts](subsystems/service-PromptAuditService.md)

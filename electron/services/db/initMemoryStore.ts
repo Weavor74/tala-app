@@ -211,6 +211,21 @@ export function getLastDbHealth(): CanonicalDbHealth | null {
 }
 
 /**
+ * Re-run canonical DB preflight health validation against the active shared pool.
+ *
+ * Returns null when canonical memory has not been initialized yet.
+ * Updates the module-level `_lastDbHealth` cache on success.
+ */
+export async function checkCanonicalDbHealth(): Promise<CanonicalDbHealth | null> {
+  if (!_repository) return null;
+  const repo = _repository as PostgresMemoryRepository;
+  const healthSvc = new DbHealthService(repo.getSharedPool(), { maxRetries: 1 });
+  const health = await healthSvc.check();
+  _lastDbHealth = health;
+  return health;
+}
+
+/**
  * Shut down the canonical memory store and any managed runtime.
  *
  * Closes the database connection pool and, if the Tala-managed native
