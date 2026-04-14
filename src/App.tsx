@@ -477,7 +477,8 @@ function App() {
                   id: t.id,
                   title,
                   path: persistedPath,
-                  payload: content
+                  payload: content,
+                  metadata: t.document?.metadata
                 });
                 return { ...t, title, data: { ...t.data, path: persistedPath, content }, document: doc };
               } catch (e) {
@@ -562,6 +563,24 @@ function App() {
         };
       }
       return t;
+    }));
+  };
+
+  const updateActiveTabDocumentMetadata = (metadata: Record<string, unknown>) => {
+    if (!activeTabId) return;
+    setTabs(prev => prev.map(t => {
+      if (t.id !== activeTabId || !t.document) return t;
+      const mergedMetadata = { ...(t.document.metadata || {}), ...metadata };
+      if (JSON.stringify(mergedMetadata) === JSON.stringify(t.document.metadata || {})) {
+        return t;
+      }
+      return {
+        ...t,
+        document: {
+          ...t.document,
+          metadata: mergedMetadata,
+        }
+      };
     }));
   };
 
@@ -1271,8 +1290,9 @@ function App() {
                 <WorkspaceSurfaceHost
                   document={buildWorkspaceDocumentForTab(tab)}
                   onContentChange={updateActiveTabContent}
-                  onSave={handleSaveFile}
+                  onSave={tab.type === 'file' ? handleSaveFile : undefined}
                   onEditorKeyDown={handleEditorKeyDown}
+                  onDocumentMetadataChange={updateActiveTabDocumentMetadata}
                 />
               )}
               {tab.type === 'conflict' && (

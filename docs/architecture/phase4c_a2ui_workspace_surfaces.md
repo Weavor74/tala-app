@@ -11,6 +11,10 @@ the generalized workspace host. The same center-pane host now routes document
 surfaces by deterministic content type (text, html, board, rtf-preview, pdf,
 image, fallback) while preserving A2UI and browser/conflict flows.
 
+The workspace host now also supports typed per-surface controls registration.
+This keeps control UI deterministic and surface-owned (PDF/image/HTML/board)
+without introducing ad-hoc shell logic or parallel workspaces.
+
 **Core rule:** A2UI surfaces render exclusively in the document/editor pane.
 Chat receives only lightweight textual notices.
 

@@ -2,14 +2,47 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from 'pdfjs-dist';
 import type { WorkspaceSurfaceProps } from './WorkspaceSurfaceTypes';
 import { buildDisplayFileUrl } from '../WorkspaceSurfaceHelpers';
+import { buildSurfaceStateMetadata, getSurfaceState } from '../WorkspaceSurfaceState';
+import type { WorkspaceSurfaceControl } from './WorkspaceSurfaceControls';
+
+interface PdfSurfaceState {
+    zoom?: number;
+    page?: number;
+}
+
+export function buildPdfSurfaceControls(state: {
+    currentPage: number;
+    pageCount: number;
+    hasDocument: boolean;
+    zoom: number;
+}): WorkspaceSurfaceControl[] {
+    return [
+        { id: 'pdf-prev', label: 'Prev', kind: 'button', disabled: state.currentPage <= 1 },
+        { id: 'pdf-next', label: 'Next', kind: 'button', disabled: state.pageCount === 0 || state.currentPage >= state.pageCount },
+        { id: 'pdf-zoom-out', label: 'Zoom -', kind: 'button', disabled: !state.hasDocument },
+        { id: 'pdf-zoom-in', label: 'Zoom +', kind: 'button', disabled: !state.hasDocument },
+        { id: 'pdf-zoom-reset', label: 'Reset', kind: 'button', disabled: !state.hasDocument },
+        { id: 'pdf-fit-width', label: 'Fit Width', kind: 'button', disabled: !state.hasDocument },
+        { id: 'pdf-page-status', label: 'Page', kind: 'status', value: state.pageCount > 0 ? `${state.currentPage}/${state.pageCount}` : '-' },
+        { id: 'pdf-zoom-status', label: 'Zoom', kind: 'status', value: `${Math.round(state.zoom * 100)}%` },
+    ];
+}
 
 const pdfWorkerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-export const PdfSurface: React.FC<WorkspaceSurfaceProps> = ({ document: workspaceDocument }) => {
+export const PdfSurface: React.FC<WorkspaceSurfaceProps> = ({
+    document: workspaceDocument,
+    onSurfaceControlsChange,
+    onDocumentMetadataChange,
+}) => {
     const containerRef = useRef<HTMLDivElement>(null);
-    const [zoom, setZoom] = useState(1);
+    const persistedState = getSurfaceState<PdfSurfaceState>(workspaceDocument, 'pdf');
+    const [zoom, setZoom] = useState(typeof persistedState?.zoom === 'number' ? persistedState.zoom : 1);
     const [error, setError] = useState<string | null>(null);
+    const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
+    const [pageCount, setPageCount] = useState(0);
+    const [currentPage, setCurrentPage] = useState(Math.max(1, typeof persistedState?.page === 'number' ? persistedState.page : 1));
 
     const src = useMemo(
         () => buildDisplayFileUrl(workspaceDocument.path || workspaceDocument.uri || workspaceDocument.sourceRef || workspaceDocument.payload),
@@ -17,51 +50,109 @@ export const PdfSurface: React.FC<WorkspaceSurfaceProps> = ({ document: workspac
     );
 
     useEffect(() => {
-        let cancelled = false;
-        let pdf: PDFDocumentProxy | null = null;
+        setPdfDoc(null);
+        setPageCount(0);
+        setCurrentPage(Math.max(1, typeof persistedState?.page === 'number' ? persistedState.page : 1));
+        setZoom(typeof persistedState?.zoom === 'number' ? persistedState.zoom : 1);
+    }, [workspaceDocument.id]);
 
-        async function render() {
-            setError(null);
-            const container = containerRef.current;
-            if (!container || !src) return;
-            container.innerHTML = '';
+    useEffect(() => {
+        let cancelled = false;
+        let nextPdf: PDFDocumentProxy | null = null;
+
+        async function loadPdf(): Promise<void> {
+            if (!src) return;
             try {
-                pdf = await getDocument(src).promise;
-                for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-                    if (cancelled) return;
-                    const page = await pdf.getPage(pageNumber);
-                    const viewport = page.getViewport({ scale: zoom });
-                    const canvas = window.document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    if (!ctx) continue;
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
-                    canvas.style.display = 'block';
-                    canvas.style.margin = '0 auto 12px auto';
-                    container.appendChild(canvas);
-                    await page.render({ canvasContext: ctx, viewport }).promise;
-                }
-            } catch (e: any) {
-                setError(e?.message || 'Failed to render PDF');
+                setError(null);
+                nextPdf = await getDocument(src).promise;
+                if (cancelled) return;
+                setPdfDoc(nextPdf);
+                setPageCount(nextPdf.numPages);
+                setCurrentPage((page) => Math.min(nextPdf!.numPages, Math.max(1, page)));
+            } catch (err: any) {
+                if (cancelled) return;
+                setError(err?.message || 'Failed to load PDF');
+                setPdfDoc(null);
+                setPageCount(0);
             }
         }
-        render();
 
+        loadPdf();
         return () => {
             cancelled = true;
-            if (pdf) {
-                pdf.destroy().catch(() => undefined);
+            if (nextPdf) {
+                nextPdf.destroy().catch(() => undefined);
             }
         };
-    }, [src, zoom]);
+    }, [src]);
+
+    useEffect(() => {
+        let cancelled = false;
+        async function renderCurrentPage(): Promise<void> {
+            const container = containerRef.current;
+            if (!container) return;
+            container.innerHTML = '';
+            if (!pdfDoc) return;
+            try {
+                const page = await pdfDoc.getPage(currentPage);
+                if (cancelled) return;
+                const viewport = page.getViewport({ scale: zoom });
+                const canvas = window.document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                if (!context) return;
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.display = 'block';
+                canvas.style.margin = '0 auto';
+                container.appendChild(canvas);
+                await page.render({ canvasContext: context, viewport }).promise;
+            } catch (err: any) {
+                if (!cancelled) {
+                    setError(err?.message || 'Failed to render PDF page');
+                }
+            }
+        }
+        renderCurrentPage();
+        return () => {
+            cancelled = true;
+        };
+    }, [currentPage, pdfDoc, zoom]);
+
+    useEffect(() => {
+        onSurfaceControlsChange?.({
+            controls: buildPdfSurfaceControls({
+                currentPage,
+                pageCount,
+                hasDocument: !!pdfDoc,
+                zoom,
+            }),
+            onControlAction: async (controlId: string) => {
+                if (controlId === 'pdf-prev') setCurrentPage((page) => Math.max(1, page - 1));
+                if (controlId === 'pdf-next') setCurrentPage((page) => Math.min(pageCount || 1, page + 1));
+                if (controlId === 'pdf-zoom-out') setZoom((value) => Math.max(0.5, Number((value - 0.1).toFixed(2))));
+                if (controlId === 'pdf-zoom-in') setZoom((value) => Math.min(4, Number((value + 0.1).toFixed(2))));
+                if (controlId === 'pdf-zoom-reset') setZoom(1);
+                if (controlId === 'pdf-fit-width' && pdfDoc && containerRef.current) {
+                    const page = await pdfDoc.getPage(currentPage);
+                    const baseViewport = page.getViewport({ scale: 1 });
+                    const containerWidth = Math.max(200, containerRef.current.clientWidth - 24);
+                    const fitZoom = Number((containerWidth / baseViewport.width).toFixed(2));
+                    setZoom(Math.max(0.5, Math.min(4, fitZoom)));
+                }
+            }
+        });
+        return () => onSurfaceControlsChange?.(null);
+    }, [currentPage, onSurfaceControlsChange, pageCount, pdfDoc, zoom]);
+
+    useEffect(() => {
+        onDocumentMetadataChange?.(buildSurfaceStateMetadata(workspaceDocument, 'pdf', {
+            zoom,
+            page: currentPage,
+        }));
+    }, [currentPage, onDocumentMetadataChange, workspaceDocument, zoom]);
 
     return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}>
-            <div style={{ padding: '6px 10px', borderBottom: '1px solid #333', background: '#252526', color: '#ccc', display: 'flex', gap: 8 }}>
-                <button onClick={() => setZoom(z => Math.max(0.5, Number((z - 0.1).toFixed(2))))}>-</button>
-                <span style={{ fontSize: 12, minWidth: 55 }}>{Math.round(zoom * 100)}%</span>
-                <button onClick={() => setZoom(z => Math.min(3, Number((z + 0.1).toFixed(2))))}>+</button>
-            </div>
             {error ? (
                 <div style={{ color: '#f99', padding: 12 }}>{error}</div>
             ) : (

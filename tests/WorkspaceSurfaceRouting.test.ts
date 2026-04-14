@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { resolveWorkspaceContentType } from '../src/renderer/workspace/WorkspaceContentTypeResolver';
 import { createWorkspaceDocumentFromFile } from '../src/renderer/workspace/WorkspaceDocumentFactory';
 import { getSurfaceTypeForDocument } from '../src/renderer/workspace/WorkspaceSurfaceHost';
@@ -8,10 +8,16 @@ import {
     convertRtfToPreviewHtml,
     normalizeSafeHtmlPreview
 } from '../src/renderer/workspace/WorkspaceSurfaceHelpers';
-import { buildBoardDocumentModel } from '../src/renderer/workspace/WorkspaceBoardModel';
+import { buildBoardDocumentModel, buildBoardDocumentPayloadSerialized } from '../src/renderer/workspace/WorkspaceBoardModel';
 import { resolveSurfaceComponent } from '../src/renderer/workspace/WorkspaceSurfaceRegistry';
+import { buildPdfSurfaceControls } from '../src/renderer/workspace/surfaces/PdfSurface';
+import { buildImageSurfaceControls } from '../src/renderer/workspace/surfaces/ImageSurface';
+import { buildHtmlSurfaceControls } from '../src/renderer/workspace/surfaces/HtmlSurface';
+import { buildBoardSurfaceControls } from '../src/renderer/workspace/surfaces/BoardSurface';
 import TextEditorSurface from '../src/renderer/workspace/surfaces/TextEditorSurface';
 import FallbackSurface from '../src/renderer/workspace/surfaces/FallbackSurface';
+import { buildSurfaceStateMetadata, getSurfaceState } from '../src/renderer/workspace/WorkspaceSurfaceState';
+import type { WorkspaceDocument } from '../src/renderer/types';
 
 describe('Workspace content type resolver', () => {
     it('maps required file extensions', () => {
@@ -69,17 +75,55 @@ describe('Workspace host routing + text preservation', () => {
     });
 });
 
-describe('RTF preview pipeline', () => {
-    it('converts and sanitizes preview content', () => {
+describe('Surface controls model', () => {
+    it('exposes deterministic PDF controls', () => {
+        const controls = buildPdfSurfaceControls({ currentPage: 2, pageCount: 5, hasDocument: true, zoom: 1.2 });
+        expect(controls.find((control) => control.id === 'pdf-prev')?.disabled).toBe(false);
+        expect(controls.find((control) => control.id === 'pdf-page-status')?.value).toBe('2/5');
+        expect(controls.find((control) => control.id === 'pdf-zoom-status')?.value).toBe('120%');
+    });
+
+    it('exposes deterministic image/html/board controls', () => {
+        const imageControls = buildImageSurfaceControls({ hasSource: true, fitToView: true, zoom: 1.4 });
+        expect(imageControls.find((control) => control.id === 'image-fit')?.active).toBe(true);
+
+        const htmlControls = buildHtmlSurfaceControls({ fitToPane: false, htmlSize: 123 });
+        expect(htmlControls.find((control) => control.id === 'html-size')?.value).toBe('123 chars');
+
+        const boardControls = buildBoardSurfaceControls({
+            readOnly: false,
+            canSave: true,
+            showGrid: true,
+            zoom: 0.9,
+            elementCount: 4,
+        });
+        expect(boardControls.find((control) => control.id === 'board-grid')?.active).toBe(true);
+        expect(boardControls.find((control) => control.id === 'board-save')?.disabled).toBe(false);
+        expect(boardControls.find((control) => control.id === 'board-element-status')?.value).toBe('4');
+    });
+});
+
+describe('RTF + HTML preview sanitization pipeline', () => {
+    it('converts RTF and sanitizes preview content with parser-backed policy', () => {
         const html = convertRtfToPreviewHtml('{\\rtf1\\ansi\\b Bold\\b0\\par Normal\\par}');
         expect(html).toContain('<strong>');
-        const sanitized = normalizeSafeHtmlPreview('<script>alert(1)</script><p>ok</p>');
+
+        const sanitized = normalizeSafeHtmlPreview('<script>alert(1)</script><p onclick="x()">ok</p>');
         expect(sanitized).toContain('<p>ok</p>');
         expect(sanitized.toLowerCase()).not.toContain('<script');
+        expect(sanitized.toLowerCase()).not.toContain('onclick');
+
         expect(normalizeSafeHtmlPreview('<iframe src="x"></iframe><p>x</p>')).toBe('<p>x</p>');
+        expect(normalizeSafeHtmlPreview('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:');
+        const objectFiltered = normalizeSafeHtmlPreview('<object>bad</object><p>safe</p>');
+        expect(objectFiltered).toContain('<p>safe</p>');
+        expect(objectFiltered.toLowerCase()).not.toContain('<object');
+
         const wrapped = buildSandboxedPreviewDocument('<p>preview</p>');
-        expect(wrapped).toContain('Content-Security-Policy');
+        expect(wrapped).toContain("default-src 'none'");
         expect(wrapped).toContain('<p>preview</p>');
+        expect(wrapped).toContain('img-src data: blob: file:;');
+
         expect(checkAllowedImageSource('data:image/svg+xml,<svg></svg>')).toBe(false);
         expect(checkAllowedImageSource('data:image/png;base64,AA')).toBe(true);
         expect(checkAllowedImageSource('data:text/html,<h1>x</h1>')).toBe(false);
@@ -89,8 +133,8 @@ describe('RTF preview pipeline', () => {
     });
 });
 
-describe('Board model loading', () => {
-    it('loads positioned elements from schema', () => {
+describe('Board model loading, validation, and persistence', () => {
+    it('loads legacy positioned elements and normalizes schema', () => {
         const doc = buildBoardDocumentModel(JSON.stringify({
             id: 'board-1',
             elements: [
@@ -99,8 +143,50 @@ describe('Board model loading', () => {
             ]
         }));
         expect(doc.elements).toHaveLength(2);
-        expect(doc.elements[0].x).toBe(10);
-        expect(doc.elements[1].type).toBe('card');
+        expect(doc.elements[0].position.x).toBe(10);
+        expect(doc.elements[1].type).toBe('panel');
+    });
+
+    it('serializes validated board payload deterministically', () => {
+        const payload = buildBoardDocumentPayloadSerialized({
+            version: 1,
+            id: 'board-2',
+            title: 'Board',
+            viewport: { zoom: 1.1, offsetX: 10, offsetY: 20 },
+            elements: [
+                {
+                    id: 'text-1',
+                    type: 'text',
+                    position: { x: 12, y: 34 },
+                    size: { width: 210, height: 120 },
+                    text: 'Hello',
+                }
+            ]
+        });
+        const reloaded = buildBoardDocumentModel(payload);
+        expect(reloaded.id).toBe('board-2');
+        expect(reloaded.viewport?.zoom).toBe(1.1);
+        expect(reloaded.elements[0].type).toBe('text');
+    });
+
+    it('fails safely for malformed payload', () => {
+        const malformed = buildBoardDocumentModel('{"version":999,"bad":true}');
+        expect(malformed.elements).toHaveLength(0);
     });
 });
 
+describe('Surface state metadata persistence helpers', () => {
+    it('stores and restores per-surface state in metadata map', () => {
+        const document: WorkspaceDocument = {
+            id: 'doc-1',
+            title: 'sample.html',
+            contentType: 'html',
+            dirty: false,
+            readOnly: false,
+        };
+        const metadata = buildSurfaceStateMetadata(document, 'html', { fitToPane: true });
+        const withMetadata: WorkspaceDocument = { ...document, metadata };
+        const state = getSurfaceState<{ fitToPane: boolean }>(withMetadata, 'html');
+        expect(state?.fitToPane).toBe(true);
+    });
+});
