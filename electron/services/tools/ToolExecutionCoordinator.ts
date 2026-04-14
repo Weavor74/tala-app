@@ -27,6 +27,8 @@ export interface ToolInvocationContext {
     enforcePolicy?: boolean;
     /** Explicitly marks this tool invocation as idempotent-safe for retries. */
     toolInvocationIdempotent?: boolean;
+    /** Optional per-invocation timeout budget in milliseconds. */
+    toolTimeoutMs?: number;
 }
 
 const SAFE_READ_ONLY_TOOLS = new Set<string>([
@@ -193,6 +195,7 @@ export class ToolExecutionCoordinator {
                 operationName: 'tool_execution',
                 targetKey: name,
                 executionId: ctx?.executionId,
+                timeoutMs: ctx?.toolTimeoutMs,
                 maxAttempts: retrySafe ? 2 : 1,
                 circuitBreaker: breaker,
                 classifyFailure: (error): GuardrailFailureKind => {
