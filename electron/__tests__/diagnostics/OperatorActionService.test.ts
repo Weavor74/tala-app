@@ -299,4 +299,34 @@ describe('OperatorActionService', () => {
         expect(exitSafe?.allowed).toBe(false);
         expect(exitSafe?.reason).toContain('human_approval_required_for_high_risk_action');
     });
+
+    it('explicitly denies rerun_derived_rebuild when rebuild service is unavailable', async () => {
+        const diagnosticsAggregator: any = {
+            getSystemHealthSnapshot: () => makeHealth(),
+            setOperatorModeOverride: vi.fn(),
+            getOperatorModeOverride: vi.fn(() => null),
+            getSnapshot: () => ({ inference: {}, mcp: { services: [] } }),
+        };
+        const runtimeControl: any = {
+            probeProviders: vi.fn(async () => ({ success: true })),
+            probeMcpServices: vi.fn(() => ({ success: true })),
+            restartMcpService: vi.fn(async () => ({ success: true })),
+        };
+        const service = new OperatorActionService({
+            diagnosticsAggregator,
+            runtimeControl,
+            getSettingsPath: () => 'D:/tmp/not-used-settings.json',
+        });
+
+        const result = await service.executeAction({
+            action: 'rerun_derived_rebuild',
+            requested_by: 'closure_test_operator',
+        });
+
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toBe('rebuild_service_unavailable');
+        const available = service.getAvailableActions().find((a) => a.action === 'rerun_derived_rebuild');
+        expect(available?.allowed).toBe(false);
+        expect(available?.reason).toBe('rebuild_service_unavailable');
+    });
 });

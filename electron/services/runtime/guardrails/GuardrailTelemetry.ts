@@ -50,7 +50,7 @@ export function emitGuardrailTelemetry(input: GuardrailTelemetryInput): void {
     telemetry.operational(
         'guardrails',
         input.eventType,
-        inferSeverity(input),
+        inferSeverity(input.eventType),
         'RuntimeGuardrailExecutor',
         `${input.domain}/${input.operationName} -> ${input.eventType}`,
         inferStatus(input),
@@ -69,4 +69,3 @@ export function emitGuardrailTelemetry(input: GuardrailTelemetryInput): void {
         },
     );
 }
-

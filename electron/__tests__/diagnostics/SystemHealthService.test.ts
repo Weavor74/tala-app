@@ -175,6 +175,32 @@ describe('SystemHealthService', () => {
         )).toBe(true);
     });
 
+    it('emits incident evidence links as artifact references or explicit unavailable markers', () => {
+        const service = new SystemHealthService();
+        mockDbHealth = { ...mockDbHealth, reachable: false };
+        mockEvents = [{
+            id: 'tevt-1',
+            timestamp: '2026-04-14T12:00:00.000Z',
+            executionId: 'exec-1',
+            subsystem: 'system',
+            event: 'execution.failed',
+        } as any];
+        const snapshot = service.buildSnapshot({
+            now: '2026-04-14T12:00:00.000Z',
+            inference: makeInference(),
+            mcp: makeMcp(),
+            recentFailures: noFailures,
+            suppressedProviders: [],
+        });
+        const incident = snapshot.active_incident_entries.find((i) => i.title.includes('db health service'));
+        expect(incident).toBeTruthy();
+        expect(incident?.evidence_links.some((link) => link.startsWith('artifact://'))).toBe(true);
+        expect(
+            incident?.evidence_links.some((link) => link.startsWith('artifact://telemetry/event/'))
+            || incident?.evidence_links.includes('evidence_unavailable:telemetry_event_not_found'),
+        ).toBe(true);
+    });
+
     it('emits deterministic mode transition reason codes from health reductions', () => {
         const service = new SystemHealthService();
         const degraded = service.buildSnapshot({

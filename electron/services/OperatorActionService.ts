@@ -239,10 +239,7 @@ export class OperatorActionService {
                     break;
                 }
                 case 'rerun_derived_rebuild': {
-                    details = await this._rerunDerivedRebuild();
-                    affectedSubsystems = ['memory_authority_service', 'reflection_service'];
-                    rollback = 'none';
-                    break;
+                    return deny('rebuild_service_unavailable', ['memory_authority_service', 'reflection_service']);
                 }
                 case 'flush_or_restart_stalled_queues': {
                     const summary = await this._flushStalledQueues();
@@ -545,6 +542,19 @@ export class OperatorActionService {
             }
 
             const requiresApproval = this.highRiskApprovalRequired && HIGH_RISK_ACTIONS.has(entry.action);
+            if (entry.action === 'rerun_derived_rebuild') {
+                return {
+                    action: entry.action,
+                    label: entry.label,
+                    category: entry.category,
+                    risk_level: entry.riskLevel,
+                    recommended: recommendedByContext.has(entry.action),
+                    allowed: false,
+                    reason: 'rebuild_service_unavailable',
+                    requires_explicit_approval: false,
+                    affected_subsystems: ['memory_authority_service', 'reflection_service'],
+                };
+            }
             return {
                 action: entry.action,
                 label: entry.label,
@@ -735,27 +745,6 @@ export class OperatorActionService {
             summary.autonomy = { available: false };
         }
         return summary;
-    }
-
-    /**
-     * Best-effort derived state rebuild entrypoint.
-     * This never bypasses canonical authority; it only performs bounded
-     * revalidation and scheduler ticks through existing runtime services.
-     */
-    private async _rerunDerivedRebuild(): Promise<Record<string, unknown>> {
-        const authorityHealth = await checkCanonicalDbHealth();
-        if (!this.deps.reflectionService) {
-            return {
-                authorityHealth,
-                reflectionSchedulerTicked: false,
-                reason: 'reflection_service_not_initialized',
-            };
-        }
-        await this.deps.reflectionService.getScheduler().tickNow();
-        return {
-            authorityHealth,
-            reflectionSchedulerTicked: true,
-        };
     }
 
     private async _openEvidenceTrail(params?: Record<string, unknown>): Promise<Record<string, unknown>> {

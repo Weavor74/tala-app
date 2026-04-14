@@ -54,37 +54,17 @@ function toActionView(action: OperatorActionAvailability): DashboardActionView {
     };
 }
 
-function deriveFallbackActions(snapshot: RuntimeDiagnosticsSnapshot): DashboardActionView[] {
-    const nonHealthy = snapshot.systemHealth.subsystem_entries
-        .filter((s) => s.status !== 'healthy')
-        .map((s) => s.name);
-    const actions: string[] = ['retry_subsystem_health_check', 'export_health_snapshot'];
-    if (nonHealthy.includes('inference_service')) {
-        actions.push('retry_inference_probe', 'restart_inference_adapter', 'enter_safe_mode', 'pause_autonomy');
-    }
-    if (nonHealthy.includes('db_health_service') || nonHealthy.includes('memory_authority_service')) {
-        actions.push('rerun_db_health_validation', 'revalidate_memory_authority', 'enter_maintenance_mode');
-    }
-    return Array.from(new Set(actions)).map((id) => ({
-        id,
-        label: FALLBACK_LABELS[id] || id,
-        allowed: true,
-        reason: 'fallback_renderer_compatibility',
-        category: 'recovery_control',
-        recommended: true,
-        requiresApproval: false,
-    }));
-}
-
 export function buildDashboardActionViews(
-    snapshot: RuntimeDiagnosticsSnapshot,
+    _snapshot: RuntimeDiagnosticsSnapshot,
     operatorState: OperatorActionStateSnapshot | null,
 ): {
     contextActions: DashboardActionView[];
     groupedActions: Record<DashboardActionView['category'], DashboardActionView[]>;
+    controlsUnavailable: boolean;
+    controlsUnavailableReason: string | null;
 } {
     const availableActions = (operatorState?.available_actions ?? []).map(toActionView);
-    const source = availableActions.length > 0 ? availableActions : deriveFallbackActions(snapshot);
+    const source = availableActions;
     const contextActions = source.filter((a) => a.recommended).slice(0, 8);
     const groupedActions: Record<DashboardActionView['category'], DashboardActionView[]> = {
         runtime_control: source.filter((a) => a.category === 'runtime_control'),
@@ -92,6 +72,14 @@ export function buildDashboardActionViews(
         governance_control: source.filter((a) => a.category === 'governance_control'),
         visibility_control: source.filter((a) => a.category === 'visibility_control'),
     };
+    const controlsUnavailable = availableActions.length === 0;
 
-    return { contextActions, groupedActions };
+    return {
+        contextActions,
+        groupedActions,
+        controlsUnavailable,
+        controlsUnavailableReason: controlsUnavailable
+            ? 'operator_action_availability_unavailable'
+            : null,
+    };
 }

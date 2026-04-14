@@ -129,9 +129,10 @@ describe('runtimeDiagnosticsDashboardModel', () => {
         expect(view.contextActions.map((a) => a.id)).toEqual(['retry_inference_probe', 'enter_safe_mode']);
         expect(view.groupedActions.recovery_control.some((a) => a.id === 'retry_inference_probe')).toBe(true);
         expect(view.groupedActions.runtime_control.some((a) => a.id === 'enter_safe_mode' && !a.allowed)).toBe(true);
+        expect(view.controlsUnavailable).toBe(false);
     });
 
-    it('falls back to deterministic renderer compatibility actions when backend action state is unavailable', () => {
+    it('reports explicit controls-unavailable state when backend action state is unavailable', () => {
         const snapshot = makeSnapshot({
             systemHealth: {
                 ...makeSnapshot().systemHealth,
@@ -152,7 +153,8 @@ describe('runtimeDiagnosticsDashboardModel', () => {
             },
         });
         const view = buildDashboardActionViews(snapshot, null);
-        expect(view.contextActions.map((a) => a.id)).toContain('retry_inference_probe');
-        expect(view.contextActions.map((a) => a.id)).toContain('enter_safe_mode');
+        expect(view.contextActions).toEqual([]);
+        expect(view.controlsUnavailable).toBe(true);
+        expect(view.controlsUnavailableReason).toBe('operator_action_availability_unavailable');
     });
 });

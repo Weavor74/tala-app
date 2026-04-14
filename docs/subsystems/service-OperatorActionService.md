@@ -65,16 +65,6 @@ Returns backend-evaluated operator action availability for the dashboard.
 **Returns**: `Promise<Record<string, unknown>>`
 
 ---
-#### `_rerunDerivedRebuild`
-Best-effort derived state rebuild entrypoint.
- This never bypasses canonical authority; it only performs bounded
- revalidation and scheduler ticks through existing runtime services.
-/
-
-**Arguments**: ``
-**Returns**: `Promise<Record<string, unknown>>`
-
----
 #### `_openEvidenceTrail`
 **Arguments**: `params?: Record<string, unknown>`
 **Returns**: `Promise<Record<string, unknown>>`

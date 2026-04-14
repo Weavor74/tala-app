@@ -208,8 +208,12 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
             const snap = await api.getRuntimeSnapshot();
             setSnapshot(snap);
             if (api?.getOperatorActionState) {
-                const opState = await api.getOperatorActionState();
-                setOperatorState(opState);
+                try {
+                    const opState = await api.getOperatorActionState();
+                    setOperatorState(opState);
+                } catch {
+                    setOperatorState(null);
+                }
             }
             setError(null);
         } catch (e: any) {
@@ -276,7 +280,7 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
     const latestOperator = operatorState?.actions?.slice?.(-5)?.reverse?.() ?? [];
     const latestAuto = operatorState?.auto_actions?.slice?.(-3)?.reverse?.() ?? [];
     const fallbackChain = (systemHealth.active_fallbacks ?? []).join(' -> ') || 'none';
-    const { contextActions, groupedActions } = buildDashboardActionViews(snapshot, operatorState);
+    const { contextActions, groupedActions, controlsUnavailable, controlsUnavailableReason } = buildDashboardActionViews(snapshot, operatorState);
     const actionParams: Record<string, Record<string, unknown>> = {
         exit_safe_mode: { operator_approved: true },
         clear_maintenance_mode: { operator_approved: true },
@@ -409,17 +413,23 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
             </Section>
 
             <Section title="Action Panel">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {contextActions.slice(0, 8).map((a) => (
-                        <ControlButton
-                            key={`${a.id}-${a.label}`}
-                            label={a.label}
-                            title={a.allowed ? a.label : `${a.label}: ${a.reason}`}
-                            onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
-                            disabled={actionBusy || !a.allowed}
-                        />
-                    ))}
-                </div>
+                {controlsUnavailable ? (
+                    <div style={{ color: '#f59e0b', fontSize: 12 }}>
+                        Operator actions unavailable: {controlsUnavailableReason}
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {contextActions.slice(0, 8).map((a) => (
+                            <ControlButton
+                                key={`${a.id}-${a.label}`}
+                                label={a.label}
+                                title={a.allowed ? a.label : `${a.label}: ${a.reason}`}
+                                onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
+                                disabled={actionBusy || !a.allowed}
+                            />
+                        ))}
+                    </div>
+                )}
             </Section>
 
             <Section title="Trust Explanation">
@@ -447,17 +457,23 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
             </Section>
 
             <Section title="Operator Controls">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                    {[...groupedActions.runtime_control, ...groupedActions.recovery_control, ...groupedActions.governance_control, ...groupedActions.visibility_control].map((a) => (
-                        <ControlButton
-                            key={`control-${a.id}`}
-                            label={a.label}
-                            title={a.allowed ? `${a.label}${a.requiresApproval ? ' (approval required)' : ''}` : `${a.label}: ${a.reason}`}
-                            onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
-                            disabled={actionBusy || !a.allowed}
-                        />
-                    ))}
-                </div>
+                {controlsUnavailable ? (
+                    <div style={{ color: '#f59e0b', fontSize: 12, marginBottom: 8 }}>
+                        Operator controls unavailable: {controlsUnavailableReason}
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                        {[...groupedActions.runtime_control, ...groupedActions.recovery_control, ...groupedActions.governance_control, ...groupedActions.visibility_control].map((a) => (
+                            <ControlButton
+                                key={`control-${a.id}`}
+                                label={a.label}
+                                title={a.allowed ? `${a.label}${a.requiresApproval ? ' (approval required)' : ''}` : `${a.label}: ${a.reason}`}
+                                onClick={() => runOperatorAction(a.id, a.label, actionParams[a.id])}
+                                disabled={actionBusy || !a.allowed}
+                            />
+                        ))}
+                    </div>
+                )}
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>
                     self-improvement locked: {operatorState?.visibility?.self_improvement_locked ? 'yes' : 'no'}
                 </div>

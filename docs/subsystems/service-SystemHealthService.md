@@ -37,7 +37,16 @@ Deterministic system-health reduction service.
 
 ---
 #### `buildIncidentEntries`
-**Arguments**: `subsystemEntries: SystemHealthSubsystemSnapshot[]`
+**Arguments**: `subsystemEntries: SystemHealthSubsystemSnapshot[], events: RuntimeEvent[],`
 **Returns**: `SystemHealthIncidentEntry[]`
+
+---
+#### `buildEvidenceLinksForIncident`
+Builds machine-usable evidence references for incident inspection.
+ Returns explicit evidence_unavailable marker when no stable runtime artifact exists.
+/
+
+**Arguments**: `subsystem: SystemHealthSubsystemSnapshot, events: RuntimeEvent[],`
+**Returns**: `string[]`
 
 ---

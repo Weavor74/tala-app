@@ -442,8 +442,8 @@ export class AutonomousRunOrchestrator {
             const planInput = this._buildHarmonizationStepPlanInput(filePath, campaign, metadata);
 
             const planResponse = await this._runGuardedAutonomyOperation({
-                runId: run.runId,
-                subsystemId: goal.subsystemId,
+                runId: campaign.campaignId,
+                subsystemId: campaign.scope.targetSubsystem,
                 operationName: 'planning',
                 maxAttempts: 2,
                 execute: async () => this.safePlanner.plan(planInput),

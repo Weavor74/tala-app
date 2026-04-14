@@ -16,6 +16,7 @@ import { SystemModeManager, type SystemModeSnapshot } from './SystemModeManager'
 import { getLastDbHealth } from './db/initMemoryStore';
 import { policyGate } from './policy/PolicyGate';
 import { TelemetryBus } from './telemetry/TelemetryBus';
+import type { RuntimeEvent } from '../../shared/runtimeEventTypes';
 
 interface StartupStatusSignal {
     rag?: boolean;
@@ -481,7 +482,7 @@ export class SystemHealthService {
         });
 
         const capabilityMatrix = this.buildCapabilityMatrix(subsystemEntries, modeSnapshotWithAttention.modeContract);
-        const incidentEntries = this.buildIncidentEntries(subsystemEntries);
+        const incidentEntries = this.buildIncidentEntries(subsystemEntries, events);
 
         return {
             timestamp: now,
@@ -681,7 +682,10 @@ export class SystemHealthService {
         ];
     }
 
-    private buildIncidentEntries(subsystemEntries: SystemHealthSubsystemSnapshot[]): SystemHealthIncidentEntry[] {
+    private buildIncidentEntries(
+        subsystemEntries: SystemHealthSubsystemSnapshot[],
+        events: RuntimeEvent[],
+    ): SystemHealthIncidentEntry[] {
         return subsystemEntries
             .filter((s) => s.status !== 'healthy')
             .map((s, idx) => ({
@@ -691,11 +695,52 @@ export class SystemHealthService {
                 start_time: s.last_changed_at,
                 dedup_family: s.reason_codes[0] ?? s.name,
                 current_state: s.status,
-                evidence_links: [`logs:getHealthSnapshot#${s.name}`, ...s.evidence.slice(0, 2)],
+                evidence_links: this.buildEvidenceLinksForIncident(s, events),
                 automated_actions_attempted: s.auto_action_state === 'monitoring'
                     ? []
                     : [s.auto_action_state],
                 recommended_operator_actions: s.recommended_actions,
             }));
+    }
+
+    /**
+     * Builds machine-usable evidence references for incident inspection.
+     * Returns explicit evidence_unavailable marker when no stable runtime artifact exists.
+     */
+    private buildEvidenceLinksForIncident(
+        subsystem: SystemHealthSubsystemSnapshot,
+        events: RuntimeEvent[],
+    ): string[] {
+        const subsystemToken = subsystem.name
+            .replace(/_service$/i, '')
+            .replace(/_/g, '')
+            .toLowerCase();
+        const reasonToken = (subsystem.reason_codes[0] ?? '').replace(/_/g, '').toLowerCase();
+
+        const related = events
+            .filter((event) => {
+                const eventToken = `${event.subsystem}:${event.event}`.replace(/[_:.]/g, '').toLowerCase();
+                return eventToken.includes(subsystemToken)
+                    || (reasonToken.length > 0 && eventToken.includes(reasonToken))
+                    || (subsystem.name === 'policy_gate' && event.event === 'execution.blocked');
+            })
+            .slice(-3)
+            .reverse();
+
+        const links = new Set<string>();
+        for (const event of related) {
+            links.add(`artifact://telemetry/event/${event.id}`);
+            if (event.executionId) {
+                links.add(`artifact://telemetry/execution/${event.executionId}`);
+            }
+        }
+
+        links.add(`artifact://logs/source/health/subsystem/${subsystem.name}`);
+
+        const result = Array.from(links);
+        if (result.length === 1 && related.length === 0) {
+            return ['evidence_unavailable:telemetry_event_not_found', ...result];
+        }
+        return result;
     }
 }
