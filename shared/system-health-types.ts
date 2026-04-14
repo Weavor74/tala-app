@@ -113,6 +113,35 @@ export interface SystemTrustExplanation {
     confidence_penalties: Array<{ reason: string; penalty: number }>;
 }
 
+/**
+ * Canonical trust-score input factors used by deterministic health reduction.
+ * Keeping this explicit prevents "vibe-based" trust scoring.
+ */
+export interface SystemTrustScoreInputs {
+    inference_age_ms: number;
+    mcp_age_ms: number;
+    expected_max_age_ms: number;
+    db_evidence_observed: boolean;
+    telemetry_stream_observed: boolean;
+}
+
+/**
+ * Normalized subsystem signal shape accepted by central health reducers.
+ * Existing runtime services can adapt their native diagnostics into this shape.
+ */
+export interface SystemHealthSubsystemSignal {
+    name: string;
+    status: SystemHealthOverallStatus;
+    severity: SystemHealthSubsystemSeverity;
+    checked_at: string;
+    reason_codes: string[];
+    evidence: string[];
+    operator_impact: string;
+    auto_action_state: SystemHealthAutoActionState;
+    recommended_actions: string[];
+    active_fallbacks?: string[];
+}
+
 export interface SystemHealthSubsystemSnapshot {
     name: string;
     status: SystemHealthOverallStatus;
@@ -144,5 +173,6 @@ export interface SystemHealthSnapshot {
     capability_matrix: SystemCapabilityAvailability[];
     active_incident_entries: SystemHealthIncidentEntry[];
     trust_explanation: SystemTrustExplanation;
+    trust_score_inputs: SystemTrustScoreInputs;
     operator_attention_required: boolean;
 }

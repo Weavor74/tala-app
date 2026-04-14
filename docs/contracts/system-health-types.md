@@ -68,6 +68,33 @@ interface SystemTrustExplanation {
     }
 ```
 
+### `SystemTrustScoreInputs`
+```typescript
+interface SystemTrustScoreInputs {
+    inference_age_ms: number;
+    mcp_age_ms: number;
+    expected_max_age_ms: number;
+    db_evidence_observed: boolean;
+    telemetry_stream_observed: boolean;
+}
+```
+
+### `SystemHealthSubsystemSignal`
+```typescript
+interface SystemHealthSubsystemSignal {
+    name: string;
+    status: SystemHealthOverallStatus;
+    severity: SystemHealthSubsystemSeverity;
+    checked_at: string;
+    reason_codes: string[];
+    evidence: string[];
+    operator_impact: string;
+    auto_action_state: SystemHealthAutoActionState;
+    recommended_actions: string[];
+    active_fallbacks?: string[];
+}
+```
+
 ### `SystemHealthSubsystemSnapshot`
 ```typescript
 interface SystemHealthSubsystemSnapshot {
@@ -104,6 +131,7 @@ interface SystemHealthSnapshot {
     capability_matrix: SystemCapabilityAvailability[];
     active_incident_entries: SystemHealthIncidentEntry[];
     trust_explanation: SystemTrustExplanation;
+    trust_score_inputs: SystemTrustScoreInputs;
     operator_attention_required: boolean;
 }
 ```

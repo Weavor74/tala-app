@@ -1,7 +1,7 @@
 {
   "contract": "tala.naming",
   "contractVersion": "1.0.0",
-  "generatedAt": "2026-04-14T16:34:13.892Z",
+  "generatedAt": "2026-04-14T17:05:28.463Z",
   "exceptions": [
     {
       "file": "docs/agent_working_rules.md",
@@ -6358,6 +6358,13 @@
       "value": "memory_validator.py",
       "reason": "legacy violation - baseline tracking",
       "addedAt": "2026-04-14T16:34:13.894Z"
+    },
+    {
+      "file": "docs/subsystems/service-SystemHealthService.md",
+      "rule": "naming/file-pattern",
+      "value": "service-SystemHealthService.md",
+      "reason": "legacy violation - baseline tracking",
+      "addedAt": "2026-04-14T17:05:28.463Z"
     }
   ]
 }
