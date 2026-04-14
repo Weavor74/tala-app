@@ -372,6 +372,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Runs a local runtime smoke validation flow for packaged/dev trust checks. */
     runLocalGuardrailsRuntimeSmoke: (sampleContent?: string) =>
         ipcRenderer.invoke('guardrail:run-local-runtime-smoke', { sampleContent }),
+    /** Runs profile-level local preflight for guardrail provider/binding readiness. */
+    runGuardrailProfilePreflight: (profileId: string) =>
+        ipcRenderer.invoke('guardrail:run-profile-preflight', { profileId }),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */

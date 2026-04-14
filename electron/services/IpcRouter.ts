@@ -51,6 +51,11 @@ import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntimeHealth';
 import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
+import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
+import {
+  buildDefaultGuardrailPolicyConfig,
+  normalizeGuardrailPolicyConfig,
+} from '../../shared/guardrails/guardrailPolicyTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -608,6 +613,20 @@ export class IpcRouter {
     /** Runs a packaged/runtime smoke validation against local guardrails runtime seams. */
     ipcMain.handle('guardrail:run-local-runtime-smoke', async (_e, payload?: { sampleContent?: string }) => {
       return localGuardrailsRuntimeSmokeService.runSmokeValidation(payload?.sampleContent);
+    });
+
+    /** Runs profile-level local preflight (non-enforcement) against configured guardrail bindings. */
+    ipcMain.handle('guardrail:run-profile-preflight', async (_e, payload?: { profileId?: string }) => {
+      const appSettings = loadSettings(getSettingsPath());
+      const policy = normalizeGuardrailPolicyConfig(
+        appSettings.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig(),
+      );
+      const profileId = payload?.profileId ?? policy.activeProfileId;
+      return localGuardrailsProfilePreflightService.runProfilePreflight({
+        policy,
+        profileId,
+        runProbe: true,
+      });
     });
 
 

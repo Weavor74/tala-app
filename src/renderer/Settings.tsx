@@ -48,6 +48,7 @@ import {
     type LocalGuardrailsValidatorArgSchema,
     type LocalGuardrailsValidatorCatalogEntry,
 } from '../../shared/guardrails/localGuardrailsValidatorCatalog';
+import type { GuardrailProfilePreflightResult } from '../../shared/guardrails/localGuardrailsProfilePreflightTypes';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -4633,6 +4634,8 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const [bindingProbeBusy, setBindingProbeBusy] = useState(false);
     const [bindingArgsDraft, setBindingArgsDraft] = useState('{}');
     const [profileNameDraft, setProfileNameDraft] = useState('');
+    const [profilePreflightBusy, setProfilePreflightBusy] = useState(false);
+    const [profilePreflightResult, setProfilePreflightResult] = useState<GuardrailProfilePreflightResult | null>(null);
 
     const selectedRule = policy.rules.find(r => r.id === selectedRuleId) ?? null;
     const selectedBinding = policy.validatorBindings.find(b => b.id === selectedBindingId) ?? null;
@@ -4669,6 +4672,10 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     useEffect(() => {
         setProfileNameDraft(selectedProfile?.name ?? '');
     }, [selectedProfile?.id, selectedProfile?.name]);
+
+    useEffect(() => {
+        setProfilePreflightResult(null);
+    }, [selectedProfile?.id]);
 
     const flash = (msg: string) => { setPolicyStatus(msg); setTimeout(() => setPolicyStatus(''), 3000); };
 
@@ -4715,6 +4722,36 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
             savePolicy(updated);
         } catch (err: any) {
             flash(err?.message ?? 'Failed to delete profile');
+        }
+    };
+
+    const runProfilePreflight = async () => {
+        if (!selectedProfile || !api?.runGuardrailProfilePreflight) return;
+        setProfilePreflightBusy(true);
+        try {
+            const result = await api.runGuardrailProfilePreflight(selectedProfile.id);
+            setProfilePreflightResult(result as GuardrailProfilePreflightResult);
+        } catch (err: any) {
+            setProfilePreflightResult({
+                checkedAt: new Date().toISOString(),
+                profileId: selectedProfile.id,
+                status: 'blocked',
+                providers: [],
+                bindings: [],
+                summary: {
+                    providersTotal: 0,
+                    providersReady: 0,
+                    providersDegraded: 0,
+                    providersBlocked: 0,
+                    bindingsTotal: 0,
+                    bindingsReady: 0,
+                    bindingsDegraded: 0,
+                    bindingsBlocked: 0,
+                },
+                issues: [err?.message ?? 'Preflight failed'],
+            });
+        } finally {
+            setProfilePreflightBusy(false);
         }
     };
 
@@ -4953,6 +4990,41 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                 {selectedProfile?.isBuiltIn && (
                     <div style={{ marginTop: 6, fontSize: 10, color: '#555' }}>
                         Built-in profiles are protected and cannot be renamed or deleted.
+                    </div>
+                )}
+                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button style={btnP} onClick={runProfilePreflight} disabled={profilePreflightBusy || !selectedProfile}>
+                        {profilePreflightBusy ? 'RUNNING PREFLIGHT...' : 'RUN PREFLIGHT'}
+                    </button>
+                    {profilePreflightResult && (
+                        <span style={{
+                            fontSize: 11,
+                            color: profilePreflightResult.status === 'ready'
+                                ? '#4ec9b0'
+                                : profilePreflightResult.status === 'degraded'
+                                    ? '#d79921'
+                                    : '#cc241d',
+                        }}>
+                            {profilePreflightResult.status.toUpperCase()}
+                        </span>
+                    )}
+                </div>
+                {profilePreflightResult && (
+                    <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4 }}>
+                        <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>
+                            Providers: {profilePreflightResult.summary.providersReady}/{profilePreflightResult.summary.providersTotal} ready ·
+                            Bindings: {profilePreflightResult.summary.bindingsReady}/{profilePreflightResult.summary.bindingsTotal} ready
+                        </div>
+                        {profilePreflightResult.providers.filter(p => p.status !== 'ready').map(p => (
+                            <div key={p.providerKind} style={{ fontSize: 10, color: '#d79921' }}>
+                                Provider {p.providerKind}: {p.message ?? p.status}
+                            </div>
+                        ))}
+                        {profilePreflightResult.bindings.filter(b => b.status !== 'ready').slice(0, 6).map(b => (
+                            <div key={`${b.ruleId}:${b.bindingId}`} style={{ fontSize: 10, color: '#cc241d' }}>
+                                Binding {b.bindingName} ({b.providerKind}): {b.message ?? b.status}
+                            </div>
+                        ))}
                     </div>
                 )}
                 {policy.profiles.find(p => p.id === policy.activeProfileId)?.description && (
