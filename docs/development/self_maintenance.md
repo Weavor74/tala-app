@@ -62,3 +62,32 @@ npm run self:watch
 - Utilizes `chokidar` with a built-in debounce (1500ms).
 - Explicitly ignores output directories (`docs/**`, `dist/**`) to prevent infinite looping when `docs_maintenance` rewrites the documentation payload.
 - Injects `--mode=apply-safe` on triggered file events (e.g., changes to `electron/**`, `src/**`, or `memory/**`).
+
+## Documentation Enforcement Lifecycle
+
+### What this means
+Documentation is part of the product, not a post-task cleanup step. For qualifying code changes, the task is only complete when code and docs agree.
+
+### What to run
+Run this command before finishing qualifying work:
+
+```powershell
+npm run docs:heal-and-validate
+```
+
+### What the workflow does
+- `docs:scan-impact` maps changed files to owned docs.
+- `docs:heal` refreshes deterministic doc outputs (including generated sections and bounded updates).
+- `docs:validate` checks for remaining drift (`docs:verify`, naming contract, and doclock validation).
+
+### Types of docs
+- Generated docs: regenerate deterministically; do not freeform rewrite generated content.
+- Hybrid docs: keep bounded generated blocks up to date using the existing markers.
+- Manual docs: when safe deterministic generation is not appropriate, use a bounded `REVIEW_REQUIRED` section instead of speculative prose.
+
+### What CI checks
+- CI reruns healing and fails if healing introduces uncommitted diffs that were not included.
+- CI then runs documentation validation and naming/doclock gates.
+
+### Definition of done
+A qualifying task is not done until `npm run docs:heal-and-validate` passes and no unresolved `REVIEW_REQUIRED` checklist items remain.
