@@ -66,9 +66,19 @@
 **Returns**: `SystemHealthOverallStatus`
 
 ---
-#### `_computeTrustScore`
-**Arguments**: `nowIso: string, inference: InferenceDiagnosticsState, mcp: McpInventoryDiagnostics, dbObserved: boolean, hasTelemetry: boolean,`
-**Returns**: `number`
+#### `_computeTrustModel`
+**Arguments**: `nowIso: string, inference: InferenceDiagnosticsState, mcp: McpInventoryDiagnostics, dbObserved: boolean, hasTelemetry: boolean, subsystemEntries: SystemHealthSubsystemSnapshot[],`
+**Returns**: `TrustModel`
+
+---
+#### `_buildCapabilityMatrix`
+**Arguments**: `subsystemEntries: SystemHealthSubsystemSnapshot[], modeContract: SystemModeContract,`
+**Returns**: `SystemCapabilityAvailability[]`
+
+---
+#### `_buildIncidentEntries`
+**Arguments**: `subsystemEntries: SystemHealthSubsystemSnapshot[]`
+**Returns**: `SystemHealthIncidentEntry[]`
 
 ---
 #### `_computeDegradedSubsystems`

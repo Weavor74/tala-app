@@ -4,6 +4,42 @@
 
 ## Interfaces
 
+### `SystemCapabilityAvailability`
+```typescript
+interface SystemCapabilityAvailability {
+    capability: string;
+    status: SystemCapabilityAvailabilityStatus;
+    reason: string;
+    approval_required: boolean;
+    impacted_by: string[];
+}
+```
+
+### `SystemHealthIncidentEntry`
+```typescript
+interface SystemHealthIncidentEntry {
+    incident_id: string;
+    title: string;
+    severity: SystemIncidentSeverity;
+    start_time: string;
+    dedup_family: string;
+    current_state: string;
+    evidence_links: string[];
+    automated_actions_attempted: string[];
+    recommended_operator_actions: string[];
+}
+```
+
+### `SystemTrustExplanation`
+```typescript
+interface SystemTrustExplanation {
+    telemetry_freshness: {
+        inference_age_ms: number;
+        mcp_age_ms: number;
+        expected_max_age_ms: number;
+    }
+```
+
 ### `SystemModeContract`
 ```typescript
 interface SystemModeContract {
@@ -65,6 +101,9 @@ interface SystemHealthSnapshot {
     active_degradation_flags: SystemDegradationFlag[];
     mode_contract: SystemModeContract;
     recent_mode_transitions: SystemModeTransition[];
+    capability_matrix: SystemCapabilityAvailability[];
+    active_incident_entries: SystemHealthIncidentEntry[];
+    trust_explanation: SystemTrustExplanation;
     operator_attention_required: boolean;
 }
 ```
@@ -372,6 +411,20 @@ type SystemHealthAutoActionState =
     | 'repair_pending'
     | 'repair_active'
     | 'blocked';
+```
+
+### `SystemCapabilityAvailabilityStatus`
+```typescript
+type SystemCapabilityAvailabilityStatus = 
+    | 'available'
+    | 'degraded'
+    | 'blocked'
+    | 'approval_required';
+```
+
+### `SystemIncidentSeverity`
+```typescript
+type SystemIncidentSeverity =  'info' | 'warning' | 'error' | 'critical';
 ```
 
 ### `SystemCapability`

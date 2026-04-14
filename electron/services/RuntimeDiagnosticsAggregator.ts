@@ -7,12 +7,15 @@ import type {
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
+    SystemCapabilityAvailability,
     SystemDegradationFlag,
+    SystemHealthIncidentEntry,
     SystemModeContract,
     SystemHealthOverallStatus,
     SystemHealthSnapshot,
     SystemHealthSubsystemSnapshot,
     SystemOperatingMode,
+    SystemTrustExplanation,
 } from '../../shared/system-health-types';
 import { SystemModeManager, type SystemModeSnapshot } from './SystemModeManager';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
@@ -63,6 +66,11 @@ interface AutonomyStateSignal {
         activeCampaigns?: unknown[];
         pendingCampaigns?: unknown[];
     };
+}
+
+interface TrustModel {
+    score: number;
+    explanation: SystemTrustExplanation;
 }
 
 export interface SystemHealthAdapterDeps {
@@ -465,6 +473,34 @@ export class RuntimeDiagnosticsAggregator {
                 : ['Inspect recent tool.failed telemetry and retry with validated tool inputs.'],
         });
 
+        const retrievalStatus: SystemHealthOverallStatus = startup.rag === false
+            ? 'impaired'
+            : toolStatus === 'impaired'
+                ? 'degraded'
+                : (toolStatus === 'degraded' ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'search_retrieval_service',
+            status: retrievalStatus,
+            severity: retrievalStatus === 'impaired' ? 'error' : retrievalStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: retrievalStatus === 'healthy'
+                ? ['retrieval_paths_ready']
+                : startup.rag === false
+                    ? ['retrieval_layer_unavailable']
+                    : ['retrieval_tooling_degraded'],
+            evidence: [
+                `startup.rag=${startup.rag ?? 'unknown'}`,
+                `toolFailureRatio=${toolFailureRatio.toFixed(3)}`,
+            ],
+            operator_impact: retrievalStatus === 'healthy'
+                ? 'Search and retrieval pathways are available.'
+                : 'Search/retrieval quality or availability is reduced.',
+            auto_action_state: retrievalStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: retrievalStatus === 'healthy'
+                ? []
+                : ['Run retrieval diagnostics and validate local/connector-backed search providers.'],
+        });
+
         const policyProfileId = policyGate.getActiveProfileId();
         const guardrailPolicyStatus: SystemHealthOverallStatus = policyProfileId ? 'healthy' : 'maintenance';
         addSubsystem({
@@ -616,7 +652,37 @@ export class RuntimeDiagnosticsAggregator {
             .filter((s) => s.auto_action_state === 'repair_pending' || s.auto_action_state === 'repair_active')
             .map((s) => s.name);
 
-        const trustScore = this._computeTrustScore(now, inference, mcp, Boolean(db), events.length > 0);
+        const trustModel = this._computeTrustModel(now, inference, mcp, Boolean(db), events.length > 0, subsystemEntries);
+        const trustScore = trustModel.score;
+
+        const telemetryStatus: SystemHealthOverallStatus = trustScore < 0.6
+            ? 'impaired'
+            : (trustModel.explanation.stale_components.length > 0 || trustModel.explanation.missing_evidence.length > 0)
+                ? 'degraded'
+                : 'healthy';
+        addSubsystem({
+            name: 'dashboard_telemetry',
+            status: telemetryStatus,
+            severity: telemetryStatus === 'impaired' ? 'error' : telemetryStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: telemetryStatus === 'healthy'
+                ? ['telemetry_fresh']
+                : trustModel.explanation.stale_components.length > 0
+                    ? ['telemetry_stale_components_present']
+                    : ['telemetry_missing_evidence'],
+            evidence: [
+                `inferenceAgeMs=${trustModel.explanation.telemetry_freshness.inference_age_ms}`,
+                `mcpAgeMs=${trustModel.explanation.telemetry_freshness.mcp_age_ms}`,
+                `staleComponents=${trustModel.explanation.stale_components.join(',') || 'none'}`,
+            ],
+            operator_impact: telemetryStatus === 'healthy'
+                ? 'Dashboard claims are backed by fresh telemetry.'
+                : 'Dashboard confidence is reduced by stale or missing telemetry evidence.',
+            auto_action_state: telemetryStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: telemetryStatus === 'healthy'
+                ? []
+                : ['Refresh subsystem health checks and inspect telemetry ingestion/runtime paths.'],
+        });
 
         const overallStatus = this._reduceOverallStatus(subsystemEntries);
         const operatorAttentionRequired = overallStatus === 'failed'
@@ -636,6 +702,9 @@ export class RuntimeDiagnosticsAggregator {
             trustScore,
         });
 
+        const capabilityMatrix = this._buildCapabilityMatrix(subsystemEntries, modeSnapshotWithAttention.modeContract);
+        const incidentEntries = this._buildIncidentEntries(subsystemEntries);
+
         return {
             timestamp: now,
             overall_status: overallStatus,
@@ -651,6 +720,9 @@ export class RuntimeDiagnosticsAggregator {
             active_degradation_flags: modeSnapshotWithAttention.activeFlags,
             mode_contract: modeSnapshotWithAttention.modeContract,
             recent_mode_transitions: modeSnapshotWithAttention.recentTransitions,
+            capability_matrix: capabilityMatrix,
+            active_incident_entries: incidentEntries,
+            trust_explanation: trustModel.explanation,
             operator_attention_required: operatorAttentionRequired,
         };
     }
@@ -665,25 +737,162 @@ export class RuntimeDiagnosticsAggregator {
         return 'healthy';
     }
 
-    private _computeTrustScore(
+    private _computeTrustModel(
         nowIso: string,
         inference: InferenceDiagnosticsState,
         mcp: McpInventoryDiagnostics,
         dbObserved: boolean,
         hasTelemetry: boolean,
-    ): number {
+        subsystemEntries: SystemHealthSubsystemSnapshot[],
+    ): TrustModel {
         let trust = 1;
         const nowMs = new Date(nowIso).getTime();
         const inferenceAgeMs = Math.max(0, nowMs - new Date(inference.lastUpdated).getTime());
         const mcpAgeMs = Math.max(0, nowMs - new Date(mcp.lastUpdated).getTime());
+        const penalties: Array<{ reason: string; penalty: number }> = [];
+        const staleComponents: string[] = [];
+        const missingEvidence: string[] = [];
+        const expectedMaxAgeMs = 90_000;
 
-        if (inferenceAgeMs > 90_000) trust -= 0.2;
-        if (mcpAgeMs > 90_000) trust -= 0.2;
-        if (!dbObserved) trust -= 0.1;
-        if (!hasTelemetry) trust -= 0.1;
+        if (inferenceAgeMs > expectedMaxAgeMs) {
+            trust -= 0.2;
+            penalties.push({ reason: 'inference_telemetry_stale', penalty: 0.2 });
+            staleComponents.push('inference');
+        }
+        if (mcpAgeMs > expectedMaxAgeMs) {
+            trust -= 0.2;
+            penalties.push({ reason: 'mcp_telemetry_stale', penalty: 0.2 });
+            staleComponents.push('mcp');
+        }
+        if (!dbObserved) {
+            trust -= 0.1;
+            penalties.push({ reason: 'db_evidence_missing', penalty: 0.1 });
+            missingEvidence.push('db_health_preflight');
+        }
+        if (!hasTelemetry) {
+            trust -= 0.1;
+            penalties.push({ reason: 'telemetry_stream_missing', penalty: 0.1 });
+            missingEvidence.push('runtime_events');
+        }
 
         const clamped = Math.max(0, Math.min(1, trust));
-        return Math.round(clamped * 100) / 100;
+        const score = Math.round(clamped * 100) / 100;
+        const lastHealthy = subsystemEntries
+            .filter((s) => s.status === 'healthy')
+            .sort((a, b) => new Date(b.last_checked_at).getTime() - new Date(a.last_checked_at).getTime())[0];
+
+        return {
+            score,
+            explanation: {
+                telemetry_freshness: {
+                    inference_age_ms: inferenceAgeMs,
+                    mcp_age_ms: mcpAgeMs,
+                    expected_max_age_ms: expectedMaxAgeMs,
+                },
+                last_successful_subsystem_check: lastHealthy?.last_checked_at ?? null,
+                stale_components: staleComponents,
+                missing_evidence: missingEvidence,
+                suppressed_assumptions: [
+                    'assume_no_event_implies_healthy',
+                    'assume_partial_snapshots_equal_full_consistency',
+                ],
+                confidence_penalties: penalties,
+            },
+        };
+    }
+
+    private _buildCapabilityMatrix(
+        subsystemEntries: SystemHealthSubsystemSnapshot[],
+        modeContract: SystemModeContract,
+    ): SystemCapabilityAvailability[] {
+        const bySubsystem = new Map(subsystemEntries.map((s) => [s.name, s]));
+        const blockedCapabilities = new Set(modeContract.blocked_capabilities);
+        const approvalRequired = new Set(modeContract.operator_approval_required_for);
+        const degradedSubsystems = subsystemEntries
+            .filter((s) => s.status === 'degraded' || s.status === 'maintenance' || s.status === 'recovery')
+            .map((s) => s.name);
+
+        const make = (
+            capability: string,
+            contractCapability: SystemCapability | null,
+            impactedBy: string[],
+        ): SystemCapabilityAvailability => {
+            const blockedByMode = contractCapability ? blockedCapabilities.has(contractCapability) : false;
+            const approvalNeeded = contractCapability
+                ? approvalRequired.has(contractCapability) || approvalRequired.has(capability)
+                : approvalRequired.has(capability);
+            const degradedBySubsystem = impactedBy.some((n) => degradedSubsystems.includes(n));
+            const impairedBySubsystem = impactedBy.some((n) => {
+                const status = bySubsystem.get(n)?.status;
+                return status === 'impaired' || status === 'failed';
+            });
+
+            if (blockedByMode || impairedBySubsystem) {
+                return {
+                    capability,
+                    status: 'blocked',
+                    reason: blockedByMode ? 'blocked_by_mode_contract' : 'blocked_by_subsystem_impairment',
+                    approval_required: approvalNeeded,
+                    impacted_by: impactedBy,
+                };
+            }
+            if (approvalNeeded) {
+                return {
+                    capability,
+                    status: 'approval_required',
+                    reason: 'requires_operator_approval',
+                    approval_required: true,
+                    impacted_by: impactedBy,
+                };
+            }
+            if (degradedBySubsystem) {
+                return {
+                    capability,
+                    status: 'degraded',
+                    reason: 'degraded_by_subsystem_state',
+                    approval_required: false,
+                    impacted_by: impactedBy,
+                };
+            }
+            return {
+                capability,
+                status: 'available',
+                reason: 'available',
+                approval_required: false,
+                impacted_by: impactedBy,
+            };
+        };
+
+        return [
+            make('chat', 'chat_inference', ['inference_service']),
+            make('retrieve_local_memory', 'memory_canonical_read', ['memory_authority_service', 'db_health_service']),
+            make('write_canonical_memory', 'memory_canonical_write', ['memory_authority_service', 'db_health_service']),
+            make('run_tools', 'tool_execute_write', ['tool_execution_coordinator', 'mcp_tool_availability']),
+            make('web_retrieval', 'tool_execute_read', ['search_retrieval_service', 'mcp_tool_availability']),
+            make('autonomy', 'autonomy_execute', ['autonomy_orchestrator', 'queue_backlog_pressure']),
+            make('reflection', 'repair_execute', ['reflection_service']),
+            make('safe_auto_fix', 'repair_promotion', ['reflection_service', 'policy_gate']),
+            make('notebook_search', 'memory_canonical_read', ['search_retrieval_service']),
+            make('external_connectors', 'tool_execute_diagnostic', ['mcp_tool_availability']),
+        ];
+    }
+
+    private _buildIncidentEntries(subsystemEntries: SystemHealthSubsystemSnapshot[]): SystemHealthIncidentEntry[] {
+        return subsystemEntries
+            .filter((s) => s.status !== 'healthy')
+            .map((s, idx) => ({
+                incident_id: `inc-${s.name}-${s.reason_codes[0] ?? idx}`,
+                title: `${s.name.replace(/_/g, ' ')} ${s.status}`,
+                severity: s.severity,
+                start_time: s.last_changed_at,
+                dedup_family: s.reason_codes[0] ?? s.name,
+                current_state: s.status,
+                evidence_links: [`logs:getHealthSnapshot#${s.name}`, ...s.evidence.slice(0, 2)],
+                automated_actions_attempted: s.auto_action_state === 'monitoring'
+                    ? []
+                    : [s.auto_action_state],
+                recommended_operator_actions: s.recommended_actions,
+            }));
     }
 
     private _computeDegradedSubsystems(

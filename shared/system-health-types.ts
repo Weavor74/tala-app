@@ -72,6 +72,47 @@ export type SystemHealthAutoActionState =
     | 'repair_active'
     | 'blocked';
 
+export type SystemCapabilityAvailabilityStatus =
+    | 'available'
+    | 'degraded'
+    | 'blocked'
+    | 'approval_required';
+
+export interface SystemCapabilityAvailability {
+    capability: string;
+    status: SystemCapabilityAvailabilityStatus;
+    reason: string;
+    approval_required: boolean;
+    impacted_by: string[];
+}
+
+export type SystemIncidentSeverity = 'info' | 'warning' | 'error' | 'critical';
+
+export interface SystemHealthIncidentEntry {
+    incident_id: string;
+    title: string;
+    severity: SystemIncidentSeverity;
+    start_time: string;
+    dedup_family: string;
+    current_state: string;
+    evidence_links: string[];
+    automated_actions_attempted: string[];
+    recommended_operator_actions: string[];
+}
+
+export interface SystemTrustExplanation {
+    telemetry_freshness: {
+        inference_age_ms: number;
+        mcp_age_ms: number;
+        expected_max_age_ms: number;
+    };
+    last_successful_subsystem_check: string | null;
+    stale_components: string[];
+    missing_evidence: string[];
+    suppressed_assumptions: string[];
+    confidence_penalties: Array<{ reason: string; penalty: number }>;
+}
+
 export interface SystemHealthSubsystemSnapshot {
     name: string;
     status: SystemHealthOverallStatus;
@@ -100,5 +141,8 @@ export interface SystemHealthSnapshot {
     active_degradation_flags: SystemDegradationFlag[];
     mode_contract: SystemModeContract;
     recent_mode_transitions: SystemModeTransition[];
+    capability_matrix: SystemCapabilityAvailability[];
+    active_incident_entries: SystemHealthIncidentEntry[];
+    trust_explanation: SystemTrustExplanation;
     operator_attention_required: boolean;
 }

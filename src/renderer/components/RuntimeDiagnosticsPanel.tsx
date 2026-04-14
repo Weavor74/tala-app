@@ -41,6 +41,9 @@ function statusColor(status: string): string {
         case 'failed': return '#ef4444';
         case 'disabled':
         case 'stopped': return '#6b7280';
+        case 'approval_required': return '#f59e0b';
+        case 'blocked': return '#ef4444';
+        case 'available': return '#22c55e';
         default: return '#9ca3af';
     }
 }
@@ -230,7 +233,11 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
         setActionBusy(true);
         try {
             const result = await fn();
-            showNotification(result?.error ? `${label}: ${result.error}` : `${label}: done`);
+            if (result && typeof result.allowed === 'boolean') {
+                showNotification(result.allowed ? `${label}: allowed` : `${label}: denied (${result.reason ?? 'policy'})`);
+            } else {
+                showNotification(result?.error ? `${label}: ${result.error}` : `${label}: done`);
+            }
         } catch (e: any) {
             showNotification(`${label}: ${e.message}`);
         } finally {
@@ -267,6 +274,33 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
     const selectedId = inference.selectedProviderId;
     const latestOperator = operatorState?.actions?.slice?.(-5)?.reverse?.() ?? [];
     const latestAuto = operatorState?.auto_actions?.slice?.(-3)?.reverse?.() ?? [];
+    const fallbackChain = (systemHealth.active_fallbacks ?? []).join(' -> ') || 'none';
+    const nonHealthySubsystems = systemHealth.subsystem_entries.filter((s) => s.status !== 'healthy');
+    const hasInferenceIssue = nonHealthySubsystems.some((s) => s.name === 'inference_service');
+    const hasDbOrMemoryIssue = nonHealthySubsystems.some((s) => s.name === 'db_health_service' || s.name === 'memory_authority_service');
+    const contextActions: Array<{ id: string; label: string; params?: Record<string, unknown> }> = [];
+    if (hasInferenceIssue) {
+        contextActions.push(
+            { id: 'retry_subsystem_health_check', label: 'Retry Provider Probe', params: { subsystem: 'inference' } },
+            { id: 'restart_inference_adapter', label: 'Restart Inference Adapter' },
+            { id: 'enter_safe_mode', label: 'Enter Safe Mode' },
+            { id: 'pause_autonomy', label: 'Pause Autonomy' },
+        );
+    }
+    if (hasDbOrMemoryIssue) {
+        contextActions.push(
+            { id: 'rerun_db_health_validation', label: 'Re-run DB Validation' },
+            { id: 'revalidate_memory_authority', label: 'Revalidate Memory Authority' },
+            { id: 'enter_maintenance_mode', label: 'Enter Maintenance Mode' },
+            { id: 'require_human_approval_high_risk', label: 'Require High-Risk Approval', params: { required: true } },
+        );
+    }
+    if (contextActions.length === 0) {
+        contextActions.push(
+            { id: 'retry_subsystem_health_check', label: 'Retry Health Checks' },
+            { id: 'export_health_snapshot', label: 'Export Health Snapshot' },
+        );
+    }
 
     return (
         <div style={{ padding: '14px 16px', fontFamily: 'system-ui, sans-serif', color: '#e5e7eb', maxWidth: 560, fontSize: 13 }}>
@@ -297,6 +331,17 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                 </div>
             )}
 
+            <Section title="Top Summary">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, fontSize: 12 }}>
+                    <div>Status: <strong>{systemHealth.overall_status}</strong></div>
+                    <div>Mode: <strong>{systemHealth.effective_mode}</strong></div>
+                    <div>Trust: <strong>{systemHealth.trust_score.toFixed(2)}</strong></div>
+                    <div>Attention: <strong>{systemHealth.operator_attention_required ? 'Required' : 'No'}</strong></div>
+                    <div style={{ gridColumn: 'span 2' }}>Fallback: <strong>{fallbackChain}</strong></div>
+                    <div>Incidents: <strong>{systemHealth.active_incident_entries?.length ?? systemHealth.active_incidents.length}</strong></div>
+                </div>
+            </Section>
+
             <Section title="System Health">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <StatusBadge status={systemHealth.overall_status} />
@@ -325,6 +370,99 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                         blocked capabilities: {systemHealth.mode_contract.blocked_capabilities.join(', ')}
                     </div>
                 )}
+            </Section>
+
+            <Section title="Subsystem Health Grid">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                    {systemHealth.subsystem_entries.map((s) => (
+                        <div key={s.name} style={{ border: '1px solid #374151', borderRadius: 6, padding: 8, background: '#111827' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <div style={{ fontSize: 12, color: '#e5e7eb', fontWeight: 600 }}>{s.name}</div>
+                                <StatusBadge status={s.status} />
+                            </div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>why: {(s.reason_codes ?? []).join(', ') || 'none'}</div>
+                            <div style={{ fontSize: 11, color: '#d1d5db', marginBottom: 4 }}>impact: {s.operator_impact}</div>
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>last change: {new Date(s.last_changed_at).toLocaleString()}</div>
+                            <div style={{ fontSize: 11, color: '#93c5fd' }}>next: {(s.recommended_actions ?? [])[0] ?? 'Monitor'}</div>
+                        </div>
+                    ))}
+                </div>
+            </Section>
+
+            <Section title="Capability Matrix">
+                {(systemHealth.capability_matrix ?? []).map((cap) => (
+                    <div key={cap.capability} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #2d3748', padding: '4px 0', fontSize: 12 }}>
+                        <div style={{ color: '#e5e7eb' }}>{cap.capability}</div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <StatusBadge status={cap.status} />
+                            {cap.approval_required && <span style={{ color: '#f59e0b', fontSize: 10 }}>approval</span>}
+                        </div>
+                    </div>
+                ))}
+            </Section>
+
+            <Section title="Active Incidents / Evidence">
+                {(systemHealth.active_incident_entries ?? []).length === 0 ? (
+                    <div style={{ color: '#6b7280', fontSize: 12 }}>No active incidents.</div>
+                ) : (
+                    <>
+                        {systemHealth.active_incident_entries.map((inc) => (
+                            <div key={inc.incident_id} style={{ borderBottom: '1px solid #2d3748', padding: '6px 0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ fontSize: 12, color: '#e5e7eb', fontWeight: 600 }}>{inc.title}</div>
+                                    <StatusBadge status={inc.severity} />
+                                </div>
+                                <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                                    started: {new Date(inc.start_time).toLocaleString()} | family: {inc.dedup_family} | state: {inc.current_state}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#d1d5db' }}>evidence: {(inc.evidence_links ?? []).join(' | ')}</div>
+                                <div style={{ fontSize: 11, color: '#93c5fd' }}>auto: {(inc.automated_actions_attempted ?? []).join(', ') || 'none'}</div>
+                                <div style={{ fontSize: 11, color: '#fcd34d' }}>recommended: {(inc.recommended_operator_actions ?? []).join(', ') || 'none'}</div>
+                            </div>
+                        ))}
+                        <div style={{ marginTop: 8 }}>
+                            <ControlButton label="Open Evidence Trail" title="Open evidence/log trail" onClick={() => runOperatorAction('open_evidence_log_trail', 'Open evidence trail')} disabled={actionBusy} />
+                        </div>
+                    </>
+                )}
+            </Section>
+
+            <Section title="Action Panel">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {contextActions.slice(0, 8).map((a) => (
+                        <ControlButton
+                            key={`${a.id}-${a.label}`}
+                            label={a.label}
+                            title={a.label}
+                            onClick={() => runOperatorAction(a.id, a.label, a.params)}
+                            disabled={actionBusy}
+                        />
+                    ))}
+                </div>
+            </Section>
+
+            <Section title="Trust Explanation">
+                <div style={{ fontSize: 11, color: '#d1d5db', marginBottom: 4 }}>
+                    telemetry freshness: inference {Math.round((systemHealth.trust_explanation?.telemetry_freshness?.inference_age_ms ?? 0) / 1000)}s,
+                    mcp {Math.round((systemHealth.trust_explanation?.telemetry_freshness?.mcp_age_ms ?? 0) / 1000)}s
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>
+                    last successful subsystem check: {systemHealth.trust_explanation?.last_successful_subsystem_check
+                        ? new Date(systemHealth.trust_explanation.last_successful_subsystem_check).toLocaleString()
+                        : 'none'}
+                </div>
+                <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 4 }}>
+                    stale components: {(systemHealth.trust_explanation?.stale_components ?? []).join(', ') || 'none'}
+                </div>
+                <div style={{ fontSize: 11, color: '#fca5a5', marginBottom: 4 }}>
+                    missing evidence: {(systemHealth.trust_explanation?.missing_evidence ?? []).join(', ') || 'none'}
+                </div>
+                <div style={{ fontSize: 11, color: '#93c5fd', marginBottom: 4 }}>
+                    suppressed assumptions: {(systemHealth.trust_explanation?.suppressed_assumptions ?? []).join(', ') || 'none'}
+                </div>
+                <div style={{ fontSize: 11, color: '#e5e7eb' }}>
+                    penalties: {(systemHealth.trust_explanation?.confidence_penalties ?? []).map((p) => `${p.reason}(-${p.penalty})`).join(', ') || 'none'}
+                </div>
             </Section>
 
             <Section title="Operator Controls">
