@@ -209,6 +209,20 @@ const IMPACT_RULES: ImpactRule[] = [
     requiresManualReview: false
   },
   {
+    id: 'test-surfaces',
+    description: 'Automated test coverage changed.',
+    pathRegexes: [
+      /^tests\/.+\.test\.ts$/,
+      /^electron\/__tests__\/.+\.test\.ts$/
+    ],
+    ownedDocs: [
+      'docs/traceability/test_trace_matrix.md',
+      'docs/review/doclock-impact.md'
+    ],
+    generatedSectionIds: ['impact-map'],
+    requiresManualReview: false
+  },
+  {
     id: 'scripts-ops',
     description: 'Operational scripts changed.',
     pathRegexes: [

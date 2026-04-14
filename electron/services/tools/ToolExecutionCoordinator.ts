@@ -1,7 +1,10 @@
 import { ToolService } from '../ToolService';
-import type { SideEffectContext } from '../policy/PolicyGate';
+import { PolicyDeniedError, type SideEffectContext } from '../policy/PolicyGate';
 import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
+import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCircuitBreaker';
+import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
+import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
 
 /**
  * Context carried through a single tool invocation.
@@ -22,6 +25,48 @@ export interface ToolInvocationContext {
     executionMode?: string;
     /** Deprecated. Policy enforcement is always performed at this seam. */
     enforcePolicy?: boolean;
+    /** Explicitly marks this tool invocation as idempotent-safe for retries. */
+    toolInvocationIdempotent?: boolean;
+}
+
+const SAFE_READ_ONLY_TOOLS = new Set<string>([
+    'fs_read_text',
+    'fs_list',
+    'mem0_search',
+    'mem0_get_recent',
+    'browser_get_dom',
+    'browser_screenshot',
+    'search_web',
+]);
+
+const TRANSIENT_ERROR_PATTERNS = [
+    'ETIMEDOUT',
+    'ECONNRESET',
+    'EAI_AGAIN',
+    'ECONNREFUSED',
+    'timeout',
+    'temporar',
+];
+
+function isTransientToolError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return TRANSIENT_ERROR_PATTERNS.some((token) =>
+        message.toLowerCase().includes(token.toLowerCase()),
+    );
+}
+
+function isSafeToolRetry(
+    toolName: string,
+    args: unknown,
+    ctx?: ToolInvocationContext,
+): boolean {
+    if (ctx?.toolInvocationIdempotent) return true;
+    if (SAFE_READ_ONLY_TOOLS.has(toolName)) return true;
+    if (args && typeof args === 'object') {
+        const value = args as Record<string, unknown>;
+        if (value.idempotent === true || value.retrySafe === true) return true;
+    }
+    return false;
 }
 
 /**
@@ -72,6 +117,8 @@ export interface ToolInvocationResult {
  * circuit-breakers at this seam without touching callers.
  */
 export class ToolExecutionCoordinator {
+    private readonly breakerStore = new GuardrailCircuitBreakerStore();
+
     constructor(private readonly tools: ToolService) {}
 
     /**
@@ -132,8 +179,38 @@ export class ToolExecutionCoordinator {
 
         // ── 3. Execution timing + delegation ─────────────────────────────────
         const startTime = Date.now();
+        const retrySafe = isSafeToolRetry(name, args, ctx);
+        const breaker = this.breakerStore.get(
+            `tool:${name}`,
+            {
+                failureThreshold: 3,
+                resetAfterMs: 15_000,
+            },
+        );
         try {
-            const rawResult = await this.tools.executeTool(name, args, allowedNames);
+            const guarded = await executeWithRuntimeGuardrails({
+                domain: 'tools',
+                operationName: 'tool_execution',
+                targetKey: name,
+                executionId: ctx?.executionId,
+                maxAttempts: retrySafe ? 2 : 1,
+                circuitBreaker: breaker,
+                classifyFailure: (error): GuardrailFailureKind => {
+                    if (error instanceof PolicyDeniedError) return 'policy_denied';
+                    return 'runtime_error';
+                },
+                shouldRetry: (error, _attempt, failureKind) =>
+                    retrySafe && failureKind !== 'policy_denied' && isTransientToolError(error),
+                shouldCountFailureForCircuit: (_error, failureKind) =>
+                    failureKind !== 'policy_denied',
+                execute: async () => this.tools.executeTool(name, args, allowedNames),
+            });
+
+            if (!guarded.ok) {
+                throw guarded.error ?? new Error(`Tool execution failed: ${name}`);
+            }
+
+            const rawResult = guarded.value;
             const durationMs = Date.now() - startTime;
 
             // ── 4. Normalized result (success) ────────────────────────────────

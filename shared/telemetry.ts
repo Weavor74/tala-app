@@ -259,6 +259,7 @@ export type TelemetryEventType =
     | 'harmonization.dashboard.emitted'
     // Subsystem-namespaced events (Phase 3 execution, governance, planning, self-model)
     | `execution.${string}`
+    | `guardrail.${string}`
     | `guardrails.${string}`
     | `governance.${string}`
     | `planning.${string}`

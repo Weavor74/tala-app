@@ -5,7 +5,7 @@
 ## Class: `InferenceService`
 
 ## Overview
-⚠️ TALA INVARIANT — INFERENCE STREAMING - Stream MUST produce tokens - Do NOT alter request body format without validation - Do NOT introduce blocking or timeouts that kill valid responses - Ollama/local inference must always remain functional/
+âš ï¸ TALA INVARIANT â€” INFERENCE STREAMING - Stream MUST produce tokens - Do NOT alter request body format without validation - Do NOT introduce blocking or timeouts that kill valid responses - Ollama/local inference must always remain functional/
 import http from 'http';
 import https from 'https';
 import net from 'net';
@@ -41,6 +41,9 @@ import { inferenceDiagnostics } from './InferenceDiagnosticsService';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
 import { PolicyDeniedError } from './policy/PolicyGate';
 import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
+import { GuardrailCircuitBreakerStore } from './runtime/guardrails/GuardrailCircuitBreaker';
+import { executeWithRuntimeGuardrails } from './runtime/guardrails/GuardrailExecutor';
+import type { GuardrailFailureKind } from './runtime/guardrails/RuntimeGuardrailTypes';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -51,7 +54,7 @@ export interface ScannedProvider {
     models: string[];
 }
 
-/** InferenceService — Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator) - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
+/** InferenceService â€” Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator) - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
 
 ### Methods
 

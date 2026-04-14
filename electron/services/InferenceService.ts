@@ -1,5 +1,5 @@
-/**
- * ⚠️ TALA INVARIANT — INFERENCE STREAMING
+﻿/**
+ * âš ï¸ TALA INVARIANT â€” INFERENCE STREAMING
  *
  * - Stream MUST produce tokens
  * - Do NOT alter request body format without validation
@@ -41,6 +41,9 @@ import { inferenceDiagnostics } from './InferenceDiagnosticsService';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
 import { PolicyDeniedError } from './policy/PolicyGate';
 import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
+import { GuardrailCircuitBreakerStore } from './runtime/guardrails/GuardrailCircuitBreaker';
+import { executeWithRuntimeGuardrails } from './runtime/guardrails/GuardrailExecutor';
+import type { GuardrailFailureKind } from './runtime/guardrails/RuntimeGuardrailTypes';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -56,7 +59,7 @@ export interface ScannedProvider {
 }
 
 /**
- * InferenceService — Canonical Inference Coordinator
+ * InferenceService â€” Canonical Inference Coordinator
  *
  * Acts as the single authoritative gate for all inference operations in TALA.
  *
@@ -72,8 +75,9 @@ export interface ScannedProvider {
  * executing. AgentService should never directly probe or switch providers.
  */
 export class InferenceService {
+    private readonly guardrailBreakerStore = new GuardrailCircuitBreakerStore();
 
-    /** Legacy embedded engine — kept for IPC handlers that manage it directly. */
+    /** Legacy embedded engine â€” kept for IPC handlers that manage it directly. */
     private localEngine: LocalEngineService = new LocalEngineService();
 
     /**
@@ -82,7 +86,7 @@ export class InferenceService {
      */
     private localInferenceManager: LocalInferenceOrchestrator;
 
-    /** Provider registry — source of truth for all known/detected providers. */
+    /** Provider registry â€” source of truth for all known/detected providers. */
     private registry: InferenceProviderRegistry;
 
     /** Deterministic provider selection policy. */
@@ -99,7 +103,7 @@ export class InferenceService {
         this.selectionService = new ProviderSelectionService(this.registry);
     }
 
-    // ─── Public — registry / selection API ───────────────────────────────────
+    // â”€â”€â”€ Public â€” registry / selection API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns the current provider inventory.
@@ -176,13 +180,13 @@ export class InferenceService {
      *
      * Policy (applied in order):
      * 1. If `req.openTimeoutMs` is explicitly set, honour it unconditionally.
-     * 2. embedded_llamacpp (scope='embedded') — CPU inference is slow to produce the
+     * 2. embedded_llamacpp (scope='embedded') â€” CPU inference is slow to produce the
      *    first token, especially on a cold model load.  Give it 90 seconds.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
-     * 3. Other local providers (scope='local', e.g. Ollama) — 90 seconds baseline.
+     * 3. Other local providers (scope='local', e.g. Ollama) â€” 90 seconds baseline.
      *    Ollama may load the model from disk on a cold start, which can exceed 30 s.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
-     * 4. Cloud providers (scope='cloud') — 15 seconds (network round-trip only).
+     * 4. Cloud providers (scope='cloud') â€” 15 seconds (network round-trip only).
      *
      * The timeout only guards the pre-first-token window; once streaming has opened
      * it is cleared regardless of how long the full response takes.
@@ -196,8 +200,8 @@ export class InferenceService {
 
         const promptChars = InferenceService.countPromptChars(messages);
 
-        // Embedded llama.cpp: generous timeout — cold model loads on CPU can exceed 30 s.
-        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars ≈ >1 000 tokens).
+        // Embedded llama.cpp: generous timeout â€” cold model loads on CPU can exceed 30 s.
+        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars â‰ˆ >1 000 tokens).
         if (provider.scope === 'embedded' || provider.providerType === 'embedded_llamacpp') {
             return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
                 ? STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS
@@ -260,7 +264,7 @@ export class InferenceService {
             'inference_started',
             'info',
             'InferenceService',
-            `Stream inference starting — provider: ${currentProvider.providerId}`,
+            `Stream inference starting â€” provider: ${currentProvider.providerId}`,
             'unknown',
             {
                 turnId: req.turnId,
@@ -299,7 +303,7 @@ export class InferenceService {
                     'provider_fallback_applied',
                     'warn',
                     'InferenceService',
-                    `Stream fallback — switching to provider: ${currentProvider.providerId}`,
+                    `Stream fallback â€” switching to provider: ${currentProvider.providerId}`,
                     'partial',
                     {
                         turnId: req.turnId,
@@ -331,198 +335,226 @@ export class InferenceService {
 
             attemptedProviders.push(currentProvider.providerId);
 
-            // Tracks when this specific provider attempt started — used to compute first-token latency.
+            // Tracks when this specific provider attempt started â€” used to compute first-token latency.
             let attemptStartedAt = 0;
 
-            // Per-attempt AbortController: isolates each provider attempt's in-flight
-            // HTTP request so it can be cancelled explicitly when the attempt times out
-            // or falls back to another provider.  Without this, the underlying connection
-            // to the local ASGI inference server is abandoned (orphaned) until GC or
-            // process shutdown, which causes the server to log
-            // "ASGI callable returned without completing response".
-            const attemptController = new AbortController();
-            // Combine the per-attempt signal with any external signal from the caller.
-            // AbortSignal.any() fires as soon as the first of the provided signals fires.
-            const combinedAttemptSignals: AbortSignal[] = [attemptController.signal];
-            if (req.signal) combinedAttemptSignals.push(req.signal);
-            const combinedSignal = AbortSignal.any(combinedAttemptSignals);
-
-            // Wrapped token callback — tracks whether stream actually opened
-            const wrappedOnToken = (chunk: string) => {
-                if (!streamOpenedForCurrentProvider) {
-                    streamOpenedForCurrentProvider = true;
-                    // Record that stream is now actively flowing
-                    inferenceDiagnostics.recordStreamActive();
-                    const firstTokenLatencyMs = Date.now() - attemptStartedAt;
-                    console.log(
-                        `[InferenceService] First token received` +
-                        ` — provider: ${currentProvider.providerId}` +
-                        ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
-                        ` turnId: ${req.turnId}`
-                    );
-                    telemetry.operational(
-                        'inference',
-                        'stream_opened',
-                        'info',
-                        'InferenceService',
-                        `Stream opened — provider: ${currentProvider.providerId}`,
-                        'success',
-                        {
-                            turnId: req.turnId,
-                            correlationId: req.correlationId,
-                            sessionId: req.sessionId,
-                            mode: req.agentMode ?? 'unknown',
-                            payload: {
-                                providerId: currentProvider.providerId,
-                                providerType: currentProvider.providerType,
-                                fallbackApplied,
-                                attemptedProviders: [...attemptedProviders],
-                            },
-                        }
-                    );
-                }
-                tokensEmitted++;
-                onToken(chunk);
-            };
-
             try {
-                const openTimeoutMs = InferenceService.resolveOpenTimeout(req, currentProvider, messages);
-                const promptChars = InferenceService.countPromptChars(messages);
-                attemptStartedAt = Date.now();
+                const providerBreaker = this.guardrailBreakerStore.get(
+                    `inference:${currentProvider.providerId}`,
+                    {
+                        failureThreshold: 3,
+                        resetAfterMs: 15_000,
+                    },
+                );
 
-                // Race the brain stream call against an open-timeout.
-                // The timeout only applies before the first token is received (stream-open window).
-                // Once streamOpenedForCurrentProvider=true the timeout is irrelevant.
-                let openTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
-                const openTimeoutPromise = new Promise<never>((_, reject) => {
-                    openTimeoutHandle = setTimeout(() => {
-                        if (!streamOpenedForCurrentProvider) {
-                            const err = new Error(`Stream open timeout after ${openTimeoutMs}ms`);
-                            err.name = 'StreamOpenTimeoutError';
-                            reject(err);
+                const guarded = await executeWithRuntimeGuardrails<StreamInferenceResult>({
+                    domain: 'inference',
+                    operationName: 'provider_stream_attempt',
+                    targetKey: currentProvider.providerId,
+                    executionId: req.turnId,
+                    maxAttempts: (req.fallbackAllowed && (req.fallbackProviders?.length ?? 0) > 0) ? 1 : 2,
+                    circuitBreaker: providerBreaker,
+                    classifyFailure: (error): GuardrailFailureKind => {
+                        const errName = error instanceof Error ? error.name : '';
+                        if (req.signal?.aborted || errName === 'AbortError') return 'aborted';
+                        return (streamOpenedForCurrentProvider && tokensEmitted > 0) ? 'mid_stream' : 'pre_stream_open';
+                    },
+                    shouldRetry: (error, _attemptNo, failureKind) =>
+                        failureKind === 'pre_stream_open' &&
+                        !(error instanceof PolicyDeniedError) &&
+                        !req.signal?.aborted,
+                    shouldCountFailureForCircuit: (error, failureKind) =>
+                        !(error instanceof PolicyDeniedError) && failureKind === 'pre_stream_open',
+                    execute: async () => {
+                        streamOpenedForCurrentProvider = false;
+                        tokensEmitted = 0;
+
+                        const attemptController = new AbortController();
+                        const combinedAttemptSignals: AbortSignal[] = [attemptController.signal];
+                        if (req.signal) combinedAttemptSignals.push(req.signal);
+                        const combinedSignal = AbortSignal.any(combinedAttemptSignals);
+
+                        const wrappedOnToken = (chunk: string) => {
+                            if (!streamOpenedForCurrentProvider) {
+                                streamOpenedForCurrentProvider = true;
+                                inferenceDiagnostics.recordStreamActive();
+                                const firstTokenLatencyMs = Date.now() - attemptStartedAt;
+                                console.log(
+                                    `[InferenceService] First token received` +
+                                    ` — provider: ${currentProvider.providerId}` +
+                                    ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
+                                    ` turnId: ${req.turnId}`
+                                );
+                                telemetry.operational(
+                                    'inference',
+                                    'stream_opened',
+                                    'info',
+                                    'InferenceService',
+                                    `Stream opened — provider: ${currentProvider.providerId}`,
+                                    'success',
+                                    {
+                                        turnId: req.turnId,
+                                        correlationId: req.correlationId,
+                                        sessionId: req.sessionId,
+                                        mode: req.agentMode ?? 'unknown',
+                                        payload: {
+                                            providerId: currentProvider.providerId,
+                                            providerType: currentProvider.providerType,
+                                            fallbackApplied,
+                                            attemptedProviders: [...attemptedProviders],
+                                        },
+                                    }
+                                );
+                            }
+                            tokensEmitted++;
+                            onToken(chunk);
+                        };
+
+                        const openTimeoutMs = InferenceService.resolveOpenTimeout(req, currentProvider, messages);
+                        const promptChars = InferenceService.countPromptChars(messages);
+                        attemptStartedAt = Date.now();
+                        let openTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+                        const openTimeoutPromise = new Promise<never>((_, reject) => {
+                            openTimeoutHandle = setTimeout(() => {
+                                if (!streamOpenedForCurrentProvider) {
+                                    const err = new Error(`Stream open timeout after ${openTimeoutMs}ms`);
+                                    err.name = 'StreamOpenTimeoutError';
+                                    reject(err);
+                                }
+                            }, openTimeoutMs);
+                        });
+
+                        console.log(
+                            `[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length}` +
+                            ` — provider: ${currentProvider.providerId}` +
+                            ` scope: ${currentProvider.scope}` +
+                            ` type: ${currentProvider.providerType}` +
+                            ` openTimeout: ${openTimeoutMs}ms` +
+                            ` promptChars: ${promptChars}` +
+                            ` turnId: ${req.turnId}`
+                        );
+
+                        try {
+                            const streamPromise = brain.streamResponse(
+                                messages,
+                                systemPrompt,
+                                wrappedOnToken,
+                                combinedSignal,
+                                tools,
+                                options
+                            ).finally(() => {
+                                if (openTimeoutHandle) clearTimeout(openTimeoutHandle);
+                            });
+
+                            brainResult = await Promise.race([streamPromise, openTimeoutPromise]);
+                        } catch (err) {
+                            const asError = err instanceof Error ? err : new Error(String(err));
+                            if (!attemptController.signal.aborted) {
+                                attemptController.abort(asError);
+                            }
+                            throw err;
                         }
-                    }, openTimeoutMs);
-                });
 
-                console.log(
-                    `[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length}` +
-                    ` — provider: ${currentProvider.providerId}` +
-                    ` scope: ${currentProvider.scope}` +
-                    ` type: ${currentProvider.providerType}` +
-                    ` openTimeout: ${openTimeoutMs}ms` +
-                    ` promptChars: ${promptChars}` +
-                    ` turnId: ${req.turnId}`
-                );
+                        await enforceSideEffectWithGuardrails(
+                            'inference',
+                            {
+                                actionKind: 'inference_output',
+                                executionId: req.turnId,
+                                executionType: 'chat_turn',
+                                executionOrigin: 'ipc',
+                                executionMode: req.agentMode,
+                                targetSubsystem: 'InferenceService',
+                                mutationIntent: 'return_output',
+                            },
+                            {
+                                content: brainResult?.content ?? '',
+                                toolCalls: (brainResult?.toolCalls?.length ?? 0),
+                            },
+                        );
 
-                const streamPromise = brain.streamResponse(
-                    messages,
-                    systemPrompt,
-                    wrappedOnToken,
-                    combinedSignal,
-                    tools,
-                    options
-                ).finally(() => {
-                    if (openTimeoutHandle) clearTimeout(openTimeoutHandle);
-                });
+                        const completedAt = new Date().toISOString();
+                        const durationMs = Date.now() - new Date(startedAt).getTime();
 
-                brainResult = await Promise.race([streamPromise, openTimeoutPromise]);
+                        telemetry.operational(
+                            'inference',
+                            'stream_completed',
+                            'info',
+                            'InferenceService',
+                            `Stream completed — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                            'success',
+                            {
+                                turnId: req.turnId,
+                                correlationId: req.correlationId,
+                                sessionId: req.sessionId,
+                                mode: req.agentMode ?? 'unknown',
+                                payload: {
+                                    providerId: currentProvider.providerId,
+                                    providerType: currentProvider.providerType,
+                                    fallbackApplied,
+                                    attemptedProviders: [...attemptedProviders],
+                                    tokensEmitted,
+                                    durationMs,
+                                    promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
+                                    completionTokens: brainResult?.metadata?.usage?.completion_tokens,
+                                },
+                            }
+                        );
 
-                await enforceSideEffectWithGuardrails(
-                    'inference',
-                    {
-                        actionKind: 'inference_output',
-                        executionId: req.turnId,
-                        executionType: 'chat_turn',
-                        executionOrigin: 'ipc',
-                        executionMode: req.agentMode,
-                        targetSubsystem: 'InferenceService',
-                        mutationIntent: 'return_output',
-                    },
-                    {
-                        content: brainResult?.content ?? '',
-                        toolCalls: (brainResult?.toolCalls?.length ?? 0),
-                    },
-                );
+                        telemetry.operational(
+                            'inference',
+                            'inference_completed',
+                            'info',
+                            'InferenceService',
+                            `Inference completed (stream) — provider: ${currentProvider.providerId}`,
+                            'success',
+                            {
+                                turnId: req.turnId,
+                                correlationId: req.correlationId,
+                                sessionId: req.sessionId,
+                                mode: req.agentMode ?? 'unknown',
+                                payload: {
+                                    providerId: currentProvider.providerId,
+                                    providerType: currentProvider.providerType,
+                                    streamMode: true,
+                                    fallbackApplied,
+                                    attemptedProviders: [...attemptedProviders],
+                                    durationMs,
+                                    promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
+                                    completionTokens: brainResult?.metadata?.usage?.completion_tokens,
+                                    totalTokens: brainResult?.metadata?.usage?.total_tokens,
+                                },
+                            }
+                        );
 
-                const hasToolCalls = !!(brainResult?.toolCalls?.length);
-                console.log(`[BrainResponse] hasToolCalls=${hasToolCalls} toolCalls=[${(brainResult?.toolCalls ?? []).map(tc => tc.function?.name).join(',')}]`);
-
-                const completedAt = new Date().toISOString();
-                const durationMs = Date.now() - new Date(startedAt).getTime();
-
-                telemetry.operational(
-                    'inference',
-                    'stream_completed',
-                    'info',
-                    'InferenceService',
-                    `Stream completed — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
-                    'success',
-                    {
-                        turnId: req.turnId,
-                        correlationId: req.correlationId,
-                        sessionId: req.sessionId,
-                        mode: req.agentMode ?? 'unknown',
-                        payload: {
+                        return {
+                            success: true,
+                            content: brainResult?.content ?? '',
+                            streamStatus: 'completed',
+                            fallbackApplied,
+                            attemptedProviders,
                             providerId: currentProvider.providerId,
                             providerType: currentProvider.providerType,
-                            fallbackApplied,
-                            attemptedProviders: [...attemptedProviders],
-                            tokensEmitted,
+                            modelName: currentProvider.preferredModel ?? 'unknown',
+                            turnId: req.turnId,
+                            startedAt,
+                            completedAt,
                             durationMs,
+                            isPartial: false,
                             promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
                             completionTokens: brainResult?.metadata?.usage?.completion_tokens,
-                        },
-                    }
-                );
+                            brainMetadata: brainResult?.metadata,
+                            toolCalls: brainResult?.toolCalls?.length ? brainResult.toolCalls : undefined,
+                        };
+                    },
+                });
 
-                telemetry.operational(
-                    'inference',
-                    'inference_completed',
-                    'info',
-                    'InferenceService',
-                    `Inference completed (stream) — provider: ${currentProvider.providerId}`,
-                    'success',
-                    {
-                        turnId: req.turnId,
-                        correlationId: req.correlationId,
-                        sessionId: req.sessionId,
-                        mode: req.agentMode ?? 'unknown',
-                        payload: {
-                            providerId: currentProvider.providerId,
-                            providerType: currentProvider.providerType,
-                            streamMode: true,
-                            fallbackApplied,
-                            attemptedProviders: [...attemptedProviders],
-                            durationMs,
-                            promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
-                            completionTokens: brainResult?.metadata?.usage?.completion_tokens,
-                            totalTokens: brainResult?.metadata?.usage?.total_tokens,
-                        },
-                    }
-                );
+                if (!guarded.ok) {
+                    throw (guarded.error ?? new Error(`Stream attempt failed for provider ${currentProvider.providerId}`));
+                }
 
-                const successResult: StreamInferenceResult = {
-                    success: true,
-                    content: brainResult?.content ?? '',
-                    streamStatus: 'completed',
-                    fallbackApplied,
-                    attemptedProviders,
-                    providerId: currentProvider.providerId,
-                    providerType: currentProvider.providerType,
-                    modelName: currentProvider.preferredModel ?? 'unknown',
-                    turnId: req.turnId,
-                    startedAt,
-                    completedAt,
-                    durationMs,
-                    isPartial: false,
-                    promptTokens: brainResult?.metadata?.usage?.prompt_tokens,
-                    completionTokens: brainResult?.metadata?.usage?.completion_tokens,
-                    brainMetadata: brainResult?.metadata,
-                    toolCalls: brainResult?.toolCalls?.length ? brainResult.toolCalls : undefined,
-                };
+                const successResult = guarded.value as StreamInferenceResult;
                 inferenceDiagnostics.recordStreamResult(successResult);
                 return successResult;
-
             } catch (err: any) {
                 lastError = err instanceof Error ? err : new Error(String(err));
 
@@ -550,26 +582,10 @@ export class InferenceService {
                     return blockedResult;
                 }
 
-                // Explicitly cancel the in-flight HTTP request for this attempt so the
-                // underlying TCP connection to the local ASGI inference server is closed
-                // immediately rather than being orphaned until GC.  An orphaned connection
-                // causes the Python server to log "ASGI callable returned without completing
-                // response" when it eventually tries to write to the dead socket.
-                if (!attemptController.signal.aborted) {
-                    console.log(
-                        `[InferenceService] Cancelling in-flight request for attempt ${attempt + 1} ` +
-                        `— provider: ${currentProvider.providerId}, reason: ${lastError.name}: ${lastError.message}, turnId: ${req.turnId}`
-                    );
-                    attemptController.abort(lastError);
-                }
-
                 // If stream opened before error (partial output), do not attempt fallback
                 if (streamOpenedForCurrentProvider && tokensEmitted > 0) {
                     const completedAt = new Date().toISOString();
                     const durationMs = Date.now() - new Date(startedAt).getTime();
-                    // Use req.signal (caller's intent), not combinedSignal — attemptController is
-                    // always aborted on any error to release the TCP connection, so combinedSignal.aborted
-                    // is true for ALL failures, not just user-requested cancellations.
                     const isAbort = req.signal?.aborted || lastError.name === 'AbortError';
                     const isTimeout = !isAbort && (lastError.name === 'StreamOpenTimeoutError' || lastError.message?.includes('timeout') || lastError.message?.includes('ETIMEDOUT'));
 
@@ -584,7 +600,7 @@ export class InferenceService {
                         'stream_aborted',
                         'warn',
                         'InferenceService',
-                        `Stream aborted mid-stream — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                        `Stream aborted mid-stream â€” provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
                         'partial',
                         {
                             turnId: req.turnId,
@@ -608,7 +624,7 @@ export class InferenceService {
                         timestamp: new Date().toISOString(),
                         subsystem: 'local_inference',
                         category: signalCategory,
-                        description: `Mid-stream failure after ${tokensEmitted} tokens — provider: ${currentProvider.providerId}: ${lastError.message}`,
+                        description: `Mid-stream failure after ${tokensEmitted} tokens â€” provider: ${currentProvider.providerId}: ${lastError.message}`,
                         context: {
                             turnId: req.turnId,
                             providerId: currentProvider.providerId,
@@ -619,7 +635,7 @@ export class InferenceService {
                         },
                     });
 
-                    // Do not retry after partial output — return partial result
+                    // Do not retry after partial output â€” return partial result
                     const partialResult: StreamInferenceResult = {
                         success: false,
                         content: '',
@@ -641,7 +657,7 @@ export class InferenceService {
                     return partialResult;
                 }
 
-                // Stream never opened — fallback is safe if allowed and more candidates exist
+                // Stream never opened â€” fallback is safe if allowed and more candidates exist
                 const hasMoreCandidates = attempt < candidateProviders.length - 1;
                 if (!hasMoreCandidates) {
                     break;
@@ -666,7 +682,7 @@ export class InferenceService {
             eventType,
             'error',
             'InferenceService',
-            `Stream inference failed — providers attempted: ${attemptedProviders.join(', ')}`,
+            `Stream inference failed â€” providers attempted: ${attemptedProviders.join(', ')}`,
             'failure',
             {
                 turnId: req.turnId,
@@ -688,7 +704,7 @@ export class InferenceService {
             'stream_aborted',
             'error',
             'InferenceService',
-            `Stream aborted (no open) — providers: ${attemptedProviders.join(', ')}`,
+            `Stream aborted (no open) â€” providers: ${attemptedProviders.join(', ')}`,
             'failure',
             {
                 turnId: req.turnId,
@@ -745,7 +761,7 @@ export class InferenceService {
         return exhaustedResult;
     }
 
-    // ─── Public — embedded engine management ─────────────────────────────────
+    // â”€â”€â”€ Public â€” embedded engine management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine.
@@ -1093,7 +1109,7 @@ export class InferenceService {
             return true;
         }
 
-        // 1b. /health did not respond positively — check TCP to see if the port is actually occupied
+        // 1b. /health did not respond positively â€” check TCP to see if the port is actually occupied
         // by another process before attempting to spawn a new server that would fail to bind.
         const portOccupied = await new Promise<boolean>((resolve) => {
             const socket = new net.Socket();
@@ -1126,15 +1142,15 @@ export class InferenceService {
 
             if (inferenceReachable) {
                 telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-                    `Port ${port} occupied by existing inference service (responded to /v1/models) — adopting as embedded provider`,
+                    `Port ${port} occupied by existing inference service (responded to /v1/models) â€” adopting as embedded provider`,
                     'success', { payload: { port } });
                 return true;
             }
 
-            // Port is occupied by a non-inference service — spawning another server would fail
+            // Port is occupied by a non-inference service â€” spawning another server would fail
             // immediately with a bind error. Surface a deterministic failure instead.
             telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                `Port ${port} is already in use by a non-inference service — cannot start embedded llama.cpp`,
+                `Port ${port} is already in use by a non-inference service â€” cannot start embedded llama.cpp`,
                 'failure', { payload: { port } });
             console.error(`[EmbeddedLlamaCpp] Port ${port} is occupied by a non-inference service. Resolve the port conflict before starting TALA's embedded inference.`);
             return false;
@@ -1188,7 +1204,7 @@ export class InferenceService {
 
             child.on('exit', (code, signal) => {
                 processExited = true;
-                console.warn(`[EmbeddedLlamaCpp] Process exited early — code=${code} signal=${signal}`);
+                console.warn(`[EmbeddedLlamaCpp] Process exited early â€” code=${code} signal=${signal}`);
             });
 
             if (child.stdout) {
@@ -1258,7 +1274,7 @@ export class InferenceService {
         }
     }
 
-    // ─── Legacy — backward-compatible scan ───────────────────────────────────
+    // â”€â”€â”€ Legacy â€” backward-compatible scan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Scans the host machine for active AI inference providers.
@@ -1321,7 +1337,7 @@ export class InferenceService {
         return found;
     }
 
-    // ─── Engine installer ─────────────────────────────────────────────────────
+    // â”€â”€â”€ Engine installer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Triggers an automated installation flow for an inference engine.
@@ -1357,7 +1373,7 @@ export class InferenceService {
         }
     }
 
-    // ─── Private helpers ──────────────────────────────────────────────────────
+    // â”€â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private _checkPort(port: number): Promise<boolean> {
         return new Promise((resolve) => {
@@ -1412,4 +1428,5 @@ export class InferenceService {
         });
     }
 }
+
 

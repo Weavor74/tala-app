@@ -1,19 +1,19 @@
-/**
- * AutonomousRunOrchestrator.ts — Phase 4 P4E / Phase 5 P5 integration
+﻿/**
+ * AutonomousRunOrchestrator.ts â€” Phase 4 P4E / Phase 5 P5 integration
  *
  * Main autonomous improvement loop coordinator.
  *
  * Architecture:
- *   GoalDetection → Prioritization → Selection → PolicyGate
- *     → [Phase 5: AdaptiveValueScoring → StrategySelection → AdaptivePolicyGate]
- *     → SafeChangePlanner.plan()          (Phase 2)
- *     → SafeChangePlanner.promoteProposal()
- *     → GovernanceAppService.evaluateForProposal()   (Phase 3.5)
- *     → [immediate if self-authorized | governance_pending if human needed]
- *     → ExecutionOrchestrator.start()    (Phase 3)
- *     → OutcomeLearningRegistry.record()
- *     → [Phase 5: SubsystemProfileRegistry.update()]
- *     → AutonomyDashboardBridge.maybeEmit()
+ *   GoalDetection â†’ Prioritization â†’ Selection â†’ PolicyGate
+ *     â†’ [Phase 5: AdaptiveValueScoring â†’ StrategySelection â†’ AdaptivePolicyGate]
+ *     â†’ SafeChangePlanner.plan()          (Phase 2)
+ *     â†’ SafeChangePlanner.promoteProposal()
+ *     â†’ GovernanceAppService.evaluateForProposal()   (Phase 3.5)
+ *     â†’ [immediate if self-authorized | governance_pending if human needed]
+ *     â†’ ExecutionOrchestrator.start()    (Phase 3)
+ *     â†’ OutcomeLearningRegistry.record()
+ *     â†’ [Phase 5: SubsystemProfileRegistry.update()]
+ *     â†’ AutonomyDashboardBridge.maybeEmit()
  *
  * Safety invariants enforced here:
  *  1. One active run per subsystem (via AutonomyBudgetManager)
@@ -23,8 +23,8 @@
  *  5. No recursion: _cycleRunning flag prevents re-entrant cycles
  *  6. Every run is persisted (AutonomyAuditService)
  *  7. OutcomeLearningRegistry always called (finally block)
- *  8. Governance is mandatory — no execution without authorized decision
- *  9. No direct code mutation — all changes go through planning pipeline
+ *  8. Governance is mandatory â€” no execution without authorized decision
+ *  9. No direct code mutation â€” all changes go through planning pipeline
  * 10. Phase 5 adaptive services are optional; Phase 4 behavior is the fallback
  * 11. Phase 4D (AutonomyPolicyGate) block is never overridden by Phase 5 gate
  */
@@ -56,13 +56,13 @@ import { telemetry } from '../TelemetryService';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { ExecutionStateStore } from '../kernel/ExecutionStateStore';
 import { createExecutionRequest } from '../../../shared/runtime/ExecutionRuntimeFactory';
-// ── Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) ──
+// â”€â”€ Phase 4.3: Recovery Pack services (optional, injected via setRecoveryPackServices) â”€â”€
 import type { RecoveryPackRegistry } from './recovery/RecoveryPackRegistry';
 import type { RecoveryPackMatcher } from './recovery/RecoveryPackMatcher';
 import type { RecoveryPackPlannerAdapter } from './recovery/RecoveryPackPlannerAdapter';
 import type { RecoveryPackOutcomeTracker } from './recovery/RecoveryPackOutcomeTracker';
 import type { RecoveryPackDashboardState, RecoveryPackExecutionOutcome } from '../../../shared/recoveryPackTypes';
-// ── Phase 5: Adaptive Intelligence Layer services (optional, injected via setAdaptiveServices) ──
+// â”€â”€ Phase 5: Adaptive Intelligence Layer services (optional, injected via setAdaptiveServices) â”€â”€
 import type { SubsystemProfileRegistry } from './adaptive/SubsystemProfileRegistry';
 import type { GoalValueScoringEngine } from './adaptive/GoalValueScoringEngine';
 import type { StrategySelectionEngine } from './adaptive/StrategySelectionEngine';
@@ -75,7 +75,7 @@ import type {
     GoalValueScore,
 } from '../../../shared/adaptiveTypes';
 import { DEFAULT_ADAPTIVE_THRESHOLDS } from '../../../shared/adaptiveTypes';
-// ── Phase 5.1: Escalation & Decomposition services (optional, injected via setEscalationServices) ──
+// â”€â”€ Phase 5.1: Escalation & Decomposition services (optional, injected via setEscalationServices) â”€â”€
 import type { ModelCapabilityEvaluator } from './escalation/ModelCapabilityEvaluator';
 import type { EscalationPolicyEngine } from './escalation/EscalationPolicyEngine';
 import type { DecompositionEngine } from './escalation/DecompositionEngine';
@@ -93,8 +93,11 @@ import type {
 import { DEFAULT_ESCALATION_POLICY } from '../../../shared/escalationTypes';
 import { PolicyDeniedError } from '../policy/PolicyGate';
 import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
+import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCircuitBreaker';
+import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
+import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
 
-// ─── Poll timeouts ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Poll timeouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // How long to wait for governance to resolve after self-authorization attempt
 const GOVERNANCE_POLL_INTERVAL_MS = 2_000;
@@ -103,9 +106,10 @@ const GOVERNANCE_POLL_TIMEOUT_MS = 30_000;  // 30 seconds for self-auth path
 const EXECUTION_POLL_INTERVAL_MS = 2_000;
 const EXECUTION_POLL_TIMEOUT_MS = 5 * 60_000; // 5 minutes
 
-// ─── AutonomousRunOrchestrator ─────────────────────────────────────────────────
+// â”€â”€â”€ AutonomousRunOrchestrator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export class AutonomousRunOrchestrator {
+    private static readonly guardrailBreakerStore = new GuardrailCircuitBreakerStore();
     private cycleTimer: NodeJS.Timeout | null = null;
     private _cycleRunning = false;
 
@@ -124,13 +128,13 @@ export class AutonomousRunOrchestrator {
     private readonly telemetryStore: AutonomyTelemetryStore;
     readonly dashboardBridge: AutonomyDashboardBridge;
 
-    // ── Phase 4.3: Recovery Pack services (optional) ──────────────────────────
+    // â”€â”€ Phase 4.3: Recovery Pack services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _packRegistry: RecoveryPackRegistry | undefined;
     private _packMatcher: RecoveryPackMatcher | undefined;
     private _packPlannerAdapter: RecoveryPackPlannerAdapter | undefined;
     private _packOutcomeTracker: RecoveryPackOutcomeTracker | undefined;
 
-    // ── Phase 5: Adaptive Intelligence Layer services (optional) ─────────────
+    // â”€â”€ Phase 5: Adaptive Intelligence Layer services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _adaptiveProfileRegistry: SubsystemProfileRegistry | undefined;
     private _adaptiveValueScorer: GoalValueScoringEngine | undefined;
     private _adaptiveStrategyEngine: StrategySelectionEngine | undefined;
@@ -140,7 +144,7 @@ export class AutonomousRunOrchestrator {
     private _recentStrategySelections: StrategySelectionResult[] = [];
     private _recentAdaptiveDecisions: AdaptivePolicyDecision[] = [];
 
-    // ── Phase 5.1: Escalation & Decomposition services (optional) ────────────
+    // â”€â”€ Phase 5.1: Escalation & Decomposition services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _capabilityEvaluator: ModelCapabilityEvaluator | undefined;
     private _escalationPolicyEngine: EscalationPolicyEngine | undefined;
     private _decompositionEngine: DecompositionEngine | undefined;
@@ -153,22 +157,22 @@ export class AutonomousRunOrchestrator {
     private _recentStrategyDecisions: ExecutionStrategyDecision[] = [];
     private _recentDecompositionPlans: DecompositionPlan[] = [];
 
-    // ── Phase 5.5: Repair Campaign services (optional) ────────────────────────
+    // â”€â”€ Phase 5.5: Repair Campaign services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _campaignPlanner: import('./campaigns/RepairCampaignPlanner').RepairCampaignPlanner | undefined;
     private _campaignRegistry: import('./campaigns/RepairCampaignRegistry').RepairCampaignRegistry | undefined;
     private _campaignCoordinator: import('./campaigns/RepairCampaignCoordinator').RepairCampaignCoordinator | undefined;
 
-    // ── Phase 5.6: Harmonization services (optional) ──────────────────────────
+    // â”€â”€ Phase 5.6: Harmonization services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _harmonizationCoordinator: import('./harmonization/HarmonizationCoordinator').HarmonizationCoordinator | undefined;
 
-    // ── Phase 6: Cross-System Intelligence services (optional) ────────────────
+    // â”€â”€ Phase 6: Cross-System Intelligence services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _crossSystemCoordinator: import('./crossSystem/CrossSystemCoordinator').CrossSystemCoordinator | undefined;
 
-    // ── Phase 6.1: Strategy Routing services (optional) ───────────────────────
+    // â”€â”€ Phase 6.1: Strategy Routing services (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private _strategyRoutingEngine: import('./crossSystem/StrategyRoutingEngine').StrategyRoutingEngine | undefined;
     private _strategyRoutingOutcomeTracker: import('./crossSystem/StrategyRoutingOutcomeTracker').StrategyRoutingOutcomeTracker | undefined;
 
-    // ── Shared runtime execution state tracking ────────────────────────────────
+    // â”€â”€ Shared runtime execution state tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     /** In-memory ExecutionState store for cross-seam lifecycle tracking. Mirrors AgentKernel.stateStore. */
     private readonly _stateStore: ExecutionStateStore = new ExecutionStateStore();
 
@@ -236,7 +240,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ── Lifecycle ───────────────────────────────────────────────────────────────
+    // â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Injects optional Phase 4.3 recovery pack services.
@@ -377,7 +381,7 @@ export class AutonomousRunOrchestrator {
         if (policy) this._escalationPolicy = policy;
     }
 
-    // ── Phase 5.5: Campaign services ────────────────────────────────────────────
+    // â”€â”€ Phase 5.5: Campaign services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Injects optional Phase 5.5 repair campaign services.
@@ -403,7 +407,7 @@ export class AutonomousRunOrchestrator {
         return this._campaignCoordinator?.getDashboardState() ?? null;
     }
 
-    // ── Phase 5.6: Harmonization services ────────────────────────────────────────
+    // â”€â”€ Phase 5.6: Harmonization services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Injects optional Phase 5.6 harmonization services.
@@ -425,7 +429,7 @@ export class AutonomousRunOrchestrator {
     }
 
     /**
-     * Executes one harmonization step through the planning → governance → execution pipeline.
+     * Executes one harmonization step through the planning â†’ governance â†’ execution pipeline.
      * Called by HarmonizationCoordinator via the step executor callback.
      * Preserves all Phase 2 / 3.5 / 3 safety gates.
      */
@@ -437,7 +441,13 @@ export class AutonomousRunOrchestrator {
         try {
             const planInput = this._buildHarmonizationStepPlanInput(filePath, campaign, metadata);
 
-            const planResponse = await this.safePlanner.plan(planInput);
+            const planResponse = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'planning',
+                maxAttempts: 2,
+                execute: async () => this.safePlanner.plan(planInput),
+            });
             if (!planResponse) {
                 return {
                     executionRunId: `no-proposal-${Date.now()}`,
@@ -547,7 +557,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ─── Phase 6: Cross-System Intelligence ──────────────────────────────────
+    // â”€â”€â”€ Phase 6: Cross-System Intelligence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Injects optional Phase 6 cross-system intelligence services.
@@ -568,7 +578,7 @@ export class AutonomousRunOrchestrator {
         return this._crossSystemCoordinator?.getDashboardState() ?? null;
     }
 
-    // ─── Phase 6.1: Strategy Routing ──────────────────────────────────────────
+    // â”€â”€â”€ Phase 6.1: Strategy Routing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Injects optional Phase 6.1 strategy routing services.
@@ -594,7 +604,7 @@ export class AutonomousRunOrchestrator {
     /**
      * Processes the strategy routing queue: picks up 'eligible' routing decisions
      * and materializes them into actual goals or campaigns through the existing
-     * planning → governance → execution / campaign pipelines.
+     * planning â†’ governance â†’ execution / campaign pipelines.
      *
      * This is called from runCycleOnce() after candidate detection.
      * No-op when strategy routing services are not active.
@@ -695,7 +705,7 @@ export class AutonomousRunOrchestrator {
             }
 
             default:
-                // human_review and deferred are already persisted by the engine — no action needed
+                // human_review and deferred are already persisted by the engine â€” no action needed
                 break;
         }
     }
@@ -704,7 +714,7 @@ export class AutonomousRunOrchestrator {
      * Injects a strategy-routing-sourced autonomous goal into the normal goal pipeline.
      *
      * The goal enters at 'scored' status with 'high' priority tier and passes through
-     * the standard AutonomyPolicyGate → SafeChangePlanner → Governance → Execution path.
+     * the standard AutonomyPolicyGate â†’ SafeChangePlanner â†’ Governance â†’ Execution path.
      * No bypass exists.
      *
      * Returns the goalId, or null if the goal was not created (e.g. duplicate fingerprint).
@@ -723,7 +733,7 @@ export class AutonomousRunOrchestrator {
                 'operational',
                 'debug',
                 'AutonomousRunOrchestrator',
-                `[P6.1] Duplicate fingerprint — skipping goal injection for routing decision ${decision.routingDecisionId}`,
+                `[P6.1] Duplicate fingerprint â€” skipping goal injection for routing decision ${decision.routingDecisionId}`,
             );
             return null;
         }
@@ -737,7 +747,7 @@ export class AutonomousRunOrchestrator {
             updatedAt: now,
             source: 'strategy_routing',
             subsystemId: this._extractSubsystemFromDecision(decision),
-            title: `[Strategy Routing] ${decision.strategyKind} — ${decision.scopeSummary.slice(0, 80)}`,
+            title: `[Strategy Routing] ${decision.strategyKind} â€” ${decision.scopeSummary.slice(0, 80)}`,
             description: decision.rationale,
             status: 'scored',
             priorityTier: 'high',
@@ -801,13 +811,13 @@ export class AutonomousRunOrchestrator {
                 'operational',
                 'warn',
                 'AutonomousRunOrchestrator',
-                `[P6.1] Cannot inject repair campaign — campaign services not active.`,
+                `[P6.1] Cannot inject repair campaign â€” campaign services not active.`,
             );
             return null;
         }
 
         const subsystem = this._extractSubsystemFromDecision(decision);
-        const label = `[Strategy Campaign] ${decision.strategyKind} — ${decision.scopeSummary.slice(0, 60)}`;
+        const label = `[Strategy Campaign] ${decision.strategyKind} â€” ${decision.scopeSummary.slice(0, 60)}`;
         const goalId = `strategy-goal-${decision.routingDecisionId}`;
 
         // Build using 'repair_template' fallback with bounded step count
@@ -861,7 +871,7 @@ export class AutonomousRunOrchestrator {
                 'operational',
                 'warn',
                 'AutonomousRunOrchestrator',
-                `[P6.1] Cannot inject harmonization campaign — harmonization services not active.`,
+                `[P6.1] Cannot inject harmonization campaign â€” harmonization services not active.`,
             );
             return null;
         }
@@ -905,12 +915,12 @@ export class AutonomousRunOrchestrator {
     }
 
     /**
-     * Executes a single campaign step through the existing planning → governance → execution pipeline.
+     * Executes a single campaign step through the existing planning â†’ governance â†’ execution pipeline.
      *
      * This is the bridge between the campaign layer and the existing execution gates.
      * It is called by the RepairCampaignCoordinator via the step executor callback.
      *
-     * All Phase 2 / 3.5 / 3 safety gates are preserved — this method is a thin
+     * All Phase 2 / 3.5 / 3 safety gates are preserved â€” this method is a thin
      * wrapper that constructs a PlanTriggerInput from the step and delegates to
      * the existing planning, governance, and execution path.
      *
@@ -1134,7 +1144,7 @@ export class AutonomousRunOrchestrator {
         this.telemetryStore.stopAutoFlush();
     }
 
-    // ── Manual trigger (IPC + testing) ─────────────────────────────────────────
+    // â”€â”€ Manual trigger (IPC + testing) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Manually triggers one detection+scoring+execution cycle.
@@ -1178,7 +1188,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ── Dashboard data ──────────────────────────────────────────────────────────
+    // â”€â”€ Dashboard data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     getDashboardState(): import('../../../shared/autonomyTypes').AutonomyDashboardState {
         const allRuns = [...this.activeRuns.values()].sort(
@@ -1196,7 +1206,7 @@ export class AutonomousRunOrchestrator {
             this.activePolicy, budgetUsed,
         );
 
-        // ── Phase 4.3: Augment with recovery pack summaries ──────────────────
+        // â”€â”€ Phase 4.3: Augment with recovery pack summaries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (this._packOutcomeTracker) {
             const allPacks = this._packRegistry?.getAll() ?? [];
             state.recoveryPackSummaries = allPacks.map(pack =>
@@ -1204,31 +1214,31 @@ export class AutonomousRunOrchestrator {
             );
         }
 
-        // ── Phase 5: Augment with adaptive state ─────────────────────────────
+        // â”€â”€ Phase 5: Augment with adaptive state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const adaptiveState = this.getAdaptiveDashboardState();
         if (adaptiveState) {
             state.adaptiveState = adaptiveState;
         }
 
-        // ── Phase 5.1: Augment with escalation state ──────────────────────────
+        // â”€â”€ Phase 5.1: Augment with escalation state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const escalationState = this.getEscalationDashboardState();
         if (escalationState) {
             state.escalationState = escalationState;
         }
 
-        // ── Phase 5.5: Augment with campaign state ────────────────────────────
+        // â”€â”€ Phase 5.5: Augment with campaign state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const campaignState = this.getCampaignDashboardState();
         if (campaignState) {
             state.campaignState = campaignState;
         }
 
-        // ── Phase 5.6: Augment with harmonization state ───────────────────────
+        // â”€â”€ Phase 5.6: Augment with harmonization state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const harmonizationState = this.getHarmonizationDashboardState();
         if (harmonizationState) {
             (state as any).harmonizationState = harmonizationState;
         }
 
-        // ── Phase 6.1: Augment with strategy routing state ────────────────────
+        // â”€â”€ Phase 6.1: Augment with strategy routing state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const strategyRoutingState = this.getStrategyRoutingDashboardState();
         if (strategyRoutingState) {
             state.strategyRoutingState = strategyRoutingState;
@@ -1259,7 +1269,7 @@ export class AutonomousRunOrchestrator {
         return this.auditService.readAuditLog(goalId);
     }
 
-    // ── Policy management ───────────────────────────────────────────────────────
+    // â”€â”€ Policy management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     setGlobalEnabled(enabled: boolean): void {
         this.activePolicy = { ...this.activePolicy, globalAutonomyEnabled: enabled };
@@ -1296,7 +1306,7 @@ export class AutonomousRunOrchestrator {
         return cleared;
     }
 
-    // ── Candidate intake ────────────────────────────────────────────────────────
+    // â”€â”€ Candidate intake â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private _onCandidatesDetected(candidates: import('../../../shared/autonomyTypes').GoalCandidate[]): void {
         const newCandidates = candidates.filter(c => !c.isDuplicate);
@@ -1363,7 +1373,7 @@ export class AutonomousRunOrchestrator {
         // Mark goal as policy-approved
         this._updateGoal(goal.goalId, { status: 'policy_approved', autonomyEligible: true });
 
-        // ── Phase 5: Adaptive Intelligence Layer (optional) ───────────────────
+        // â”€â”€ Phase 5: Adaptive Intelligence Layer (optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Applied AFTER P4D permit. Never overrides a P4D block.
         let adaptiveStrategyResult: StrategySelectionResult | undefined;
 
@@ -1417,9 +1427,9 @@ export class AutonomousRunOrchestrator {
                 );
 
                 if (adaptiveDecision.action !== 'proceed') {
-                    // defer → keep goal as 'scored' for next cycle
-                    // suppress → mark suppressed
-                    // escalate → mark as policy_blocked, route to human review
+                    // defer â†’ keep goal as 'scored' for next cycle
+                    // suppress â†’ mark suppressed
+                    // escalate â†’ mark as policy_blocked, route to human review
                     let newStatus: import('../../../shared/autonomyTypes').GoalStatus;
                     let humanReviewRequired = false;
 
@@ -1437,7 +1447,7 @@ export class AutonomousRunOrchestrator {
                     return;
                 }
 
-                // Proceed — pass strategy result to the pipeline for informed pack selection
+                // Proceed â€” pass strategy result to the pipeline for informed pack selection
                 adaptiveStrategyResult = strategyResult;
 
             } catch (err: any) {
@@ -1450,14 +1460,14 @@ export class AutonomousRunOrchestrator {
                     `[P5 Adaptive] Error in adaptive layer for goal ${goal.goalId}: ${err.message}. ` +
                     `Falling back to Phase 4 behavior.`,
                 );
-                // adaptiveStrategyResult stays undefined → Phase 4 pack selection used
+                // adaptiveStrategyResult stays undefined â†’ Phase 4 pack selection used
             }
         }
-        // ── End Phase 5 ────────────────────────────────────────────────────────
+        // â”€â”€ End Phase 5 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        // ── Phase 5.1: Model Escalation & Bounded Decomposition (optional) ────
+        // â”€â”€ Phase 5.1: Model Escalation & Bounded Decomposition (optional) â”€â”€â”€â”€
         // Applied AFTER Phase 5 adaptive gate (proceed). Never overrides a Phase 5 block.
-        // Errors in this layer must never block the pipeline — fallback to proceed_local.
+        // Errors in this layer must never block the pipeline â€” fallback to proceed_local.
         if (this._capabilityEvaluator && this._escalationPolicyEngine
             && this._decompositionEngine && this._strategySelector
             && this._escalationAuditTracker && this._decompositionOutcomeTracker) {
@@ -1583,7 +1593,7 @@ export class AutonomousRunOrchestrator {
                             );
                         } else if (strategyDecision.strategy === 'decompose_local'
                             && decompositionPlan) {
-                            // Execute decomposition — use first step scope as plan hint
+                            // Execute decomposition â€” use first step scope as plan hint
                             this._decompositionOutcomeTracker.startPlan(
                                 decompositionPlan, goal.subsystemId,
                             );
@@ -1631,7 +1641,7 @@ export class AutonomousRunOrchestrator {
                 );
             }
         }
-        // ── End Phase 5.1 ─────────────────────────────────────────────────────
+        // â”€â”€ End Phase 5.1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         // Execute asynchronously (fire-and-forget with error capture)
         this._executeGoalPipeline(
@@ -1647,7 +1657,7 @@ export class AutonomousRunOrchestrator {
             });
     }
 
-    // ── Execution pipeline ──────────────────────────────────────────────────────
+    // â”€â”€ Execution pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private async _executeGoalPipeline(
         goal: AutonomousGoal,
@@ -1667,22 +1677,22 @@ export class AutonomousRunOrchestrator {
             subsystemId: goal.subsystemId,
             policyDecisionId,
             milestones: [],
-            // ── Phase 5.1: Link to decomposition plan when executing under decomposition ──
+            // â”€â”€ Phase 5.1: Link to decomposition plan when executing under decomposition â”€â”€
             decompositionPlanId: decompositionPlan?.planId,
             decompositionStepIndex: decompositionPlan ? 0 : undefined,
-            // ── Runtime Execution Vocabulary ──
+            // â”€â”€ Runtime Execution Vocabulary â”€â”€
             executionId: runId,
             runtimeExecutionType: 'autonomy_task',
             runtimeExecutionOrigin: 'autonomy_engine',
         };
         // Capture numeric start time from run.startedAt as the single source of truth
-        // for duration tracking — mirrors KernelExecutionMeta.startedAt (Date.now()).
+        // for duration tracking â€” mirrors KernelExecutionMeta.startedAt (Date.now()).
         const startedAtMs = Date.parse(run.startedAt);
 
         this.activeRuns.set(run.runId, run);
         this.budgetManager.recordRunStart(run.runId, goal.subsystemId);
 
-        // ── Register with ExecutionStateStore for cross-seam lifecycle tracking ──
+        // â”€â”€ Register with ExecutionStateStore for cross-seam lifecycle tracking â”€â”€
         this._stateStore.beginExecution(
             createExecutionRequest({
                 executionId: run.runId,
@@ -1695,7 +1705,7 @@ export class AutonomousRunOrchestrator {
             'AutonomousRunOrchestrator',
         );
 
-        // ── TelemetryBus: execution lifecycle (mirrors AgentKernel schema) ──────
+        // â”€â”€ TelemetryBus: execution lifecycle (mirrors AgentKernel schema) â”€â”€â”€â”€â”€â”€
         const intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;
         TelemetryBus.getInstance().emit({
             executionId: run.runId,
@@ -1727,7 +1737,7 @@ export class AutonomousRunOrchestrator {
         this._emitDashboard('run_started', run);
 
         try {
-            // ── Phase 2: Safe Change Planning ────────────────────────────────────
+            // â”€â”€ Phase 2: Safe Change Planning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             this._updateRunStatus(run, 'planning');
             this._addMilestone(run, 'planning_started');
             this.telemetryStore.record('planning_started',
@@ -1772,7 +1782,7 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
             );
 
-            // ── Phase 2: Promote proposal ─────────────────────────────────────────
+            // â”€â”€ Phase 2: Promote proposal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (proposal.status === 'draft' || proposal.status === 'classified') {
                 const promoted = this.safePlanner.promoteProposal(proposal.proposalId);
                 if (!promoted) {
@@ -1781,7 +1791,7 @@ export class AutonomousRunOrchestrator {
                 }
             }
 
-            // ── Phase 3.5: Governance evaluation ─────────────────────────────────
+            // â”€â”€ Phase 3.5: Governance evaluation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             this._addMilestone(run, 'governance_submitted');
             this.auditService.appendAuditRecord('governance_submitted',
                 `Governance evaluation triggered for proposal ${proposal.proposalId}`,
@@ -1790,10 +1800,18 @@ export class AutonomousRunOrchestrator {
 
             // evaluateForProposal is also called automatically by the onProposalPromoted callback
             // in main.ts, but we call it here explicitly to ensure it exists.
-            const govDecision = this.governanceAppService.evaluateForProposal(
-                this.safePlanner.listProposals(4 * 60 * 60 * 1000)
-                    .find(p => p.proposalId === proposal.proposalId) ?? proposal,
-            );
+            const govDecision = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'governance_polling',
+                maxAttempts: 1,
+                shouldCountFailureForCircuit: () => false,
+                execute: async () =>
+                    this.governanceAppService.evaluateForProposal(
+                        this.safePlanner.listProposals(4 * 60 * 60 * 1000)
+                            .find(p => p.proposalId === proposal.proposalId) ?? proposal,
+                    ),
+            });
 
             run.governanceDecisionId = govDecision.decisionId;
             this.auditService.saveRun(run);
@@ -1805,7 +1823,7 @@ export class AutonomousRunOrchestrator {
             }
 
             if (!govDecision.executionAuthorized) {
-                // Governance requires human approval — move to governance_pending
+                // Governance requires human approval â€” move to governance_pending
                 // Do NOT proceed; surface in dashboard for human action.
                 this._updateRunStatus(run, 'governance_pending');
                 this._updateGoal(goal.goalId, { status: 'governance_pending', governanceDecisionId: govDecision.decisionId });
@@ -1815,15 +1833,15 @@ export class AutonomousRunOrchestrator {
                     { goalId: goal.goalId, runId: run.runId },
                 );
                 this._emitDashboard('governance_resolved', run);
-                // Run stays in governance_pending — will be resumed when governance approves
+                // Run stays in governance_pending â€” will be resumed when governance approves
                 return;
             }
 
-            // Governance self-authorized → proceed
+            // Governance self-authorized â†’ proceed
             this._addMilestone(run, 'governance_resolved', 'self_authorized');
             this._emitDashboard('governance_resolved', run);
 
-            // ── Phase 3: Controlled Execution ─────────────────────────────────────
+            // â”€â”€ Phase 3: Controlled Execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             this._updateRunStatus(run, 'executing');
             this._addMilestone(run, 'execution_started');
             this._updateGoal(goal.goalId, { status: 'executing' });
@@ -1855,13 +1873,19 @@ export class AutonomousRunOrchestrator {
                 },
             );
 
-            const execResponse = await this.executionOrchestrator.start({
-                proposalId: proposal.proposalId,
-                // 'user_explicit' is the only value accepted by ExecutionStartRequest.
-                // In the autonomy pipeline this represents that Tala (acting as the operator)
-                // has explicitly authorized this run through the governance gate above.
-                authorizedBy: 'user_explicit',
-                dryRun: false,
+            const execResponse = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'execution_start',
+                maxAttempts: 1,
+                execute: async () => this.executionOrchestrator.start({
+                    proposalId: proposal.proposalId,
+                    // 'user_explicit' is the only value accepted by ExecutionStartRequest.
+                    // In the autonomy pipeline this represents that Tala (acting as the operator)
+                    // has explicitly authorized this run through the governance gate above.
+                    authorizedBy: 'user_explicit',
+                    dryRun: false,
+                }),
             });
 
             if (execResponse.blocked) {
@@ -1873,7 +1897,13 @@ export class AutonomousRunOrchestrator {
             this.auditService.saveRun(run);
 
             // Poll for execution terminal state
-            const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            const terminalStatus = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'execution_wait',
+                maxAttempts: 1,
+                execute: async () => this._waitForExecution(execResponse.executionId),
+            });
             await enforceSideEffectWithGuardrails(
                 'autonomy',
                 {
@@ -1922,7 +1952,7 @@ export class AutonomousRunOrchestrator {
             this._emitDashboard(outcome === 'succeeded' ? 'run_completed' : 'run_failed', run);
 
         } catch (err: any) {
-            // PolicyDeniedError is not an execution failure — re-throw so callers
+            // PolicyDeniedError is not an execution failure â€” re-throw so callers
             // know the action was blocked by policy rather than by an internal error.
             if (err instanceof PolicyDeniedError) throw err;
             this._abortRun(run, goal, `Unhandled error: ${err.message}`);
@@ -1932,7 +1962,7 @@ export class AutonomousRunOrchestrator {
             const finalRun = this.activeRuns.get(run.runId)!;
             const outcome = this._outcomeFromRunStatus(finalRun.status);
 
-            // ── TelemetryBus: terminal lifecycle event (mirrors AgentKernel schema) ──
+            // â”€â”€ TelemetryBus: terminal lifecycle event (mirrors AgentKernel schema) â”€â”€
             const durationMs = Date.now() - startedAtMs;
             if (outcome === 'succeeded') {
                 // Advance state to 'finalizing' before sealing (mirrors AgentKernel.finalizeExecution)
@@ -1981,7 +2011,7 @@ export class AutonomousRunOrchestrator {
                 { goalId: goal.goalId, runId: run.runId },
             );
 
-            // ── Phase 4.3: Record recovery pack outcome if a pack was used ─────
+            // â”€â”€ Phase 4.3: Record recovery pack outcome if a pack was used â”€â”€â”€â”€â”€
             if (this._packOutcomeTracker && finalRun.recoveryPackId) {
                 const packOutcome = this._packOutcomeFromRunOutcome(outcome);
                 this._packOutcomeTracker.record(
@@ -1996,7 +2026,7 @@ export class AutonomousRunOrchestrator {
                 );
             }
 
-            // ── Phase 5: Update subsystem adaptive profile (feedback loop) ────
+            // â”€â”€ Phase 5: Update subsystem adaptive profile (feedback loop) â”€â”€â”€â”€
             if (this._adaptiveProfileRegistry) {
                 // Determine strategy actually used (pack if recoveryPackId set, else standard)
                 const strategyUsed = adaptiveStrategyResult?.strategy
@@ -2009,7 +2039,7 @@ export class AutonomousRunOrchestrator {
                 );
             }
 
-            // ── Phase 5.1: Record decomposition step outcome (feedback loop) ──
+            // â”€â”€ Phase 5.1: Record decomposition step outcome (feedback loop) â”€â”€
             if (this._decompositionOutcomeTracker && decompositionPlan) {
                 const step = decompositionPlan.steps[0];
                 if (step) {
@@ -2051,7 +2081,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ── Governance-pending resume ───────────────────────────────────────────────
+    // â”€â”€ Governance-pending resume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Called when a governance decision resolves (human approval).
@@ -2103,10 +2133,16 @@ export class AutonomousRunOrchestrator {
                     phase: 'pre',
                 },
             );
-            const execResponse = await this.executionOrchestrator.start({
-                proposalId: run.proposalId,
-                authorizedBy: 'user_explicit',
-                dryRun: false,
+            const execResponse = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'execution_start',
+                maxAttempts: 1,
+                execute: async () => this.executionOrchestrator.start({
+                    proposalId: run.proposalId!,
+                    authorizedBy: 'user_explicit',
+                    dryRun: false,
+                }),
             });
 
             if (execResponse.blocked) {
@@ -2117,7 +2153,13 @@ export class AutonomousRunOrchestrator {
             run.executionRunId = execResponse.executionId;
             this.auditService.saveRun(run);
 
-            const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            const terminalStatus = await this._runGuardedAutonomyOperation({
+                runId: run.runId,
+                subsystemId: goal.subsystemId,
+                operationName: 'execution_wait',
+                maxAttempts: 1,
+                execute: async () => this._waitForExecution(execResponse.executionId),
+            });
             await enforceSideEffectWithGuardrails(
                 'autonomy',
                 {
@@ -2147,7 +2189,7 @@ export class AutonomousRunOrchestrator {
             const outcome = this._outcomeFromRunStatus(finalRun.status);
             this.learningRegistry.record(goal, finalRun, outcome);
             this.budgetManager.recordRunEnd(run.runId);
-            // ── Phase 4.3.1: Record recovery pack outcome on resume path ──────
+            // â”€â”€ Phase 4.3.1: Record recovery pack outcome on resume path â”€â”€â”€â”€â”€â”€
             if (this._packOutcomeTracker && finalRun.recoveryPackId) {
                 const packOutcome = this._packOutcomeFromRunOutcome(outcome);
                 this._packOutcomeTracker.record(
@@ -2164,7 +2206,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ── Run state helpers ───────────────────────────────────────────────────────
+    // â”€â”€ Run state helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private _failRun(run: AutonomousRun, goal: AutonomousGoal, reason: string): void {
         run.failureReason = reason;
@@ -2258,8 +2300,49 @@ export class AutonomousRunOrchestrator {
             this.activePolicy, budgetUsed,
         );
     }
+    private async _runGuardedAutonomyOperation<T>(
+        opts: {
+            runId?: string;
+            subsystemId: string;
+            operationName: string;
+            maxAttempts?: number;
+            execute: () => Promise<T>;
+            shouldRetry?: (error: unknown, failureKind: GuardrailFailureKind, attempt: number) => boolean;
+            shouldCountFailureForCircuit?: (error: unknown, failureKind: GuardrailFailureKind) => boolean;
+        },
+    ): Promise<T> {
+        const breaker = AutonomousRunOrchestrator.guardrailBreakerStore.get(
+            `autonomy:${opts.subsystemId}:${opts.operationName}`,
+            {
+                failureThreshold: 3,
+                resetAfterMs: 20_000,
+            },
+        );
+        const guarded = await executeWithRuntimeGuardrails<T>({
+            domain: 'autonomy',
+            operationName: opts.operationName,
+            targetKey: `${opts.subsystemId}:${opts.operationName}`,
+            executionId: opts.runId,
+            maxAttempts: Math.max(1, opts.maxAttempts ?? 1),
+            circuitBreaker: breaker,
+            classifyFailure: (error): GuardrailFailureKind => {
+                if (error instanceof PolicyDeniedError) return 'policy_denied';
+                return 'runtime_error';
+            },
+            shouldRetry: (error, attempt, failureKind) =>
+                opts.shouldRetry?.(error, failureKind, attempt) ?? false,
+            shouldCountFailureForCircuit: (error, failureKind) =>
+                opts.shouldCountFailureForCircuit?.(error, failureKind) ??
+                (failureKind !== 'policy_denied' && failureKind !== 'governance_blocked'),
+            execute: async () => opts.execute(),
+        });
+        if (!guarded.ok) {
+            throw (guarded.error ?? new Error(`Guarded autonomy operation failed: ${opts.operationName}`));
+        }
+        return guarded.value as T;
+    }
 
-    // ── Execution polling ───────────────────────────────────────────────────────
+    // â”€â”€ Execution polling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private async _waitForExecution(executionId: string): Promise<string> {
         const TERMINAL = new Set([
@@ -2277,7 +2360,7 @@ export class AutonomousRunOrchestrator {
         return 'aborted'; // Timeout
     }
 
-    // ── Recovery ────────────────────────────────────────────────────────────────
+    // â”€â”€ Recovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private _recoverStaleRuns(): void {
         const runs = this.auditService.listRuns();
@@ -2288,11 +2371,11 @@ export class AutonomousRunOrchestrator {
         for (const run of runs) {
             if (NON_TERMINAL.has(run.status)) {
                 if (run.status === 'governance_pending') {
-                    // Keep these — they are awaiting human review
+                    // Keep these â€” they are awaiting human review
                     this.activeRuns.set(run.runId, run);
                     continue;
                 }
-                // Stale active run — mark as aborted
+                // Stale active run â€” mark as aborted
                 run.status = 'aborted';
                 run.abortReason = 'stale_on_startup';
                 run.completedAt = new Date().toISOString();
@@ -2310,7 +2393,7 @@ export class AutonomousRunOrchestrator {
         }
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────────
+    // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private _delay(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -2369,7 +2452,7 @@ export class AutonomousRunOrchestrator {
         return [];
     }
 
-    // ── Phase 4.3: Recovery Pack helpers ─────────────────────────────────────────
+    // â”€â”€ Phase 4.3: Recovery Pack helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Builds the PlanTriggerInput for a goal.
@@ -2399,7 +2482,7 @@ export class AutonomousRunOrchestrator {
             issueType: goal.source,
             normalizedTarget: goal.subsystemId,
             severity: this._severityForTier(goal.priorityTier),
-            // ── Phase 5.1: Narrow description to decomposition scope when executing under a plan ──
+            // â”€â”€ Phase 5.1: Narrow description to decomposition scope when executing under a plan â”€â”€
             description: decompositionScopeHint
                 ? `[Decomposed scope: ${decompositionScopeHint}] ${goal.description}`
                 : goal.description,
@@ -2408,11 +2491,11 @@ export class AutonomousRunOrchestrator {
             isManual: false,
         };
 
-        // ── Phase 5: Adaptive strategy hint ──────────────────────────────────
+        // â”€â”€ Phase 5: Adaptive strategy hint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // If adaptive layer decided 'standard_planning', skip pack matching.
         if (adaptiveStrategyResult?.strategy === 'standard_planning') {
             this.telemetryStore.record('recovery_pack_fallback',
-                `[P5 Adaptive] Standard planning selected — skipping pack matching for goal ${goal.goalId}`,
+                `[P5 Adaptive] Standard planning selected â€” skipping pack matching for goal ${goal.goalId}`,
                 { goalId: goal.goalId, runId: run.runId },
             );
             return standardInput;
@@ -2441,7 +2524,7 @@ export class AutonomousRunOrchestrator {
 
             if (matchResult.fallbackToStandardPlanning || !matchResult.selectedPackId) {
                 this.telemetryStore.record('recovery_pack_fallback',
-                    `No pack matched for goal ${goal.goalId} — using standard planning. ${matchResult.rationale}`,
+                    `No pack matched for goal ${goal.goalId} â€” using standard planning. ${matchResult.rationale}`,
                     { goalId: goal.goalId, runId: run.runId },
                 );
                 return standardInput;
@@ -2450,7 +2533,7 @@ export class AutonomousRunOrchestrator {
             const pack = this._packRegistry.getById(matchResult.selectedPackId);
             if (!pack) {
                 this.telemetryStore.record('recovery_pack_rejected',
-                    `Pack ${matchResult.selectedPackId} was selected but not found in registry — rejected.`,
+                    `Pack ${matchResult.selectedPackId} was selected but not found in registry â€” rejected.`,
                     { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
                 );
                 return standardInput;
@@ -2459,13 +2542,13 @@ export class AutonomousRunOrchestrator {
             const adaptedInput = this._packPlannerAdapter.buildPlanInput(goal, pack, matchResult);
             if (!adaptedInput) {
                 this.telemetryStore.record('recovery_pack_rejected',
-                    `Pack ${pack.packId} adapter returned null — pack rejected, falling back to standard planning.`,
+                    `Pack ${pack.packId} adapter returned null â€” pack rejected, falling back to standard planning.`,
                     { goalId: goal.goalId, runId: run.runId, subsystemId: goal.subsystemId },
                 );
                 return standardInput;
             }
 
-            // Pack match succeeded — record on run for audit and dashboard
+            // Pack match succeeded â€” record on run for audit and dashboard
             run.recoveryPackId = pack.packId;
             run.recoveryPackMatchStrength = matchResult.selectedMatchStrength;
             this.auditService.saveRun(run);
@@ -2482,9 +2565,9 @@ export class AutonomousRunOrchestrator {
             return adaptedInput;
 
         } catch (err: any) {
-            // Exception in pack layer → log and fall back to standard planning
+            // Exception in pack layer â†’ log and fall back to standard planning
             this.telemetryStore.record('recovery_pack_fallback',
-                `Exception in recovery pack matching: ${err.message} — falling back to standard planning.`,
+                `Exception in recovery pack matching: ${err.message} â€” falling back to standard planning.`,
                 { goalId: goal.goalId, runId: run.runId },
             );
             telemetry.operational(
