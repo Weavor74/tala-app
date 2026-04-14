@@ -24,7 +24,10 @@ import type {
     SourceControlProvider,
     AgentProfile
 } from '../../shared/settings';
-import { buildDefaultGuardrailPolicyConfig } from '../../shared/guardrails/guardrailPolicyTypes';
+import {
+    buildDefaultGuardrailPolicyConfig,
+    normalizeGuardrailPolicyConfig,
+} from '../../shared/guardrails/guardrailPolicyTypes';
 
 export type { 
     McpServerConfig,
@@ -317,7 +320,7 @@ export const migrateSettings = (loaded: any): AppSettings => {
 
     // Migrate GuardrailPolicy (structured policy config authored by GuardrailsTab)
     if (loaded.guardrailPolicy && loaded.guardrailPolicy.version === 1) {
-        base.guardrailPolicy = loaded.guardrailPolicy;
+        base.guardrailPolicy = normalizeGuardrailPolicyConfig(loaded.guardrailPolicy);
     }
 
     // Migrate Workflows

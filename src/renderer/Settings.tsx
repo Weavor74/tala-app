@@ -28,8 +28,15 @@ import { LogViewerPanel } from './components/LogViewerPanel';
 import { SelfModelPanel } from './components/SelfModelPanel';
 import {
     buildDefaultGuardrailPolicyConfig,
+    cloneGuardrailProfile,
+    createBlankGuardrailProfile,
+    deleteGuardrailProfile,
+    normalizeGuardrailPolicyConfig,
+    renameGuardrailProfile,
+    setActiveGuardrailProfile,
     VALIDATOR_PROVIDER_REGISTRY,
     type GuardrailPolicyConfig,
+    type GuardrailProfile,
     type GuardrailRule,
     type ValidatorBinding,
     type GuardrailAction,
@@ -4613,7 +4620,7 @@ function makeDraftBinding(): ValidatorBinding {
 
 function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const getPolicy = (): GuardrailPolicyConfig =>
-        settings?.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig();
+        normalizeGuardrailPolicyConfig(settings?.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig());
 
     const [policy, setPolicy] = useState<GuardrailPolicyConfig>(getPolicy);
     const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
@@ -4625,12 +4632,19 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     const [bindingProbeResult, setBindingProbeResult] = useState<any | null>(null);
     const [bindingProbeBusy, setBindingProbeBusy] = useState(false);
     const [bindingArgsDraft, setBindingArgsDraft] = useState('{}');
+    const [profileNameDraft, setProfileNameDraft] = useState('');
 
     const selectedRule = policy.rules.find(r => r.id === selectedRuleId) ?? null;
     const selectedBinding = policy.validatorBindings.find(b => b.id === selectedBindingId) ?? null;
     const selectedCuratedEntry = localValidatorCatalog.find(
         c => c.validatorName === (selectedBinding?.validatorName ?? ''),
     );
+    const selectedProfile: GuardrailProfile | null =
+        policy.profiles.find(p => p.id === policy.activeProfileId) ?? null;
+
+    useEffect(() => {
+        setPolicy(getPolicy());
+    }, [settings?.guardrailPolicy]);
 
     useEffect(() => {
         const loadCatalog = async () => {
@@ -4652,10 +4666,17 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
         setBindingProbeResult(null);
     }, [selectedBindingId, selectedBinding?.validatorArgs]);
 
+    useEffect(() => {
+        setProfileNameDraft(selectedProfile?.name ?? '');
+    }, [selectedProfile?.id, selectedProfile?.name]);
+
     const flash = (msg: string) => { setPolicyStatus(msg); setTimeout(() => setPolicyStatus(''), 3000); };
 
     const savePolicy = async (updated: GuardrailPolicyConfig) => {
-        const newPolicy = { ...updated, updatedAt: new Date().toISOString() };
+        const newPolicy = normalizeGuardrailPolicyConfig({
+            ...updated,
+            updatedAt: new Date().toISOString(),
+        });
         setPolicy(newPolicy);
         if (api?.saveSettings) {
             const currentSettings: AppSettings = settings ?? {};
@@ -4665,7 +4686,36 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
     };
 
     const handleProfileChange = (profileId: string) => {
-        savePolicy({ ...policy, activeProfileId: profileId });
+        savePolicy(setActiveGuardrailProfile(policy, profileId));
+    };
+
+    const handleCreateProfile = () => {
+        savePolicy(createBlankGuardrailProfile(policy));
+    };
+
+    const handleCloneProfile = () => {
+        if (!selectedProfile) return;
+        savePolicy(cloneGuardrailProfile(policy, selectedProfile.id));
+    };
+
+    const handleRenameProfile = () => {
+        if (!selectedProfile) return;
+        try {
+            const renamed = renameGuardrailProfile(policy, selectedProfile.id, profileNameDraft);
+            savePolicy(renamed);
+        } catch (err: any) {
+            flash(err?.message ?? 'Failed to rename profile');
+        }
+    };
+
+    const handleDeleteProfile = () => {
+        if (!selectedProfile) return;
+        try {
+            const updated = deleteGuardrailProfile(policy, selectedProfile.id);
+            savePolicy(updated);
+        } catch (err: any) {
+            flash(err?.message ?? 'Failed to delete profile');
+        }
     };
 
     const handleNewRule = () => {
@@ -4839,6 +4889,21 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
             {/* Active profile selector */}
             <div style={panelBase}>
                 <label style={lbl9}>Active Policy Profile</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, marginBottom: 10 }}>
+                    <select
+                        style={sel}
+                        value={policy.activeProfileId}
+                        onChange={e => handleProfileChange(e.target.value)}
+                    >
+                        {policy.profiles.map(p => (
+                            <option key={p.id} value={p.id}>
+                                {p.name}{p.isBuiltIn ? ' (built-in)' : ''}
+                            </option>
+                        ))}
+                    </select>
+                    <button style={btnG} onClick={handleCreateProfile}>+ NEW</button>
+                    <button style={btnG} onClick={handleCloneProfile} disabled={!selectedProfile}>CLONE</button>
+                </div>
                 <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
                     {policy.profiles.map(p => (
                         <button
@@ -4858,9 +4923,38 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                             title={p.description}
                         >
                             {p.name}
+                            {p.isBuiltIn && <span style={{ marginLeft: 6, fontSize: 9, color: '#7a7a7a' }}>(built-in)</span>}
                         </button>
                     ))}
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, marginTop: 10 }}>
+                    <input
+                        style={inp}
+                        value={profileNameDraft}
+                        disabled={!selectedProfile || selectedProfile.isBuiltIn}
+                        placeholder="Profile name"
+                        onChange={e => setProfileNameDraft(e.target.value)}
+                    />
+                    <button
+                        style={btnG}
+                        disabled={!selectedProfile || selectedProfile.isBuiltIn}
+                        onClick={handleRenameProfile}
+                    >
+                        RENAME
+                    </button>
+                    <button
+                        style={btnD}
+                        disabled={!selectedProfile || selectedProfile.isBuiltIn}
+                        onClick={handleDeleteProfile}
+                    >
+                        DELETE
+                    </button>
+                </div>
+                {selectedProfile?.isBuiltIn && (
+                    <div style={{ marginTop: 6, fontSize: 10, color: '#555' }}>
+                        Built-in profiles are protected and cannot be renamed or deleted.
+                    </div>
+                )}
                 {policy.profiles.find(p => p.id === policy.activeProfileId)?.description && (
                     <div style={{ marginTop: 8, fontSize: 11, color: '#555' }}>
                         {policy.profiles.find(p => p.id === policy.activeProfileId)?.description}
@@ -5059,7 +5153,7 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                                                     onChange={e => toggleRuleInProfile(p.id, selectedRule.id, e.target.checked)}
                                                 />
                                                 {p.name}
-                                                {p.readonly && <span style={{ fontSize: 9, color: '#555' }}>(built-in)</span>}
+                                                {p.isBuiltIn && <span style={{ fontSize: 9, color: '#555' }}>(built-in)</span>}
                                             </label>
                                         ))}
                                     </div>

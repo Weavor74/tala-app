@@ -280,7 +280,12 @@ export interface GuardrailProfile {
     description?: string;
     /** Ordered list of rule IDs included in this profile. */
     ruleIds: string[];
-    /** Whether this is a built-in profile (built-ins cannot be deleted). */
+    /** Whether this is a built-in profile (built-ins cannot be deleted or renamed). */
+    isBuiltIn: boolean;
+    /**
+     * Legacy compatibility field.
+     * @deprecated Use isBuiltIn instead.
+     */
     readonly?: boolean;
 }
 
@@ -311,6 +316,171 @@ export interface GuardrailPolicyConfig {
     updatedAt: string;
 }
 
+export const BUILTIN_GUARDRAIL_PROFILE_IDS = {
+    unrestricted: 'unrestricted',
+    casual: 'casual',
+    businessOnly: 'business_only',
+} as const;
+
+const LEGACY_PROFILE_ID_MAP: Record<string, string> = {
+    permissive: BUILTIN_GUARDRAIL_PROFILE_IDS.unrestricted,
+    balanced: BUILTIN_GUARDRAIL_PROFILE_IDS.casual,
+    locked_down: BUILTIN_GUARDRAIL_PROFILE_IDS.businessOnly,
+};
+
+const BUILTIN_RULE_IDS = {
+    basicSafetyWarn: 'builtin-basic-safety-warn',
+    localToolValidation: 'builtin-local-tool-validation',
+    denyShellRun: 'builtin-deny-shell-run',
+    denyFsWrite: 'builtin-deny-fs-write',
+} as const;
+
+function _cloneBinding(binding: ValidatorBinding): ValidatorBinding {
+    return {
+        ...binding,
+        executionScopes: [...(binding.executionScopes ?? [])],
+        supportedActions: [...(binding.supportedActions ?? [])],
+        validatorArgs: binding.validatorArgs ? { ...binding.validatorArgs } : undefined,
+        entityTypes: binding.entityTypes ? [...binding.entityTypes] : undefined,
+    };
+}
+
+function _cloneRule(rule: GuardrailRule): GuardrailRule {
+    return {
+        ...rule,
+        scopes: [...(rule.scopes ?? [])],
+        validatorBindings: [...(rule.validatorBindings ?? [])].map(_cloneBinding),
+    };
+}
+
+function _cloneProfile(profile: GuardrailProfile): GuardrailProfile {
+    return {
+        ...profile,
+        ruleIds: [...(profile.ruleIds ?? [])],
+        isBuiltIn: profile.isBuiltIn ?? Boolean(profile.readonly),
+    };
+}
+
+function _sanitizeProfileName(name: string, fallback: string): string {
+    const next = (name ?? '').trim();
+    return next.length > 0 ? next : fallback;
+}
+
+function _makeCustomProfileId(existing: GuardrailProfile[]): string {
+    const existingIds = new Set(existing.map(p => p.id));
+    let attempts = 0;
+    while (attempts < 10000) {
+        attempts += 1;
+        const candidate = `custom-${Date.now()}-${attempts}`;
+        if (!existingIds.has(candidate)) {
+            return candidate;
+        }
+    }
+    return `custom-${Math.floor(Math.random() * 1_000_000_000)}`;
+}
+
+function _upsertBuiltInRule(
+    existingRule: GuardrailRule | undefined,
+    incomingRule: GuardrailRule,
+): GuardrailRule {
+    if (!existingRule) return _cloneRule(incomingRule);
+    return {
+        ..._cloneRule(existingRule),
+        name: incomingRule.name,
+        description: incomingRule.description,
+        severity: incomingRule.severity,
+        action: incomingRule.action,
+        scopes: [...incomingRule.scopes],
+    };
+}
+
+function _buildBuiltInRules(now: string): GuardrailRule[] {
+    return [
+        {
+            id: BUILTIN_RULE_IDS.basicSafetyWarn,
+            name: 'Basic Safety Warnings',
+            description: 'Warn on baseline safety-sensitive content paths.',
+            enabled: true,
+            scopes: [],
+            severity: 'medium',
+            action: 'warn',
+            validatorBindings: [],
+            createdAt: now,
+            updatedAt: now,
+        },
+        {
+            id: BUILTIN_RULE_IDS.localToolValidation,
+            name: 'Local Tool Validation',
+            description: 'Require validation checks before high-impact tool execution.',
+            enabled: true,
+            scopes: [{ executionType: 'tool_invocation' }],
+            severity: 'high',
+            action: 'require_validation',
+            validatorBindings: [],
+            createdAt: now,
+            updatedAt: now,
+        },
+        {
+            id: BUILTIN_RULE_IDS.denyShellRun,
+            name: 'Deny Shell Execution',
+            description: 'Block direct shell execution for business-only posture.',
+            enabled: true,
+            scopes: [{ capability: 'shell_run' }],
+            severity: 'critical',
+            action: 'deny',
+            validatorBindings: [],
+            createdAt: now,
+            updatedAt: now,
+        },
+        {
+            id: BUILTIN_RULE_IDS.denyFsWrite,
+            name: 'Deny Filesystem Writes',
+            description: 'Block direct filesystem writes for business-only posture.',
+            enabled: true,
+            scopes: [{ capability: 'fs_write' }],
+            severity: 'critical',
+            action: 'deny',
+            validatorBindings: [],
+            createdAt: now,
+            updatedAt: now,
+        },
+    ];
+}
+
+function _buildBuiltInProfiles(): GuardrailProfile[] {
+    return [
+        {
+            id: BUILTIN_GUARDRAIL_PROFILE_IDS.unrestricted,
+            name: 'Unrestricted',
+            description: 'No policy rules applied.',
+            ruleIds: [],
+            isBuiltIn: true,
+        },
+        {
+            id: BUILTIN_GUARDRAIL_PROFILE_IDS.casual,
+            name: 'Casual',
+            description: 'Basic safety warnings with tool validation checks.',
+            ruleIds: [
+                BUILTIN_RULE_IDS.basicSafetyWarn,
+                BUILTIN_RULE_IDS.localToolValidation,
+            ],
+            isBuiltIn: true,
+        },
+        {
+            id: BUILTIN_GUARDRAIL_PROFILE_IDS.businessOnly,
+            name: 'Business Only',
+            description: 'Strict safety posture with capability restrictions.',
+            ruleIds: [
+                BUILTIN_RULE_IDS.basicSafetyWarn,
+                BUILTIN_RULE_IDS.localToolValidation,
+                BUILTIN_RULE_IDS.denyShellRun,
+                BUILTIN_RULE_IDS.denyFsWrite,
+            ],
+            isBuiltIn: true,
+        },
+    ];
+}
+
 // ─── Default config factory ───────────────────────────────────────────────────
 
 /**
@@ -319,35 +489,184 @@ export interface GuardrailPolicyConfig {
  */
 export function buildDefaultGuardrailPolicyConfig(): GuardrailPolicyConfig {
     const now = new Date().toISOString();
+    const rules = _buildBuiltInRules(now);
+    const profiles = _buildBuiltInProfiles();
     return {
         version: 1,
-        activeProfileId: 'balanced',
-        profiles: [
-            {
-                id: 'permissive',
-                name: 'Permissive',
-                description: 'Minimal restrictions — allows most actions. Suitable for trusted development environments.',
-                ruleIds: [],
-                readonly: true,
-            },
-            {
-                id: 'balanced',
-                name: 'Balanced',
-                description: 'Moderate guardrails — blocks high-risk actions, warns on medium-risk actions.',
-                ruleIds: [],
-                readonly: true,
-            },
-            {
-                id: 'locked_down',
-                name: 'Locked Down',
-                description: 'Strict restrictions — requires validation for most side-effectful actions.',
-                ruleIds: [],
-                readonly: true,
-            },
-        ],
-        rules: [],
+        activeProfileId: BUILTIN_GUARDRAIL_PROFILE_IDS.casual,
+        profiles,
+        rules,
         validatorBindings: [],
         updatedAt: now,
+    };
+}
+
+export function normalizeGuardrailPolicyConfig(
+    config: GuardrailPolicyConfig | undefined,
+): GuardrailPolicyConfig {
+    if (!config) {
+        return buildDefaultGuardrailPolicyConfig();
+    }
+
+    const now = new Date().toISOString();
+    const next: GuardrailPolicyConfig = {
+        ...config,
+        version: 1,
+        activeProfileId: config.activeProfileId,
+        profiles: (config.profiles ?? []).map(_cloneProfile),
+        rules: (config.rules ?? []).map(_cloneRule),
+        validatorBindings: (config.validatorBindings ?? []).map(_cloneBinding),
+        updatedAt: config.updatedAt ?? now,
+    };
+
+    for (const p of next.profiles) {
+        if (LEGACY_PROFILE_ID_MAP[p.id]) {
+            p.id = LEGACY_PROFILE_ID_MAP[p.id];
+        }
+    }
+    if (LEGACY_PROFILE_ID_MAP[next.activeProfileId]) {
+        next.activeProfileId = LEGACY_PROFILE_ID_MAP[next.activeProfileId];
+    }
+
+    const builtInRules = _buildBuiltInRules(now);
+    for (const builtInRule of builtInRules) {
+        const idx = next.rules.findIndex(r => r.id === builtInRule.id);
+        if (idx < 0) {
+            next.rules.push(_cloneRule(builtInRule));
+        } else {
+            next.rules[idx] = _upsertBuiltInRule(next.rules[idx], builtInRule);
+        }
+    }
+
+    const builtInProfiles = _buildBuiltInProfiles();
+    for (const builtIn of builtInProfiles) {
+        const idx = next.profiles.findIndex(p => p.id === builtIn.id);
+        if (idx < 0) {
+            next.profiles.push(_cloneProfile(builtIn));
+        } else {
+            next.profiles[idx] = {
+                ...next.profiles[idx],
+                id: builtIn.id,
+                name: builtIn.name,
+                description: builtIn.description,
+                ruleIds: [...builtIn.ruleIds],
+                isBuiltIn: true,
+            };
+        }
+    }
+
+    const knownRuleIds = new Set(next.rules.map(r => r.id));
+    next.profiles = next.profiles
+        .map(profile => ({
+            ...profile,
+            ruleIds: profile.ruleIds.filter(ruleId => knownRuleIds.has(ruleId)),
+        }))
+        .filter((profile, idx, arr) => arr.findIndex(p => p.id === profile.id) === idx);
+
+    if (!next.profiles.some(p => p.id === next.activeProfileId)) {
+        next.activeProfileId = BUILTIN_GUARDRAIL_PROFILE_IDS.casual;
+    }
+
+    return next;
+}
+
+export function createBlankGuardrailProfile(
+    config: GuardrailPolicyConfig,
+    name: string = 'Custom Profile',
+): GuardrailPolicyConfig {
+    const profileId = _makeCustomProfileId(config.profiles);
+    const nextProfile: GuardrailProfile = {
+        id: profileId,
+        name: _sanitizeProfileName(name, 'Custom Profile'),
+        ruleIds: [],
+        isBuiltIn: false,
+    };
+    return {
+        ...config,
+        profiles: [...config.profiles.map(_cloneProfile), nextProfile],
+        activeProfileId: profileId,
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+export function cloneGuardrailProfile(
+    config: GuardrailPolicyConfig,
+    sourceProfileId: string,
+    name?: string,
+): GuardrailPolicyConfig {
+    const source = config.profiles.find(p => p.id === sourceProfileId);
+    if (!source) {
+        throw new Error(`Profile '${sourceProfileId}' not found`);
+    }
+    const profileId = _makeCustomProfileId(config.profiles);
+    const nextProfile: GuardrailProfile = {
+        id: profileId,
+        name: _sanitizeProfileName(name ?? `${source.name} Copy`, `${source.name} Copy`),
+        ruleIds: [...source.ruleIds],
+        isBuiltIn: false,
+    };
+    return {
+        ...config,
+        profiles: [...config.profiles.map(_cloneProfile), nextProfile],
+        activeProfileId: profileId,
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+export function renameGuardrailProfile(
+    config: GuardrailPolicyConfig,
+    profileId: string,
+    nextName: string,
+): GuardrailPolicyConfig {
+    const profile = config.profiles.find(p => p.id === profileId);
+    if (!profile) {
+        throw new Error(`Profile '${profileId}' not found`);
+    }
+    if (profile.isBuiltIn || profile.readonly) {
+        throw new Error(`Built-in profile '${profile.name}' cannot be renamed`);
+    }
+    const trimmedName = _sanitizeProfileName(nextName, profile.name);
+    return {
+        ...config,
+        profiles: config.profiles.map(p => (p.id === profileId ? { ...p, name: trimmedName } : _cloneProfile(p))),
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+export function deleteGuardrailProfile(
+    config: GuardrailPolicyConfig,
+    profileId: string,
+): GuardrailPolicyConfig {
+    const profile = config.profiles.find(p => p.id === profileId);
+    if (!profile) {
+        throw new Error(`Profile '${profileId}' not found`);
+    }
+    if (profile.isBuiltIn || profile.readonly) {
+        throw new Error(`Built-in profile '${profile.name}' cannot be deleted`);
+    }
+    const remaining = config.profiles.filter(p => p.id !== profileId).map(_cloneProfile);
+    const fallbackActive = remaining.find(p => p.id === config.activeProfileId)?.id
+        ?? remaining[0]?.id
+        ?? BUILTIN_GUARDRAIL_PROFILE_IDS.casual;
+    return {
+        ...config,
+        profiles: remaining,
+        activeProfileId: fallbackActive,
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+export function setActiveGuardrailProfile(
+    config: GuardrailPolicyConfig,
+    profileId: string,
+): GuardrailPolicyConfig {
+    if (!config.profiles.some(p => p.id === profileId)) {
+        throw new Error(`Profile '${profileId}' not found`);
+    }
+    return {
+        ...config,
+        activeProfileId: profileId,
+        updatedAt: new Date().toISOString(),
     };
 }
 
