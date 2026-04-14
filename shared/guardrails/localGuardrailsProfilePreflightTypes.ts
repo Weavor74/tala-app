@@ -7,6 +7,7 @@ export interface GuardrailPreflightProviderStatus {
     status: GuardrailPreflightStatus;
     ready: boolean;
     message?: string;
+    fixHint?: string;
 }
 
 export interface GuardrailPreflightBindingProbeStatus {
@@ -25,6 +26,7 @@ export interface GuardrailPreflightBindingStatus {
     failOpen: boolean;
     status: GuardrailPreflightStatus;
     message?: string;
+    fixHint?: string;
     probe: GuardrailPreflightBindingProbeStatus;
 }
 
@@ -48,4 +50,3 @@ export interface GuardrailProfilePreflightResult {
     summary: GuardrailPreflightSummary;
     issues: string[];
 }
-

@@ -616,10 +616,10 @@ export class IpcRouter {
     });
 
     /** Runs profile-level local preflight (non-enforcement) against configured guardrail bindings. */
-    ipcMain.handle('guardrail:run-profile-preflight', async (_e, payload?: { profileId?: string }) => {
+    ipcMain.handle('guardrail:run-profile-preflight', async (_e, payload?: { profileId?: string; policy?: any }) => {
       const appSettings = loadSettings(getSettingsPath());
       const policy = normalizeGuardrailPolicyConfig(
-        appSettings.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig(),
+        payload?.policy ?? appSettings.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig(),
       );
       const profileId = payload?.profileId ?? policy.activeProfileId;
       return localGuardrailsProfilePreflightService.runProfilePreflight({

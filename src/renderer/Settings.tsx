@@ -49,6 +49,7 @@ import {
     type LocalGuardrailsValidatorCatalogEntry,
 } from '../../shared/guardrails/localGuardrailsValidatorCatalog';
 import type { GuardrailProfilePreflightResult } from '../../shared/guardrails/localGuardrailsProfilePreflightTypes';
+import { evaluateGuardrailProfileActivationSafety } from '../../shared/guardrails/guardrailActivationSafety';
 
 // Styles
 const containerStyle = { padding: '30px', maxWidth: '900px', margin: '0 auto', color: '#ccc', height: '100%', display: 'flex', flexDirection: 'column' as const };
@@ -4692,8 +4693,29 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
         }
     };
 
-    const handleProfileChange = (profileId: string) => {
-        savePolicy(setActiveGuardrailProfile(policy, profileId));
+    const handleProfileChange = async (profileId: string) => {
+        if (!api?.runGuardrailProfilePreflight) {
+            savePolicy(setActiveGuardrailProfile(policy, profileId));
+            return;
+        }
+
+        try {
+            const preflight = await api.runGuardrailProfilePreflight(profileId, policy);
+            const typedPreflight = preflight as GuardrailProfilePreflightResult;
+            setProfilePreflightResult(typedPreflight);
+            const decision = evaluateGuardrailProfileActivationSafety(typedPreflight);
+            if (!decision.allowActivation) {
+                flash(decision.message);
+                return;
+            }
+
+            savePolicy(setActiveGuardrailProfile(policy, profileId));
+            if (decision.warnUser) {
+                flash(decision.message);
+            }
+        } catch (err: any) {
+            flash(`Preflight check failed: ${err?.message ?? 'unknown error'}`);
+        }
     };
 
     const handleCreateProfile = () => {
@@ -4729,7 +4751,7 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
         if (!selectedProfile || !api?.runGuardrailProfilePreflight) return;
         setProfilePreflightBusy(true);
         try {
-            const result = await api.runGuardrailProfilePreflight(selectedProfile.id);
+            const result = await api.runGuardrailProfilePreflight(selectedProfile.id, policy);
             setProfilePreflightResult(result as GuardrailProfilePreflightResult);
         } catch (err: any) {
             setProfilePreflightResult({
@@ -5018,11 +5040,13 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
                         {profilePreflightResult.providers.filter(p => p.status !== 'ready').map(p => (
                             <div key={p.providerKind} style={{ fontSize: 10, color: '#d79921' }}>
                                 Provider {p.providerKind}: {p.message ?? p.status}
+                                {p.fixHint ? ` | Fix: ${p.fixHint}` : ''}
                             </div>
                         ))}
                         {profilePreflightResult.bindings.filter(b => b.status !== 'ready').slice(0, 6).map(b => (
                             <div key={`${b.ruleId}:${b.bindingId}`} style={{ fontSize: 10, color: '#cc241d' }}>
                                 Binding {b.bindingName} ({b.providerKind}): {b.message ?? b.status}
+                                {b.fixHint ? ` | Fix: ${b.fixHint}` : ''}
                             </div>
                         ))}
                     </div>

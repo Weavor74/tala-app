@@ -75,6 +75,10 @@ function passProbeResult(validatorId: string): GuardrailValidationResult {
     };
 }
 
+function noopSnapshotStore() {
+    return { appendSnapshot: vi.fn() };
+}
+
 describe('LocalGuardrailsProfilePreflightService', () => {
     it('returns ready when all providers and bindings are healthy', async () => {
         const runtimeHealth = {
@@ -91,6 +95,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
             testBinding: vi.fn(async (input: any) => passProbeResult(input.binding.id)),
         };
         const service = new LocalGuardrailsProfilePreflightService({ runtimeHealth: runtimeHealth as any, probeService: probeService as any });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-ready', [
             rule('r-1', [binding('b-1', 'local_guardrails_ai', false)]),
@@ -118,6 +123,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
                 testBinding: vi.fn(),
             } as any,
         });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-degraded', [
             rule('r-1', [binding('b-1', 'local_guardrails_ai', true)]),
@@ -144,6 +150,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
                 testBinding: vi.fn(),
             } as any,
         });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-blocked', [
             rule('r-1', [binding('b-1', 'local_guardrails_ai', false)]),
@@ -179,6 +186,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
             }),
         };
         const service = new LocalGuardrailsProfilePreflightService({ runtimeHealth: runtimeHealth as any, probeService: probeService as any });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-multi', [
             rule('r-1', [binding('b-good', 'local_guardrails_ai', false)]),
@@ -201,6 +209,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
                 testBinding: vi.fn(),
             } as any,
         });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-empty', [rule('r-empty', [])]);
         const result = await service.runProfilePreflight({ policy: config, profileId: 'p-empty' });
@@ -218,6 +227,7 @@ describe('LocalGuardrailsProfilePreflightService', () => {
             testBinding: vi.fn(),
         };
         const service = new LocalGuardrailsProfilePreflightService({ runtimeHealth: runtimeHealth as any, probeService: probeService as any });
+        (service as any)._snapshotStore = noopSnapshotStore();
 
         const config = policyWithProfile('p-remote', [
             rule('r-remote', [binding('b-remote', 'remote_guardrails_service', false)]),
@@ -230,5 +240,75 @@ describe('LocalGuardrailsProfilePreflightService', () => {
         expect(runtimeHealth.checkReadiness).not.toHaveBeenCalled();
         expect(probeService.testBinding).not.toHaveBeenCalled();
     });
-});
 
+    it('provides fix hints for missing python and guardrails package failures', async () => {
+        const service = new LocalGuardrailsProfilePreflightService({
+            runtimeHealth: {
+                checkReadiness: vi.fn(async () => ({
+                    providerKind: 'local_guardrails_ai',
+                    checkedAt: '',
+                    ready: false,
+                    python: { resolved: false, error: 'Python interpreter not found' },
+                    runner: { path: '/runtime/guardrails/local_guardrails_runner.py', exists: false },
+                    guardrails: { importable: false, error: 'No module named guardrails' },
+                })),
+            } as any,
+            probeService: { testBinding: vi.fn() } as any,
+            snapshotStore: noopSnapshotStore() as any,
+        });
+
+        const config = policyWithProfile('p-fix', [
+            rule('r-1', [binding('b-1', 'local_guardrails_ai', true)]),
+        ]);
+        const result = await service.runProfilePreflight({ policy: config, profileId: 'p-fix' });
+        expect(result.providers[0]?.fixHint).toContain('Python');
+        expect(result.bindings[0]?.fixHint).toContain('Python');
+    });
+
+    it('supports provider readiness transitions for local_presidio and local_opa', async () => {
+        const snapshotStore = noopSnapshotStore();
+        const service = new LocalGuardrailsProfilePreflightService({
+            runtimeHealth: { checkReadiness: vi.fn() } as any,
+            probeService: { testBinding: vi.fn() } as any,
+            resolvePythonPath: vi.fn(async () => '/python'),
+            checkPythonImport: vi.fn(async () => ({ ok: true })),
+            checkLocalOPA: vi.fn(async () => ({ ok: true })),
+            snapshotStore: snapshotStore as any,
+        });
+
+        const config = policyWithProfile('p-providers', [
+            rule('r-1', [binding('b-presidio', 'local_presidio', false)]),
+            rule('r-2', [binding('b-opa', 'local_opa', false)]),
+        ]);
+
+        const result = await service.runProfilePreflight({ policy: config, profileId: 'p-providers' });
+        expect(result.status).toBe('ready');
+        expect(result.providers.every(p => p.status === 'ready')).toBe(true);
+    });
+
+    it('persists snapshots for completed preflight runs', async () => {
+        const snapshotStore = noopSnapshotStore();
+        const service = new LocalGuardrailsProfilePreflightService({
+            runtimeHealth: {
+                checkReadiness: vi.fn(async () => ({
+                    providerKind: 'local_guardrails_ai',
+                    checkedAt: '',
+                    ready: true,
+                    python: { resolved: true, path: 'python' },
+                    runner: { path: '/runtime/guardrails/local_guardrails_runner.py', exists: true },
+                    guardrails: { importable: true, version: '0.6.3' },
+                })),
+            } as any,
+            probeService: {
+                testBinding: vi.fn(async (input: any) => passProbeResult(input.binding.id)),
+            } as any,
+            snapshotStore: snapshotStore as any,
+        });
+
+        const config = policyWithProfile('p-snap', [
+            rule('r-1', [binding('b-1', 'local_guardrails_ai', false)]),
+        ]);
+        await service.runProfilePreflight({ policy: config, profileId: 'p-snap' });
+        expect(snapshotStore.appendSnapshot).toHaveBeenCalledTimes(1);
+    });
+});
