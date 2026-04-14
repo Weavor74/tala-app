@@ -28,6 +28,8 @@ import type { McpLifecycleManager } from './McpLifecycleManager';
 import type { McpService } from './McpService';
 import type { OperatorActionRecord } from '../../shared/runtimeDiagnosticsTypes';
 import type { McpServerConfig } from '../../shared/settings';
+import type { SystemCapability } from '../../shared/system-health-types';
+import { SystemModeManager } from './SystemModeManager';
 
 // ─── Action result ────────────────────────────────────────────────────────────
 
@@ -74,6 +76,8 @@ export class RuntimeControlService {
      * Emits provider_restart_requested/completed telemetry.
      */
     public async restartProvider(providerId: string): Promise<ControlActionResult> {
+        const blocked = this.guardModeCapability('tool_execute_diagnostic', 'provider_restart', providerId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const inventory = this.inferenceService.getProviderInventory();
         const provider = inventory.providers.find(p => p.providerId === providerId);
@@ -158,6 +162,8 @@ export class RuntimeControlService {
      * Debounced to prevent probe storms.
      */
     public async probeProviders(): Promise<ControlActionResult> {
+        const blocked = this.guardModeCapability('tool_execute_diagnostic', 'provider_probe', 'all');
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const now = Date.now();
         if (now - this.lastProbeTime < PROBE_DEBOUNCE_MS) {
@@ -179,6 +185,8 @@ export class RuntimeControlService {
      * Does not permanently remove the provider.
      */
     public disableProvider(providerId: string, reason?: string): ControlActionResult {
+        const blocked = this.guardModeCapability('tool_execute_write', 'provider_disable', providerId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const inventory = this.inferenceService.getProviderInventory();
         const provider = inventory.providers.find(p => p.providerId === providerId);
@@ -216,6 +224,8 @@ export class RuntimeControlService {
      * Re-enables a previously suppressed provider.
      */
     public enableProvider(providerId: string, reason?: string): ControlActionResult {
+        const blocked = this.guardModeCapability('tool_execute_write', 'provider_enable', providerId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const inventory = this.inferenceService.getProviderInventory();
         const provider = inventory.providers.find(p => p.providerId === providerId);
@@ -257,6 +267,8 @@ export class RuntimeControlService {
      * Forces selection of a specific provider for the current session.
      */
     public forceProviderSelection(providerId: string, reason?: string): ControlActionResult {
+        const blocked = this.guardModeCapability('tool_execute_write', 'provider_force_select', providerId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const inventory = this.inferenceService.getProviderInventory();
         const priorSelected = inventory.selectedProviderId ?? 'auto';
@@ -294,6 +306,8 @@ export class RuntimeControlService {
      * Restarts an MCP service by disconnecting and reconnecting.
      */
     public async restartMcpService(serviceId: string, mcpConfigs: McpServerConfig[]): Promise<ControlActionResult> {
+        const blocked = this.guardModeCapability('tool_execute_diagnostic', 'mcp_restart', serviceId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const health = this.mcpService.getServiceHealth(serviceId);
         const priorState = health?.state?.toString() ?? 'unknown';
@@ -374,6 +388,8 @@ export class RuntimeControlService {
      * Disables an MCP service (prevents invocation, disconnects it).
      */
     public async disableMcpService(serviceId: string): Promise<ControlActionResult> {
+        const blocked = this.guardModeCapability('tool_execute_write', 'mcp_disable', serviceId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const health = this.mcpService.getServiceHealth(serviceId);
         const priorState = health?.state?.toString() ?? 'unknown';
@@ -408,6 +424,8 @@ export class RuntimeControlService {
      * Re-enables a previously disabled MCP service.
      */
     public async enableMcpService(serviceId: string, mcpConfigs: McpServerConfig[]): Promise<ControlActionResult> {
+        const blocked = this.guardModeCapability('tool_execute_write', 'mcp_enable', serviceId);
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const config = mcpConfigs.find(c => c.id === serviceId);
         if (!config) {
@@ -454,6 +472,8 @@ export class RuntimeControlService {
      * Debounced to prevent probe storms.
      */
     public probeMcpServices(): ControlActionResult {
+        const blocked = this.guardModeCapability('tool_execute_diagnostic', 'mcp_probe', 'all');
+        if (blocked) return blocked;
         const correlationId = uuidv4();
         const now = Date.now();
         if (now - this.lastMcpProbeTime < PROBE_DEBOUNCE_MS) {
@@ -540,5 +560,29 @@ export class RuntimeControlService {
                 });
             }
         }
+    }
+
+    /**
+     * Central mode contract guard for runtime control actions.
+     * Returns a deterministic denied action result instead of throwing so
+     * existing IPC callers retain their success/error contract shape.
+     */
+    private guardModeCapability(
+        capability: SystemCapability,
+        action: OperatorActionRecord['action'],
+        entityId: string,
+    ): ControlActionResult | null {
+        const check = SystemModeManager.checkCapability(
+            capability,
+            `RuntimeControlService.${action}`,
+        );
+        if (check.allowed) return null;
+        return {
+            success: false,
+            entityId,
+            action,
+            correlationId: uuidv4(),
+            error: `${check.reason} (${check.reason_code}; mode=${check.effective_mode}; capability=${capability})`,
+        };
     }
 }

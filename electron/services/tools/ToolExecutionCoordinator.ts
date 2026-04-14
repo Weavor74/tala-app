@@ -5,6 +5,7 @@ import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCircuitBreaker';
 import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
+import { SystemModeManager } from '../SystemModeManager';
 
 /**
  * Context carried through a single tool invocation.
@@ -147,6 +148,14 @@ export class ToolExecutionCoordinator {
         allowedNames?: ReadonlySet<string>,
         ctx?: ToolInvocationContext,
     ): Promise<ToolInvocationResult> {
+        // ── 0. Runtime mode contract (deterministic capability gate) ─────────
+        const capability = SystemModeManager.resolveToolCapability(name);
+        SystemModeManager.assertCapability(
+            capability,
+            'ToolExecutionCoordinator.executeTool',
+            ctx?.executionId,
+        );
+
         // ── 1. Policy gate (throws PolicyDeniedError before any telemetry) ────
         const sideEffectCtx: SideEffectContext = {
             actionKind: 'tool_invoke',

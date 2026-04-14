@@ -89,3 +89,13 @@ Triggers a health check / re-probe of all MCP services. Debounced to prevent pr
 **Returns**: `void`
 
 ---
+#### `guardModeCapability`
+Central mode contract guard for runtime control actions.
+ Returns a deterministic denied action result instead of throwing so
+ existing IPC callers retain their success/error contract shape.
+/
+
+**Arguments**: `capability: SystemCapability, action: OperatorActionRecord['action'], entityId: string,`
+**Returns**: `ControlActionResult | null`
+
+---

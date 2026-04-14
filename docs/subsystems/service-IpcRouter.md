@@ -56,6 +56,7 @@ import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrails
 import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
 import type { SystemCapability } from '../../shared/system-health-types';
+import { SystemModeManager } from './SystemModeManager';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,

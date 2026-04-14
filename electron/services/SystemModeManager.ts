@@ -1,6 +1,8 @@
 import type {
     SystemCapability,
+    SystemCapabilityAvailability,
     SystemDegradationFlag,
+    SystemHealthSnapshot,
     SystemHealthOverallStatus,
     SystemModeContract,
     SystemModeTransition,
@@ -25,6 +27,39 @@ export interface SystemModeSnapshot {
     modeContract: SystemModeContract;
     recentTransitions: SystemModeTransition[];
 }
+
+interface ModeDiagnosticsProvider {
+    getSystemHealthSnapshot(sessionId?: string): SystemHealthSnapshot;
+    isCapabilityAllowed(
+        capability: SystemCapability,
+        sessionId?: string,
+    ): { allowed: boolean; effective_mode: string; reason: string };
+}
+
+export interface SystemModeCapabilityCheck {
+    allowed: boolean;
+    capability: SystemCapability;
+    effective_mode: string;
+    reason: string;
+    reason_code: string;
+}
+
+const READ_TOOL_HINTS = new Set<string>([
+    'fs_read_',
+    'fs_list',
+    'search_',
+    'browser_get_',
+    'browser_screenshot',
+    'mem0_search',
+    'mem0_get_',
+]);
+
+const DIAGNOSTIC_TOOL_HINTS = new Set<string>([
+    'diagnostic',
+    'health',
+    'probe',
+    'status',
+]);
 
 const BASE_ALLOWED_CAPABILITIES: SystemCapability[] = [
     'chat_inference',
@@ -188,6 +223,7 @@ const MODE_CONTRACTS: Record<SystemOperatingMode, Omit<SystemModeContract, 'mode
 };
 
 export class SystemModeManager {
+    private static diagnosticsProviderResolver: (() => ModeDiagnosticsProvider | null) | null = null;
     private currentMode: SystemOperatingMode = 'NORMAL';
     private recentTransitions: SystemModeTransition[] = [];
     private operatorModeOverride: {
@@ -197,10 +233,101 @@ export class SystemModeManager {
         requestedBy?: string;
     } | null = null;
 
+    public static configureDiagnosticsProvider(resolver: () => ModeDiagnosticsProvider | null): void {
+        SystemModeManager.diagnosticsProviderResolver = resolver;
+    }
+
+    public static clearDiagnosticsProviderForTests(): void {
+        SystemModeManager.diagnosticsProviderResolver = null;
+    }
+
+    public static getCapabilityMatrix(sessionId?: string): SystemCapabilityAvailability[] {
+        const snapshot = SystemModeManager.getSystemHealthSnapshot(sessionId);
+        return snapshot?.capability_matrix ?? [];
+    }
+
+    public static getSystemHealthSnapshot(sessionId?: string): SystemHealthSnapshot | null {
+        const provider = SystemModeManager.diagnosticsProviderResolver?.();
+        if (!provider) return null;
+        return provider.getSystemHealthSnapshot(sessionId);
+    }
+
+    public static checkCapability(
+        capability: SystemCapability,
+        source: string,
+        sessionId?: string,
+    ): SystemModeCapabilityCheck {
+        const provider = SystemModeManager.diagnosticsProviderResolver?.();
+        if (!provider) {
+            return {
+                allowed: true,
+                capability,
+                effective_mode: 'NORMAL',
+                reason: 'mode_provider_not_configured',
+                reason_code: 'mode_provider_not_configured',
+            };
+        }
+
+        const check = provider.isCapabilityAllowed(capability, sessionId);
+        const normalizedMode = (check.effective_mode || 'UNKNOWN').toLowerCase();
+        const reasonCode = check.allowed
+            ? `allowed_by_mode_contract:${normalizedMode}`
+            : `blocked_by_mode_contract:${normalizedMode}`;
+        if (!check.allowed) {
+            TelemetryBus.getInstance().emit({
+                executionId: `${source}-${Date.now()}`,
+                subsystem: 'system',
+                event: 'execution.blocked',
+                phase: 'mode_contract',
+                payload: {
+                    source,
+                    capability,
+                    mode: check.effective_mode,
+                    reason: check.reason,
+                    reasonCode,
+                },
+            });
+        }
+        return {
+            allowed: check.allowed,
+            capability,
+            effective_mode: check.effective_mode,
+            reason: check.reason,
+            reason_code: reasonCode,
+        };
+    }
+
+    public static assertCapability(
+        capability: SystemCapability,
+        source: string,
+        sessionId?: string,
+    ): SystemModeCapabilityCheck {
+        const check = SystemModeManager.checkCapability(capability, source, sessionId);
+        if (!check.allowed) {
+            throw new Error(`Blocked by runtime mode ${check.effective_mode}: capability ${capability} is not permitted.`);
+        }
+        return check;
+    }
+
+    public static resolveToolCapability(toolName: string): SystemCapability {
+        const normalized = toolName.toLowerCase();
+        for (const hint of READ_TOOL_HINTS) {
+            if (normalized.startsWith(hint) || normalized.includes(hint)) {
+                return 'tool_execute_read';
+            }
+        }
+        for (const hint of DIAGNOSTIC_TOOL_HINTS) {
+            if (normalized.includes(hint)) {
+                return 'tool_execute_diagnostic';
+            }
+        }
+        return 'tool_execute_write';
+    }
+
     public evaluate(input: ModeInput): SystemModeSnapshot {
         const activeFlags = this.deriveFlags(input);
         const nextMode = this.resolveEffectiveMode(input, activeFlags);
-        const transition = this.recordTransitionIfNeeded(input.timestamp, nextMode, activeFlags);
+        const transition = this.recordTransitionIfNeeded(input.timestamp, nextMode, activeFlags, input);
 
         if (transition) {
             TelemetryBus.getInstance().emit({
@@ -304,13 +431,14 @@ export class SystemModeManager {
         now: string,
         nextMode: SystemOperatingMode,
         flags: SystemDegradationFlag[],
+        input: ModeInput,
     ): SystemModeTransition | null {
         if (nextMode === this.currentMode) return null;
         const transition: SystemModeTransition = {
             from_mode: this.currentMode,
             to_mode: nextMode,
             transitioned_at: now,
-            reason_codes: flags.length > 0 ? flags : ['deterministic_mode_transition'],
+            reason_codes: this.deriveTransitionReasonCodes(nextMode, flags, input),
         };
         this.currentMode = nextMode;
         this.recentTransitions.push(transition);
@@ -318,5 +446,31 @@ export class SystemModeManager {
             this.recentTransitions = this.recentTransitions.slice(-30);
         }
         return transition;
+    }
+
+    /**
+     * Deterministic transition reason-code derivation.
+     * Invariant: identical input + prior mode always yields identical reason_codes.
+     */
+    private deriveTransitionReasonCodes(
+        nextMode: SystemOperatingMode,
+        flags: SystemDegradationFlag[],
+        input: ModeInput,
+    ): string[] {
+        const reasons = new Set<string>();
+        reasons.add(`mode_entered:${nextMode.toLowerCase()}`);
+        for (const flag of flags) {
+            reasons.add(`flag:${flag.toLowerCase()}`);
+        }
+        if (input.overallStatus !== 'healthy') {
+            reasons.add(`overall_status:${input.overallStatus}`);
+        }
+        for (const capability of [...input.blockedCapabilities].sort()) {
+            reasons.add(`blocked:${capability}`);
+        }
+        if (this.operatorModeOverride) {
+            reasons.add(`operator_override:${this.operatorModeOverride.mode.toLowerCase()}`);
+        }
+        return Array.from(reasons.values());
     }
 }

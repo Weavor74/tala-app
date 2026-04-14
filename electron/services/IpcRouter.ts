@@ -56,6 +56,7 @@ import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrails
 import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
 import type { SystemCapability } from '../../shared/system-health-types';
+import { SystemModeManager } from './SystemModeManager';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
@@ -148,22 +149,7 @@ export class IpcRouter {
       return VALID_EXECUTION_MODES.has(rawMode) ? (rawMode as RuntimeExecutionMode) : 'assistant';
     };
     const enforceModeCapability = (capability: SystemCapability, source: string): { mode: string } => {
-      const check = this.ctx.diagnosticsAggregator.isCapabilityAllowed(capability);
-      if (!check.allowed) {
-        TelemetryBus.getInstance().emit({
-          executionId: `${source}-${Date.now()}`,
-          subsystem: 'router',
-          event: 'execution.blocked',
-          phase: 'mode_contract',
-          payload: {
-            source,
-            capability,
-            mode: check.effective_mode,
-            reason: check.reason,
-          },
-        });
-        throw new Error(`Blocked by runtime mode ${check.effective_mode}: capability ${capability} is not permitted.`);
-      }
+      const check = SystemModeManager.assertCapability(capability, source);
       return { mode: check.effective_mode };
     };
 

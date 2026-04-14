@@ -37,7 +37,16 @@
 
 ---
 #### `recordTransitionIfNeeded`
-**Arguments**: `now: string, nextMode: SystemOperatingMode, flags: SystemDegradationFlag[],`
+**Arguments**: `now: string, nextMode: SystemOperatingMode, flags: SystemDegradationFlag[], input: ModeInput,`
 **Returns**: `SystemModeTransition | null`
+
+---
+#### `deriveTransitionReasonCodes`
+Deterministic transition reason-code derivation.
+ Invariant: identical input + prior mode always yields identical reason_codes.
+/
+
+**Arguments**: `nextMode: SystemOperatingMode, flags: SystemDegradationFlag[], input: ModeInput,`
+**Returns**: `string[]`
 
 ---

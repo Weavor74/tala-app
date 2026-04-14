@@ -56,6 +56,7 @@ import { McpLifecycleManager } from './services/McpLifecycleManager';
 import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './services/RuntimeControlService';
 import { OperatorActionService } from './services/OperatorActionService';
+import { SystemModeManager } from './services/SystemModeManager';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
 import { initCanonicalMemory, shutdownCanonicalMemory, getResearchRepository, getEmbeddingsRepository } from './services/db/initMemoryStore';
@@ -645,6 +646,8 @@ const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(
     getReflectionSummary: () => agent.getReflectionSummary(),
   },
 );
+// Phase D: central mode manager delegates to the canonical diagnostics provider.
+SystemModeManager.configureDiagnosticsProvider(() => diagnosticsAggregator);
 const operatorActionService = new OperatorActionService({
   diagnosticsAggregator,
   runtimeControl,
@@ -919,5 +922,4 @@ ipcRouter.registerAll();
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
-
 

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceDiagnosticsState, McpInventoryDiagnostics, RuntimeFailureSummary } from '../../../shared/runtimeDiagnosticsTypes';
+import type { SystemCapability } from '../../../shared/system-health-types';
 import { SystemHealthService } from '../../services/SystemHealthService';
+import { SystemModeManager } from '../../services/SystemModeManager';
 
 let mockDbHealth: any = {
     reachable: true,
@@ -63,6 +65,7 @@ const noFailures: RuntimeFailureSummary = {
 
 describe('SystemHealthService', () => {
     beforeEach(() => {
+        SystemModeManager.clearDiagnosticsProviderForTests();
         mockDbHealth = {
             reachable: true,
             authenticated: true,
@@ -171,4 +174,104 @@ describe('SystemHealthService', () => {
             Boolean(entry.last_checked_at) && Boolean(entry.last_changed_at) && Boolean(entry.operator_impact),
         )).toBe(true);
     });
+
+    it('emits deterministic mode transition reason codes from health reductions', () => {
+        const service = new SystemHealthService();
+        const degraded = service.buildSnapshot({
+            now: '2026-04-14T12:00:00.000Z',
+            inference: makeInference({ fallbackApplied: true }),
+            mcp: makeMcp(),
+            recentFailures: noFailures,
+            suppressedProviders: [],
+        });
+
+        expect(degraded.effective_mode).toBe('DEGRADED_INFERENCE');
+        expect(degraded.recent_mode_transitions).toHaveLength(1);
+        expect(degraded.recent_mode_transitions[0].reason_codes).toEqual([
+            'mode_entered:degraded_inference',
+            'flag:degraded_inference',
+            'overall_status:degraded',
+        ]);
+    });
+
+    it('keeps mode transitions idempotent for repeated equivalent health states', () => {
+        const service = new SystemHealthService();
+        const input = {
+            now: '2026-04-14T12:00:00.000Z',
+            inference: makeInference({ fallbackApplied: true }),
+            mcp: makeMcp(),
+            recentFailures: noFailures,
+            suppressedProviders: [],
+        };
+
+        const first = service.buildSnapshot(input);
+        const second = service.buildSnapshot(input);
+        expect(first.recent_mode_transitions).toHaveLength(1);
+        expect(second.recent_mode_transitions).toHaveLength(1);
+        expect(second.recent_mode_transitions[0]).toEqual(first.recent_mode_transitions[0]);
+    });
+
+    it('exposes deterministic capability checks through the central mode contract', () => {
+        const health = makeSnapshotContractFixture();
+        SystemModeManager.configureDiagnosticsProvider(() => ({
+            getSystemHealthSnapshot: () => health,
+            isCapabilityAllowed: (_capability: SystemCapability) => ({
+                allowed: false,
+                effective_mode: 'SAFE_MODE',
+                reason: 'blocked_by_mode_contract:SAFE_MODE',
+            }),
+        }));
+
+        const denied = SystemModeManager.checkCapability('tool_execute_write', 'system-health-test');
+        expect(denied.allowed).toBe(false);
+        expect(denied.reason_code).toBe('blocked_by_mode_contract:safe_mode');
+        expect(() => SystemModeManager.assertCapability('tool_execute_write', 'system-health-test')).toThrow(
+            /Blocked by runtime mode SAFE_MODE/,
+        );
+        expect(SystemModeManager.resolveToolCapability('fs_read_text')).toBe('tool_execute_read');
+        expect(SystemModeManager.resolveToolCapability('provider_health_probe')).toBe('tool_execute_diagnostic');
+    });
 });
+
+function makeSnapshotContractFixture() {
+    return {
+        timestamp: '2026-04-14T12:00:00.000Z',
+        overall_status: 'healthy' as const,
+        subsystem_entries: [],
+        trust_score: 1,
+        trust_score_inputs: {
+            expected_max_age_ms: 60_000,
+            db_evidence_observed: true,
+            inference_evidence_observed: true,
+            telemetry_freshness_penalty: 0,
+            stale_component_count: 0,
+            missing_evidence_count: 0,
+            suppressed_assumption_count: 0,
+        },
+        degraded_capabilities: [],
+        blocked_capabilities: [],
+        active_fallbacks: [],
+        active_incidents: [],
+        pending_repairs: [],
+        current_mode: 'NORMAL' as const,
+        effective_mode: 'NORMAL' as const,
+        active_degradation_flags: [],
+        mode_contract: {
+            mode: 'NORMAL' as const,
+            entry_conditions: [],
+            exit_conditions: [],
+            allowed_capabilities: [],
+            blocked_capabilities: [],
+            fallback_behavior: [],
+            user_facing_behavior_changes: [],
+            telemetry_expectations: [],
+            operator_actions_allowed: [],
+            autonomy_allowed: true,
+            writes_allowed: true,
+            operator_approval_required_for: [],
+        },
+        recent_mode_transitions: [],
+        operator_attention_required: false,
+        capability_matrix: [],
+    };
+}
