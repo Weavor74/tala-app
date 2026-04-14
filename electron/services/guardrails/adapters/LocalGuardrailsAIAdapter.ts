@@ -5,23 +5,12 @@
  *
  * Engine: GuardrailsAI (https://guardrailsai.com/)
  *
- * Integration seam:
- *   In a live deployment this adapter spawns a short-lived Python subprocess
- *   using the configured `validatorName` and `validatorArgs` from the binding.
- *   The subprocess loads `guardrails-ai`, instantiates the named Validator, and
- *   validates the supplied content string, returning a JSON result on stdout.
- *
- *   Current status: subprocess integration is defined as a future-safe boundary.
- *   The adapter skeleton is fully wired (config, error handling, failOpen/Closed,
- *   result normalization) and the execute() method returns a deterministic stub
- *   result so callers can integrate without a live Python environment.
- *
- *   To activate: replace the `_runGuardrailsValidator` method body with a real
- *   `child_process.spawn` call that writes JSON to stdout and reads it back.
- *
  * Node.js (electron/) only.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
 import type { ValidatorBinding } from '../../../../shared/guardrails/guardrailPolicyTypes';
 import type {
     IGuardrailAdapter,
@@ -31,10 +20,9 @@ import type {
     GuardrailEvidence,
 } from '../types';
 import { makeErrorResult, makePassResult, makeViolationResult } from '../types';
+import { APP_ROOT, resolveAppPath } from '../../PathResolver';
+import { SystemService } from '../../SystemService';
 
-// ─── Engine-specific types (internal to this adapter) ────────────────────────
-
-/** Raw result produced by a GuardrailsAI Validator subprocess call. */
 interface RawGuardrailsAIResult {
     passed: boolean;
     output?: string;
@@ -43,7 +31,21 @@ interface RawGuardrailsAIResult {
     validator_name: string;
 }
 
-// ─── Adapter ─────────────────────────────────────────────────────────────────
+interface RunnerInputPayload {
+    validator_name: string;
+    validator_args: Record<string, unknown>;
+    content: string;
+}
+
+interface RunnerOutputEnvelope {
+    ok: boolean;
+    result?: Partial<RawGuardrailsAIResult>;
+    error?: {
+        code?: string;
+        type?: string;
+        message: string;
+    };
+}
 
 /**
  * LocalGuardrailsAIAdapter
@@ -53,6 +55,8 @@ interface RawGuardrailsAIResult {
  */
 export class LocalGuardrailsAIAdapter implements IGuardrailAdapter {
     readonly providerKind = 'local_guardrails_ai';
+    private readonly _systemService = new SystemService();
+    private _pythonPathPromise: Promise<string | undefined> | undefined;
 
     async execute(
         binding: ValidatorBinding,
@@ -99,33 +103,215 @@ export class LocalGuardrailsAIAdapter implements IGuardrailAdapter {
         }
     }
 
-    /**
-     * Invoke a GuardrailsAI validator subprocess and return its raw result.
-     *
-     * Integration boundary: replace this stub with a real child_process.spawn
-     * call that runs:
-     *   python -c "
-     *     from guardrails.hub import <validatorName>
-     *     import json, sys
-     *     v = <validatorName>(**args)
-     *     result = v.validate(content, {})
-     *     print(json.dumps({'passed': result.__class__.__name__ == 'PassResult', ...}))
-     *   "
-     *
-     * For now returns a pass result so the adapter is safe to wire without
-     * a live Python environment.
-     */
+    /** Invoke the Guardrails runner subprocess and normalize the raw JSON result. */
     private async _runGuardrailsValidator(
         validatorName: string,
-        _args: Record<string, unknown>,
-        _content: string,
-        _timeoutMs: number,
+        args: Record<string, unknown>,
+        content: string,
+        timeoutMs: number,
     ): Promise<RawGuardrailsAIResult> {
-        // Stub: always passes until subprocess integration is activated.
-        return {
-            passed: true,
+        const pythonPath = await this._resolvePythonExecutable();
+        if (!pythonPath) {
+            throw new Error('No Python interpreter found for local_guardrails_ai adapter');
+        }
+
+        const runnerPath = this._resolveRunnerPath();
+        if (!fs.existsSync(runnerPath)) {
+            throw new Error(`Guardrails runner script not found at '${runnerPath}'`);
+        }
+
+        const payload: RunnerInputPayload = {
             validator_name: validatorName,
+            validator_args: args,
+            content,
         };
+
+        return new Promise<RawGuardrailsAIResult>((resolve, reject) => {
+            const child = spawn(pythonPath, [runnerPath], {
+                cwd: APP_ROOT,
+                stdio: 'pipe',
+                env: this._systemService.getMcpEnv(process.env as Record<string, string>),
+            });
+
+            let stdout = '';
+            let stderr = '';
+            let settled = false;
+            let timedOut = false;
+
+            const finishError = (error: Error): void => {
+                if (settled) return;
+                settled = true;
+                reject(error);
+            };
+
+            const finishSuccess = (result: RawGuardrailsAIResult): void => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+
+            const timeoutHandle = setTimeout(() => {
+                timedOut = true;
+                child.kill();
+                finishError(
+                    new Error(
+                        `Local Guardrails validator '${validatorName}' timed out after ${timeoutMs}ms`,
+                    ),
+                );
+            }, timeoutMs);
+
+            child.stdout.setEncoding('utf8');
+            child.stderr.setEncoding('utf8');
+
+            child.stdout.on('data', (chunk: string) => {
+                stdout += chunk;
+            });
+
+            child.stderr.on('data', (chunk: string) => {
+                stderr += chunk;
+            });
+
+            child.on('error', (err) => {
+                clearTimeout(timeoutHandle);
+                finishError(
+                    new Error(
+                        `Unable to start Guardrails runner subprocess: ${err.message}`,
+                    ),
+                );
+            });
+
+            child.on('close', (code, signal) => {
+                clearTimeout(timeoutHandle);
+                if (timedOut) return;
+
+                if (code !== 0) {
+                    const details = stderr.trim() || `exit code ${code ?? 'unknown'}`;
+                    finishError(
+                        new Error(
+                            `Guardrails runner failed (${signal ?? 'no-signal'}): ${details}`,
+                        ),
+                    );
+                    return;
+                }
+
+                const trimmed = stdout.trim();
+                if (!trimmed) {
+                    finishError(new Error('Guardrails runner returned empty stdout'));
+                    return;
+                }
+
+                let envelope: RunnerOutputEnvelope;
+                try {
+                    envelope = JSON.parse(trimmed) as RunnerOutputEnvelope;
+                } catch {
+                    finishError(new Error('Guardrails runner returned malformed JSON'));
+                    return;
+                }
+
+                if (!envelope.ok) {
+                    const error = envelope.error;
+                    const codeText = error?.code ? `[${error.code}] ` : '';
+                    const typeText = error?.type ? `(${error.type}) ` : '';
+                    const message = error?.message ?? 'Runner reported unknown error';
+                    finishError(
+                        new Error(`Guardrails runner error ${codeText}${typeText}${message}`.trim()),
+                    );
+                    return;
+                }
+
+                if (!envelope.result) {
+                    finishError(new Error('Guardrails runner JSON missing result payload'));
+                    return;
+                }
+
+                try {
+                    finishSuccess(this._normalizeRunnerResult(validatorName, envelope.result));
+                } catch (err) {
+                    finishError(err as Error);
+                }
+            });
+
+            try {
+                child.stdin.write(JSON.stringify(payload));
+                child.stdin.end();
+            } catch (err) {
+                clearTimeout(timeoutHandle);
+                child.kill();
+                finishError(
+                    new Error(
+                        `Failed to write request payload to Guardrails runner: ${
+                            err instanceof Error ? err.message : String(err)
+                        }`,
+                    ),
+                );
+            }
+        });
+    }
+
+    private _normalizeRunnerResult(
+        fallbackValidatorName: string,
+        result: Partial<RawGuardrailsAIResult>,
+    ): RawGuardrailsAIResult {
+        if (typeof result.passed !== 'boolean') {
+            throw new Error('Guardrails runner JSON missing boolean field: result.passed');
+        }
+
+        return {
+            passed: result.passed,
+            validator_name: result.validator_name ?? fallbackValidatorName,
+            output: typeof result.output === 'string' ? result.output : undefined,
+            error_message:
+                typeof result.error_message === 'string'
+                    ? result.error_message
+                    : undefined,
+            fixed_value:
+                typeof result.fixed_value === 'string' ? result.fixed_value : undefined,
+        };
+    }
+
+    private _resolveRunnerPath(): string {
+        return resolveAppPath(path.join('runtime', 'guardrails', 'local_guardrails_runner.py'));
+    }
+
+    private async _resolvePythonExecutable(): Promise<string | undefined> {
+        if (!this._pythonPathPromise) {
+            this._pythonPathPromise = this._resolvePythonExecutableOnce();
+        }
+        return this._pythonPathPromise;
+    }
+
+    private async _resolvePythonExecutableOnce(): Promise<string | undefined> {
+        const isWin = process.platform === 'win32';
+        const localCandidates = [
+            path.join(APP_ROOT, 'local-inference', 'venv', 'Scripts', 'python.exe'),
+            path.join(APP_ROOT, 'local-inference', 'venv', 'bin', 'python3'),
+            path.join(APP_ROOT, 'local-inference', 'venv', 'bin', 'python'),
+            path.join(APP_ROOT, 'venv', 'Scripts', 'python.exe'),
+            path.join(APP_ROOT, '.venv', 'Scripts', 'python.exe'),
+            path.join(APP_ROOT, 'venv', 'bin', 'python3'),
+            path.join(APP_ROOT, '.venv', 'bin', 'python3'),
+            path.join(APP_ROOT, 'mcp-servers', 'tala-core', 'venv', 'Scripts', 'python.exe'),
+            path.join(APP_ROOT, 'mcp-servers', 'tala-core', 'venv', 'bin', 'python3'),
+            path.join(APP_ROOT, 'bin', 'python-win', 'python.exe'),
+            path.join(APP_ROOT, 'bin', 'python-mac', 'bin', 'python3'),
+            path.join(APP_ROOT, 'bin', 'python-linux', 'bin', 'python3'),
+            path.join(APP_ROOT, 'bin', 'python-portable', isWin ? 'python.exe' : 'python3'),
+            path.join(APP_ROOT, 'bin', 'python-portable', isWin ? 'python.exe' : path.join('bin', 'python3')),
+        ];
+
+        const projectLocal = localCandidates.find(candidate => fs.existsSync(candidate));
+        if (projectLocal) {
+            return projectLocal;
+        }
+
+        const info = await this._systemService.detectEnv(APP_ROOT);
+        if (info.pythonEnvPath && fs.existsSync(info.pythonEnvPath)) {
+            return info.pythonEnvPath;
+        }
+        if (info.pythonPath && info.pythonPath !== 'Not Found') {
+            return info.pythonPath;
+        }
+        return undefined;
     }
 }
 
