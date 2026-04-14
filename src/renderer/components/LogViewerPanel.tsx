@@ -225,7 +225,7 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
 
     const subsystems = useMemo(() => {
         const subs = new Set<string>();
-        ['ollama', 'rag', 'memory', 'astro', 'prompt_audit', 'routing', 'mcp', 'app'].forEach(s => subs.add(s));
+        ['ollama', 'rag', 'memory', 'astro', 'prompt_audit', 'routing', 'mcp', 'guardrails', 'app'].forEach(s => subs.add(s));
         entries.forEach(e => { if (e.subsystem) subs.add(e.subsystem); });
         return Array.from(subs).sort();
     }, [entries]);

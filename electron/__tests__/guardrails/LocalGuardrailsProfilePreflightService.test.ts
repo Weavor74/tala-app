@@ -311,4 +311,43 @@ describe('LocalGuardrailsProfilePreflightService', () => {
         await service.runProfilePreflight({ policy: config, profileId: 'p-snap' });
         expect(snapshotStore.appendSnapshot).toHaveBeenCalledTimes(1);
     });
+
+    it('emits structured guardrails.preflight diagnostics', async () => {
+        const telemetry = { emit: vi.fn() };
+        const service = new LocalGuardrailsProfilePreflightService({
+            runtimeHealth: {
+                checkReadiness: vi.fn(async () => ({
+                    providerKind: 'local_guardrails_ai',
+                    checkedAt: '',
+                    ready: true,
+                    python: { resolved: true, path: 'python' },
+                    runner: { path: '/runtime/guardrails/local_guardrails_runner.py', exists: true },
+                    guardrails: { importable: true, version: '0.6.3' },
+                })),
+            } as any,
+            probeService: {
+                testBinding: vi.fn(async (input: any) => passProbeResult(input.binding.id)),
+            } as any,
+            snapshotStore: noopSnapshotStore() as any,
+            telemetry: telemetry as any,
+        });
+
+        const config = policyWithProfile('p-telemetry', [
+            rule('r-1', [binding('b-1', 'local_guardrails_ai', false)]),
+        ]);
+        await service.runProfilePreflight({ policy: config, profileId: 'p-telemetry' });
+
+        expect(telemetry.emit).toHaveBeenCalledWith(expect.objectContaining({
+            eventName: 'guardrails.preflight',
+            status: 'ready',
+            payload: expect.objectContaining({
+                profileId: 'p-telemetry',
+                summary: expect.objectContaining({
+                    bindingsTotal: 1,
+                    providersTotal: 1,
+                }),
+                durationMs: expect.any(Number),
+            }),
+        }));
+    });
 });

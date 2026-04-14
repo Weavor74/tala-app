@@ -166,4 +166,43 @@ describe('LocalGuardrailsRuntimeHealth', () => {
             else process.env.PYTHONPATH = priorPath;
         }
     });
+
+    it('emits structured guardrails.runtime.health diagnostics', async () => {
+        const child = createMockChildProcess();
+        const telemetry = { emit: vi.fn() };
+        const health = new LocalGuardrailsRuntimeHealth({
+            resolvePythonPath: async () => 'python-local',
+            resolveRunnerPath: () => '/app/runtime/guardrails/local_guardrails_runner.py',
+            fileExists: () => true,
+            spawnProcess: vi.fn(() => child as unknown as ChildProcess),
+            telemetry: telemetry as any,
+        });
+
+        const pending = health.checkReadiness();
+        await Promise.resolve();
+
+        child.stdout.emit('data', JSON.stringify({
+            ok: true,
+            health: {
+                guardrails_importable: true,
+                diagnostics: {
+                    sys_executable: 'python-local',
+                    guardrails_import_succeeded: true,
+                },
+            },
+        }));
+        child.emit('close', 0, null);
+        await pending;
+
+        expect(telemetry.emit).toHaveBeenCalledWith(expect.objectContaining({
+            eventName: 'guardrails.runtime.health',
+            status: 'ready',
+            payload: expect.objectContaining({
+                providerKind: 'local_guardrails_ai',
+                runnerPath: '/app/runtime/guardrails/local_guardrails_runner.py',
+                pythonExecutable: 'python-local',
+                durationMs: expect.any(Number),
+            }),
+        }));
+    });
 });

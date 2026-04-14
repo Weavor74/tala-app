@@ -4700,6 +4700,23 @@ function PolicyAuthoringPanel({ settings, api }: { settings: any; api: any }) {
         }
 
         try {
+            if (api?.evaluateGuardrailProfileActivation) {
+                const evaluation = await api.evaluateGuardrailProfileActivation(profileId, policy);
+                const typedPreflight = evaluation?.preflight as GuardrailProfilePreflightResult;
+                const decision = evaluation?.decision ?? evaluateGuardrailProfileActivationSafety(typedPreflight);
+                setProfilePreflightResult(typedPreflight);
+                if (!decision.allowActivation) {
+                    flash(decision.message);
+                    return;
+                }
+
+                savePolicy(setActiveGuardrailProfile(policy, profileId));
+                if (decision.warnUser) {
+                    flash(decision.message);
+                }
+                return;
+            }
+
             const preflight = await api.runGuardrailProfilePreflight(profileId, policy);
             const typedPreflight = preflight as GuardrailProfilePreflightResult;
             setProfilePreflightResult(typedPreflight);

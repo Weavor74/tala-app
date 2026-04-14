@@ -375,6 +375,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Runs profile-level local preflight for guardrail provider/binding readiness. */
     runGuardrailProfilePreflight: (profileId: string, policy?: any) =>
         ipcRenderer.invoke('guardrail:run-profile-preflight', { profileId, policy }),
+    /** Evaluates activation safety for a guardrail profile and emits activation diagnostics. */
+    evaluateGuardrailProfileActivation: (profileId: string, policy?: any) =>
+        ipcRenderer.invoke('guardrail:evaluate-profile-activation', { profileId, policy }),
 
     // ─── RAG & Search ─────────────────────────────────────────────
     /** Triggers a background scan and ingestion of the memory folder. */

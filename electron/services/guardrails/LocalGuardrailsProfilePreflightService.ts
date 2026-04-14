@@ -21,6 +21,7 @@ import { localGuardrailsPreflightSnapshotStore, type ILocalGuardrailsPreflightSn
 import { resolveLocalGuardrailsPythonPath } from './LocalGuardrailsRuntime';
 import { SystemService } from '../SystemService';
 import { spawn, type ChildProcess } from 'child_process';
+import { guardrailsTelemetry, type IGuardrailsTelemetry } from './GuardrailsTelemetry';
 
 interface LocalGuardrailsProfilePreflightInput {
     policy: GuardrailPolicyConfig;
@@ -38,6 +39,7 @@ interface LocalGuardrailsProfilePreflightDeps {
     checkLocalOPA?: () => Promise<{ ok: boolean; message?: string }>;
     spawnProcess?: typeof spawn;
     systemService?: SystemService;
+    telemetry?: IGuardrailsTelemetry;
 }
 
 const REMOTE_PROVIDER_PREFIX = 'remote_';
@@ -51,6 +53,7 @@ export class LocalGuardrailsProfilePreflightService {
     private readonly _checkLocalOPA: () => Promise<{ ok: boolean; message?: string }>;
     private readonly _spawnProcess: typeof spawn;
     private readonly _systemService: SystemService;
+    private readonly _telemetry: IGuardrailsTelemetry;
 
     constructor(deps: LocalGuardrailsProfilePreflightDeps = {}) {
         this._runtimeHealth = deps.runtimeHealth ?? localGuardrailsRuntimeHealth;
@@ -64,24 +67,26 @@ export class LocalGuardrailsProfilePreflightService {
             ?? ((pythonPath: string, moduleName: string) => this._checkPythonModuleImport(pythonPath, moduleName));
         this._checkLocalOPA = deps.checkLocalOPA
             ?? (() => this._checkOPAAvailable());
+        this._telemetry = deps.telemetry ?? guardrailsTelemetry;
     }
 
     async runProfilePreflight(
         input: LocalGuardrailsProfilePreflightInput,
     ): Promise<GuardrailProfilePreflightResult> {
+        const startedAt = Date.now();
         const checkedAt = new Date().toISOString();
         const policy = normalizeGuardrailPolicyConfig(input.policy);
         const profile = policy.profiles.find(p => p.id === input.profileId);
         if (!profile) {
             return this._finalizeAndPersist(checkedAt, input.profileId, [], [], [
                 `Profile '${input.profileId}' was not found`,
-            ]);
+            ], startedAt);
         }
 
         const rules = this._resolveProfileRules(policy, profile);
         const bindings = this._resolveProfileBindings(rules);
         if (bindings.length === 0) {
-            return this._finalizeAndPersist(checkedAt, profile.id, [], [], []);
+            return this._finalizeAndPersist(checkedAt, profile.id, [], [], [], startedAt);
         }
 
         const providers = await this._evaluateProviders(bindings);
@@ -104,7 +109,7 @@ export class LocalGuardrailsProfilePreflightService {
             ...bindingStatuses.filter(b => b.status !== 'ready').map(b => b.message).filter(Boolean) as string[],
         ];
 
-        return this._finalizeAndPersist(checkedAt, profile.id, providers, bindingStatuses, issues);
+        return this._finalizeAndPersist(checkedAt, profile.id, providers, bindingStatuses, issues, startedAt);
     }
 
     private _resolveProfileRules(
@@ -322,6 +327,7 @@ export class LocalGuardrailsProfilePreflightService {
         providers: GuardrailPreflightProviderStatus[],
         bindings: GuardrailPreflightBindingStatus[],
         issues: string[],
+        startedAt: number,
     ): GuardrailProfilePreflightResult {
         const result = this._finalize(
             checkedAt,
@@ -331,6 +337,35 @@ export class LocalGuardrailsProfilePreflightService {
             issues,
         );
         this._snapshotStore.appendSnapshot(result);
+        this._telemetry.emit({
+            eventName: 'guardrails.preflight',
+            actor: 'LocalGuardrailsProfilePreflightService',
+            summary: `Guardrails profile preflight completed with status '${result.status}'.`,
+            status: result.status,
+            payload: {
+                profileId: result.profileId,
+                reason: result.issues[0],
+                code: result.status === 'ready' ? 'PREFLIGHT_READY' : 'PREFLIGHT_NOT_READY',
+                durationMs: Date.now() - startedAt,
+                providerStatuses: result.providers.map(provider => ({
+                    providerKind: provider.providerKind,
+                    status: provider.status,
+                    fixHint: provider.fixHint,
+                    reason: provider.message,
+                })),
+                bindingStatuses: result.bindings.map(binding => ({
+                    bindingId: binding.bindingId,
+                    ruleId: binding.ruleId,
+                    providerKind: binding.providerKind,
+                    status: binding.status,
+                    failOpen: binding.failOpen,
+                    fixHint: binding.fixHint,
+                    reason: binding.message,
+                })),
+                summary: result.summary,
+                issues: result.issues,
+            },
+        });
         return result;
     }
 

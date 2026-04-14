@@ -44,6 +44,7 @@ export type TelemetrySubsystem =
     | 'world_model'
     | 'maintenance'
     | 'autonomy'
+    | 'guardrails'
     | 'self_model'
     | 'unknown';
 
@@ -258,6 +259,7 @@ export type TelemetryEventType =
     | 'harmonization.dashboard.emitted'
     // Subsystem-namespaced events (Phase 3 execution, governance, planning, self-model)
     | `execution.${string}`
+    | `guardrails.${string}`
     | `governance.${string}`
     | `planning.${string}`
     | `selfModel.${string}`

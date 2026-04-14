@@ -8,6 +8,7 @@ import {
     resolveLocalGuardrailsPythonPath,
     resolveLocalGuardrailsRunnerPath,
 } from './LocalGuardrailsRuntime';
+import { guardrailsTelemetry, type IGuardrailsTelemetry } from './GuardrailsTelemetry';
 
 interface RunnerHealthEnvelope {
     ok: boolean;
@@ -58,6 +59,7 @@ interface LocalGuardrailsRuntimeHealthDeps {
     fileExists?: (filePath: string) => boolean;
     spawnProcess?: typeof spawn;
     systemService?: SystemService;
+    telemetry?: IGuardrailsTelemetry;
 }
 
 export class LocalGuardrailsRuntimeHealth {
@@ -66,6 +68,7 @@ export class LocalGuardrailsRuntimeHealth {
     private readonly _resolveRunnerPath: () => string;
     private readonly _fileExists: (filePath: string) => boolean;
     private readonly _spawnProcess: typeof spawn;
+    private readonly _telemetry: IGuardrailsTelemetry;
 
     constructor(deps: LocalGuardrailsRuntimeHealthDeps = {}) {
         this._systemService = deps.systemService ?? new SystemService();
@@ -75,9 +78,11 @@ export class LocalGuardrailsRuntimeHealth {
             ?? (() => resolveLocalGuardrailsRunnerPath(APP_ROOT));
         this._fileExists = deps.fileExists ?? fs.existsSync;
         this._spawnProcess = deps.spawnProcess ?? spawn;
+        this._telemetry = deps.telemetry ?? guardrailsTelemetry;
     }
 
     async checkReadiness(timeoutMs: number = 5000): Promise<LocalGuardrailsRuntimeReadiness> {
+        const startedAt = Date.now();
         const checkedAt = new Date().toISOString();
         const runnerPath = this._resolveRunnerPath();
         const runnerExists = this._fileExists(runnerPath);
@@ -104,23 +109,38 @@ export class LocalGuardrailsRuntimeHealth {
         };
 
         if (!pythonResolved) {
+            this._emitHealthEvent(base, {
+                status: 'blocked',
+                code: 'PYTHON_UNRESOLVED',
+                reason: base.python.error,
+                fixHint: 'Install or configure a local Python runtime in the app root.',
+                startedAt,
+            });
             return base;
         }
 
         if (!runnerExists) {
-            return {
+            const result = {
                 ...base,
                 guardrails: {
                     importable: false,
                     error: `Runner not found at '${runnerPath}'`,
                 },
             };
+            this._emitHealthEvent(result, {
+                status: 'blocked',
+                code: 'RUNNER_MISSING',
+                reason: result.guardrails.error,
+                fixHint: 'Ensure runtime/guardrails/local_guardrails_runner.py exists in the app root/package.',
+                startedAt,
+            });
+            return result;
         }
 
         const healthEnvelope = await this._runHealthCheck(pythonPath!, runnerPath, timeoutMs);
         if (!healthEnvelope.ok) {
             const message = healthEnvelope.error?.message ?? 'Runner health check failed';
-            return {
+            const result = {
                 ...base,
                 guardrails: {
                     importable: false,
@@ -128,10 +148,18 @@ export class LocalGuardrailsRuntimeHealth {
                     diagnostics: normalizeDiagnostics(healthEnvelope.health?.diagnostics),
                 },
             };
+            this._emitHealthEvent(result, {
+                status: 'failed',
+                code: healthEnvelope.error?.code,
+                reason: message,
+                fixHint: this._fixHintForError(message),
+                startedAt,
+            });
+            return result;
         }
 
         const importable = Boolean(healthEnvelope.health?.guardrails_importable);
-        return {
+        const result = {
             ...base,
             ready: importable,
             guardrails: {
@@ -142,6 +170,57 @@ export class LocalGuardrailsRuntimeHealth {
                 diagnostics: normalizeDiagnostics(healthEnvelope.health?.diagnostics),
             },
         };
+        this._emitHealthEvent(result, {
+            status: importable ? 'ready' : 'blocked',
+            reason: result.guardrails.error,
+            code: importable ? 'RUNTIME_READY' : 'GUARDRAILS_IMPORT_FAILED',
+            fixHint: importable ? undefined : this._fixHintForError(result.guardrails.error),
+            startedAt,
+        });
+        return result;
+    }
+
+    private _fixHintForError(message: string | undefined): string | undefined {
+        const text = (message ?? '').toLowerCase();
+        if (!text) return undefined;
+        if (text.includes('python')) return 'Install or configure a local Python interpreter in the app root.';
+        if (text.includes('runner not found')) return 'Ensure runtime/guardrails/local_guardrails_runner.py is packaged and present.';
+        if (text.includes('no module named guardrails') || text.includes('guardrails')) {
+            return 'Install guardrails-ai in the selected local Python environment.';
+        }
+        return undefined;
+    }
+
+    private _emitHealthEvent(
+        readiness: LocalGuardrailsRuntimeReadiness,
+        input: {
+            status: 'ready' | 'degraded' | 'blocked' | 'failed' | 'passed';
+            code?: string;
+            reason?: string;
+            fixHint?: string;
+            startedAt: number;
+        },
+    ): void {
+        const diagnostics = readiness.guardrails.diagnostics;
+        this._telemetry.emit({
+            eventName: 'guardrails.runtime.health',
+            actor: 'LocalGuardrailsRuntimeHealth',
+            summary: readiness.ready
+                ? 'Local guardrails runtime readiness check succeeded.'
+                : 'Local guardrails runtime readiness check failed.',
+            status: input.status,
+            payload: {
+                providerKind: readiness.providerKind,
+                runnerPath: readiness.runner.path,
+                pythonExecutable: diagnostics?.sysExecutable ?? readiness.python.path,
+                importError: diagnostics?.guardrailsImportError ?? readiness.guardrails.error,
+                fixHint: input.fixHint,
+                reason: input.reason,
+                code: input.code,
+                durationMs: Date.now() - input.startedAt,
+                diagnostics,
+            },
+        });
     }
 
     private async _runHealthCheck(

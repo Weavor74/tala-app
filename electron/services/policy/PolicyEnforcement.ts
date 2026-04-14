@@ -5,6 +5,7 @@ import {
     type SideEffectContext,
 } from './PolicyGate';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
+import { guardrailsTelemetry } from '../guardrails/GuardrailsTelemetry';
 
 export type GuardrailSubsystem = 'tool' | 'memory' | 'inference' | 'autonomy' | 'workflow';
 export type GuardrailDecisionKind = 'allow' | 'warn' | 'deny';
@@ -20,6 +21,7 @@ function emitGuardrailEnforcementLog(
     ctx: SideEffectContext,
     decision: PolicyDecision,
 ): void {
+    const decisionKind = decisionKindFromPolicyDecision(decision);
     try {
         TelemetryBus.getInstance().emit({
             executionId: ctx.executionId ?? `guardrail-${Date.now()}`,
@@ -28,7 +30,7 @@ function emitGuardrailEnforcementLog(
             phase: 'decision',
             payload: {
                 subsystem,
-                decision: decisionKindFromPolicyDecision(decision),
+                decision: decisionKind,
                 allowed: decision.allowed,
                 reason: decision.reason,
                 code: decision.code,
@@ -40,6 +42,32 @@ function emitGuardrailEnforcementLog(
                 capability: ctx.capability,
                 targetSubsystem: ctx.targetSubsystem,
                 mutationIntent: ctx.mutationIntent,
+            },
+        });
+    } catch {
+        // Telemetry failures must never interrupt enforcement.
+    }
+
+    try {
+        guardrailsTelemetry.emit({
+            eventName: 'guardrails.enforcement',
+            actor: 'PolicyEnforcement',
+            summary: `Guardrail enforcement decision '${decisionKind}' for subsystem '${subsystem}'.`,
+            status: decisionKind === 'deny' ? 'blocked' : 'passed',
+            decision: decisionKind,
+            payload: {
+                profileId: policyGate.getActiveProfileId(),
+                reason: decision.reason,
+                code: decision.code,
+                executionId: ctx.executionId,
+                executionType: ctx.executionType,
+                executionOrigin: ctx.executionOrigin,
+                executionMode: ctx.executionMode,
+                targetSubsystem: ctx.targetSubsystem,
+                actionKind: ctx.actionKind,
+                capability: ctx.capability,
+                mutationIntent: ctx.mutationIntent,
+                subsystemTarget: subsystem,
             },
         });
     } catch {

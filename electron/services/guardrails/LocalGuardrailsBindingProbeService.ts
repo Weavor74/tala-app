@@ -11,6 +11,7 @@ import type {
 } from './types';
 import { makeErrorResult } from './types';
 import { localGuardrailsAIAdapter } from './adapters/LocalGuardrailsAIAdapter';
+import { guardrailsTelemetry, type IGuardrailsTelemetry } from './GuardrailsTelemetry';
 
 export interface LocalGuardrailsBindingProbeInput {
     binding: Partial<ValidatorBinding>;
@@ -20,6 +21,7 @@ export interface LocalGuardrailsBindingProbeInput {
 export class LocalGuardrailsBindingProbeService {
     constructor(
         private readonly _adapter: IGuardrailAdapter = localGuardrailsAIAdapter,
+        private readonly _telemetry: IGuardrailsTelemetry = guardrailsTelemetry,
     ) {}
 
     getCatalog(): LocalGuardrailsValidatorCatalogEntry[] {
@@ -27,9 +29,15 @@ export class LocalGuardrailsBindingProbeService {
     }
 
     async testBinding(input: LocalGuardrailsBindingProbeInput): Promise<GuardrailValidationResult> {
+        const startedAt = Date.now();
         const normalizedBinding = this._normalizeBinding(input.binding);
         if (!normalizedBinding) {
-            return this._invalidBindingResult(input.binding, 'Invalid local_guardrails_ai binding configuration');
+            const result = this._invalidBindingResult(
+                input.binding,
+                'Invalid local_guardrails_ai binding configuration',
+            );
+            this._emitProbeEvent('failed', result, startedAt, 'INVALID_BINDING');
+            return result;
         }
 
         const sampleContent = typeof input.sampleContent === 'string'
@@ -52,10 +60,43 @@ export class LocalGuardrailsBindingProbeService {
         };
 
         try {
-            return await this._adapter.execute(normalizedBinding, request);
+            const result = await this._adapter.execute(normalizedBinding, request);
+            this._emitProbeEvent(result.success && result.passed ? 'passed' : 'failed', result, startedAt);
+            return result;
         } catch (err) {
-            return makeErrorResult(normalizedBinding, err, 0);
+            const result = makeErrorResult(normalizedBinding, err, 0);
+            this._emitProbeEvent('failed', result, startedAt, 'PROBE_EXECUTION_ERROR');
+            return result;
         }
+    }
+
+    private _emitProbeEvent(
+        status: 'ready' | 'degraded' | 'blocked' | 'failed' | 'passed',
+        result: GuardrailValidationResult,
+        startedAt: number,
+        code?: string,
+    ): void {
+        this._telemetry.emit({
+            eventName: 'guardrails.runtime.probe',
+            actor: 'LocalGuardrailsBindingProbeService',
+            summary: status === 'passed'
+                ? 'Local guardrails binding probe passed.'
+                : 'Local guardrails binding probe failed.',
+            status,
+            payload: {
+                providerKind: result.engineKind,
+                bindingId: result.validatorId,
+                decision: result.shouldDeny ? 'deny' : 'allow',
+                importError: result.error,
+                reason: result.error,
+                code: code ?? (status === 'passed' ? 'BINDING_PROBE_PASSED' : 'BINDING_PROBE_FAILED'),
+                durationMs: Date.now() - startedAt,
+                probeType: 'binding_test',
+                probeSuccess: result.success,
+                probePassed: result.passed,
+                localOnly: true,
+            },
+        });
     }
 
     private _normalizeBinding(binding: Partial<ValidatorBinding>): ValidatorBinding | null {

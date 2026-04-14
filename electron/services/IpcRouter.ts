@@ -52,6 +52,7 @@ import { localGuardrailsRuntimeHealth } from './guardrails/LocalGuardrailsRuntim
 import { localGuardrailsBindingProbeService } from './guardrails/LocalGuardrailsBindingProbeService';
 import { localGuardrailsRuntimeSmokeService } from './guardrails/LocalGuardrailsRuntimeSmokeService';
 import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardrailsProfilePreflightService';
+import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
@@ -626,6 +627,19 @@ export class IpcRouter {
         policy,
         profileId,
         runProbe: true,
+      });
+    });
+
+    /** Runs activation safety evaluation in main process and emits structured activation diagnostics. */
+    ipcMain.handle('guardrail:evaluate-profile-activation', async (_e, payload?: { profileId?: string; policy?: any }) => {
+      const appSettings = loadSettings(getSettingsPath());
+      const policy = normalizeGuardrailPolicyConfig(
+        payload?.policy ?? appSettings.guardrailPolicy ?? buildDefaultGuardrailPolicyConfig(),
+      );
+      const profileId = payload?.profileId ?? policy.activeProfileId;
+      return guardrailActivationDiagnosticsService.evaluateActivation({
+        policy,
+        profileId,
       });
     });
 
