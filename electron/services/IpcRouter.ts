@@ -848,7 +848,7 @@ export class IpcRouter {
     });
 
     ipcMain.handle('logs:getHealthSnapshot', async () => {
-      return await logViewerService.getHealthSnapshot();
+      return this.ctx.diagnosticsAggregator.getSystemHealthSnapshot();
     });
 
     ipcMain.handle('logs:getCorrelationEntries', async (_e, { sessionId, turnId }) => {

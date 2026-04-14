@@ -26,6 +26,11 @@ const tala = () => (window as any).tala;
 
 function statusColor(status: string): string {
     switch (status) {
+        case 'healthy': return '#22c55e';
+        case 'maintenance':
+        case 'recovery': return '#f59e0b';
+        case 'impaired':
+        case 'failed': return '#ef4444';
         case 'ready': return '#22c55e';
         case 'starting':
         case 'recovering': return '#f59e0b';
@@ -242,7 +247,7 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
         );
     }
 
-    const { inference, mcp, degradedSubsystems, recentFailures, providerHealthScores, suppressedProviders, operatorActions, recentProviderRecoveries } = snapshot;
+    const { inference, mcp, recentFailures, providerHealthScores, suppressedProviders, operatorActions, recentProviderRecoveries, systemHealth } = snapshot;
     const selectedId = inference.selectedProviderId;
 
     return (
@@ -266,14 +271,30 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                     {notification}
                 </div>
             )}
-
-            {/* Degraded subsystems alert */}
-            {degradedSubsystems.length > 0 && (
+            {/* Canonical system health alert */}
+            {systemHealth.overall_status !== 'healthy' && (
                 <div style={{ marginBottom: 12, padding: '6px 10px', background: '#7c2d1222', borderRadius: 6, fontSize: 12, color: '#f97316', border: '1px solid #f9731644' }}>
-                    ⚠ Degraded: {degradedSubsystems.join(', ')}
+                    System health: <strong>{systemHealth.overall_status.toUpperCase()}</strong>
+                    {systemHealth.operator_attention_required ? ' (operator attention required)' : ''}
                 </div>
             )}
 
+            <Section title="System Health">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <StatusBadge status={systemHealth.overall_status} />
+                    <span style={{ fontSize: 12, color: '#9ca3af' }}>
+                        trust: {Math.round(systemHealth.trust_score * 100)}%
+                    </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                    {systemHealth.subsystem_entries.filter((s) => s.status !== 'healthy').slice(0, 4).map((s) => (
+                        <div key={s.name}>{s.name}: {s.status}</div>
+                    ))}
+                    {systemHealth.subsystem_entries.every((s) => s.status === 'healthy') && (
+                        <div>All canonical health adapters are healthy.</div>
+                    )}
+                </div>
+            </Section>
             {/* Inference section */}
             <Section title="Inference">
                 <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
@@ -409,3 +430,4 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
 };
 
 export default RuntimeDiagnosticsPanel;
+

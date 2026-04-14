@@ -30,7 +30,7 @@ import { GuardrailService } from './services/GuardrailService';
 import { GitService } from './services/GitService';
 import { BackupService } from './services/BackupService';
 import { InferenceService } from './services/InferenceService';
-import { loadSettings, saveSettings } from './services/SettingsManager';
+import { loadSettings, saveSettings, getActiveMode } from './services/SettingsManager';
 import { IpcRouter } from './services/IpcRouter';
 import { ReflectionService } from './services/reflection/ReflectionService';
 import { ReflectionAppService } from './services/reflection/ReflectionAppService';
@@ -633,7 +633,17 @@ const logViewerService = new LogViewerService();
 // ─── Runtime Diagnostics (Priority 2A) ───────────────────────────────────────
 const mcpLifecycleManager = new McpLifecycleManager(mcpService);
 const runtimeControl = new RuntimeControlService(inferenceService, mcpLifecycleManager, mcpService);
-const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(inferenceDiagnostics, mcpLifecycleManager, runtimeControl);
+const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(
+  inferenceDiagnostics,
+  mcpLifecycleManager,
+  runtimeControl,
+  {
+    getStartupStatus: () => agent.getStartupStatus(),
+    getCurrentMode: () => getActiveMode(SYSTEM_SETTINGS_PATH, 'RuntimeDiagnosticsAggregator'),
+    getAutonomyState: () => autonomousRunOrchestrator.getDashboardState(),
+    getReflectionSummary: () => agent.getReflectionSummary(),
+  },
+);
 
 // ─── World Model Assembler (Phase 4A) ─────────────────────────────────────────
 const worldModelAssembler = new WorldModelAssembler({ includeRepoState: true });

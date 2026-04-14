@@ -19,10 +19,10 @@ import type {
     LogSeverity,
     LogViewerEntry,
     LogSourceInfo,
-    LogHealthSnapshot,
     PerformanceSummary,
     LogDiagnosticsSummary
 } from '../logTypes';
+import type { SystemHealthSnapshot } from '../../../shared/system-health-types';
 
 interface LogViewerPanelProps {
     api: any;
@@ -46,7 +46,7 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
     const [subsystemFilter, setSubsystemFilter] = useState<string>('all');
     const [errorsOnly, setErrorsOnly] = useState(false);
     const [autoRefresh, setAutoRefresh] = useState(false);
-    const [healthSnapshot, setHealthSnapshot] = useState<LogHealthSnapshot | null>(null);
+    const [healthSnapshot, setHealthSnapshot] = useState<SystemHealthSnapshot | null>(null);
     const [detailsTab, setDetailsTab] = useState<'info' | 'raw' | 'related' | 'insights' | 'timeline'>('info');
     const [correlatedEntries, setCorrelatedEntries] = useState<LogViewerEntry[]>([]);
     const [correlationLoading, setCorrelationLoading] = useState(false);
@@ -394,9 +394,9 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
 
     const healthBadge = (status: string) => {
         let color = '#888';
-        if (status === 'online') color = '#4caf50';
-        if (status === 'degraded') color = '#ff9800';
-        if (status === 'offline') color = '#f44336';
+        if (status === 'healthy') color = '#4caf50';
+        if (status === 'degraded' || status === 'maintenance' || status === 'recovery') color = '#ff9800';
+        if (status === 'impaired' || status === 'failed') color = '#f44336';
 
         return (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -443,12 +443,16 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
                 )}
                 {healthSnapshot && (
                     <div style={{ ...summaryCardStyle('#888'), borderLeft: '1px solid #333', minWidth: '240px' }}>
-                        <span style={{ fontSize: '10px', color: '#888', fontWeight: 'bold', borderBottom: '1px solid #444', marginBottom: '4px' }}>SUBSYSTEM HEALTH</span>
+                        <span style={{ fontSize: '10px', color: '#888', fontWeight: 'bold', borderBottom: '1px solid #444', marginBottom: '4px' }}>SYSTEM HEALTH</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '9px', opacity: 0.7 }}>OVERALL</span>
+                            {healthBadge(healthSnapshot.overall_status)}
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', rowGap: '2px' }}>
-                            {Object.entries(healthSnapshot).map(([sub, status]) => (
-                                <div key={sub} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '9px', opacity: 0.7 }}>{sub.toUpperCase()}</span>
-                                    {healthBadge(status.status)}
+                            {healthSnapshot.subsystem_entries.map((subsystem) => (
+                                <div key={subsystem.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '9px', opacity: 0.7 }}>{subsystem.name.toUpperCase()}</span>
+                                    {healthBadge(subsystem.status)}
                                 </div>
                             ))}
                         </div>
@@ -902,3 +906,4 @@ export const LogViewerPanel: React.FC<LogViewerPanelProps> = ({ api }) => {
         </div>
     );
 };
+

@@ -70,6 +70,19 @@ function makeMinimalSnapshot(overrides: Partial<RuntimeDiagnosticsSnapshot> = {}
         suppressedProviders: [],
         recentProviderRecoveries: [],
         recentMcpRestarts: [],
+        systemHealth: {
+            timestamp: now,
+            overall_status: 'healthy',
+            subsystem_entries: [],
+            trust_score: 1,
+            degraded_capabilities: [],
+            blocked_capabilities: [],
+            active_fallbacks: [],
+            active_incidents: [],
+            pending_repairs: [],
+            current_mode: 'assistant',
+            operator_attention_required: false,
+        },
         ...overrides,
     } as RuntimeDiagnosticsSnapshot;
 }

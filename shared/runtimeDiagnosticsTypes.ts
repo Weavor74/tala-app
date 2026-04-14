@@ -283,7 +283,8 @@ export interface RuntimeDiagnosticsSnapshot {
     recentProviderRecoveries: Array<{ providerId: string; timestamp: string; reason: string }>;
     /** Recent MCP service restart events (ISO timestamps + serviceId). */
     recentMcpRestarts: Array<{ serviceId: string; timestamp: string; reason: string }>;
-    // ─── Phase 3: Cognitive diagnostics ────────────────────────────────────────
+    /** Canonical operator-facing system health snapshot (Phase D). */
+    systemHealth: import('./system-health-types').SystemHealthSnapshot;
     /** Normalized cognitive diagnostics for the most recent cognitive turn. */
     cognitive?: CognitiveDiagnosticsSnapshot;
 }
@@ -383,3 +384,7 @@ export interface CognitiveDiagnosticsSnapshot {
         compactionDurationMs?: number;
     };
 }
+
+
+
+

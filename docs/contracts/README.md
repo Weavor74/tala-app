@@ -24,6 +24,7 @@
 - [selfModelTypes.ts](./selfModelTypes.md)
 - [settings.ts](./settings.md)
 - [strategyRoutingTypes.ts](./strategyRoutingTypes.md)
+- [system-health-types.ts](./system-health-types.md)
 - [telemetry.ts](./telemetry.md)
 - [userProfile.ts](./userProfile.md)
 - [worldModelTypes.ts](./worldModelTypes.md)

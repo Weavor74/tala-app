@@ -1,21 +1,3 @@
-/**
- * RuntimeDiagnosticsAggregator — Unified Runtime Diagnostics Snapshot Producer
- *
- * Assembles a RuntimeDiagnosticsSnapshot from:
- * - InferenceDiagnosticsService (inference provider + stream state)
- * - McpLifecycleManager (MCP service inventory + lifecycle state)
- * - RuntimeControlService (operator actions, health scores) — Phase 2B
- *
- * This is the single point of truth for app-facing runtime diagnostics.
- * IPC handlers call getSnapshot() to retrieve the current operational picture.
- *
- * Design rules:
- * - All returned data is safe for IPC serialization.
- * - No probing or live service calls — reads from already-maintained state.
- * - Snapshot is assembled on demand; no background aggregation loop needed.
- * - Degraded subsystem list is derived from normalized status, not raw booleans.
- */
-
 import type {
     RuntimeDiagnosticsSnapshot,
     RuntimeFailureSummary,
@@ -23,16 +5,21 @@ import type {
     McpInventoryDiagnostics,
     CognitiveDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
+import type {
+    SystemHealthOverallStatus,
+    SystemHealthSnapshot,
+    SystemHealthSubsystemSnapshot,
+} from '../../shared/system-health-types';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
 import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
 import type { RuntimeControlService } from './RuntimeControlService';
 import type { TalaCognitiveContext, MemoryContributionCategory } from '../../shared/cognitiveTurnTypes';
 import type { CompactionDiagnosticsSummary } from '../../shared/modelCapabilityTypes';
+import { getLastDbHealth } from './db/initMemoryStore';
+import { policyGate } from './policy/PolicyGate';
+import { TelemetryBus } from './telemetry/TelemetryBus';
 
-// ─── Phase 3C: Extended cognitive metadata ────────────────────────────────────
-
-/** Extended cognitive metadata recorded per turn for Phase 3C diagnostics. */
 export interface CognitiveTurnMeta {
     context: TalaCognitiveContext;
     compactionSummary?: CompactionDiagnosticsSummary;
@@ -49,38 +36,58 @@ export interface CognitiveTurnMeta {
     docsSuppressed?: number;
 }
 
+interface StartupStatusSignal {
+    rag?: boolean;
+    memory?: boolean;
+    astro?: boolean;
+    world?: boolean;
+    memoryGraph?: boolean;
+    soulReady?: boolean;
+}
+
+interface AutonomyStateSignal {
+    globalAutonomyEnabled?: boolean;
+    kpis?: {
+        pendingGoals?: number;
+        activeRuns?: number;
+        totalPolicyBlocked?: number;
+        totalGovernanceBlocked?: number;
+    };
+    blockedGoals?: unknown[];
+    campaignState?: {
+        activeCampaigns?: unknown[];
+        pendingCampaigns?: unknown[];
+    };
+}
+
+export interface SystemHealthAdapterDeps {
+    getStartupStatus?: () => StartupStatusSignal;
+    getCurrentMode?: () => string;
+    getAutonomyState?: () => AutonomyStateSignal | null;
+    getReflectionSummary?: () => string;
+}
+
 export class RuntimeDiagnosticsAggregator {
     private lastCognitiveMeta?: CognitiveTurnMeta;
+    private readonly subsystemLastChange = new Map<string, { status: SystemHealthOverallStatus; changedAt: string }>();
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
         private readonly mcpLifecycle: McpLifecycleManager,
         private readonly runtimeControl?: RuntimeControlService,
+        private readonly healthDeps?: SystemHealthAdapterDeps,
     ) {}
 
-    /**
-     * Records the most recent cognitive context for inclusion in diagnostics snapshots.
-     * Called by CognitiveTurnAssembler (or AgentService) after assembling each turn.
-     */
     public recordCognitiveContext(context: TalaCognitiveContext): void {
         this.lastCognitiveMeta = { ...this.lastCognitiveMeta, context };
     }
 
-    /**
-     * Records extended cognitive metadata for Phase 3C diagnostics.
-     * Call after compaction, orchestration, and assembly to capture performance data.
-     */
     public recordCognitiveMeta(meta: Partial<Omit<CognitiveTurnMeta, 'context'>>): void {
         if (this.lastCognitiveMeta) {
             this.lastCognitiveMeta = { ...this.lastCognitiveMeta, ...meta };
         }
     }
-    /**
-     * Returns the current normalized runtime diagnostics snapshot.
-     * Safe to call from IPC handlers.
-     *
-     * @param sessionId - Optional session ID to include in the snapshot.
-     */
+
     public getSnapshot(sessionId?: string): RuntimeDiagnosticsSnapshot {
         const now = new Date().toISOString();
         const inferenceState = this.inferenceDiagnostics.getState();
@@ -89,12 +96,13 @@ export class RuntimeDiagnosticsAggregator {
         const degradedSubsystems = this._computeDegradedSubsystems(inferenceState, mcpInventory);
         const recentFailures = this._computeRecentFailures(inferenceState, mcpInventory);
 
-        // Phase 2B extensions
         const providerHealthScores = providerHealthScorer.getAllScores();
         const suppressedProviders = providerHealthScorer.getSuppressedProviderIds();
         const operatorActions = this.runtimeControl?.getOperatorActions() ?? [];
         const recentProviderRecoveries = this.runtimeControl?.getRecentProviderRecoveries() ?? [];
         const recentMcpRestarts = this.runtimeControl?.getRecentMcpRestarts() ?? [];
+
+        const systemHealth = this._buildSystemHealthSnapshot(now, inferenceState, mcpInventory, recentFailures, suppressedProviders);
 
         return {
             timestamp: now,
@@ -107,39 +115,28 @@ export class RuntimeDiagnosticsAggregator {
                 inference: inferenceState.lastUpdated,
                 mcp: mcpInventory.lastUpdated,
             },
-            // Phase 2B
             operatorActions,
             providerHealthScores,
             suppressedProviders,
             recentProviderRecoveries,
             recentMcpRestarts,
-            // Phase 3: Cognitive diagnostics
+            systemHealth,
             cognitive: this._buildCognitiveDiagnostics(now),
         };
     }
 
-    /**
-     * Returns only the normalized inference diagnostics state.
-     * Used by the diagnostics:getInferenceStatus IPC handler.
-     */
+    public getSystemHealthSnapshot(sessionId?: string): SystemHealthSnapshot {
+        return this.getSnapshot(sessionId).systemHealth;
+    }
+
     public getInferenceStatus(): InferenceDiagnosticsState {
         return this.inferenceDiagnostics.getState();
     }
 
-    /**
-     * Returns only the normalized MCP inventory diagnostics.
-     * Used by the diagnostics:getMcpStatus IPC handler.
-     */
     public getMcpStatus(): McpInventoryDiagnostics {
         return this.mcpLifecycle.getDiagnosticsInventory();
     }
 
-    // ─── Private helpers ──────────────────────────────────────────────────────
-
-    /**
-     * Builds a normalized cognitive diagnostics snapshot from the last recorded
-     * cognitive context. Returns undefined if no cognitive context has been recorded.
-     */
     private _buildCognitiveDiagnostics(now: string): CognitiveDiagnosticsSnapshot | undefined {
         const meta = this.lastCognitiveMeta;
         if (!meta) return undefined;
@@ -150,7 +147,6 @@ export class RuntimeDiagnosticsAggregator {
             byCategory[c.category] = (byCategory[c.category] ?? 0) + 1;
         }
 
-        // ── Phase 3C: extended fields ─────────────────────────────────────────
         const totalMemoryUsed = ctx.memoryContributions.contributions.length;
         const totalCandidates = ctx.memoryContributions.candidateCount;
         const totalExcluded = ctx.memoryContributions.excludedCount;
@@ -181,8 +177,6 @@ export class RuntimeDiagnosticsAggregator {
                 applied: ctx.reflectionContributions.applied,
             },
             lastPolicyAppliedAt: ctx.modePolicy.appliedAt,
-
-            // Phase 3C extensions
             promptProfile: compSummary?.profileClass,
             compactionSummary: compSummary
                 ? {
@@ -234,23 +228,405 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildSystemHealthSnapshot(
+        now: string,
+        inference: InferenceDiagnosticsState,
+        mcp: McpInventoryDiagnostics,
+        recentFailures: RuntimeFailureSummary,
+        suppressedProviders: string[],
+    ): SystemHealthSnapshot {
+        const startup = this.healthDeps?.getStartupStatus?.() ?? {};
+        const autonomy = this.healthDeps?.getAutonomyState?.() ?? null;
+        const reflectionSummary = (this.healthDeps?.getReflectionSummary?.() ?? '').trim();
+        const currentMode = this.healthDeps?.getCurrentMode?.() ?? this.lastCognitiveMeta?.context.modePolicy.mode ?? 'assistant';
+        const db = getLastDbHealth();
+        const events = [...TelemetryBus.getInstance().getRecentEvents()];
+
+        const toolFailed = events.filter(e => e.event === 'tool.failed').length;
+        const toolCompleted = events.filter(e => e.event === 'tool.completed').length;
+        const policyDenied = events.filter(e => e.event === 'policy.rule_denied' || e.event === 'execution.blocked').length;
+        const memoryRepairPending = events.filter(e => e.event === 'memory.repair_trigger').length
+            - events.filter(e => e.event === 'memory.repair_completed').length;
+
+        const activeFallbacks: string[] = [];
+        if (inference.fallbackApplied) activeFallbacks.push('inference_provider_fallback');
+        if (suppressedProviders.length > 0) activeFallbacks.push('provider_suppression_routing');
+
+        const subsystemEntries: SystemHealthSubsystemSnapshot[] = [];
+
+        const addSubsystem = (entry: Omit<SystemHealthSubsystemSnapshot, 'last_changed_at'>) => {
+            const prev = this.subsystemLastChange.get(entry.name);
+            const changedAt = prev && prev.status === entry.status ? prev.changedAt : now;
+            this.subsystemLastChange.set(entry.name, { status: entry.status, changedAt });
+            subsystemEntries.push({ ...entry, last_changed_at: changedAt });
+        };
+
+        const dbStatus: SystemHealthOverallStatus = !db
+            ? 'maintenance'
+            : (!db.reachable || !db.authenticated)
+                ? 'failed'
+                : (!db.databaseExists || !db.pgvectorInstalled || !db.migrationsApplied)
+                    ? 'degraded'
+                    : 'healthy';
+        addSubsystem({
+            name: 'db_health_service',
+            status: dbStatus,
+            severity: dbStatus === 'failed' ? 'critical' : dbStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: !db
+                ? ['db_health_unavailable']
+                : dbStatus === 'failed'
+                    ? ['canonical_db_unreachable']
+                    : dbStatus === 'degraded'
+                        ? ['canonical_db_capability_gap']
+                        : ['db_ok'],
+            evidence: !db
+                ? ['No DB preflight result has been recorded yet.']
+                : [
+                    `reachable=${db.reachable}`,
+                    `authenticated=${db.authenticated}`,
+                    `databaseExists=${db.databaseExists}`,
+                    `pgvectorInstalled=${db.pgvectorInstalled}`,
+                    `migrationsApplied=${db.migrationsApplied}`,
+                  ],
+            operator_impact: dbStatus === 'healthy'
+                ? 'Canonical memory authority path is available.'
+                : dbStatus === 'failed'
+                    ? 'Canonical memory authority is unavailable; durable memory truth cannot be trusted.'
+                    : 'Canonical DB is reachable but missing required capabilities.',
+            auto_action_state: dbStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: dbStatus === 'healthy'
+                ? []
+                : ['Verify Postgres runtime and apply missing schema/pgvector setup.'],
+        });
+
+        const memoryAuthorityStatus: SystemHealthOverallStatus = dbStatus === 'failed'
+            ? 'failed'
+            : dbStatus === 'degraded'
+                ? 'impaired'
+                : 'healthy';
+        addSubsystem({
+            name: 'memory_authority_service',
+            status: memoryAuthorityStatus,
+            severity: memoryAuthorityStatus === 'failed' ? 'critical' : memoryAuthorityStatus === 'impaired' ? 'error' : 'info',
+            last_checked_at: now,
+            reason_codes: memoryAuthorityStatus === 'healthy'
+                ? ['canonical_memory_authority_ok']
+                : ['canonical_memory_authority_unavailable'],
+            evidence: [
+                `db_status=${dbStatus}`,
+                'Canonical authority must resolve to PostgreSQL-backed IDs.',
+            ],
+            operator_impact: memoryAuthorityStatus === 'healthy'
+                ? 'Memory authority integrity invariant is currently satisfied.'
+                : 'Memory authority integrity is compromised; canonical truth operations are constrained.',
+            auto_action_state: memoryAuthorityStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: memoryAuthorityStatus === 'healthy'
+                ? []
+                : ['Restore canonical DB authority before resuming normal memory operations.'],
+        });
+
+        const inferenceStatus: SystemHealthOverallStatus = (!inference.selectedProviderReady && !inference.fallbackApplied)
+            ? (inference.lastStreamStatus === 'failed' ? 'impaired' : 'degraded')
+            : (inference.fallbackApplied ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'inference_service',
+            status: inferenceStatus,
+            severity: inferenceStatus === 'impaired' ? 'error' : inferenceStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: inferenceStatus === 'healthy'
+                ? ['inference_primary_ready']
+                : inference.fallbackApplied
+                    ? ['inference_fallback_active']
+                    : ['inference_primary_unavailable'],
+            evidence: [
+                `selectedProviderReady=${inference.selectedProviderReady}`,
+                `fallbackApplied=${inference.fallbackApplied}`,
+                `streamStatus=${inference.streamStatus}`,
+                `lastStreamStatus=${inference.lastStreamStatus ?? 'none'}`,
+            ],
+            operator_impact: inferenceStatus === 'healthy'
+                ? 'Primary inference path is healthy.'
+                : inference.fallbackApplied
+                    ? 'Inference remains available through fallback routing with reduced resilience.'
+                    : 'Inference availability is impaired for normal operation.',
+            auto_action_state: inference.fallbackApplied ? 'fallback_active' : (inferenceStatus === 'healthy' ? 'monitoring' : 'repair_pending'),
+            recommended_actions: inferenceStatus === 'healthy'
+                ? []
+                : ['Probe providers and restore a ready primary model endpoint.'],
+        });
+
+        const mcpStatus: SystemHealthOverallStatus = mcp.totalUnavailable > 0
+            ? (mcp.criticalUnavailable ? 'impaired' : 'degraded')
+            : (mcp.totalDegraded > 0 ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'mcp_tool_availability',
+            status: mcpStatus,
+            severity: mcpStatus === 'impaired' ? 'error' : mcpStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: mcpStatus === 'healthy'
+                ? ['mcp_inventory_ready']
+                : mcp.criticalUnavailable
+                    ? ['mcp_critical_service_unavailable']
+                    : ['mcp_partial_unavailable'],
+            evidence: [
+                `totalConfigured=${mcp.totalConfigured}`,
+                `totalReady=${mcp.totalReady}`,
+                `totalDegraded=${mcp.totalDegraded}`,
+                `totalUnavailable=${mcp.totalUnavailable}`,
+                `criticalUnavailable=${mcp.criticalUnavailable}`,
+            ],
+            operator_impact: mcpStatus === 'healthy'
+                ? 'MCP tooling surface is available.'
+                : 'Tool capabilities are reduced due to MCP service availability issues.',
+            auto_action_state: mcpStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: mcpStatus === 'healthy'
+                ? []
+                : ['Restart affected MCP services and verify service credentials/runtime health.'],
+        });
+
+        const toolFailureRatio = toolCompleted > 0 ? toolFailed / toolCompleted : (toolFailed > 0 ? 1 : 0);
+        const toolStatus: SystemHealthOverallStatus = toolFailureRatio >= 0.4 && toolFailed >= 3
+            ? 'impaired'
+            : (toolFailureRatio > 0.1 ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'tool_execution_coordinator',
+            status: toolStatus,
+            severity: toolStatus === 'impaired' ? 'error' : toolStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: toolStatus === 'healthy' ? ['tool_execution_nominal'] : ['tool_execution_error_rate_elevated'],
+            evidence: [
+                `toolFailed=${toolFailed}`,
+                `toolCompleted=${toolCompleted}`,
+                `failureRatio=${toolFailureRatio.toFixed(3)}`,
+            ],
+            operator_impact: toolStatus === 'healthy'
+                ? 'Tool execution path is stable.'
+                : 'Tool execution reliability is reduced; some requested actions may fail.',
+            auto_action_state: toolStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: toolStatus === 'healthy'
+                ? []
+                : ['Inspect recent tool.failed telemetry and retry with validated tool inputs.'],
+        });
+
+        const policyProfileId = policyGate.getActiveProfileId();
+        const guardrailPolicyStatus: SystemHealthOverallStatus = policyProfileId ? 'healthy' : 'maintenance';
+        addSubsystem({
+            name: 'policy_gate',
+            status: guardrailPolicyStatus,
+            severity: guardrailPolicyStatus === 'healthy' ? 'info' : 'warning',
+            last_checked_at: now,
+            reason_codes: [policyProfileId ? 'policy_profile_active' : 'policy_profile_not_loaded'],
+            evidence: [
+                `activeProfileId=${policyProfileId ?? 'none'}`,
+                `policyDeniedEvents=${policyDenied}`,
+            ],
+            operator_impact: policyProfileId
+                ? 'Policy gate is actively enforcing guardrail rules.'
+                : 'Policy profile is not loaded; runtime is in guardrail maintenance posture.',
+            auto_action_state: guardrailPolicyStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: policyProfileId
+                ? []
+                : ['Load and validate the active guardrail policy profile.'],
+        });
+
+        const reflectionStatus: SystemHealthOverallStatus = memoryRepairPending > 0
+            ? 'recovery'
+            : (reflectionSummary.length > 0 ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'reflection_service',
+            status: reflectionStatus,
+            severity: reflectionStatus === 'healthy' ? 'info' : 'warning',
+            last_checked_at: now,
+            reason_codes: reflectionStatus === 'recovery'
+                ? ['memory_repair_in_progress']
+                : reflectionSummary.length > 0
+                    ? ['reflection_actions_pending']
+                    : ['reflection_queue_clear'],
+            evidence: [
+                `memoryRepairPendingApprox=${Math.max(0, memoryRepairPending)}`,
+                `reflectionSummaryPresent=${reflectionSummary.length > 0}`,
+            ],
+            operator_impact: reflectionStatus === 'healthy'
+                ? 'Reflection/repair loop is idle and stable.'
+                : 'Reflection/repair flow has pending work and may require operator follow-up.',
+            auto_action_state: reflectionStatus === 'healthy' ? 'monitoring' : 'repair_active',
+            recommended_actions: reflectionStatus === 'healthy'
+                ? []
+                : ['Review reflection queue and resolve pending repair proposals.'],
+        });
+
+        const autonomyPending = autonomy?.kpis?.pendingGoals ?? 0;
+        const autonomyBlocked = (autonomy?.blockedGoals?.length ?? 0) + (autonomy?.kpis?.totalPolicyBlocked ?? 0) + (autonomy?.kpis?.totalGovernanceBlocked ?? 0);
+        const autonomyStatus: SystemHealthOverallStatus = autonomy?.globalAutonomyEnabled === false
+            ? 'maintenance'
+            : autonomyBlocked > 0
+                ? 'degraded'
+                : (autonomyPending > 10 ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'autonomy_orchestrator',
+            status: autonomyStatus,
+            severity: autonomyStatus === 'healthy' ? 'info' : autonomyStatus === 'maintenance' ? 'warning' : 'warning',
+            last_checked_at: now,
+            reason_codes: autonomy?.globalAutonomyEnabled === false
+                ? ['autonomy_disabled_by_policy']
+                : autonomyBlocked > 0
+                    ? ['autonomy_blocked_goals_present']
+                    : autonomyPending > 10
+                        ? ['autonomy_backlog_high']
+                        : ['autonomy_nominal'],
+            evidence: [
+                `globalAutonomyEnabled=${autonomy?.globalAutonomyEnabled ?? 'unknown'}`,
+                `pendingGoals=${autonomyPending}`,
+                `blockedGoals=${autonomyBlocked}`,
+                `activeRuns=${autonomy?.kpis?.activeRuns ?? 0}`,
+            ],
+            operator_impact: autonomyStatus === 'healthy'
+                ? 'Autonomy orchestration is within expected bounds.'
+                : autonomyStatus === 'maintenance'
+                    ? 'Autonomy is intentionally disabled and operating in maintenance posture.'
+                    : 'Autonomy has blocked/backlogged work and may require intervention.',
+            auto_action_state: autonomyStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: autonomyStatus === 'healthy'
+                ? []
+                : ['Review blocked goals and campaign queue before widening autonomy scope.'],
+        });
+
+        const startupFailures = ['rag', 'memory', 'astro', 'world', 'memoryGraph']
+            .filter((k) => startup[k as keyof StartupStatusSignal] === false);
+        const bootstrapStatus: SystemHealthOverallStatus = startupFailures.length === 0
+            ? (startup.soulReady === false ? 'degraded' : 'healthy')
+            : (startup.soulReady === false ? 'impaired' : 'degraded');
+        addSubsystem({
+            name: 'bootstrap_runtime_services',
+            status: bootstrapStatus,
+            severity: bootstrapStatus === 'impaired' ? 'error' : bootstrapStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: startupFailures.length === 0
+                ? (startup.soulReady === false ? ['startup_partial_ready'] : ['startup_ready'])
+                : ['startup_dependency_unready'],
+            evidence: [
+                `soulReady=${startup.soulReady ?? 'unknown'}`,
+                `unready=${startupFailures.join(',') || 'none'}`,
+            ],
+            operator_impact: bootstrapStatus === 'healthy'
+                ? 'Core startup/runtime dependencies are available.'
+                : 'One or more core startup/runtime dependencies are not fully ready.',
+            auto_action_state: bootstrapStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: bootstrapStatus === 'healthy'
+                ? []
+                : ['Run startup diagnostics and recover unready runtime dependencies.'],
+        });
+
+        const queuePressure = autonomyPending + autonomyBlocked + Math.max(0, memoryRepairPending);
+        const queueStatus: SystemHealthOverallStatus = queuePressure > 25
+            ? 'impaired'
+            : (queuePressure > 10 ? 'degraded' : 'healthy');
+        addSubsystem({
+            name: 'queue_backlog_pressure',
+            status: queueStatus,
+            severity: queueStatus === 'impaired' ? 'error' : queueStatus === 'degraded' ? 'warning' : 'info',
+            last_checked_at: now,
+            reason_codes: queueStatus === 'healthy' ? ['queue_pressure_normal'] : ['queue_pressure_elevated'],
+            evidence: [
+                `queuePressure=${queuePressure}`,
+                `autonomyPending=${autonomyPending}`,
+                `autonomyBlocked=${autonomyBlocked}`,
+                `memoryRepairPendingApprox=${Math.max(0, memoryRepairPending)}`,
+            ],
+            operator_impact: queueStatus === 'healthy'
+                ? 'Backlog pressure is within expected operational limits.'
+                : 'Backlog pressure is elevated and may delay repairs or autonomy execution.',
+            auto_action_state: queueStatus === 'healthy' ? 'monitoring' : 'repair_pending',
+            recommended_actions: queueStatus === 'healthy'
+                ? []
+                : ['Prioritize blocked/pending items and drain repair queues.'],
+        });
+
+        const degradedCapabilities = subsystemEntries
+            .filter((s) => s.status === 'degraded' || s.status === 'maintenance')
+            .map((s) => s.name);
+        const blockedCapabilities = subsystemEntries
+            .filter((s) => s.status === 'failed' || s.status === 'impaired')
+            .map((s) => s.name);
+
+        const activeIncidents = subsystemEntries
+            .filter((s) => s.status !== 'healthy')
+            .flatMap((s) => s.reason_codes.map((code) => `${s.name}:${code}`));
+
+        const pendingRepairs = subsystemEntries
+            .filter((s) => s.auto_action_state === 'repair_pending' || s.auto_action_state === 'repair_active')
+            .map((s) => s.name);
+
+        const trustScore = this._computeTrustScore(now, inference, mcp, Boolean(db), events.length > 0);
+
+        const overallStatus = this._reduceOverallStatus(subsystemEntries);
+        const operatorAttentionRequired = overallStatus === 'failed'
+            || overallStatus === 'impaired'
+            || blockedCapabilities.length > 0
+            || queueStatus === 'impaired'
+            || trustScore < 0.6;
+
+        return {
+            timestamp: now,
+            overall_status: overallStatus,
+            subsystem_entries: subsystemEntries,
+            trust_score: trustScore,
+            degraded_capabilities: degradedCapabilities,
+            blocked_capabilities: blockedCapabilities,
+            active_fallbacks: activeFallbacks,
+            active_incidents: activeIncidents,
+            pending_repairs: pendingRepairs,
+            current_mode: currentMode,
+            operator_attention_required: operatorAttentionRequired,
+        };
+    }
+
+    private _reduceOverallStatus(entries: SystemHealthSubsystemSnapshot[]): SystemHealthOverallStatus {
+        const statuses = entries.map((e) => e.status);
+        if (statuses.includes('failed')) return 'failed';
+        if (statuses.includes('impaired')) return 'impaired';
+        if (statuses.includes('recovery')) return 'recovery';
+        if (statuses.includes('degraded')) return 'degraded';
+        if (statuses.includes('maintenance')) return 'maintenance';
+        return 'healthy';
+    }
+
+    private _computeTrustScore(
+        nowIso: string,
+        inference: InferenceDiagnosticsState,
+        mcp: McpInventoryDiagnostics,
+        dbObserved: boolean,
+        hasTelemetry: boolean,
+    ): number {
+        let trust = 1;
+        const nowMs = new Date(nowIso).getTime();
+        const inferenceAgeMs = Math.max(0, nowMs - new Date(inference.lastUpdated).getTime());
+        const mcpAgeMs = Math.max(0, nowMs - new Date(mcp.lastUpdated).getTime());
+
+        if (inferenceAgeMs > 90_000) trust -= 0.2;
+        if (mcpAgeMs > 90_000) trust -= 0.2;
+        if (!dbObserved) trust -= 0.1;
+        if (!hasTelemetry) trust -= 0.1;
+
+        const clamped = Math.max(0, Math.min(1, trust));
+        return Math.round(clamped * 100) / 100;
+    }
+
     private _computeDegradedSubsystems(
         inference: InferenceDiagnosticsState,
         mcp: McpInventoryDiagnostics,
     ): string[] {
         const degraded: string[] = [];
 
-        // Inference: degraded if selected provider is not ready and stream is not idle
         if (!inference.selectedProviderReady && inference.streamStatus !== 'idle') {
             degraded.push('inference');
         }
 
-        // Inference: degraded if last stream failed/timed-out
         if (inference.lastStreamStatus === 'failed' || inference.lastStreamStatus === 'timed_out') {
             if (!degraded.includes('inference')) degraded.push('inference');
         }
 
-        // MCP: degraded if any service is degraded or unavailable
         if (mcp.totalDegraded > 0 || mcp.totalUnavailable > 0) {
             degraded.push('mcp');
         }
@@ -267,7 +643,6 @@ export class RuntimeDiagnosticsAggregator {
         let lastFailureTime: string | undefined;
         let lastFailureReason: string | undefined;
 
-        // Inference failures
         if (inference.lastFailureTime) {
             count++;
             failedEntityIds.push(inference.lastUsedProviderId ?? 'inference');
@@ -277,7 +652,6 @@ export class RuntimeDiagnosticsAggregator {
             }
         }
 
-        // MCP failures
         for (const svc of mcp.services) {
             if (svc.status === 'failed' || svc.status === 'unavailable') {
                 count++;
