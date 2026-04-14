@@ -133,20 +133,31 @@ export type PromptBlockBudget = {
 
 export type PromptBlockRenderResult = {
     kind: PromptBlockKind;
+    selected: boolean;
     included: boolean;
     rendered: boolean;
+    merged: boolean;
+    skipped: boolean;
+    omittedByPolicy: boolean;
     truncated: boolean;
     originalChars: number;
     finalChars: number;
+    finalRenderedChars: number;
     maxChars: number;
+    renderTargets: string[];
+    reason?: string;
     content: string;
 };
 
 export type BoundedPromptPacket = {
     budgets: Record<PromptBlockKind, number>;
     blocks: PromptBlockRenderResult[];
+    selectedBlocks: PromptBlockKind[];
     includedBlocks: PromptBlockKind[];
     renderedBlocks: PromptBlockKind[];
+    mergedBlocks: PromptBlockKind[];
+    skippedBlocks: PromptBlockKind[];
+    omittedByPolicyBlocks: PromptBlockKind[];
     truncatedBlocks: PromptBlockKind[];
     totalChars: number;
     renderedChars: number;
@@ -687,45 +698,92 @@ export class ChatExecutionSpine {
         return base;
     }
 
-    private renderPromptBlock(kind: PromptBlockKind, rawContent: string, budget: number, rendered: boolean): PromptBlockRenderResult {
+    private renderPromptBlock(
+        kind: PromptBlockKind,
+        rawContent: string,
+        budget: number,
+        semantics: {
+            selected: boolean;
+            rendered: boolean;
+            merged?: boolean;
+            omittedByPolicy?: boolean;
+            renderTargets?: string[];
+            reason?: string;
+            additionalRenderedChars?: number;
+        }
+    ): PromptBlockRenderResult {
+        const {
+            selected,
+            rendered,
+            merged = false,
+            omittedByPolicy = false,
+            renderTargets = [],
+            reason,
+            additionalRenderedChars = 0,
+        } = semantics;
         const safe = rawContent ?? '';
         const originalChars = safe.length;
         const maxChars = Math.max(0, budget);
         if (maxChars === 0 || originalChars === 0) {
+            const skipped = !rendered;
             return {
                 kind,
+                selected,
                 included: false,
                 rendered,
+                merged,
+                skipped,
+                omittedByPolicy,
                 truncated: false,
                 originalChars,
                 finalChars: 0,
+                finalRenderedChars: additionalRenderedChars,
                 maxChars,
+                renderTargets,
+                reason,
                 content: '',
             };
         }
         if (originalChars <= maxChars) {
+            const skipped = !rendered;
+            const finalChars = originalChars;
             return {
                 kind,
+                selected,
                 included: true,
                 rendered,
+                merged,
+                skipped,
+                omittedByPolicy,
                 truncated: false,
                 originalChars,
-                finalChars: originalChars,
+                finalChars,
+                finalRenderedChars: (rendered ? finalChars : 0) + additionalRenderedChars,
                 maxChars,
+                renderTargets,
+                reason,
                 content: safe,
             };
         }
         const ellipsis = '\n...[TRUNCATED]';
         const hardLimit = Math.max(0, maxChars - ellipsis.length);
         const content = `${safe.slice(0, hardLimit)}${ellipsis}`;
+        const skipped = !rendered;
         return {
             kind,
+            selected,
             included: true,
             rendered,
+            merged,
+            skipped,
+            omittedByPolicy,
             truncated: true,
             originalChars,
             finalChars: content.length,
+            finalRenderedChars: (rendered ? content.length : 0) + additionalRenderedChars,
             maxChars,
+            renderTargets,
+            reason,
             content,
         };
     }
@@ -779,22 +837,95 @@ export class ChatExecutionSpine {
         const notebookText = notebookActive
             ? `[NOTEBOOK]: Active notebook context is attached. Prioritize grounded references from notebook sources when relevant.`
             : '';
+        const identityOverlayBudget = Math.max(400, Math.floor(budgetByKind.identity * 0.5));
+        const identityOverlay = this.renderPromptBlock(
+            'identity',
+            userIdentity || '',
+            identityOverlayBudget,
+            {
+                selected: !!userIdentity,
+                rendered: false,
+                merged: true,
+                renderTargets: ['userIdentity'],
+                reason: userIdentity ? 'merged_into_compact_builder_userIdentity' : 'identity_overlay_not_available',
+            },
+        );
+        const toolsOmittedByPolicy = !toolsEnabled || turnPolicy?.toolExposureProfile === 'none' || executionPlan.activeMode === 'rp';
 
         const blocks: PromptBlockRenderResult[] = [
-            this.renderPromptBlock('identity', `${activeProfileSystemPrompt || ''}`, budgetByKind.identity, true),
-            this.renderPromptBlock('task_policy', dynamicContext || '', budgetByKind.task_policy, true),
-            this.renderPromptBlock('memory', memoryContext || '', budgetByKind.memory, true),
-            this.renderPromptBlock('docs_retrieval', docContextText || '', budgetByKind.docs_retrieval, false),
-            this.renderPromptBlock('tools', toolSigs || '', budgetByKind.tools, true),
-            this.renderPromptBlock('notebook', notebookText, budgetByKind.notebook, false),
-            this.renderPromptBlock('astro', astroState || '', budgetByKind.astro, false),
-            this.renderPromptBlock('reflection', goalsAndReflections || '', budgetByKind.reflection, true),
+            this.renderPromptBlock('identity', `${activeProfileSystemPrompt || ''}`, budgetByKind.identity, {
+                selected: true,
+                rendered: true,
+                merged: true,
+                renderTargets: ['systemPromptBase', 'userIdentity'],
+                reason: identityOverlay.included
+                    ? 'renders_system_prompt_base_and_merges_identity_overlay'
+                    : 'renders_system_prompt_base',
+                additionalRenderedChars: identityOverlay.finalChars,
+            }),
+            this.renderPromptBlock('task_policy', dynamicContext || '', budgetByKind.task_policy, {
+                selected: true,
+                rendered: true,
+                renderTargets: ['dynamicContext'],
+                reason: 'renders_dynamic_context',
+            }),
+            this.renderPromptBlock('memory', memoryContext || '', budgetByKind.memory, {
+                selected: true,
+                rendered: turnPolicy?.memoryReadPolicy !== 'blocked',
+                omittedByPolicy: turnPolicy?.memoryReadPolicy === 'blocked',
+                renderTargets: ['memoryContext'],
+                reason: turnPolicy?.memoryReadPolicy === 'blocked'
+                    ? 'omitted_by_memory_read_policy'
+                    : 'renders_memory_context',
+            }),
+            this.renderPromptBlock('docs_retrieval', docContextText || '', budgetByKind.docs_retrieval, {
+                selected: true,
+                rendered: false,
+                renderTargets: [],
+                reason: 'selected_bounded_but_not_in_compact_builder_text_path',
+            }),
+            this.renderPromptBlock('tools', toolSigs || '', budgetByKind.tools, {
+                selected: true,
+                rendered: !toolsOmittedByPolicy,
+                omittedByPolicy: toolsOmittedByPolicy,
+                renderTargets: ['toolSigs'],
+                reason: toolsOmittedByPolicy
+                    ? 'selected_but_omitted_by_tool_exposure_policy'
+                    : 'renders_tool_signatures',
+            }),
+            this.renderPromptBlock('notebook', notebookText, budgetByKind.notebook, {
+                selected: notebookActive,
+                rendered: false,
+                merged: true,
+                renderTargets: ['notebookGrounded'],
+                reason: notebookActive
+                    ? 'merged_into_notebook_grounded_flag'
+                    : 'notebook_inactive',
+            }),
+            this.renderPromptBlock('astro', astroState || '', budgetByKind.astro, {
+                selected: true,
+                rendered: false,
+                omittedByPolicy: turnObject?.turnBehavior?.astroLevel === 'off',
+                renderTargets: [],
+                reason: turnObject?.turnBehavior?.astroLevel === 'off'
+                    ? 'selected_but_omitted_by_astro_policy'
+                    : 'selected_bounded_but_not_in_compact_builder_text_path',
+            }),
+            this.renderPromptBlock('reflection', goalsAndReflections || '', budgetByKind.reflection, {
+                selected: true,
+                rendered: turnObject?.turnBehavior?.reflectionLevel !== 'off',
+                omittedByPolicy: turnObject?.turnBehavior?.reflectionLevel === 'off',
+                renderTargets: ['goalsAndReflections'],
+                reason: turnObject?.turnBehavior?.reflectionLevel === 'off'
+                    ? 'selected_but_omitted_by_reflection_policy'
+                    : 'renders_reflection_context',
+            }),
         ];
 
         const byKind = (kind: PromptBlockKind) => blocks.find(b => b.kind === kind)?.content || '';
         const inputs = {
             systemPromptBase: byKind('identity'),
-            userIdentity: this.renderPromptBlock('identity', userIdentity || '', Math.max(400, Math.floor(budgetByKind.identity * 0.5)), true).content,
+            userIdentity: identityOverlay.content,
             dynamicContext: byKind('task_policy'),
             memoryContext: byKind('memory'),
             goalsAndReflections: byKind('reflection'),
@@ -802,17 +933,25 @@ export class ChatExecutionSpine {
             notebookGrounded: notebookActive,
         };
 
+        const selectedBlocks = blocks.filter(b => b.selected).map(b => b.kind);
         const includedBlocks = blocks.filter(b => b.included).map(b => b.kind);
         const renderedBlocks = blocks.filter(b => b.included && b.rendered).map(b => b.kind);
+        const mergedBlocks = blocks.filter(b => b.selected && b.merged).map(b => b.kind);
+        const skippedBlocks = blocks.filter(b => b.selected && b.skipped).map(b => b.kind);
+        const omittedByPolicyBlocks = blocks.filter(b => b.selected && b.omittedByPolicy).map(b => b.kind);
         const truncatedBlocks = blocks.filter(b => b.truncated).map(b => b.kind);
         const totalChars = blocks.reduce((sum, b) => sum + b.finalChars, 0);
-        const renderedChars = blocks.filter(b => b.rendered).reduce((sum, b) => sum + b.finalChars, 0);
+        const renderedChars = blocks.reduce((sum, b) => sum + b.finalRenderedChars, 0);
 
         return {
             budgets: budgetByKind,
             blocks,
+            selectedBlocks,
             includedBlocks,
             renderedBlocks,
+            mergedBlocks,
+            skippedBlocks,
+            omittedByPolicyBlocks,
             truncatedBlocks,
             totalChars,
             renderedChars,
@@ -1485,7 +1624,9 @@ export class ChatExecutionSpine {
             astroState,
         });
         console.log(
-            `[PromptBounds] turn=${turnId} included=[${boundedPromptPacket.includedBlocks.join(',')}] ` +
+            `[PromptBounds] turn=${turnId} selected=[${boundedPromptPacket.selectedBlocks.join(',')}] ` +
+            `rendered=[${boundedPromptPacket.renderedBlocks.join(',')}] merged=[${boundedPromptPacket.mergedBlocks.join(',')}] ` +
+            `skipped=[${boundedPromptPacket.skippedBlocks.join(',')}] omittedByPolicy=[${boundedPromptPacket.omittedByPolicyBlocks.join(',')}] ` +
             `truncated=[${boundedPromptPacket.truncatedBlocks.join(',')}] totalChars=${boundedPromptPacket.totalChars} renderedChars=${boundedPromptPacket.renderedChars}`,
         );
         telemetry.operational(
@@ -1500,19 +1641,30 @@ export class ChatExecutionSpine {
                     turnId,
                     mode: activeMode,
                     intent: turnObject.intent.class,
+                    selectedBlocks: boundedPromptPacket.selectedBlocks,
                     includedBlocks: boundedPromptPacket.includedBlocks,
                     renderedBlocks: boundedPromptPacket.renderedBlocks,
+                    mergedBlocks: boundedPromptPacket.mergedBlocks,
+                    skippedBlocks: boundedPromptPacket.skippedBlocks,
+                    omittedByPolicyBlocks: boundedPromptPacket.omittedByPolicyBlocks,
                     truncatedBlocks: boundedPromptPacket.truncatedBlocks,
                     totalChars: boundedPromptPacket.totalChars,
                     renderedChars: boundedPromptPacket.renderedChars,
                     perBlock: boundedPromptPacket.blocks.map(b => ({
                         kind: b.kind,
+                        selected: b.selected,
                         included: b.included,
                         rendered: b.rendered,
+                        merged: b.merged,
+                        skipped: b.skipped,
+                        omittedByPolicy: b.omittedByPolicy,
                         truncated: b.truncated,
                         originalChars: b.originalChars,
                         finalChars: b.finalChars,
+                        finalRenderedChars: b.finalRenderedChars,
                         maxChars: b.maxChars,
+                        renderTargets: b.renderTargets,
+                        reason: b.reason,
                     })),
                 },
             },
