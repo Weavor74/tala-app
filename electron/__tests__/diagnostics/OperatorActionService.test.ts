@@ -1,5 +1,35 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OperatorActionService } from '../../services/OperatorActionService';
+
+const mocked = vi.hoisted(() => ({
+    telemetryEmit: vi.fn(),
+    auditInfo: vi.fn(),
+    policyCheckSideEffect: vi.fn(() => ({ allowed: true, reason: 'ok' })),
+}));
+
+vi.mock('../../services/telemetry/TelemetryBus', () => ({
+    TelemetryBus: {
+        getInstance: () => ({
+            emit: mocked.telemetryEmit,
+        }),
+    },
+}));
+
+vi.mock('../../services/AuditLogger', () => ({
+    auditLogger: {
+        info: mocked.auditInfo,
+    },
+}));
+
+vi.mock('../../services/policy/PolicyGate', () => ({
+    policyGate: {
+        checkSideEffect: mocked.policyCheckSideEffect,
+    },
+}));
+
+const telemetryEmit = mocked.telemetryEmit;
+const auditInfo = mocked.auditInfo;
+const policyCheckSideEffect = mocked.policyCheckSideEffect;
 
 function makeHealth(overrides: Record<string, unknown> = {}): any {
     return {
@@ -36,7 +66,14 @@ function makeHealth(overrides: Record<string, unknown> = {}): any {
 }
 
 describe('OperatorActionService', () => {
-    it('enters safe mode and returns a deterministic action contract', async () => {
+    beforeEach(() => {
+        telemetryEmit.mockClear();
+        auditInfo.mockClear();
+        policyCheckSideEffect.mockReset();
+        policyCheckSideEffect.mockReturnValue({ allowed: true, reason: 'ok' });
+    });
+
+    it('returns deterministic allowed contract and mode delta for enter_safe_mode', async () => {
         let health = makeHealth();
         let overrideMode: string | null = null;
         const diagnosticsAggregator: any = {
@@ -70,7 +107,8 @@ describe('OperatorActionService', () => {
         });
 
         expect(result.allowed).toBe(true);
-        expect(result.action_id).toBe('enter_safe_mode');
+        expect(result.action).toBe('enter_safe_mode');
+        expect(result.action_id.length).toBeGreaterThan(10);
         expect(result.resulting_mode_change).toEqual({
             from_mode: 'NORMAL',
             to_mode: 'SAFE_MODE',
@@ -120,6 +158,68 @@ describe('OperatorActionService', () => {
 
         expect(denied.allowed).toBe(false);
         expect(denied.reason).toContain('human_approval_required_for_high_risk_action');
+        expect(denied.action).toBe('exit_safe_mode');
+    });
+
+    it('writes audit and telemetry traces for allowed and denied actions', async () => {
+        const diagnosticsAggregator: any = {
+            getSystemHealthSnapshot: () => makeHealth(),
+            setOperatorModeOverride: vi.fn(),
+            getOperatorModeOverride: vi.fn(() => null),
+            getSnapshot: () => ({ inference: {}, mcp: { services: [] } }),
+        };
+        const runtimeControl: any = {
+            probeProviders: vi.fn(async () => ({ success: true })),
+            probeMcpServices: vi.fn(() => ({ success: true })),
+            restartMcpService: vi.fn(async () => ({ success: true })),
+        };
+        const service = new OperatorActionService({
+            diagnosticsAggregator,
+            runtimeControl,
+            getSettingsPath: () => 'D:/tmp/not-used-settings.json',
+        });
+
+        await service.executeAction({
+            action: 'mute_duplicate_alerts',
+            requested_by: 'audit_test_operator',
+            params: { alert_key: 'dup-1' },
+        });
+
+        policyCheckSideEffect.mockReturnValueOnce({ allowed: false, reason: 'policy_test_denied' });
+        await service.executeAction({
+            action: 'pin_active_issue',
+            requested_by: 'audit_test_operator',
+            params: { issue_id: 'inc-1' },
+        });
+
+        expect(auditInfo).toHaveBeenCalled();
+        const events = auditInfo.mock.calls.map((c) => c[0]);
+        expect(events).toContain('operator_action_executed');
+        expect(events).toContain('operator_action_denied');
+        expect(telemetryEmit).toHaveBeenCalled();
+    });
+
+    it('separates auto-repair actions from operator history', async () => {
+        const diagnosticsAggregator: any = {
+            getSystemHealthSnapshot: () => makeHealth(),
+            setOperatorModeOverride: vi.fn(),
+            getOperatorModeOverride: vi.fn(() => null),
+            getSnapshot: () => ({ inference: {}, mcp: { services: [] } }),
+        };
+        const runtimeControl: any = {
+            probeProviders: vi.fn(async () => ({ success: true })),
+            probeMcpServices: vi.fn(() => ({ success: true })),
+            restartMcpService: vi.fn(async () => ({ success: true })),
+        };
+        const service = new OperatorActionService({
+            diagnosticsAggregator,
+            runtimeControl,
+            getSettingsPath: () => 'D:/tmp/not-used-settings.json',
+        });
+
+        const autoResult = await service.executeAutoAction('mute_duplicate_alerts', { alert_key: 'dup-auto' });
+        expect(autoResult.source).toBe('auto_repair');
+        expect(service.getAutoRepairHistory().length).toBe(1);
+        expect(service.getActionHistory().length).toBe(0);
     });
 });
-

@@ -2328,7 +2328,8 @@ export class IpcRouter {
       const svc = this.ctx.operatorActionService;
       if (!svc) {
         return {
-          action_id: request?.action ?? 'retry_subsystem_health_check',
+          action_id: `fallback-${Date.now()}`,
+          action: request?.action ?? 'retry_subsystem_health_check',
           requested_by: request?.requested_by ?? 'operator',
           executed_at: new Date().toISOString(),
           allowed: false,

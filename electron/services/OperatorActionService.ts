@@ -8,9 +8,11 @@ import { policyGate } from './policy/PolicyGate';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import { checkCanonicalDbHealth } from './db/initMemoryStore';
 import { loadSettings } from './SettingsManager';
+import { auditLogger } from './AuditLogger';
 import type { McpServerConfig } from '../../shared/settings';
 import type {
     OperatorActionId,
+    OperatorActionSource,
     OperatorActionRequest,
     OperatorActionResultContract,
     SystemHealthSnapshot,
@@ -49,12 +51,23 @@ export class OperatorActionService {
         const action = request.action;
         const requestedBy = request.requested_by || 'operator';
         const actionId = uuidv4();
+        const source: OperatorActionSource = request.source ?? 'operator';
         const executedAt = new Date().toISOString();
-
         const before = this.deps.diagnosticsAggregator.getSystemHealthSnapshot();
+        const deny = (reason: string, affectedSubsystems: string[]) =>
+            this._buildDeniedResult(
+                action,
+                requestedBy,
+                executedAt,
+                before,
+                reason,
+                affectedSubsystems,
+                actionId,
+                source,
+            );
         const modeAllowed = this._checkModeAllowance(action, before);
         if (!modeAllowed.allowed) {
-            return this._buildDeniedResult(action, requestedBy, executedAt, before, modeAllowed.reason, modeAllowed.affectedSubsystems);
+            return deny(modeAllowed.reason, modeAllowed.affectedSubsystems);
         }
 
         const decision = policyGate.checkSideEffect({
@@ -66,17 +79,17 @@ export class OperatorActionService {
             mutationIntent: action,
         });
         if (!decision.allowed) {
-            return this._buildDeniedResult(action, requestedBy, executedAt, before, `policy_denied:${decision.reason}`, ['policy_gate']);
+            return deny(`policy_denied:${decision.reason}`, ['policy_gate']);
         }
 
         if (this.selfImprovementLocked && this._isSelfImprovementAction(action)) {
-            return this._buildDeniedResult(action, requestedBy, executedAt, before, 'self_improvement_locked', ['reflection_service', 'autonomy_orchestrator']);
+            return deny('self_improvement_locked', ['reflection_service', 'autonomy_orchestrator']);
         }
 
         if (this.highRiskApprovalRequired && HIGH_RISK_ACTIONS.has(action)) {
             const explicitlyApproved = request.params?.operator_approved === true;
             if (!explicitlyApproved) {
-                return this._buildDeniedResult(action, requestedBy, executedAt, before, 'human_approval_required_for_high_risk_action', ['policy_gate']);
+                return deny('human_approval_required_for_high_risk_action', ['policy_gate']);
             }
         }
 
@@ -112,7 +125,7 @@ export class OperatorActionService {
                 case 'exit_safe_mode': {
                     const override = this.deps.diagnosticsAggregator.getOperatorModeOverride();
                     if (!override || override.mode !== 'SAFE_MODE') {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'safe_mode_override_not_active', ['runtime_mode_manager']);
+                        return deny('safe_mode_override_not_active', ['runtime_mode_manager']);
                     }
                     this.deps.diagnosticsAggregator.setOperatorModeOverride(null, {
                         reason: 'operator_requested_clear',
@@ -136,7 +149,7 @@ export class OperatorActionService {
                 case 'clear_maintenance_mode': {
                     const override = this.deps.diagnosticsAggregator.getOperatorModeOverride();
                     if (!override || override.mode !== 'MAINTENANCE') {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'maintenance_override_not_active', ['runtime_mode_manager']);
+                        return deny('maintenance_override_not_active', ['runtime_mode_manager']);
                     }
                     this.deps.diagnosticsAggregator.setOperatorModeOverride(null, {
                         reason: 'operator_requested_clear',
@@ -152,6 +165,13 @@ export class OperatorActionService {
                     affectedSubsystems = await this._retryHealthFor(target);
                     rollback = 'none';
                     details = { target };
+                    break;
+                }
+                case 'retry_inference_probe': {
+                    const result = await this.deps.runtimeControl.probeProviders();
+                    affectedSubsystems = ['inference_service'];
+                    rollback = 'none';
+                    details = { result };
                     break;
                 }
                 case 'restart_inference_adapter': {
@@ -182,14 +202,10 @@ export class OperatorActionService {
                     break;
                 }
                 case 'rerun_derived_rebuild': {
-                    return this._buildDeniedResult(
-                        action,
-                        requestedBy,
-                        executedAt,
-                        before,
-                        'memory_authority_rebuild_not_wired_in_runtime_context',
-                        ['memory_authority_service'],
-                    );
+                    details = await this._rerunDerivedRebuild();
+                    affectedSubsystems = ['memory_authority_service', 'reflection_service'];
+                    rollback = 'none';
+                    break;
                 }
                 case 'flush_or_restart_stalled_queues': {
                     const summary = await this._flushStalledQueues();
@@ -208,11 +224,11 @@ export class OperatorActionService {
                 case 'approve_repair_proposal': {
                     const proposalId = String(request.params?.proposal_id ?? '');
                     if (!proposalId) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'missing_proposal_id', ['reflection_service']);
+                        return deny('missing_proposal_id', ['reflection_service']);
                     }
                     const patch = this.deps.reflectionService?.getActivePatches().get(proposalId);
                     if (!patch || !this.deps.reflectionService) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'proposal_not_found', ['reflection_service']);
+                        return deny('proposal_not_found', ['reflection_service']);
                     }
                     const mockReport: any = { overallResult: 'pass' };
                     await this.deps.reflectionService.getPromoter().promotePatch(patch, mockReport, requestedBy);
@@ -225,11 +241,11 @@ export class OperatorActionService {
                 case 'reject_repair_proposal': {
                     const proposalId = String(request.params?.proposal_id ?? '');
                     if (!proposalId) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'missing_proposal_id', ['reflection_service']);
+                        return deny('missing_proposal_id', ['reflection_service']);
                     }
                     const patch = this.deps.reflectionService?.getActivePatches().get(proposalId);
                     if (!patch) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'proposal_not_found', ['reflection_service']);
+                        return deny('proposal_not_found', ['reflection_service']);
                     }
                     patch.status = 'rejected';
                     affectedSubsystems = ['reflection_service'];
@@ -240,11 +256,11 @@ export class OperatorActionService {
                 case 'defer_proposal': {
                     const proposalId = String(request.params?.proposal_id ?? '');
                     if (!proposalId) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'missing_proposal_id', ['reflection_service']);
+                        return deny('missing_proposal_id', ['reflection_service']);
                     }
                     const patch = this.deps.reflectionService?.getActivePatches().get(proposalId);
                     if (!patch) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'proposal_not_found', ['reflection_service']);
+                        return deny('proposal_not_found', ['reflection_service']);
                     }
                     patch.status = 'staged';
                     affectedSubsystems = ['reflection_service'];
@@ -276,7 +292,7 @@ export class OperatorActionService {
                 case 'acknowledge_incident': {
                     const incidentId = String(request.params?.incident_id ?? '');
                     if (!incidentId) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'missing_incident_id', ['diagnostics']);
+                        return deny('missing_incident_id', ['diagnostics']);
                     }
                     this.acknowledgedIncidents.add(incidentId);
                     affectedSubsystems = ['diagnostics'];
@@ -295,7 +311,7 @@ export class OperatorActionService {
                 case 'pin_active_issue': {
                     const issueId = String(request.params?.issue_id ?? '');
                     if (!issueId) {
-                        return this._buildDeniedResult(action, requestedBy, executedAt, before, 'missing_issue_id', ['diagnostics']);
+                        return deny('missing_issue_id', ['diagnostics']);
                     }
                     this.pinnedIssue = issueId;
                     affectedSubsystems = ['diagnostics'];
@@ -317,29 +333,37 @@ export class OperatorActionService {
                     break;
                 }
                 default: {
-                    return this._buildDeniedResult(action, requestedBy, executedAt, before, 'unknown_action', ['diagnostics']);
+                    return deny('unknown_action', ['diagnostics']);
                 }
             }
         } catch (err: any) {
-            return this._buildDeniedResult(
-                action,
-                requestedBy,
-                executedAt,
-                before,
+            return deny(
                 `action_execution_error:${err?.message ?? String(err)}`,
                 affectedSubsystems.length ? affectedSubsystems : ['diagnostics'],
             );
         }
 
         const after = this.deps.diagnosticsAggregator.getSystemHealthSnapshot();
-        const result = this._buildAllowedResult(action, requestedBy, executedAt, before, after, reason, affectedSubsystems, rollback, details);
-        this.actionHistory.push(result);
-        if (this.actionHistory.length > 100) this.actionHistory = this.actionHistory.slice(-100);
+        const result = this._buildAllowedResult(
+            action,
+            requestedBy,
+            executedAt,
+            before,
+            after,
+            reason,
+            affectedSubsystems,
+            rollback,
+            details,
+            actionId,
+            source,
+        );
+        this._recordActionResult(result);
+        this._emitAuditRecord(result);
 
         TelemetryBus.getInstance().emit({
             executionId: actionId,
             subsystem: 'system',
-            event: 'execution.operator_action',
+            event: source === 'operator' ? 'execution.operator_action' : 'execution.auto_action',
             phase: 'operator_action',
             payload: {
                 action,
@@ -348,7 +372,7 @@ export class OperatorActionService {
                 reason,
                 affectedSubsystems,
                 resultingMode: after.effective_mode,
-                source: 'operator',
+                source,
             },
         });
 
@@ -361,6 +385,19 @@ export class OperatorActionService {
 
     public getAutoRepairHistory(): OperatorActionResultContract[] {
         return [...this.autoRepairHistory];
+    }
+
+    public async executeAutoAction(
+        action: OperatorActionId,
+        params?: Record<string, unknown>,
+        requestedBy: string = 'system_auto_repair',
+    ): Promise<OperatorActionResultContract> {
+        return this.executeAction({
+            action,
+            requested_by: requestedBy,
+            params,
+            source: 'auto_repair',
+        });
     }
 
     public getVisibilityState(): {
@@ -386,9 +423,12 @@ export class OperatorActionService {
         before: SystemHealthSnapshot,
         reason: string,
         affectedSubsystems: string[],
+        actionExecutionId: string = uuidv4(),
+        source: OperatorActionSource = 'operator',
     ): OperatorActionResultContract {
         const result: OperatorActionResultContract = {
-            action_id: action,
+            action_id: actionExecutionId,
+            action,
             requested_by: requestedBy,
             executed_at: executedAt,
             allowed: false,
@@ -405,10 +445,25 @@ export class OperatorActionService {
                 resolved_incidents: [],
             },
             rollback_availability: 'none',
-            source: 'operator',
+            source,
         };
-        this.actionHistory.push(result);
-        if (this.actionHistory.length > 100) this.actionHistory = this.actionHistory.slice(-100);
+        this._recordActionResult(result);
+        this._emitAuditRecord(result);
+        TelemetryBus.getInstance().emit({
+            executionId: actionExecutionId,
+            subsystem: 'system',
+            event: source === 'operator' ? 'execution.operator_action' : 'execution.auto_action',
+            phase: 'operator_action',
+            payload: {
+                action,
+                requestedBy,
+                allowed: false,
+                reason,
+                affectedSubsystems,
+                resultingMode: before.effective_mode,
+                source,
+            },
+        });
         return result;
     }
 
@@ -422,6 +477,8 @@ export class OperatorActionService {
         affectedSubsystems: string[],
         rollback: RollbackAvailability,
         details?: Record<string, unknown>,
+        actionExecutionId: string = uuidv4(),
+        source: OperatorActionSource = 'operator',
     ): OperatorActionResultContract {
         const beforeIncidents = new Set(before.active_incidents);
         const afterIncidents = new Set(after.active_incidents);
@@ -430,7 +487,8 @@ export class OperatorActionService {
         const trustDelta = Math.round((after.trust_score - before.trust_score) * 100) / 100;
 
         return {
-            action_id: action,
+            action_id: actionExecutionId,
+            action,
             requested_by: requestedBy,
             executed_at: executedAt,
             allowed: true,
@@ -449,7 +507,7 @@ export class OperatorActionService {
                 resolved_incidents: resolvedIncidents,
             },
             rollback_availability: rollback,
-            source: 'operator',
+            source,
             details,
         };
     }
@@ -530,6 +588,27 @@ export class OperatorActionService {
         return summary;
     }
 
+    /**
+     * Best-effort derived state rebuild entrypoint.
+     * This never bypasses canonical authority; it only performs bounded
+     * revalidation and scheduler ticks through existing runtime services.
+     */
+    private async _rerunDerivedRebuild(): Promise<Record<string, unknown>> {
+        const authorityHealth = await checkCanonicalDbHealth();
+        if (!this.deps.reflectionService) {
+            return {
+                authorityHealth,
+                reflectionSchedulerTicked: false,
+                reason: 'reflection_service_not_initialized',
+            };
+        }
+        await this.deps.reflectionService.getScheduler().tickNow();
+        return {
+            authorityHealth,
+            reflectionSchedulerTicked: true,
+        };
+    }
+
     private async _openEvidenceTrail(params?: Record<string, unknown>): Promise<Record<string, unknown>> {
         const svc = this.deps.logViewerService;
         if (!svc) {
@@ -555,6 +634,36 @@ export class OperatorActionService {
         return action === 'approve_repair_proposal'
             || action === 'defer_proposal'
             || action === 'unlock_self_improvement';
+    }
+
+    private _emitAuditRecord(result: OperatorActionResultContract): void {
+        auditLogger.info(
+            result.allowed ? 'operator_action_executed' : 'operator_action_denied',
+            'OperatorActionService',
+            {
+                action_id: result.action_id,
+                action: result.action,
+                requested_by: result.requested_by,
+                source: result.source,
+                allowed: result.allowed,
+                reason: result.reason,
+                affected_subsystems: result.affected_subsystems,
+                resulting_mode_change: result.resulting_mode_change,
+                resulting_health_delta: result.resulting_health_delta,
+                rollback_availability: result.rollback_availability,
+            },
+            result.action_id,
+        );
+    }
+
+    private _recordActionResult(result: OperatorActionResultContract): void {
+        if (result.source === 'auto_repair') {
+            this.autoRepairHistory.push(result);
+            if (this.autoRepairHistory.length > 100) this.autoRepairHistory = this.autoRepairHistory.slice(-100);
+            return;
+        }
+        this.actionHistory.push(result);
+        if (this.actionHistory.length > 100) this.actionHistory = this.actionHistory.slice(-100);
     }
 
     private _checkModeAllowance(

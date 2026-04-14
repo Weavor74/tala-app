@@ -271,6 +271,7 @@ export type OperatorActionId =
     | 'enter_maintenance_mode'
     | 'clear_maintenance_mode'
     | 'retry_subsystem_health_check'
+    | 'retry_inference_probe'
     | 'restart_inference_adapter'
     | 'rerun_db_health_validation'
     | 'revalidate_memory_authority'
@@ -294,11 +295,15 @@ export type OperatorActionSource = 'operator' | 'auto_repair';
 export interface OperatorActionRequest {
     action: OperatorActionId;
     requested_by: string;
+    source?: OperatorActionSource;
     params?: Record<string, unknown>;
 }
 
 export interface OperatorActionResultContract {
-    action_id: OperatorActionId;
+    /** Stable action execution instance ID (UUID). */
+    action_id: string;
+    /** Canonical action identifier requested/executed. */
+    action: OperatorActionId;
     requested_by: string;
     executed_at: string;
     allowed: boolean;

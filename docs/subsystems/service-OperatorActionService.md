@@ -21,18 +21,23 @@
 **Returns**: `OperatorActionResultContract[]`
 
 ---
+#### `executeAutoAction`
+**Arguments**: `action: OperatorActionId, params?: Record<string, unknown>, requestedBy: string = 'system_auto_repair',`
+**Returns**: `Promise<OperatorActionResultContract>`
+
+---
 #### `getVisibilityState`
 **Arguments**: ``
 **Returns**: ``
 
 ---
 #### `_buildDeniedResult`
-**Arguments**: `action: OperatorActionId, requestedBy: string, executedAt: string, before: SystemHealthSnapshot, reason: string, affectedSubsystems: string[],`
+**Arguments**: `action: OperatorActionId, requestedBy: string, executedAt: string, before: SystemHealthSnapshot, reason: string, affectedSubsystems: string[], actionExecutionId: string = uuidv4(), source: OperatorActionSource = 'operator',`
 **Returns**: `OperatorActionResultContract`
 
 ---
 #### `_buildAllowedResult`
-**Arguments**: `action: OperatorActionId, requestedBy: string, executedAt: string, before: SystemHealthSnapshot, after: SystemHealthSnapshot, reason: string, affectedSubsystems: string[], rollback: RollbackAvailability, details?: Record<string, unknown>,`
+**Arguments**: `action: OperatorActionId, requestedBy: string, executedAt: string, before: SystemHealthSnapshot, after: SystemHealthSnapshot, reason: string, affectedSubsystems: string[], rollback: RollbackAvailability, details?: Record<string, unknown>, actionExecutionId: string = uuidv4(), source: OperatorActionSource = 'operator',`
 **Returns**: `OperatorActionResultContract`
 
 ---
@@ -51,6 +56,16 @@
 **Returns**: `Promise<Record<string, unknown>>`
 
 ---
+#### `_rerunDerivedRebuild`
+Best-effort derived state rebuild entrypoint.
+ This never bypasses canonical authority; it only performs bounded
+ revalidation and scheduler ticks through existing runtime services.
+/
+
+**Arguments**: ``
+**Returns**: `Promise<Record<string, unknown>>`
+
+---
 #### `_openEvidenceTrail`
 **Arguments**: `params?: Record<string, unknown>`
 **Returns**: `Promise<Record<string, unknown>>`
@@ -59,6 +74,16 @@
 #### `_isSelfImprovementAction`
 **Arguments**: `action: OperatorActionId`
 **Returns**: `boolean`
+
+---
+#### `_emitAuditRecord`
+**Arguments**: `result: OperatorActionResultContract`
+**Returns**: `void`
+
+---
+#### `_recordActionResult`
+**Arguments**: `result: OperatorActionResultContract`
+**Returns**: `void`
 
 ---
 #### `_checkModeAllowance`
