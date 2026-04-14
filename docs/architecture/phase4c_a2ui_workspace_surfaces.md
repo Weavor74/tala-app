@@ -6,6 +6,11 @@ Phase 4C integrates the React A2UI (Agent-to-UI) renderer model into Tala's
 document/editor pane so Tala can open structured UI surfaces showing her
 current cognitive, world, and maintenance state.
 
+As of the center-pane multi-surface upgrade, A2UI is one routed surface inside
+the generalized workspace host. The same center-pane host now routes document
+surfaces by deterministic content type (text, html, board, rtf-preview, pdf,
+image, fallback) while preserving A2UI and browser/conflict flows.
+
 **Core rule:** A2UI surfaces render exclusively in the document/editor pane.
 Chat receives only lightweight textual notices.
 

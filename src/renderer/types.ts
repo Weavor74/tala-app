@@ -20,6 +20,29 @@ export interface A2UIState {
     components: A2UIComponent[];
 }
 
+export type WorkspaceContentType =
+    | 'text'
+    | 'html'
+    | 'board'
+    | 'rtf'
+    | 'pdf'
+    | 'image'
+    | 'unknown';
+
+export interface WorkspaceDocument {
+    id: string;
+    title: string;
+    path?: string;
+    uri?: string;
+    mimeType?: string;
+    contentType: WorkspaceContentType;
+    dirty: boolean;
+    readOnly: boolean;
+    payload?: string;
+    sourceRef?: string;
+    metadata?: Record<string, unknown>;
+}
+
 export type TabType = 'file' | 'browser' | 'a2ui' | 'settings' | 'profile' | 'search' | 'library' | 'sessions' | 'memory' | 'workflow' | 'conflict' | 'artifact';
 
 export interface Tab {
@@ -31,6 +54,7 @@ export interface Tab {
     scrollPosition?: number;
     conflictPath?: string; // Specific for conflict tabs
     artifact?: WorkspaceArtifact;
+    document?: WorkspaceDocument;
 }
 
 export type ArtifactType =
@@ -44,7 +68,9 @@ export type ArtifactType =
     | "json"
     | "code"
     | "image"
-    | "pdf";
+    | "pdf"
+    | "rtf"
+    | "board";
 
 export interface WorkspaceArtifact {
     id: string;

@@ -53,6 +53,7 @@
 - [Tala Naming Conventions (Locked Architecture Contract)](architecture/naming-conventions.md)
 - [Tala System Overview](architecture/system_overview.md)
 - [Technology Stack](architecture/technology_stack.md)
+- [Workspace Surface Host Architecture](architecture/workspace-surface-host.md)
 
 ## audit
 

@@ -13,7 +13,9 @@ export type ArtifactType =
     | "json"
     | "code"
     | "image"
-    | "pdf";
+    | "pdf"
+    | "rtf"
+    | "board";
 
 export interface WorkspaceArtifact {
     id: string;

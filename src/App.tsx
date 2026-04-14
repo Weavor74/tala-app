@@ -31,7 +31,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import type { Tab, WorkspaceArtifact } from './renderer/types';
+import type { Tab, WorkspaceArtifact, WorkspaceDocument } from './renderer/types';
 
 import { UserProfile } from './renderer/UserProfile';
 import { Settings } from './renderer/Settings';
@@ -50,6 +50,9 @@ import { CoreWorkspace } from './renderer/components/CoreWorkspace';
 import { AgentModeConfigPanel } from './renderer/components/AgentModeConfigPanel';
 import { A2UIWorkspaceSurface } from './renderer/A2UIWorkspaceSurface';
 import type { A2UISurfacePayload, A2UIActionDispatch } from '../shared/a2uiTypes';
+import WorkspaceSurfaceHost from './renderer/workspace/WorkspaceSurfaceHost';
+import { createWorkspaceDocumentFromArtifact, createWorkspaceDocumentFromFile } from './renderer/workspace/WorkspaceDocumentFactory';
+import { resolveWorkspaceContentType } from './renderer/workspace/WorkspaceContentTypeResolver';
 
 
 /** A single chat message in the conversation history. */
@@ -245,19 +248,33 @@ function App() {
     }
   };
 
+  const resolveFilePayloadReadRequirement = (path: string): boolean => {
+    const contentType = resolveWorkspaceContentType({ path });
+    return contentType === 'text' || contentType === 'html' || contentType === 'rtf' || contentType === 'board';
+  };
+
   const openFileTab = async (path: string) => {
-    const existing = tabs.find(t => t.type === 'file' && t.data?.path === path);
+    const existing = tabs.find(t => t.type === 'file' && (t.document?.path === path || t.data?.path === path));
     if (existing) {
       activateTab(existing.id);
       return;
     }
     try {
-      const content = await api.readFile(path);
+      const payload = resolveFilePayloadReadRequirement(path) ? await api.readFile(path) : undefined;
+      const tabId = 'tab-' + Math.random().toString(36).substr(2, 9);
+      const title = path.split('/').pop() || 'File';
+      const document = createWorkspaceDocumentFromFile({
+        id: tabId,
+        title,
+        path,
+        payload
+      });
       const newTab: Tab = {
-        id: 'tab-' + Math.random().toString(36).substr(2, 9),
+        id: tabId,
         type: 'file',
-        title: path.split('/').pop() || 'File',
-        data: { path, content },
+        title,
+        data: { path, content: payload },
+        document,
         active: true
       };
       setTabs(prev => [...prev, newTab]);
@@ -448,13 +465,28 @@ function App() {
           // Re-hydrate tabs (e.g. read file content again to ensure freshness)
           const hydratedTabs = await Promise.all(session.tabs.map(async (t: Tab) => {
             if (t.type === 'file') {
+              const persistedPath = t.document?.path || t.data?.path;
+              const title = t.title || persistedPath?.split(/[/\\]/).pop() || 'File';
+              if (!persistedPath) return t;
               try {
-                const content = await (window as any).tala.readFile(t.data.path);
-                return { ...t, data: { ...t.data, content } };
+                const contentType = resolveWorkspaceContentType({ path: persistedPath });
+                const content = (contentType === 'text' || contentType === 'html' || contentType === 'rtf' || contentType === 'board')
+                  ? await (window as any).tala.readFile(persistedPath)
+                  : undefined;
+                const doc = createWorkspaceDocumentFromFile({
+                  id: t.id,
+                  title,
+                  path: persistedPath,
+                  payload: content
+                });
+                return { ...t, title, data: { ...t.data, path: persistedPath, content }, document: doc };
               } catch (e) {
-                console.error(`Failed to restore file ${t.data.path}`, e);
+                console.error(`Failed to restore file ${persistedPath}`, e);
                 return t; // Keep it, it might just be missing context or deleted
               }
+            }
+            if (t.type === 'artifact' && t.artifact && !t.document) {
+              return { ...t, document: createWorkspaceDocumentFromArtifact(t.artifact) };
             }
             return t;
           }));
@@ -485,7 +517,8 @@ function App() {
       const sessionData = {
         tabs: tabs.map(t => ({
           ...t,
-          data: t.type === 'file' ? { path: t.data.path } : t.data // Don't save huge file content, just path
+          data: t.type === 'file' ? { path: t.document?.path || t.data?.path } : t.data, // Don't save huge file content, just path
+          document: t.document ? { ...t.document, payload: undefined, dirty: false } : undefined
         })),
         activeTabId
       };
@@ -499,7 +532,11 @@ function App() {
     if (!activeTabId) return;
     setTabs(prev => prev.map(t => {
       if (t.id === activeTabId && t.type === 'file') {
-        return { ...t, data: { ...t.data, content: newContent } };
+        return {
+          ...t,
+          data: { ...t.data, content: newContent },
+          document: t.document ? { ...t.document, payload: newContent, dirty: true } : t.document
+        };
       }
       return t;
     }));
@@ -508,12 +545,19 @@ function App() {
   const handleSaveFile = async () => {
     const tab = activeTab;
     if (!tab || tab.type !== 'file') return;
+    const path = tab.document?.path || tab.data?.path;
+    const content = tab.document?.payload ?? tab.data?.content ?? '';
+    if (!path) return;
     try {
-      await api.createFile(tab.data.path, tab.data.content);
+      await api.createFile(path, content);
+      setTabs(prev => prev.map(t => {
+        if (t.id !== tab.id || !t.document) return t;
+        return { ...t, document: { ...t.document, dirty: false } };
+      }));
       // If in memory folder, re-ingest
-      if (tab.data.path.startsWith('memory/')) {
-        console.log(`[App] Re-ingesting ${tab.data.path}...`);
-        await api.ingestFile(tab.data.path);
+      if (path.startsWith('memory/')) {
+        console.log(`[App] Re-ingesting ${path}...`);
+        await api.ingestFile(path);
       }
       addToast({ type: 'success', message: `Saved ${tab.title}` });
     } catch (e: any) {
@@ -635,9 +679,10 @@ function App() {
         }
 
         const tid = artifact.id || ('tab-' + Math.random().toString(36).substr(2, 9));
+        const document = createWorkspaceDocumentFromArtifact(artifact);
 
         setTabs(prev => {
-          const existing = prev.find(t => t.artifact?.id === artifact.id || (t.type === 'file' && t.data?.path === artifact.path));
+          const existing = prev.find(t => t.artifact?.id === artifact.id || (t.type === 'file' && (t.document?.path === artifact.path || t.data?.path === artifact.path)));
           if (existing) {
             setActiveTabId(existing.id);
             return prev;
@@ -645,10 +690,11 @@ function App() {
           const newTab: Tab = {
             id: tid,
             type: 'artifact',
-            title: artifact.title || artifact.path?.split(/[/\\]/).pop() || 'Artifact',
+            title: document.title,
             active: true,
             artifact: artifact,
-            data: artifact.content || artifact.url
+            data: artifact.content || artifact.url,
+            document,
           };
           setActiveTabId(tid);
           return [...prev, newTab];
@@ -960,6 +1006,25 @@ function App() {
     }
   };
 
+  const buildWorkspaceDocumentForTab = (tab: Tab): WorkspaceDocument | null => {
+    if (tab.document) return tab.document;
+
+    if (tab.type === 'file' && tab.data?.path) {
+      return createWorkspaceDocumentFromFile({
+        id: tab.id,
+        title: tab.title,
+        path: tab.data.path,
+        payload: tab.data.content
+      });
+    }
+
+    if (tab.type === 'artifact' && tab.artifact) {
+      return createWorkspaceDocumentFromArtifact(tab.artifact);
+    }
+
+    return null;
+  };
+
   return (
     <div className="ide-shell">
       <StartupSplash />
@@ -1125,7 +1190,7 @@ function App() {
               className={`tab ${activeTabId === tab.id ? 'active' : ''}`}
               onClick={() => activateTab(tab.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-              title={tab.type === 'file' ? tab.data.path : tab.title}
+              title={tab.type === 'file' ? (tab.document?.path || tab.data?.path || tab.title) : tab.title}
             >
               {tab.type === 'browser' ? '🌐 ' : ''}
               {tab.title}
@@ -1174,24 +1239,13 @@ function App() {
               {tab.type === 'browser' && (
                 <Browser key={tab.id} initialUrl={tab.data.url} isActive={activeTabId === tab.id} />
               )}
-              {tab.type === 'file' && (
-                <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '5px 10px', background: '#252526', color: '#ccc', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>{tab.data.path}</span>
-                    <button
-                      onClick={handleSaveFile}
-                      style={{ background: '#0e639c', color: 'white', border: 'none', padding: '2px 10px', fontSize: 10, cursor: 'pointer', borderRadius: 2 }}
-                    >
-                      SAVE
-                    </button>
-                  </div>
-                  <textarea
-                    style={{ flex: 1, background: '#1e1e1e', color: '#d4d4d4', padding: 10, border: 'none', resize: 'none', fontFamily: 'Consolas, monospace', outline: 'none' }}
-                    value={tab.data.content}
-                    onChange={e => updateActiveTabContent(e.target.value)}
-                    onKeyDown={handleEditorKeyDown}
-                  />
-                </div>
+              {(tab.type === 'file' || tab.type === 'artifact') && (
+                <WorkspaceSurfaceHost
+                  document={buildWorkspaceDocumentForTab(tab)}
+                  onContentChange={updateActiveTabContent}
+                  onSave={handleSaveFile}
+                  onEditorKeyDown={handleEditorKeyDown}
+                />
               )}
               {tab.type === 'conflict' && (
                 <ConflictEditor
@@ -1200,57 +1254,6 @@ function App() {
                   onResolve={handleResolveConflict}
                   onCancel={() => closeTab(tab.id)}
                 />
-              )}
-              {tab.type === 'artifact' && tab.artifact && (
-                <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e', color: '#d4d4d4', overflow: 'hidden' }}>
-                  <div style={{ padding: '8px 15px', background: '#252526', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 'bold', fontSize: '0.9em' }}>{tab.title}</span>
-                    <span style={{ fontSize: '0.8em', opacity: 0.6 }}>{tab.artifact.type.toUpperCase()}</span>
-                  </div>
-                  <div style={{ flex: 1, padding: (tab.artifact.type === 'html' || tab.artifact.type === 'image' || tab.artifact.type === 'pdf') ? 0 : '20px', overflow: 'auto' }}>
-                    {tab.artifact.type === 'diff' && (
-                      <div style={{ fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
-                        {(typeof tab.data === 'string' ? tab.data : '').split('\n').map((line, i) => (
-                          <div key={i} style={{
-                            backgroundColor: line.startsWith('+') ? '#1a3e1a' : line.startsWith('-') ? '#3e1a1a' : 'transparent',
-                            color: line.startsWith('+') ? '#b5f2b5' : line.startsWith('-') ? '#f2b5b5' : 'inherit',
-                            padding: '0 5px',
-                            whiteSpace: 'pre-wrap',
-                            borderLeft: line.startsWith('+') ? '3px solid #0f0' : line.startsWith('-') ? '3px solid #f00' : 'none'
-                          }}>
-                            {line}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {tab.artifact.type === 'markdown' && (
-                      <div className="markdown-body" style={{ color: '#d4d4d4' }}>
-                        <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{tab.data}</pre>
-                      </div>
-                    )}
-                    {tab.artifact.type === 'html' && (
-                      <iframe srcDoc={tab.data} style={{ width: '100%', height: '100%', border: 'none', background: 'white' }} title={tab.title} />
-                    )}
-                    {(tab.artifact.type === 'text' || tab.artifact.type === 'json') && (
-                      <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>{tab.data}</pre>
-                    )}
-                    {(tab.artifact.type === 'editor' || tab.artifact.type === 'code') && (
-                      <textarea
-                        style={{ width: '100%', height: '100%', background: 'transparent', color: 'inherit', border: 'none', resize: 'none', outline: 'none', fontFamily: 'Consolas, monospace', fontSize: '13px' }}
-                        value={tab.data}
-                        readOnly
-                      />
-                    )}
-                    {tab.artifact.type === 'image' && (
-                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', background: '#000' }}>
-                        <img src={tab.data} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} alt={tab.title} />
-                      </div>
-                    )}
-                    {tab.artifact.type === 'pdf' && (
-                      <iframe src={tab.data} style={{ width: '100%', height: '100%', border: 'none' }} title={tab.title} />
-                    )}
-                  </div>
-                </div>
               )}
               {/* A2UI WORKSPACE SURFACE (Phase 4C) — renders in document/editor pane only */}
               {tab.type === 'a2ui' && tab.data && (

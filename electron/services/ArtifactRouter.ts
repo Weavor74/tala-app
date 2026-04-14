@@ -255,6 +255,10 @@ export class ArtifactRouter {
                 return 'html';
             case '.pdf':
                 return 'pdf';
+            case '.rtf':
+                return 'rtf';
+            case '.board':
+                return 'board';
             case '.ts':
             case '.tsx':
             case '.js':
@@ -283,6 +287,7 @@ export class ArtifactRouter {
             case '.bmp':
                 return 'image';
             default:
+                if (filePath.toLowerCase().endsWith('.board.json')) return 'board';
                 return 'text';
         }
     }
