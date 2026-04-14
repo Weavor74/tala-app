@@ -3067,7 +3067,7 @@ Exported standalone package from Tala.
         const invResult = await this.coordinator.executeTool(name, args, undefined, {
             executionType: 'direct_invocation',
             executionOrigin: 'api',
-            // enforcePolicy omitted: public API callers are responsible for their own guards
+            // Policy enforcement is performed inside ToolExecutionCoordinator.
         });
         return invResult.data;
     }

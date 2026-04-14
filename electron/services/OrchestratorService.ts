@@ -1,5 +1,6 @@
 import { IBrain, ChatMessage } from '../brains/IBrain';
 import { ToolService } from './ToolService';
+import { ToolExecutionCoordinator } from './tools/ToolExecutionCoordinator';
 
 /**
  * Agentic Orchestrator Service
@@ -16,10 +17,12 @@ import { ToolService } from './ToolService';
 export class OrchestratorService {
     private brain: IBrain;
     private tools: ToolService;
+    private coordinator: ToolExecutionCoordinator;
 
     constructor(brain: IBrain, tools: ToolService) {
         this.brain = brain;
         this.tools = tools;
+        this.coordinator = new ToolExecutionCoordinator(this.tools);
     }
 
     /**
@@ -76,7 +79,12 @@ export class OrchestratorService {
                     console.log(`[Orchestrator] Executing tool: ${functionName}`);
                     let result: string | { result: string; images: string[] };
                     try {
-                        result = await this.tools.executeTool(functionName, args);
+                        const invResult = await this.coordinator.executeTool(functionName, args, undefined, {
+                            executionType: 'autonomy_task',
+                            executionOrigin: 'autonomy_engine',
+                            executionMode: 'system',
+                        });
+                        result = invResult.data as string | { result: string; images: string[] };
                     } catch (e: unknown) {
                         result = `Error: ${e instanceof Error ? e.message : String(e)}`;
                     }

@@ -3,7 +3,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { FunctionService } from './FunctionService';
 import { AgentService } from './AgentService';
-import { policyGate, PolicyDeniedError } from './policy/PolicyGate';
+import { PolicyDeniedError } from './policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 import { resolveStoragePath } from './PathResolver';
 const { ImapFlow } = require('imapflow');
 
@@ -369,12 +370,20 @@ export class WorkflowEngine {
                 // --- POLICY GATE: workflow step pre-check ---
                 // Fires before each node is executed.
                 // PolicyDeniedError propagates out of the BFS loop and is surfaced as an error.
-                policyGate.assertSideEffect({
-                    actionKind: 'workflow_action',
-                    executionMode,
-                    targetSubsystem: 'workflow',
-                    mutationIntent: `node_execute:${node.type}`,
-                });
+                await enforceSideEffectWithGuardrails(
+                    'workflow',
+                    {
+                        actionKind: 'workflow_action',
+                        executionMode,
+                        targetSubsystem: 'workflow',
+                        mutationIntent: `node_execute:${node.type}`,
+                    },
+                    {
+                        nodeId: node.id,
+                        nodeType: node.type,
+                        phase: 'pre',
+                    },
+                );
 
                 // execute node
                 log(`Executing node: ${node.type} (${node.id})`);
@@ -392,6 +401,22 @@ export class WorkflowEngine {
                     }
 
                     context.history.push({ nodeId: node.id, input, output, timestamp: Date.now() });
+
+                    await enforceSideEffectWithGuardrails(
+                        'workflow',
+                        {
+                            actionKind: 'workflow_action',
+                            executionMode,
+                            targetSubsystem: 'workflow',
+                            mutationIntent: `node_execute:${node.type}:post`,
+                        },
+                        {
+                            nodeId: node.id,
+                            nodeType: node.type,
+                            phase: 'post',
+                            outputPreview: typeof output === 'string' ? output.slice(0, 512) : '[non-string]',
+                        },
+                    );
                 } catch (e: any) {
                     log(`Error in node ${node.id}: ${e.message}`);
                     throw e; // Stop execution on error

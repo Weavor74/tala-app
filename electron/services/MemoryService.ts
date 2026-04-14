@@ -3,7 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import fs from 'fs';
 import path from 'path';
 import { RuntimeFlags } from './RuntimeFlags';
-import { policyGate } from './policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 import type { MemoryRuntimeResolution } from '../../shared/memory/MemoryRuntimeResolution';
 import { MemoryIntegrityPolicy } from './memory/MemoryIntegrityPolicy';
 import { MemoryRepairTriggerService } from './memory/MemoryRepairTriggerService';
@@ -916,12 +916,20 @@ export class MemoryService {
             role,
         };
 
-        policyGate.assertSideEffect({
-            actionKind: 'memory_write',
-            executionMode: mode,
-            targetSubsystem: 'MemoryService',
-            mutationIntent: 'derived_projection_sync',
-        });
+        await enforceSideEffectWithGuardrails(
+            'memory',
+            {
+                actionKind: 'memory_write',
+                executionMode: mode,
+                targetSubsystem: 'MemoryService',
+                mutationIntent: 'derived_projection_sync',
+            },
+            {
+                canonicalMemoryId,
+                text: input.text,
+                metadata: finalMetadata as Record<string, unknown>,
+            },
+        );
 
         const now = Date.now();
         const existing = this.localMemories.find(

@@ -42,7 +42,7 @@ import {
     selectMemoryByAuthority,
     resolveMemoryAuthorityConflict,
 } from './derivedWriteGuards';
-import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 // ---------------------------------------------------------------------------
@@ -948,12 +948,21 @@ export class MemoryAuthorityService {
         const bus = TelemetryBus.getInstance();
         const startTime = Date.now();
         try {
-            policyGate.assertSideEffect({
-                actionKind: 'memory_write',
-                executionMode: ctx?.executionMode,
-                targetSubsystem: 'MemoryAuthorityService',
-                mutationIntent: 'write',
-            });
+            await enforceSideEffectWithGuardrails(
+                'memory',
+                {
+                    actionKind: 'memory_write',
+                    executionMode: ctx?.executionMode,
+                    targetSubsystem: 'MemoryAuthorityService',
+                    mutationIntent: 'write',
+                },
+                {
+                    operation: 'merge',
+                    sourceMemoryId,
+                    targetMemoryId,
+                    mergeReason,
+                },
+            );
 
             const source = await this._fetchRecord(sourceMemoryId);
             const target = await this._fetchRecord(targetMemoryId);
@@ -1206,11 +1215,22 @@ export class MemoryAuthorityService {
                 },
             });
 
-            policyGate.assertSideEffect({
-                actionKind: 'memory_write',
-                targetSubsystem: 'MemoryAuthorityService',
-                mutationIntent: 'canonical_memory_write',
-            });
+            await enforceSideEffectWithGuardrails(
+                'memory',
+                {
+                    actionKind: 'memory_write',
+                    targetSubsystem: 'MemoryAuthorityService',
+                    mutationIntent: 'canonical_memory_write',
+                    executionId: writeOperationId,
+                },
+                {
+                    operation: 'create',
+                    memory_type: input.memory_type,
+                    subject_type: input.subject_type,
+                    subject_id: input.subject_id,
+                    content_text: input.content_text,
+                },
+            );
 
             bus.emit({
                 executionId: writeOperationId,
@@ -1337,12 +1357,21 @@ export class MemoryAuthorityService {
         const startTime = Date.now();
         const bus = TelemetryBus.getInstance();
         try {
-            policyGate.assertSideEffect({
-                actionKind: 'memory_write',
-                executionMode,
-                targetSubsystem: 'MemoryAuthorityService',
-                mutationIntent: 'write',
-            });
+            await enforceSideEffectWithGuardrails(
+                'memory',
+                {
+                    actionKind: 'memory_write',
+                    executionMode,
+                    targetSubsystem: 'MemoryAuthorityService',
+                    mutationIntent: 'write',
+                    executionId: writeOperationId,
+                },
+                {
+                    operation: 'update',
+                    memory_id: memoryId,
+                    updates: updates as Record<string, unknown>,
+                },
+            );
 
             bus.emit({
                 executionId: writeOperationId,
@@ -1449,12 +1478,20 @@ export class MemoryAuthorityService {
         const startTime = Date.now();
         const bus = TelemetryBus.getInstance();
         try {
-            policyGate.assertSideEffect({
-                actionKind: 'memory_write',
-                executionMode,
-                targetSubsystem: 'MemoryAuthorityService',
-                mutationIntent: 'write',
-            });
+            await enforceSideEffectWithGuardrails(
+                'memory',
+                {
+                    actionKind: 'memory_write',
+                    executionMode,
+                    targetSubsystem: 'MemoryAuthorityService',
+                    mutationIntent: 'write',
+                    executionId: writeOperationId,
+                },
+                {
+                    operation: 'delete',
+                    memory_id: memoryId,
+                },
+            );
 
             bus.emit({
                 executionId: writeOperationId,

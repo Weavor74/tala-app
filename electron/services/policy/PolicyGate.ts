@@ -154,7 +154,8 @@ export type SideEffectActionKind =
     | 'memory_write'
     | 'file_write'
     | 'workflow_action'
-    | 'autonomy_action';
+    | 'autonomy_action'
+    | 'inference_output';
 
 /**
  * Typed context for side-effect pre-checks.
@@ -229,6 +230,14 @@ export class PolicyGate {
      */
     setConfig(config: GuardrailPolicyConfig | undefined): void {
         this._config = config;
+    }
+
+    /**
+     * Returns the currently active guardrail profile ID, if a policy config
+     * has been loaded via setConfig().
+     */
+    getActiveProfileId(): string | undefined {
+        return this._config?.activeProfileId;
     }
 
     /**

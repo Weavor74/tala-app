@@ -1,5 +1,6 @@
 import { ToolService } from '../ToolService';
-import { policyGate, PolicyDeniedError, type SideEffectContext } from '../policy/PolicyGate';
+import type { SideEffectContext } from '../policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 
 /**
@@ -19,11 +20,7 @@ export interface ToolInvocationContext {
     executionOrigin?: string;
     /** Runtime mode in effect (e.g. 'rp', 'hybrid', 'assistant'). */
     executionMode?: string;
-    /**
-     * When true, ToolExecutionCoordinator will call policyGate.assertSideEffect()
-     * before delegating to ToolService.  Defaults to false so the fast-path and
-     * public API call sites that already handle their own guards are unaffected.
-     */
+    /** Deprecated. Policy enforcement is always performed at this seam. */
     enforcePolicy?: boolean;
 }
 
@@ -59,7 +56,7 @@ export interface ToolInvocationResult {
  * The primary live seam for all tool execution in the Tala runtime.
  * Wraps ToolService.executeTool() and owns:
  *
- * 1. Pre-execution policy enforcement (when `ctx.enforcePolicy === true`).
+ * 1. Pre-execution policy enforcement (always-on at this seam).
  * 2. Execution timing — `durationMs` is captured for every invocation.
  * 3. Telemetry emission — `tool.requested`, `tool.completed`, `tool.failed`
  *    events are emitted to TelemetryBus, correlated to the parent execution
@@ -84,16 +81,16 @@ export class ToolExecutionCoordinator {
      * `tool.failed` depending on outcome.  Timing (`durationMs`) is captured
      * regardless of outcome.
      *
-     * When `ctx.enforcePolicy` is true, PolicyGate.assertSideEffect() is called
-     * before any execution begins.  A PolicyDeniedError is propagated to the
-     * caller unchanged and no telemetry is emitted after the block.
+     * Policy enforcement is always evaluated before execution starts. A
+     * PolicyDeniedError is propagated to the caller unchanged and no tool
+     * execution telemetry is emitted after the block.
      *
      * @param name          Tool name (provider prefixes are stripped inside ToolService).
      * @param args          Key-value arguments for the tool.
      * @param allowedNames  Optional turn-scoped allowlist enforced inside ToolService.
      * @param ctx           Optional execution context for policy enforcement and telemetry.
      * @returns             Normalized ToolInvocationResult containing the raw tool data.
-     * @throws PolicyDeniedError when `ctx.enforcePolicy` is true and the policy check fails.
+     * @throws PolicyDeniedError when the policy check fails.
      */
     async executeTool(
         name: string,
@@ -102,19 +99,20 @@ export class ToolExecutionCoordinator {
         ctx?: ToolInvocationContext,
     ): Promise<ToolInvocationResult> {
         // ── 1. Policy gate (throws PolicyDeniedError before any telemetry) ────
-        if (ctx?.enforcePolicy) {
-            const sideEffectCtx: SideEffectContext = {
-                actionKind: 'tool_invoke',
-                executionId: ctx.executionId,
-                executionType: ctx.executionType,
-                executionOrigin: ctx.executionOrigin,
-                executionMode: ctx.executionMode,
-                capability: name,
-                targetSubsystem: 'ToolService',
-                mutationIntent: `tool invocation: ${name}`,
-            };
-            policyGate.assertSideEffect(sideEffectCtx);
-        }
+        const sideEffectCtx: SideEffectContext = {
+            actionKind: 'tool_invoke',
+            executionId: ctx?.executionId,
+            executionType: ctx?.executionType,
+            executionOrigin: ctx?.executionOrigin,
+            executionMode: ctx?.executionMode,
+            capability: name,
+            targetSubsystem: 'ToolService',
+            mutationIntent: `tool invocation: ${name}`,
+        };
+        await enforceSideEffectWithGuardrails('tool', sideEffectCtx, {
+            toolName: name,
+            args: (args && typeof args === 'object') ? args as Record<string, unknown> : { value: String(args ?? '') },
+        });
 
         // ── 2. Telemetry: tool.requested ──────────────────────────────────────
         const bus = TelemetryBus.getInstance();

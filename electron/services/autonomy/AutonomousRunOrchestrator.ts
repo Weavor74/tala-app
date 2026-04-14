@@ -91,7 +91,8 @@ import type {
     DecompositionPlan,
 } from '../../../shared/escalationTypes';
 import { DEFAULT_ESCALATION_POLICY } from '../../../shared/escalationTypes';
-import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
+import { PolicyDeniedError } from '../policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
 
 // ─── Poll timeouts ────────────────────────────────────────────────────────────
 
@@ -478,6 +479,23 @@ export class AutonomousRunOrchestrator {
                 };
             }
 
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'harmonization_step:pre',
+                },
+                {
+                    proposalId: proposal.proposalId,
+                    filePath,
+                    phase: 'pre',
+                },
+            );
+
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: proposal.proposalId,
                 authorizedBy: 'user_explicit',
@@ -494,6 +512,22 @@ export class AutonomousRunOrchestrator {
             }
 
             const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'harmonization_step:post',
+                },
+                {
+                    executionId: execResponse.executionId,
+                    terminalStatus,
+                    phase: 'post',
+                },
+            );
             const succeeded = terminalStatus === 'succeeded';
             const rolledBack = terminalStatus === 'rolled_back';
 
@@ -936,6 +970,22 @@ export class AutonomousRunOrchestrator {
             }
 
             // Phase 3: Execute
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'campaign_step:pre',
+                },
+                {
+                    proposalId: proposal.proposalId,
+                    stepOrder: step.order,
+                    phase: 'pre',
+                },
+            );
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: proposal.proposalId,
                 authorizedBy: 'user_explicit',
@@ -955,6 +1005,23 @@ export class AutonomousRunOrchestrator {
 
             // Poll for terminal state (reuse existing _waitForExecution)
             const terminalStatus = await this._waitForExecution(executionRunId);
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'campaign_step:post',
+                },
+                {
+                    executionId: executionRunId,
+                    stepOrder: step.order,
+                    terminalStatus,
+                    phase: 'post',
+                },
+            );
             const succeeded = terminalStatus === 'succeeded';
             const rolledBack = terminalStatus === 'rolled_back';
 
@@ -1770,15 +1837,23 @@ export class AutonomousRunOrchestrator {
             // --- POLICY GATE: autonomy action pre-check ---
             // Fires after governance approval, before controlled execution starts.
             // PolicyDeniedError propagates to the outer catch; the run is failed there.
-            policyGate.assertSideEffect({
-                actionKind: 'autonomy_action',
-                executionId: run.runId,
-                executionType: 'autonomy_task',
-                executionOrigin: 'autonomy_engine',
-                executionMode: 'system',
-                targetSubsystem: 'autonomy',
-                mutationIntent: 'execute',
-            });
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionId: run.runId,
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'execute:pre',
+                },
+                {
+                    runId: run.runId,
+                    proposalId: proposal.proposalId,
+                    phase: 'pre',
+                },
+            );
 
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: proposal.proposalId,
@@ -1799,6 +1874,24 @@ export class AutonomousRunOrchestrator {
 
             // Poll for execution terminal state
             const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionId: run.runId,
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'execute:post',
+                },
+                {
+                    runId: run.runId,
+                    executionId: execResponse.executionId,
+                    terminalStatus,
+                    phase: 'post',
+                },
+            );
             this._addMilestone(run, 'execution_completed', terminalStatus);
             this._emitDashboard('execution_completed', run);
 
@@ -1993,6 +2086,23 @@ export class AutonomousRunOrchestrator {
         this._updateGoal(goal.goalId, { status: 'executing' });
 
         try {
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionId: run.runId,
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'governance_resume:pre',
+                },
+                {
+                    runId: run.runId,
+                    proposalId: run.proposalId,
+                    phase: 'pre',
+                },
+            );
             const execResponse = await this.executionOrchestrator.start({
                 proposalId: run.proposalId,
                 authorizedBy: 'user_explicit',
@@ -2008,6 +2118,24 @@ export class AutonomousRunOrchestrator {
             this.auditService.saveRun(run);
 
             const terminalStatus = await this._waitForExecution(execResponse.executionId);
+            await enforceSideEffectWithGuardrails(
+                'autonomy',
+                {
+                    actionKind: 'autonomy_action',
+                    executionId: run.runId,
+                    executionType: 'autonomy_task',
+                    executionOrigin: 'autonomy_engine',
+                    executionMode: 'system',
+                    targetSubsystem: 'autonomy',
+                    mutationIntent: 'governance_resume:post',
+                },
+                {
+                    runId: run.runId,
+                    executionId: execResponse.executionId,
+                    terminalStatus,
+                    phase: 'post',
+                },
+            );
             const outcome = this._outcomeFromExecutionStatus(terminalStatus);
             const finalRunStatus = this._runStatusFromOutcome(outcome);
             this._updateRunStatus(run, finalRunStatus);

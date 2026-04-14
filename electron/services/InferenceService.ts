@@ -39,6 +39,8 @@ import type {
 import { ReflectionEngine, type TelemetrySignal } from './reflection/ReflectionEngine';
 import { inferenceDiagnostics } from './InferenceDiagnosticsService';
 import type { IBrain, BrainResponse } from '../brains/IBrain';
+import { PolicyDeniedError } from './policy/PolicyGate';
+import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -425,6 +427,23 @@ export class InferenceService {
 
                 brainResult = await Promise.race([streamPromise, openTimeoutPromise]);
 
+                await enforceSideEffectWithGuardrails(
+                    'inference',
+                    {
+                        actionKind: 'inference_output',
+                        executionId: req.turnId,
+                        executionType: 'chat_turn',
+                        executionOrigin: 'ipc',
+                        executionMode: req.agentMode,
+                        targetSubsystem: 'InferenceService',
+                        mutationIntent: 'return_output',
+                    },
+                    {
+                        content: brainResult?.content ?? '',
+                        toolCalls: (brainResult?.toolCalls?.length ?? 0),
+                    },
+                );
+
                 const hasToolCalls = !!(brainResult?.toolCalls?.length);
                 console.log(`[BrainResponse] hasToolCalls=${hasToolCalls} toolCalls=[${(brainResult?.toolCalls ?? []).map(tc => tc.function?.name).join(',')}]`);
 
@@ -506,6 +525,30 @@ export class InferenceService {
 
             } catch (err: any) {
                 lastError = err instanceof Error ? err : new Error(String(err));
+
+                if (err instanceof PolicyDeniedError) {
+                    const completedAt = new Date().toISOString();
+                    const durationMs = Date.now() - new Date(startedAt).getTime();
+                    const blockedResult: StreamInferenceResult = {
+                        success: false,
+                        content: '',
+                        streamStatus: 'failed',
+                        fallbackApplied: false,
+                        attemptedProviders,
+                        providerId: currentProvider.providerId,
+                        providerType: currentProvider.providerType,
+                        modelName: currentProvider.preferredModel ?? 'unknown',
+                        turnId: req.turnId,
+                        startedAt,
+                        completedAt,
+                        durationMs,
+                        isPartial: false,
+                        errorCode: 'policy_violation',
+                        errorMessage: err.message,
+                    };
+                    inferenceDiagnostics.recordStreamResult(blockedResult);
+                    return blockedResult;
+                }
 
                 // Explicitly cancel the in-flight HTTP request for this attempt so the
                 // underlying TCP connection to the local ASGI inference server is closed
