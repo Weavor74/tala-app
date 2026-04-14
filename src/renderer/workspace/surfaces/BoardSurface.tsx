@@ -1,12 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { WorkspaceSurfaceProps } from './WorkspaceSurfaceTypes';
 import { buildBoardDocumentModel } from '../WorkspaceBoardModel';
-import { buildDisplayFileUrl } from '../WorkspaceSurfaceHelpers';
+import { buildDisplayFileUrl, checkAllowedImageSource } from '../WorkspaceSurfaceHelpers';
 
 export const BoardSurface: React.FC<WorkspaceSurfaceProps> = ({ document }) => {
     const parsed = useMemo(() => buildBoardDocumentModel(document.payload, document.title), [document.payload, document.title]);
     const [elements, setElements] = useState(parsed.elements);
     const [activeElementId, setActiveElementId] = useState<string | null>(null);
+
+    useEffect(() => {
+        setElements(parsed.elements);
+        setActiveElementId(null);
+    }, [parsed]);
 
     const updateElementDragPosition = (id: string, nextX: number, nextY: number) => {
         setElements(prev => prev.map(el => (el.id === id ? { ...el, x: nextX, y: nextY } : el)));
@@ -73,7 +78,10 @@ export const BoardSurface: React.FC<WorkspaceSurfaceProps> = ({ document }) => {
                             )}
                             {el.type === 'image' && el.imageUri && (
                                 <img
-                                    src={buildDisplayFileUrl(el.imageUri)}
+                                    src={(() => {
+                                        const resolved = buildDisplayFileUrl(el.imageUri);
+                                        return checkAllowedImageSource(resolved) ? resolved : '';
+                                    })()}
                                     alt={el.text || 'board-image'}
                                     style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 4 }}
                                 />

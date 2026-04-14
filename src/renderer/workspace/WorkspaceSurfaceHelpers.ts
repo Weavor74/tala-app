@@ -5,6 +5,28 @@ export function buildDisplayFileUrl(value?: string): string {
     return encodeURI(`file:///${normalized.replace(/^\/+/, '')}`);
 }
 
+export function checkAllowedImageSource(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('vbscript:')) return false;
+    if (lower.startsWith('data:')) {
+        const header = lower.slice(5, lower.indexOf(',') > -1 ? lower.indexOf(',') : undefined);
+        if (!header.startsWith('image/')) return false;
+        if (header.startsWith('image/svg+xml')) return false;
+        return true;
+    }
+
+    try {
+        const parsed = new URL(trimmed);
+        const protocol = parsed.protocol.toLowerCase();
+        return protocol === 'file:' || protocol === 'http:' || protocol === 'https:' || protocol === 'blob:';
+    } catch {
+        // Treat unqualified values as local filesystem paths.
+        return true;
+    }
+}
+
 export function convertTextToEscapedHtml(text: string): string {
     return text
         .replace(/&/g, '&amp;')
@@ -18,10 +40,30 @@ export function normalizeSafeHtmlPreview(input: string): string {
     let safe = input || '';
     safe = safe.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
     safe = safe.replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '');
+    safe = safe.replace(/<link[\s\S]*?>/gi, '');
+    safe = safe.replace(/<meta[\s\S]*?>/gi, '');
+    safe = safe.replace(/<base[\s\S]*?>/gi, '');
+    safe = safe.replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, '');
+    safe = safe.replace(/<embed[\s\S]*?>/gi, '');
+    safe = safe.replace(/<frame[\s\S]*?>[\s\S]*?<\/frame>/gi, '');
+    safe = safe.replace(/<frameset[\s\S]*?>[\s\S]*?<\/frameset>/gi, '');
+    safe = safe.replace(/<form[\s\S]*?>[\s\S]*?<\/form>/gi, '');
     safe = safe.replace(/\son\w+\s*=\s*(".*?"|'.*?'|[^\s>]+)/gi, '');
-    safe = safe.replace(/(href|src)\s*=\s*(['"])\s*javascript:[^'"]*\2/gi, '$1="#"');
+    safe = safe.replace(/(href|src)\s*=\s*(['"])\s*(javascript|vbscript|data:text\/html):[^'"]*\2/gi, '$1="#"');
     safe = safe.replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '');
     return safe;
+}
+
+export function buildSandboxedPreviewDocument(innerHtml: string): string {
+    return [
+        '<!DOCTYPE html>',
+        '<html><head>',
+        "<meta charset=\"utf-8\">",
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: blob: file:; style-src 'unsafe-inline';\">",
+        '</head><body style="margin:0;padding:0;word-break:break-word;">',
+        innerHtml,
+        '</body></html>'
+    ].join('');
 }
 
 /**

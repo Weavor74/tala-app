@@ -485,8 +485,25 @@ function App() {
                 return t; // Keep it, it might just be missing context or deleted
               }
             }
-            if (t.type === 'artifact' && t.artifact && !t.document) {
-              return { ...t, document: createWorkspaceDocumentFromArtifact(t.artifact) };
+            if (t.type === 'artifact' && t.artifact) {
+              const normalized = createWorkspaceDocumentFromArtifact(t.artifact);
+              if (t.document) {
+                return {
+                  ...t,
+                  document: {
+                    ...normalized,
+                    ...t.document,
+                    payload: t.document.payload ?? normalized.payload ?? (typeof t.data === 'string' ? t.data : undefined),
+                  }
+                };
+              }
+              return {
+                ...t,
+                document: {
+                  ...normalized,
+                  payload: normalized.payload ?? (typeof t.data === 'string' ? t.data : undefined),
+                }
+              };
             }
             return t;
           }));
@@ -518,7 +535,13 @@ function App() {
         tabs: tabs.map(t => ({
           ...t,
           data: t.type === 'file' ? { path: t.document?.path || t.data?.path } : t.data, // Don't save huge file content, just path
-          document: t.document ? { ...t.document, payload: undefined, dirty: false } : undefined
+          document: t.document
+            ? {
+              ...t.document,
+              payload: t.type === 'file' ? undefined : t.document.payload,
+              dirty: false
+            }
+            : undefined
         })),
         activeTabId
       };
@@ -1007,7 +1030,12 @@ function App() {
   };
 
   const buildWorkspaceDocumentForTab = (tab: Tab): WorkspaceDocument | null => {
-    if (tab.document) return tab.document;
+    if (tab.document) {
+      if (tab.type === 'artifact' && !tab.document.payload) {
+        return { ...tab.document, payload: typeof tab.data === 'string' ? tab.data : tab.document.payload };
+      }
+      return tab.document;
+    }
 
     if (tab.type === 'file' && tab.data?.path) {
       return createWorkspaceDocumentFromFile({

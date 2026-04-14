@@ -1,13 +1,14 @@
 import React, { useMemo } from 'react';
 import type { WorkspaceSurfaceProps } from './WorkspaceSurfaceTypes';
-import { buildDisplayFileUrl } from '../WorkspaceSurfaceHelpers';
+import { buildDisplayFileUrl, checkAllowedImageSource } from '../WorkspaceSurfaceHelpers';
 
 export const ImageSurface: React.FC<WorkspaceSurfaceProps> = ({ document }) => {
     const src = useMemo(() => {
         if (document.payload && (document.payload.startsWith('data:') || document.payload.startsWith('http'))) {
-            return document.payload;
+            return checkAllowedImageSource(document.payload) ? document.payload : '';
         }
-        return buildDisplayFileUrl(document.path || document.uri || document.sourceRef);
+        const resolved = buildDisplayFileUrl(document.path || document.uri || document.sourceRef);
+        return checkAllowedImageSource(resolved) ? resolved : '';
     }, [document.payload, document.path, document.uri, document.sourceRef]);
 
     return (

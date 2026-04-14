@@ -2,8 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { resolveWorkspaceContentType } from '../src/renderer/workspace/WorkspaceContentTypeResolver';
 import { createWorkspaceDocumentFromFile } from '../src/renderer/workspace/WorkspaceDocumentFactory';
 import { getSurfaceTypeForDocument } from '../src/renderer/workspace/WorkspaceSurfaceHost';
-import { convertRtfToPreviewHtml, normalizeSafeHtmlPreview } from '../src/renderer/workspace/WorkspaceSurfaceHelpers';
+import {
+    buildSandboxedPreviewDocument,
+    checkAllowedImageSource,
+    convertRtfToPreviewHtml,
+    normalizeSafeHtmlPreview
+} from '../src/renderer/workspace/WorkspaceSurfaceHelpers';
 import { buildBoardDocumentModel } from '../src/renderer/workspace/WorkspaceBoardModel';
+import { resolveSurfaceComponent } from '../src/renderer/workspace/WorkspaceSurfaceRegistry';
+import TextEditorSurface from '../src/renderer/workspace/surfaces/TextEditorSurface';
+import FallbackSurface from '../src/renderer/workspace/surfaces/FallbackSurface';
 
 describe('Workspace content type resolver', () => {
     it('maps required file extensions', () => {
@@ -22,6 +30,16 @@ describe('Workspace content type resolver', () => {
         expect(resolveWorkspaceContentType({ path: 'main.ts' })).toBe('text');
         expect(resolveWorkspaceContentType({ path: 'unknown.bin' })).toBe('unknown');
     });
+
+    it('maps artifact and mime hints deterministically', () => {
+        expect(resolveWorkspaceContentType({ artifactType: 'board' })).toBe('board');
+        expect(resolveWorkspaceContentType({ artifactType: 'rtf' })).toBe('rtf');
+        expect(resolveWorkspaceContentType({ artifactType: 'pdf' })).toBe('pdf');
+        expect(resolveWorkspaceContentType({ artifactType: 'image' })).toBe('image');
+        expect(resolveWorkspaceContentType({ mimeType: 'text/html; charset=utf-8' })).toBe('html');
+        expect(resolveWorkspaceContentType({ mimeType: 'application/pdf' })).toBe('pdf');
+        expect(resolveWorkspaceContentType({ mimeType: 'image/svg+xml' })).toBe('image');
+    });
 });
 
 describe('Workspace host routing + text preservation', () => {
@@ -36,6 +54,19 @@ describe('Workspace host routing + text preservation', () => {
         expect(doc.readOnly).toBe(false);
         expect(getSurfaceTypeForDocument(doc)).toBe('text');
     });
+
+    it('routes unknown documents to fallback surface', () => {
+        const unknownDoc = {
+            id: '2',
+            title: 'blob.bin',
+            contentType: 'unknown' as const,
+            dirty: false,
+            readOnly: true
+        };
+        expect(getSurfaceTypeForDocument(unknownDoc)).toBe('unknown');
+        expect(resolveSurfaceComponent('text')).toBe(TextEditorSurface);
+        expect(resolveSurfaceComponent('unknown')).toBe(FallbackSurface);
+    });
 });
 
 describe('RTF preview pipeline', () => {
@@ -45,6 +76,16 @@ describe('RTF preview pipeline', () => {
         const sanitized = normalizeSafeHtmlPreview('<script>alert(1)</script><p>ok</p>');
         expect(sanitized).toContain('<p>ok</p>');
         expect(sanitized.toLowerCase()).not.toContain('<script');
+        expect(normalizeSafeHtmlPreview('<iframe src="x"></iframe><p>x</p>')).toBe('<p>x</p>');
+        const wrapped = buildSandboxedPreviewDocument('<p>preview</p>');
+        expect(wrapped).toContain('Content-Security-Policy');
+        expect(wrapped).toContain('<p>preview</p>');
+        expect(checkAllowedImageSource('data:image/svg+xml,<svg></svg>')).toBe(false);
+        expect(checkAllowedImageSource('data:image/png;base64,AA')).toBe(true);
+        expect(checkAllowedImageSource('data:text/html,<h1>x</h1>')).toBe(false);
+        expect(checkAllowedImageSource('vbscript:msgbox(1)')).toBe(false);
+        expect(checkAllowedImageSource('https://example.com/a.png')).toBe(true);
+        expect(checkAllowedImageSource('ftp://example.com/a.png')).toBe(false);
     });
 });
 
