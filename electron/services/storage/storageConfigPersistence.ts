@@ -1,5 +1,6 @@
 import { loadSettings, saveSettings } from '../SettingsManager';
 import {
+    StorageAssignmentDecision,
     createStorageOperationError,
     PersistedStorageConfig,
     StorageOperationErrorCode,
@@ -43,6 +44,22 @@ function sanitizeAssignments(input: unknown): StorageRoleAssignment[] {
     });
 }
 
+function sanitizeAssignmentDecisions(input: unknown): StorageAssignmentDecision[] {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+    return input.filter((item): item is StorageAssignmentDecision => {
+        const candidate = item as Partial<StorageAssignmentDecision> | null | undefined;
+        return !!candidate
+            && typeof candidate.role === 'string'
+            && (typeof candidate.providerId === 'string' || candidate.providerId === null)
+            && typeof candidate.source === 'string'
+            && typeof candidate.outcome === 'string'
+            && typeof candidate.reasonCode === 'string'
+            && typeof candidate.timestamp === 'string';
+    });
+}
+
 function sanitizePersistedConfig(input: unknown): PersistedStorageConfig {
     if (!input || typeof input !== 'object') {
         return createDefaultConfig();
@@ -53,6 +70,7 @@ function sanitizePersistedConfig(input: unknown): PersistedStorageConfig {
         version,
         providers: sanitizeProviders(candidate.providers),
         assignments: sanitizeAssignments(candidate.assignments),
+        assignmentDecisions: sanitizeAssignmentDecisions((candidate as any).assignmentDecisions),
         updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : nowIso(),
     };
 }

@@ -7,6 +7,19 @@ export enum StorageRole {
     ARTIFACT_STORE = 'artifact_store',
 }
 
+export enum StorageAssignmentReasonCode {
+    EXPLICIT_ASSIGNMENT_PRESERVED = 'explicit_assignment_preserved',
+    FILLED_MISSING_ROLE_FROM_BOOTSTRAP = 'filled_missing_role_from_bootstrap',
+    BLOCKED_CAPABILITY_MISMATCH = 'blocked_capability_mismatch',
+    BLOCKED_AUTH_INVALID = 'blocked_auth_invalid',
+    BLOCKED_POLICY_CONFLICT = 'blocked_policy_conflict',
+    BLOCKED_CANONICAL_CONFLICT = 'blocked_canonical_conflict',
+    PROVIDER_UNREACHABLE = 'provider_unreachable',
+    PROVIDER_NOT_REGISTERED = 'provider_not_registered',
+    LEGACY_IMPORT_SKIPPED_EXISTING_REGISTRY = 'legacy_import_skipped_existing_registry',
+    RECOVERY_SUGGESTION_ONLY = 'recovery_suggestion_only',
+}
+
 export enum StorageProviderKind {
     FILESYSTEM = 'filesystem',
     POSTGRESQL = 'postgresql',
@@ -112,12 +125,28 @@ export interface StorageRoleAssignment {
     role: StorageRole;
     providerId: string;
     assignedAt: string;
+    assignmentReasonCode?: StorageAssignmentReasonCode;
+}
+
+export type StorageAssignmentDecisionSource = 'explicit_registry' | 'bootstrap' | 'policy' | 'recovery';
+
+export type StorageAssignmentDecisionOutcome = 'applied' | 'preserved' | 'blocked' | 'skipped' | 'suggestion';
+
+export interface StorageAssignmentDecision {
+    role: StorageRole;
+    providerId: string | null;
+    source: StorageAssignmentDecisionSource;
+    outcome: StorageAssignmentDecisionOutcome;
+    reasonCode: StorageAssignmentReasonCode;
+    timestamp: string;
+    details?: Record<string, unknown>;
 }
 
 export interface StorageRegistrySnapshot {
     version: number;
     providers: StorageProviderRecord[];
     assignments: StorageRoleAssignment[];
+    assignmentDecisions?: StorageAssignmentDecision[];
     updatedAt: string;
 }
 

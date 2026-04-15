@@ -50,6 +50,17 @@ Rejected or deferred candidates must not be surfaced as Canonical authority data
 - Role-level visibility is modeled structurally and includes assigned Provider, assignment type (`explicit`, `bootstrap`, `inferred`, `unassigned`), eligibility reasoning, and blocked alternatives.
 - Assignment explanations are modeled as deterministic records with outcome, reason code, reason summary, blocked alternatives, and actionable next steps so assignment success/failure is inspectable and self-explanatory.
 
+## Storage Assignment Law
+- Assignment precedence is deterministic and centralized in `StorageAssignmentPolicyService` and `StorageProviderRegistryService`:
+  1. explicit registry assignment is preserved
+  2. explicit Providers are selected before bootstrap candidates
+  3. bootstrap fills missing Role gaps only
+  4. bootstrap never overwrites explicit assignments
+  5. capability mismatch blocks assignment
+  6. policy conflicts block assignment
+  7. canonical conflicts are surfaced as recovery suggestions and are not auto-resolved
+- Assignment decisions emit stable reason codes and are persisted as assignment decision diagnostics for UI, diagnostics, and test assertions.
+
 ## Current Rebuild Coverage
 - Executable now:
 - `memory_projections` Hydration for `mem0`, `graph`, and `vector`

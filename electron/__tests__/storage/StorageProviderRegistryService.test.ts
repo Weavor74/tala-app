@@ -7,6 +7,7 @@ import { StorageAssignmentPolicyService } from '../../services/storage/StorageAs
 import { StorageConfigPersistenceService } from '../../services/storage/storageConfigPersistence';
 import { StorageProviderRegistryService } from '../../services/storage/StorageProviderRegistryService';
 import {
+    StorageAssignmentReasonCode,
     StorageAuthMode,
     StorageAuthStatus,
     StorageHealthStatus,
@@ -105,6 +106,17 @@ describe('StorageProviderRegistryService', () => {
         ).toThrowError(/Provider ID already exists/);
     });
 
+    it('provider-not-registered assignment emits deterministic reason code', () => {
+        const registry = makeRegistry(settingsPath);
+        try {
+            registry.assignRole('missing-provider', StorageRole.BLOB_STORE);
+            throw new Error('expected assignment to throw');
+        } catch (error) {
+            const opError = error as { details?: Record<string, unknown> };
+            expect(opError.details?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED);
+        }
+    });
+
     it('invalid role rejection', () => {
         const registry = makeRegistry(settingsPath);
         registry.addProvider({
@@ -115,7 +127,13 @@ describe('StorageProviderRegistryService', () => {
             registrationMode: StorageRegistrationMode.MANUAL,
         });
 
-        expect(() => registry.assignRole('fs-local', StorageRole.VECTOR_INDEX)).toThrowError(/does not support requested role/);
+        try {
+            registry.assignRole('fs-local', StorageRole.VECTOR_INDEX);
+            throw new Error('expected assignment to throw');
+        } catch (error) {
+            const opError = error as { details?: Record<string, unknown> };
+            expect(opError.details?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH);
+        }
     });
 
     it('canonical ineligible provider rejection', () => {
@@ -139,7 +157,13 @@ describe('StorageProviderRegistryService', () => {
             },
         });
 
-        expect(() => registry.assignRole('s3-archive', StorageRole.CANONICAL_MEMORY)).toThrowError(/not eligible for canonical memory/);
+        try {
+            registry.assignRole('s3-archive', StorageRole.CANONICAL_MEMORY);
+            throw new Error('expected assignment to throw');
+        } catch (error) {
+            const opError = error as { details?: Record<string, unknown> };
+            expect(opError.details?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH);
+        }
     });
 
     it('blocked removal of sole canonical provider', () => {
@@ -220,5 +244,8 @@ describe('StorageProviderRegistryService', () => {
             StorageRole.CANONICAL_MEMORY,
             StorageRole.DOCUMENT_STORE,
         ]);
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.reasonCode === StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+        )).toBe(true);
     });
 });

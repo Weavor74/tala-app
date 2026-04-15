@@ -377,6 +377,6 @@ describe('Storage renderer model', () => {
         expect(success.nextSteps).toContain('run_validation');
         expect(failure.outcome).toBe('failed');
         expect(failure.reasonCode).toBe('provider_disabled');
-        expect(failure.nextSteps).toContain('enable_provider');
+        expect(failure.nextSteps).toContain('review_assignment_eligibility');
     });
 });

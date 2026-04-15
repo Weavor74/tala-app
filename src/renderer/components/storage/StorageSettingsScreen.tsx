@@ -202,12 +202,28 @@ const buildStorageSettingsScreen = () => {
                                         <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>
                                             assignment type: {roleAssignmentTypeLabel(role.assignmentType)}
                                         </div>
+                                        <div style={{ fontSize: 11, color: '#9cdcfe', marginTop: 2 }}>
+                                            reason code: {role.decisionReasonCode ?? 'none'}
+                                        </div>
                                         <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>
                                             eligibility: {role.eligibilityReasoning.join(' | ')}
                                         </div>
                                         <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>
                                             blocked alternatives: {role.blockedAlternatives.length}
                                         </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {(snapshot.assignmentDecisions?.length ?? 0) > 0 && (
+                        <div style={{ marginTop: 14, background: '#1e1e1e', padding: 12, borderRadius: 6, border: '1px solid #3a3a3a' }}>
+                            <h4 style={{ margin: 0, marginBottom: 8, color: '#dcdcaa', fontSize: 13 }}>Assignment Decision Log</h4>
+                            <div style={{ display: 'grid', gap: 8 }}>
+                                {[...(snapshot.assignmentDecisions ?? [])].slice(-8).reverse().map((decision, index) => (
+                                    <div key={`assignment-decision-${decision.timestamp}-${index}`} style={{ padding: 8, border: '1px solid #3e3e42', borderRadius: 4, background: '#252526', fontSize: 11, color: '#bbb' }}>
+                                        {decision.role} | {decision.outcome} | {decision.reasonCode} | provider: {decision.providerId ?? 'none'}
                                     </div>
                                 ))}
                             </div>

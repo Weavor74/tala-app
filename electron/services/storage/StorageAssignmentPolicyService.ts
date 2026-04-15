@@ -1,5 +1,6 @@
 import { getStorageCapabilityProfile } from './storageCapabilityMatrix';
 import {
+    StorageAssignmentReasonCode,
     StorageCapability,
     StorageAuthMode,
     StorageAuthStatus,
@@ -16,26 +17,34 @@ export interface StoragePolicyValidationResult {
     ok: boolean;
     code?: StorageOperationErrorCode;
     message?: string;
+    assignmentReasonCode: StorageAssignmentReasonCode;
     details?: Record<string, unknown>;
 }
 
 function success(): StoragePolicyValidationResult {
-    return { ok: true };
+    return {
+        ok: true,
+        assignmentReasonCode: StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+    };
 }
 
 function failure(
     code: StorageOperationErrorCode,
     message: string,
+    assignmentReasonCode: StorageAssignmentReasonCode,
     details?: Record<string, unknown>,
 ): StoragePolicyValidationResult {
-    return { ok: false, code, message, details };
+    return { ok: false, code, message, assignmentReasonCode, details };
 }
 
 function toError(result: StoragePolicyValidationResult): StorageOperationError {
     if (result.ok || !result.code || !result.message) {
         return createStorageOperationError(StorageOperationErrorCode.INVALID_PROVIDER_ROLE_SET, 'Unexpected policy error state');
     }
-    return createStorageOperationError(result.code, result.message, result.details);
+        return createStorageOperationError(result.code, result.message, {
+            ...(result.details || {}),
+            assignmentReasonCode: result.assignmentReasonCode,
+        });
 }
 
 function findProvider(snapshot: StorageRegistrySnapshot, providerId: string): StorageProviderRecord | undefined {
@@ -65,70 +74,130 @@ export class StorageAssignmentPolicyService {
     ): StoragePolicyValidationResult {
         const provider = findProvider(snapshot, providerId);
         if (!provider) {
-            return failure(StorageOperationErrorCode.PROVIDER_NOT_FOUND, 'Provider not found', { providerId });
+            return failure(
+                StorageOperationErrorCode.PROVIDER_NOT_FOUND,
+                'Provider not found',
+                StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED,
+                { providerId },
+            );
+        }
+
+        const canonicalAssignments = getCanonicalAssignments(snapshot);
+        if (canonicalAssignments.length > 1) {
+            return failure(
+                StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED,
+                'Canonical conflict is present and must be resolved explicitly before reassignment.',
+                StorageAssignmentReasonCode.BLOCKED_CANONICAL_CONFLICT,
+                { canonicalAssignments: canonicalAssignments.map((assignment) => assignment.providerId) },
+            );
         }
 
         const profile = getStorageCapabilityProfile(provider.kind);
         if (!profile.allowedLocality.includes(provider.locality)) {
-            return failure(StorageOperationErrorCode.INVALID_PROVIDER_LOCALITY, 'Provider locality is not allowed for its kind', {
-                providerId,
-                kind: provider.kind,
-                locality: provider.locality,
-            });
+            return failure(
+                StorageOperationErrorCode.INVALID_PROVIDER_LOCALITY,
+                'Provider locality is not allowed for its kind',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
+                {
+                    providerId,
+                    kind: provider.kind,
+                    locality: provider.locality,
+                },
+            );
         }
 
         if (!provider.enabled) {
-            return failure(StorageOperationErrorCode.PROVIDER_DISABLED, 'Cannot assign role to disabled provider', { providerId, role });
+            return failure(
+                StorageOperationErrorCode.PROVIDER_DISABLED,
+                'Cannot assign role to disabled provider',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
+                { providerId, role },
+            );
         }
 
         if (role === StorageRole.CANONICAL_MEMORY && !profile.canonicalEligible) {
-            return failure(StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED, 'Provider kind is not eligible for canonical memory', {
-                providerId,
-                kind: provider.kind,
-            });
+            return failure(
+                StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED,
+                'Provider kind is not eligible for canonical memory',
+                StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                {
+                    providerId,
+                    kind: provider.kind,
+                },
+            );
         }
         if (role === StorageRole.CANONICAL_MEMORY && !provider.capabilities.includes(StorageCapability.STRUCTURED_RECORDS)) {
-            return failure(StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED, 'Canonical memory requires structured storage capability', {
-                providerId,
-                kind: provider.kind,
-            });
+            return failure(
+                StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED,
+                'Canonical memory requires structured storage capability',
+                StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                {
+                    providerId,
+                    kind: provider.kind,
+                },
+            );
         }
 
         if (!profile.supportedRoles.includes(role) || !provider.supportedRoles.includes(role)) {
-            return failure(StorageOperationErrorCode.ROLE_UNSUPPORTED, 'Provider does not support requested role', { providerId, role });
+            return failure(
+                StorageOperationErrorCode.ROLE_UNSUPPORTED,
+                'Provider does not support requested role',
+                StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                { providerId, role },
+            );
         }
         if (role === StorageRole.VECTOR_INDEX && !hasVectorCapability(provider)) {
-            return failure(StorageOperationErrorCode.ROLE_UNSUPPORTED, 'Vector index assignment requires vector search capability', {
-                providerId,
-                role,
-                capabilities: provider.capabilities,
-            });
+            return failure(
+                StorageOperationErrorCode.ROLE_UNSUPPORTED,
+                'Vector index assignment requires vector search capability',
+                StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                {
+                    providerId,
+                    role,
+                    capabilities: provider.capabilities,
+                },
+            );
         }
 
         if (provider.health.status === StorageHealthStatus.OFFLINE || provider.health.status === StorageHealthStatus.UNREACHABLE) {
-            return failure(StorageOperationErrorCode.PROVIDER_OFFLINE, 'Provider is offline or unreachable', {
-                providerId,
-                health: provider.health.status,
-            });
+            return failure(
+                StorageOperationErrorCode.PROVIDER_OFFLINE,
+                'Provider is offline or unreachable',
+                StorageAssignmentReasonCode.PROVIDER_UNREACHABLE,
+                {
+                    providerId,
+                    health: provider.health.status,
+                },
+            );
         }
 
         const requiresAuth = provider.auth.mode !== StorageAuthMode.NONE;
         const authReady = provider.auth.status === StorageAuthStatus.AUTHENTICATED || provider.auth.status === StorageAuthStatus.NOT_REQUIRED;
         if (requiresAuth && !authReady) {
-            return failure(StorageOperationErrorCode.AUTH_BLOCKED, 'Provider auth state does not allow assignment', {
-                providerId,
-                authMode: provider.auth.mode,
-                authStatus: provider.auth.status,
-            });
+            return failure(
+                StorageOperationErrorCode.AUTH_BLOCKED,
+                'Provider auth state does not allow assignment',
+                StorageAssignmentReasonCode.BLOCKED_AUTH_INVALID,
+                {
+                    providerId,
+                    authMode: provider.auth.mode,
+                    authStatus: provider.auth.status,
+                },
+            );
         }
 
         const existing = snapshot.assignments.find((assignment) => assignment.role === role);
         if (existing && existing.providerId !== providerId) {
-            return failure(StorageOperationErrorCode.ROLE_ALREADY_ASSIGNED, 'Role is already assigned to another provider', {
-                role,
-                assignedProviderId: existing.providerId,
-                requestedProviderId: providerId,
-            });
+            return failure(
+                StorageOperationErrorCode.ROLE_ALREADY_ASSIGNED,
+                'Role is already assigned to another provider',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
+                {
+                    role,
+                    assignedProviderId: existing.providerId,
+                    requestedProviderId: providerId,
+                },
+            );
         }
 
         return success();
@@ -148,7 +217,12 @@ export class StorageAssignmentPolicyService {
     public validateProviderDisable(snapshot: StorageRegistrySnapshot, providerId: string): StoragePolicyValidationResult {
         const provider = findProvider(snapshot, providerId);
         if (!provider) {
-            return failure(StorageOperationErrorCode.PROVIDER_NOT_FOUND, 'Provider not found', { providerId });
+            return failure(
+                StorageOperationErrorCode.PROVIDER_NOT_FOUND,
+                'Provider not found',
+                StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED,
+                { providerId },
+            );
         }
 
         if (!provider.enabled) {
@@ -167,6 +241,7 @@ export class StorageAssignmentPolicyService {
             return failure(
                 StorageOperationErrorCode.SOLE_CANONICAL_PROVIDER_REQUIRED,
                 'Cannot disable the sole active canonical_memory provider',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
                 { providerId },
             );
         }
@@ -184,7 +259,12 @@ export class StorageAssignmentPolicyService {
     public validateProviderRemoval(snapshot: StorageRegistrySnapshot, providerId: string): StoragePolicyValidationResult {
         const provider = findProvider(snapshot, providerId);
         if (!provider) {
-            return failure(StorageOperationErrorCode.PROVIDER_NOT_FOUND, 'Provider not found', { providerId });
+            return failure(
+                StorageOperationErrorCode.PROVIDER_NOT_FOUND,
+                'Provider not found',
+                StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED,
+                { providerId },
+            );
         }
 
         const hasCanonical = snapshot.assignments.some(
@@ -199,6 +279,7 @@ export class StorageAssignmentPolicyService {
             return failure(
                 StorageOperationErrorCode.SOLE_CANONICAL_PROVIDER_REQUIRED,
                 'Cannot remove the sole active canonical_memory provider',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
                 { providerId },
             );
         }
@@ -216,7 +297,12 @@ export class StorageAssignmentPolicyService {
     public validateRoleUnassignment(snapshot: StorageRegistrySnapshot, role: StorageRole): StoragePolicyValidationResult {
         const assignment = snapshot.assignments.find((item) => item.role === role);
         if (!assignment) {
-            return failure(StorageOperationErrorCode.ASSIGNMENT_NOT_FOUND, 'Role assignment not found', { role });
+            return failure(
+                StorageOperationErrorCode.ASSIGNMENT_NOT_FOUND,
+                'Role assignment not found',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
+                { role },
+            );
         }
 
         if (role !== StorageRole.CANONICAL_MEMORY) {
@@ -228,6 +314,7 @@ export class StorageAssignmentPolicyService {
             return failure(
                 StorageOperationErrorCode.SOLE_CANONICAL_PROVIDER_REQUIRED,
                 'Cannot unassign the sole active canonical_memory provider',
+                StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT,
                 { providerId: assignment.providerId },
             );
         }

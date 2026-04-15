@@ -198,7 +198,12 @@ export class StorageScreenService {
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Assigned Role ${role} to Provider ${providerId}.`,
-            lastAssignmentExplanation: buildAssignmentSuccessExplanation(response.snapshot, providerId, role),
+            lastAssignmentExplanation: buildAssignmentSuccessExplanation(
+                response.snapshot,
+                providerId,
+                role,
+                response.changed.assignmentReasonCode ?? 'explicit_assignment_preserved',
+            ),
         });
         return this.state;
     }

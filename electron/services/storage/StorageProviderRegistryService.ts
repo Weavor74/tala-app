@@ -7,6 +7,9 @@ import { getStorageCapabilityProfile } from './storageCapabilityMatrix';
 import { StorageAssignmentPolicyService } from './StorageAssignmentPolicyService';
 import { STORAGE_CONFIG_VERSION, StorageConfigPersistenceService } from './storageConfigPersistence';
 import {
+    StorageAssignmentDecision,
+    StorageAssignmentDecisionOutcome,
+    StorageAssignmentReasonCode,
     StorageAuthMode,
     StorageAuthStatus,
     StorageHealthStatus,
@@ -35,6 +38,8 @@ interface InferredProviderSeed {
     health?: StorageProviderRecord['health'];
     explicitLegacy?: boolean;
 }
+
+const MAX_ASSIGNMENT_DECISIONS = 200;
 
 export interface AddStorageProviderInput {
     id: string;
@@ -83,6 +88,7 @@ function isLocalHost(host: string): boolean {
 export class StorageProviderRegistryService {
     private snapshot: StorageRegistrySnapshot;
     private bootstrapApplied = false;
+    private assignmentDecisions: StorageAssignmentDecision[] = [];
 
     constructor(
         private readonly persistence: StorageConfigPersistenceService,
@@ -90,11 +96,13 @@ export class StorageProviderRegistryService {
         private readonly now = () => new Date().toISOString(),
     ) {
         this.snapshot = this.normalizeSnapshot(this.persistence.loadConfig());
+        this.assignmentDecisions = this.snapshot.assignmentDecisions ? this.snapshot.assignmentDecisions.slice() : [];
         this.bootstrapFromLegacyConfigIfNeeded();
     }
 
     public loadPersistedProviderConfig(): StorageRegistrySnapshot {
         this.snapshot = this.normalizeSnapshot(this.persistence.loadConfig());
+        this.assignmentDecisions = this.snapshot.assignmentDecisions ? this.snapshot.assignmentDecisions.slice() : [];
         this.bootstrapApplied = false;
         this.bootstrapFromLegacyConfigIfNeeded();
         return this.getRegistrySnapshot();
@@ -107,7 +115,10 @@ export class StorageProviderRegistryService {
 
     public getRegistrySnapshot(): StorageRegistrySnapshot {
         this.bootstrapFromLegacyConfigIfNeeded();
-        return cloneSnapshot(this.snapshot);
+        return cloneSnapshot({
+            ...this.snapshot,
+            assignmentDecisions: this.assignmentDecisions.slice(),
+        });
     }
 
     public getProviderById(providerId: string): StorageProviderRecord | null {
@@ -116,6 +127,28 @@ export class StorageProviderRegistryService {
             return null;
         }
         return JSON.parse(JSON.stringify(provider)) as StorageProviderRecord;
+    }
+
+    private pushAssignmentDecision(
+        role: StorageRole,
+        providerId: string | null,
+        source: StorageAssignmentDecision['source'],
+        outcome: StorageAssignmentDecisionOutcome,
+        reasonCode: StorageAssignmentReasonCode,
+        details?: Record<string, unknown>,
+    ): void {
+        this.assignmentDecisions.push({
+            role,
+            providerId,
+            source,
+            outcome,
+            reasonCode,
+            timestamp: this.now(),
+            details,
+        });
+        if (this.assignmentDecisions.length > MAX_ASSIGNMENT_DECISIONS) {
+            this.assignmentDecisions.splice(0, this.assignmentDecisions.length - MAX_ASSIGNMENT_DECISIONS);
+        }
     }
 
     public addProvider(input: AddStorageProviderInput): StorageRegistrySnapshot {
@@ -215,10 +248,28 @@ export class StorageProviderRegistryService {
     }
 
     public assignRole(providerId: string, role: StorageRole): StorageRegistrySnapshot {
-        this.policy.assertRoleAssignmentEligibility(this.snapshot, providerId, role);
+        const policyResult = this.policy.validateRoleAssignmentEligibility(this.snapshot, providerId, role);
+        if (!policyResult.ok) {
+            this.pushAssignmentDecision(
+                role,
+                providerId,
+                'policy',
+                'blocked',
+                policyResult.assignmentReasonCode,
+                policyResult.details,
+            );
+            this.policy.assertRoleAssignmentEligibility(this.snapshot, providerId, role);
+        }
 
         const existing = this.snapshot.assignments.find((assignment) => assignment.role === role);
         if (existing && existing.providerId === providerId) {
+            this.pushAssignmentDecision(
+                role,
+                providerId,
+                'explicit_registry',
+                'preserved',
+                StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+            );
             return this.getRegistrySnapshot();
         }
 
@@ -227,7 +278,15 @@ export class StorageProviderRegistryService {
             role,
             providerId,
             assignedAt: this.now(),
+            assignmentReasonCode: StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
         });
+        this.pushAssignmentDecision(
+            role,
+            providerId,
+            'explicit_registry',
+            'applied',
+            StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+        );
 
         const provider = this.snapshot.providers.find((item) => item.id === providerId);
         if (provider) {
@@ -256,7 +315,17 @@ export class StorageProviderRegistryService {
 
         const settingsPath = this.persistence.getSettingsPath();
         const settings = loadSettings(settingsPath, 'StorageProviderRegistryService.bootstrapLegacy');
-        if (!this.shouldRunLegacyBootstrap(settings)) {
+        const bootstrapDecision = this.shouldRunLegacyBootstrap(settings);
+        if (!bootstrapDecision.shouldRun) {
+            if (bootstrapDecision.skippedExistingExplicitRegistry) {
+                this.pushAssignmentDecision(
+                    StorageRole.CANONICAL_MEMORY,
+                    null,
+                    'bootstrap',
+                    'skipped',
+                    StorageAssignmentReasonCode.LEGACY_IMPORT_SKIPPED_EXISTING_REGISTRY,
+                );
+            }
             this.bootstrapApplied = true;
             return;
         }
@@ -277,6 +346,7 @@ export class StorageProviderRegistryService {
                 version: STORAGE_CONFIG_VERSION,
                 providers: this.snapshot.providers,
                 assignments: this.snapshot.assignments,
+                assignmentDecisions: this.assignmentDecisions.slice(),
                 updatedAt: this.snapshot.updatedAt,
             };
             this.persistence.saveConfig(payload);
@@ -285,17 +355,23 @@ export class StorageProviderRegistryService {
         this.bootstrapApplied = true;
     }
 
-    private shouldRunLegacyBootstrap(settings: Record<string, unknown>): boolean {
+    private shouldRunLegacyBootstrap(settings: Record<string, unknown>): {
+        shouldRun: boolean;
+        skippedExistingExplicitRegistry: boolean;
+    } {
         const hasMissingRequiredRoles = this.snapshot.assignments.length < 6;
         const hasExplicitRegistryContent = this.snapshot.providers.length > 0 || this.snapshot.assignments.length > 0;
         const hasLegacySignal = this.hasLegacyBootstrapSignal(settings);
         if (!hasLegacySignal) {
-            return false;
+            return { shouldRun: false, skippedExistingExplicitRegistry: false };
         }
         if (hasExplicitRegistryContent) {
-            return hasMissingRequiredRoles;
+            return {
+                shouldRun: hasMissingRequiredRoles,
+                skippedExistingExplicitRegistry: !hasMissingRequiredRoles,
+            };
         }
-        return true;
+        return { shouldRun: true, skippedExistingExplicitRegistry: false };
     }
 
     private hasLegacyBootstrapSignal(settings: Record<string, unknown>): boolean {
@@ -684,25 +760,105 @@ export class StorageProviderRegistryService {
         }
 
         const assignRoleIfMissing = (role: StorageRole, providerId: string | null): void => {
-            if (!providerId || assignmentByRole.has(role)) {
+            const existing = assignmentByRole.get(role);
+            if (existing) {
+                this.pushAssignmentDecision(
+                    role,
+                    existing.providerId,
+                    'bootstrap',
+                    'preserved',
+                    StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+                    { bootstrapAttemptedProviderId: providerId },
+                );
+                return;
+            }
+            if (!providerId) {
+                this.pushAssignmentDecision(
+                    role,
+                    null,
+                    'recovery',
+                    'suggestion',
+                    StorageAssignmentReasonCode.RECOVERY_SUGGESTION_ONLY,
+                    { reason: 'no_eligible_provider_found_for_missing_role' },
+                );
                 return;
             }
             const provider = this.snapshot.providers.find((item) => item.id === providerId);
             if (!provider || !provider.enabled || !provider.supportedRoles.includes(role)) {
+                const decisionReason = !provider
+                    ? StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED
+                    : (!provider.enabled ? StorageAssignmentReasonCode.BLOCKED_POLICY_CONFLICT : StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH);
+                this.pushAssignmentDecision(
+                    role,
+                    providerId,
+                    'bootstrap',
+                    'blocked',
+                    decisionReason,
+                );
+                return;
+            }
+            const eligibility = this.policy.validateRoleAssignmentEligibility(this.snapshot, providerId, role);
+            if (!eligibility.ok) {
+                this.pushAssignmentDecision(
+                    role,
+                    providerId,
+                    'policy',
+                    'blocked',
+                    eligibility.assignmentReasonCode,
+                    eligibility.details,
+                );
                 return;
             }
             this.snapshot.assignments.push({
                 role,
                 providerId,
                 assignedAt: this.now(),
+                assignmentReasonCode: StorageAssignmentReasonCode.FILLED_MISSING_ROLE_FROM_BOOTSTRAP,
             });
             assignmentByRole.set(role, this.snapshot.assignments[this.snapshot.assignments.length - 1]);
+            this.pushAssignmentDecision(
+                role,
+                providerId,
+                'bootstrap',
+                'applied',
+                StorageAssignmentReasonCode.FILLED_MISSING_ROLE_FROM_BOOTSTRAP,
+            );
             changed = true;
         };
 
-        const canonicalCandidateId = postgresProvider?.id
-            ?? explicitSqliteProviders[0]?.id
-            ?? null;
+        const enabledExplicitProviders = this.snapshot.providers.filter(
+            (provider) => provider.enabled && provider.registrationMode === StorageRegistrationMode.MANUAL,
+        );
+        const enabledBootstrapProviders = this.snapshot.providers.filter(
+            (provider) => provider.enabled && provider.registrationMode !== StorageRegistrationMode.MANUAL,
+        );
+        const pickFirstEligibleProviderId = (role: StorageRole, candidateProviderIds: Array<string | null | undefined>): string | null => {
+            for (const candidate of candidateProviderIds) {
+                if (!candidate) continue;
+                const provider = this.snapshot.providers.find((item) => item.id === candidate);
+                if (!provider || !provider.enabled || !provider.supportedRoles.includes(role)) continue;
+                const policyCheck = this.policy.validateRoleAssignmentEligibility(this.snapshot, provider.id, role);
+                if (policyCheck.ok) return provider.id;
+                this.pushAssignmentDecision(
+                    role,
+                    provider.id,
+                    'policy',
+                    'blocked',
+                    policyCheck.assignmentReasonCode,
+                    policyCheck.details,
+                );
+            }
+            return null;
+        };
+
+        const explicitCanonicalCandidate = enabledExplicitProviders.find(
+            (provider) => provider.supportedRoles.includes(StorageRole.CANONICAL_MEMORY),
+        )?.id;
+        const canonicalCandidateId = pickFirstEligibleProviderId(StorageRole.CANONICAL_MEMORY, [
+            explicitCanonicalCandidate,
+            explicitSqliteProviders[0]?.id,
+            postgresProvider?.id,
+        ]);
         assignRoleIfMissing(StorageRole.CANONICAL_MEMORY, canonicalCandidateId);
 
         let vectorCandidateId: string | null = preferredVectorProviderId;
@@ -717,12 +873,28 @@ export class StorageProviderRegistryService {
                 }
             }
         }
-        assignRoleIfMissing(StorageRole.VECTOR_INDEX, vectorCandidateId);
+        const explicitVectorCandidate = enabledExplicitProviders.find(
+            (provider) => provider.supportedRoles.includes(StorageRole.VECTOR_INDEX),
+        )?.id;
+        assignRoleIfMissing(
+            StorageRole.VECTOR_INDEX,
+            pickFirstEligibleProviderId(StorageRole.VECTOR_INDEX, [explicitVectorCandidate, vectorCandidateId]),
+        );
 
-        assignRoleIfMissing(StorageRole.BLOB_STORE, baseFilesystemProviderId);
-        assignRoleIfMissing(StorageRole.DOCUMENT_STORE, baseFilesystemProviderId);
-        assignRoleIfMissing(StorageRole.BACKUP_TARGET, backupFilesystemProviderId);
-        assignRoleIfMissing(StorageRole.ARTIFACT_STORE, artifactFilesystemProviderId);
+        const explicitBlobCandidate = enabledExplicitProviders.find((provider) => provider.supportedRoles.includes(StorageRole.BLOB_STORE))?.id;
+        const explicitDocumentCandidate = enabledExplicitProviders.find((provider) => provider.supportedRoles.includes(StorageRole.DOCUMENT_STORE))?.id;
+        const explicitBackupCandidate = enabledExplicitProviders.find((provider) => provider.supportedRoles.includes(StorageRole.BACKUP_TARGET))?.id;
+        const explicitArtifactCandidate = enabledExplicitProviders.find((provider) => provider.supportedRoles.includes(StorageRole.ARTIFACT_STORE))?.id;
+
+        const bootstrapBlobCandidate = enabledBootstrapProviders.find((provider) => provider.id === baseFilesystemProviderId)?.id ?? baseFilesystemProviderId;
+        const bootstrapDocCandidate = bootstrapBlobCandidate;
+        const bootstrapBackupCandidate = enabledBootstrapProviders.find((provider) => provider.id === backupFilesystemProviderId)?.id ?? backupFilesystemProviderId;
+        const bootstrapArtifactCandidate = enabledBootstrapProviders.find((provider) => provider.id === artifactFilesystemProviderId)?.id ?? artifactFilesystemProviderId;
+
+        assignRoleIfMissing(StorageRole.BLOB_STORE, pickFirstEligibleProviderId(StorageRole.BLOB_STORE, [explicitBlobCandidate, bootstrapBlobCandidate]));
+        assignRoleIfMissing(StorageRole.DOCUMENT_STORE, pickFirstEligibleProviderId(StorageRole.DOCUMENT_STORE, [explicitDocumentCandidate, bootstrapDocCandidate]));
+        assignRoleIfMissing(StorageRole.BACKUP_TARGET, pickFirstEligibleProviderId(StorageRole.BACKUP_TARGET, [explicitBackupCandidate, bootstrapBackupCandidate]));
+        assignRoleIfMissing(StorageRole.ARTIFACT_STORE, pickFirstEligibleProviderId(StorageRole.ARTIFACT_STORE, [explicitArtifactCandidate, bootstrapArtifactCandidate]));
 
         return changed;
     }
@@ -734,12 +906,14 @@ export class StorageProviderRegistryService {
             version: STORAGE_CONFIG_VERSION,
             providers: this.snapshot.providers,
             assignments: this.snapshot.assignments,
+            assignmentDecisions: this.assignmentDecisions.slice(),
             updatedAt: this.snapshot.updatedAt,
         };
         this.persistence.saveConfig(payload);
     }
 
     private normalizeSnapshot(input: PersistedStorageConfig): StorageRegistrySnapshot {
+        const normalizationDecisions: StorageAssignmentDecision[] = [];
         const providersById = new Map<string, StorageProviderRecord>();
         for (const provider of input.providers) {
             if (!provider.id || providersById.has(provider.id)) {
@@ -772,6 +946,26 @@ export class StorageProviderRegistryService {
         const seenRoles = new Set<StorageRole>();
         for (const assignment of input.assignments) {
             if (seenRoles.has(assignment.role)) {
+                if (assignment.role === StorageRole.CANONICAL_MEMORY) {
+                    normalizationDecisions.push({
+                        role: assignment.role,
+                        providerId: assignment.providerId,
+                        source: 'recovery',
+                        outcome: 'suggestion',
+                        reasonCode: StorageAssignmentReasonCode.BLOCKED_CANONICAL_CONFLICT,
+                        timestamp: this.now(),
+                        details: { conflict: 'duplicate_assignment_detected_during_normalization' },
+                    });
+                    normalizationDecisions.push({
+                        role: assignment.role,
+                        providerId: assignment.providerId,
+                        source: 'recovery',
+                        outcome: 'suggestion',
+                        reasonCode: StorageAssignmentReasonCode.RECOVERY_SUGGESTION_ONLY,
+                        timestamp: this.now(),
+                        details: { suggestion: 'resolve_canonical_conflict_manually' },
+                    });
+                }
                 continue;
             }
             const provider = providersById.get(assignment.providerId);
@@ -787,6 +981,7 @@ export class StorageProviderRegistryService {
                 role: assignment.role,
                 providerId: assignment.providerId,
                 assignedAt: assignment.assignedAt || this.now(),
+                assignmentReasonCode: assignment.assignmentReasonCode,
             });
         }
 
@@ -807,10 +1002,16 @@ export class StorageProviderRegistryService {
         providers.sort((a, b) => a.id.localeCompare(b.id));
         assignments.sort((a, b) => a.role.localeCompare(b.role));
 
+        const mergedDecisions = [
+            ...((input as StorageRegistrySnapshot).assignmentDecisions ?? []),
+            ...normalizationDecisions,
+        ].slice(-MAX_ASSIGNMENT_DECISIONS);
+
         return {
             version: typeof input.version === 'number' ? input.version : STORAGE_CONFIG_VERSION,
             providers,
             assignments,
+            assignmentDecisions: mergedDecisions,
             updatedAt: input.updatedAt || this.now(),
         };
     }

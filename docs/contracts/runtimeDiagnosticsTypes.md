@@ -276,6 +276,7 @@ interface StorageRoleDiagnostics {
     role: string;
     assignedProviderId: string | null;
     assignmentType: StorageAssignmentType;
+    reasonCode?: string;
     eligibilityReasoning: string[];
     blockedAlternativeProviderIds: string[];
 }
@@ -300,8 +301,14 @@ interface StorageDiagnosticsSnapshot {
     authoritySummary: StorageAuthoritySummaryDiagnostics;
     providers: StorageProviderDiagnostics[];
     roles: StorageRoleDiagnostics[];
-    lastAssignmentExplanation?: StorageAssignmentExplanationDiagnostics;
-}
+    assignmentDecisions?: Array<{
+        role: string;
+        providerId: string | null;
+        source: 'explicit_registry' | 'bootstrap' | 'policy' | 'recovery';
+        outcome: 'applied' | 'preserved' | 'blocked' | 'skipped' | 'suggestion';
+        reasonCode: string;
+        timestamp: string;
+    }
 ```
 
 ### `RuntimeDiagnosticsSnapshot`

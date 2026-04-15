@@ -15,6 +15,7 @@ import type {
     StorageSetProviderEnabledResponse,
 } from '../../services/storage/storageTypes';
 import {
+    StorageAssignmentReasonCode,
     StorageHealthStatus,
     StorageLocality,
     StorageOperationErrorCode,
@@ -131,6 +132,7 @@ describe('Storage IPC routes', () => {
         expect(assignResult.ok).toBe(false);
         if (!assignResult.ok) {
             expect(assignResult.error.code).toBe(StorageOperationErrorCode.CANONICAL_ROLE_RESTRICTED);
+            expect(assignResult.error.details?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH);
         }
     });
 

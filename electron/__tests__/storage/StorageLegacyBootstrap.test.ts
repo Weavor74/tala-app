@@ -6,6 +6,7 @@ import { refreshSettingsFromDisk, saveSettings } from '../../services/SettingsMa
 import { StorageConfigPersistenceService } from '../../services/storage/storageConfigPersistence';
 import { StorageProviderRegistryService } from '../../services/storage/StorageProviderRegistryService';
 import {
+    StorageAssignmentReasonCode,
     StorageAuthMode,
     StorageAuthStatus,
     StorageCapability,
@@ -42,7 +43,7 @@ describe('Storage legacy bootstrap hydration', () => {
         refreshSettingsFromDisk(settingsPath, 'StorageLegacyBootstrap.test.beforeEach');
     });
 
-    it('empty new registry + existing PostgreSQL config -> provider imported and canonical_memory assigned', () => {
+    it('empty new registry + existing PostgreSQL config -> provider imported and canonical assignment is blocked with deterministic reason', () => {
         writeSettings(settingsPath, {
             database: {
                 host: 'localhost',
@@ -60,7 +61,11 @@ describe('Storage legacy bootstrap hydration', () => {
 
         const postgres = snapshot.providers.find((provider) => provider.kind === StorageProviderKind.POSTGRESQL);
         expect(postgres).toBeTruthy();
-        expect(snapshot.assignments.find((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY)?.providerId).toBe(postgres?.id);
+        expect(snapshot.assignments.find((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY)?.providerId).toBeUndefined();
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.role === StorageRole.CANONICAL_MEMORY
+                && decision.reasonCode === StorageAssignmentReasonCode.BLOCKED_AUTH_INVALID,
+        )).toBe(true);
     });
 
     it('empty new registry + filesystem paths -> filesystem provider imported and blob/document/backup/artifact assigned', () => {
@@ -231,6 +236,10 @@ describe('Storage legacy bootstrap hydration', () => {
 
         const canonicalAssignment = snapshot.assignments.find((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY);
         expect(canonicalAssignment?.providerId).toBe('sqlite:legacy-canonical.db');
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.role === StorageRole.CANONICAL_MEMORY
+                && decision.reasonCode === StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+        )).toBe(true);
     });
 
     it('partial registry with missing roles only fills safe deterministic gaps', () => {
@@ -286,6 +295,9 @@ describe('Storage legacy bootstrap hydration', () => {
             const vectorAssignment = snapshot.assignments.find((assignment) => assignment.role === StorageRole.VECTOR_INDEX);
             expect(vectorAssignment?.providerId).toBe('chromadb:http://127.0.0.1:8000');
             expect(snapshot.assignments.length).toBeGreaterThan(1);
+            expect(snapshot.assignmentDecisions?.some(
+                (decision) => decision.reasonCode === StorageAssignmentReasonCode.FILLED_MISSING_ROLE_FROM_BOOTSTRAP,
+            )).toBe(true);
         } finally {
             if (previousDbHost === undefined) {
                 delete process.env.TALA_DB_HOST;
@@ -295,7 +307,7 @@ describe('Storage legacy bootstrap hydration', () => {
         }
     });
 
-    it('snapshot after bootstrap no longer reports all required roles missing when legacy config exists', () => {
+    it('snapshot after bootstrap reports deterministic blocked reason codes for missing canonical role', () => {
         writeSettings(settingsPath, {
             backup: {
                 localPath: './custom-backups',
@@ -317,11 +329,167 @@ describe('Storage legacy bootstrap hydration', () => {
         const snapshot = registry.getRegistrySnapshot();
 
         const assignedRoles = new Set(snapshot.assignments.map((assignment) => assignment.role));
-        expect(assignedRoles.has(StorageRole.CANONICAL_MEMORY)).toBe(true);
+        expect(assignedRoles.has(StorageRole.CANONICAL_MEMORY)).toBe(false);
         expect(assignedRoles.has(StorageRole.VECTOR_INDEX)).toBe(true);
         expect(assignedRoles.has(StorageRole.BLOB_STORE)).toBe(true);
         expect(assignedRoles.has(StorageRole.DOCUMENT_STORE)).toBe(true);
         expect(assignedRoles.has(StorageRole.BACKUP_TARGET)).toBe(true);
         expect(assignedRoles.has(StorageRole.ARTIFACT_STORE)).toBe(true);
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.role === StorageRole.CANONICAL_MEMORY
+                && decision.reasonCode === StorageAssignmentReasonCode.BLOCKED_AUTH_INVALID,
+        )).toBe(true);
+    });
+
+    it('explicit providers override bootstrap candidates for missing role gaps', () => {
+        writeSettings(settingsPath, {
+            storageRegistry: {
+                version: 1,
+                updatedAt: '2026-04-14T12:00:00.000Z',
+                providers: [
+                    {
+                        id: 'sqlite:manual-canonical.db',
+                        name: 'Manual SQLite Canonical',
+                        kind: StorageProviderKind.SQLITE,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.CANONICAL_MEMORY, StorageRole.DOCUMENT_STORE],
+                        capabilities: [StorageCapability.STRUCTURED_RECORDS, StorageCapability.DOCUMENT_STORAGE],
+                        enabled: true,
+                        connection: { path: 'manual-canonical.db' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+                assignments: [],
+            },
+            database: {
+                host: 'localhost',
+                port: 5432,
+                database: 'tala',
+            },
+        });
+
+        const registry = makeRegistry(settingsPath);
+        const snapshot = registry.getRegistrySnapshot();
+        const canonicalAssignment = snapshot.assignments.find((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY);
+        expect(canonicalAssignment?.providerId).toBe('sqlite:manual-canonical.db');
+        expect(canonicalAssignment?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.FILLED_MISSING_ROLE_FROM_BOOTSTRAP);
+    });
+
+    it('legacy bootstrap skip emits explicit registry skip reason code', () => {
+        writeSettings(settingsPath, {
+            storageRegistry: {
+                version: 1,
+                updatedAt: '2026-04-14T12:00:00.000Z',
+                providers: [
+                    {
+                        id: 'sqlite:canonical.db',
+                        name: 'Canonical SQLite',
+                        kind: StorageProviderKind.SQLITE,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.CANONICAL_MEMORY, StorageRole.DOCUMENT_STORE, StorageRole.BACKUP_TARGET],
+                        capabilities: [StorageCapability.STRUCTURED_RECORDS, StorageCapability.DOCUMENT_STORAGE, StorageCapability.BACKUP_TARGET],
+                        enabled: true,
+                        connection: { path: 'canonical.db' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [StorageRole.CANONICAL_MEMORY, StorageRole.DOCUMENT_STORE, StorageRole.BACKUP_TARGET],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                    {
+                        id: 'chromadb:http://127.0.0.1:8000',
+                        name: 'Chroma',
+                        kind: StorageProviderKind.CHROMADB,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.VECTOR_INDEX],
+                        capabilities: [StorageCapability.VECTOR_INDEXING],
+                        enabled: true,
+                        connection: { endpoint: 'http://127.0.0.1:8000' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [StorageRole.VECTOR_INDEX],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                    {
+                        id: 'filesystem:storage',
+                        name: 'FS',
+                        kind: StorageProviderKind.FILESYSTEM,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.BLOB_STORE, StorageRole.ARTIFACT_STORE],
+                        capabilities: [StorageCapability.BLOB_STORAGE, StorageCapability.ARTIFACT_STORAGE],
+                        enabled: true,
+                        connection: { path: 'storage' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [StorageRole.BLOB_STORE, StorageRole.ARTIFACT_STORE],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+                assignments: [
+                    { role: StorageRole.CANONICAL_MEMORY, providerId: 'sqlite:canonical.db', assignedAt: '2026-04-14T12:00:00.000Z' },
+                    { role: StorageRole.VECTOR_INDEX, providerId: 'chromadb:http://127.0.0.1:8000', assignedAt: '2026-04-14T12:00:00.000Z' },
+                    { role: StorageRole.BLOB_STORE, providerId: 'filesystem:storage', assignedAt: '2026-04-14T12:00:00.000Z' },
+                    { role: StorageRole.DOCUMENT_STORE, providerId: 'sqlite:canonical.db', assignedAt: '2026-04-14T12:00:00.000Z' },
+                    { role: StorageRole.BACKUP_TARGET, providerId: 'sqlite:canonical.db', assignedAt: '2026-04-14T12:00:00.000Z' },
+                    { role: StorageRole.ARTIFACT_STORE, providerId: 'filesystem:storage', assignedAt: '2026-04-14T12:00:00.000Z' },
+                ],
+            },
+            storage: {
+                activeProviderId: 'legacy-chroma',
+                providers: [{ id: 'legacy-chroma', name: 'Legacy Chroma', type: 'chroma-local', path: './data/memory' }],
+            },
+        });
+
+        const registry = makeRegistry(settingsPath);
+        const snapshot = registry.getRegistrySnapshot();
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.reasonCode === StorageAssignmentReasonCode.LEGACY_IMPORT_SKIPPED_EXISTING_REGISTRY,
+        )).toBe(true);
     });
 });

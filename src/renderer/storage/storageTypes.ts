@@ -6,6 +6,18 @@ export type StorageRole =
     | 'backup_target'
     | 'artifact_store';
 
+export type StorageAssignmentReasonCode =
+    | 'explicit_assignment_preserved'
+    | 'filled_missing_role_from_bootstrap'
+    | 'blocked_capability_mismatch'
+    | 'blocked_auth_invalid'
+    | 'blocked_policy_conflict'
+    | 'blocked_canonical_conflict'
+    | 'provider_unreachable'
+    | 'provider_not_registered'
+    | 'legacy_import_skipped_existing_registry'
+    | 'recovery_suggestion_only';
+
 export type StorageProviderKind =
     | 'filesystem'
     | 'postgresql'
@@ -87,12 +99,28 @@ export interface StorageRoleAssignment {
     role: StorageRole;
     providerId: string;
     assignedAt: string;
+    assignmentReasonCode?: StorageAssignmentReasonCode;
+}
+
+export type StorageAssignmentDecisionSource = 'explicit_registry' | 'bootstrap' | 'policy' | 'recovery';
+
+export type StorageAssignmentDecisionOutcome = 'applied' | 'preserved' | 'blocked' | 'skipped' | 'suggestion';
+
+export interface StorageAssignmentDecision {
+    role: StorageRole;
+    providerId: string | null;
+    source: StorageAssignmentDecisionSource;
+    outcome: StorageAssignmentDecisionOutcome;
+    reasonCode: StorageAssignmentReasonCode;
+    timestamp: string;
+    details?: Record<string, unknown>;
 }
 
 export interface StorageRegistrySnapshot {
     version: number;
     providers: StorageProviderRecord[];
     assignments: StorageRoleAssignment[];
+    assignmentDecisions?: StorageAssignmentDecision[];
     updatedAt: string;
 }
 

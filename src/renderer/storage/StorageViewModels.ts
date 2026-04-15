@@ -1,4 +1,5 @@
 import type {
+    StorageAssignmentReasonCode,
     StorageAuthStatus,
     StorageHealthStatus,
     StorageIpcErrorPayload,
@@ -120,6 +121,7 @@ export interface StorageRoleVisibilityViewModel {
     roleLabel: string;
     assignedProvider: StorageAuthorityReference;
     assignmentType: StorageRoleAssignmentType;
+    decisionReasonCode: StorageAssignmentReasonCode | null;
     eligibilityReasoning: string[];
     blockedAlternatives: StorageRoleCandidateBlockerViewModel[];
 }
@@ -393,6 +395,9 @@ export function buildRoleVisibilityModels(snapshot: StorageRegistrySnapshot): St
         const assignment = getAssignmentByRole(snapshot, role);
         const assignedProvider = assignment ? getProviderById(snapshot, assignment.providerId) : null;
         const assignmentType = assignedProvider ? mapAssignmentType(assignedProvider.registrationMode) : 'unassigned';
+        const decisionReasonCode = [...(snapshot.assignmentDecisions ?? [])]
+            .reverse()
+            .find((decision) => decision.role === role)?.reasonCode ?? null;
         const eligibilityReasoning = assignedProvider
             ? buildRoleEligibilityReasons(assignedProvider, role)
             : ['role_unassigned'];
@@ -404,6 +409,7 @@ export function buildRoleVisibilityModels(snapshot: StorageRegistrySnapshot): St
                 ? { providerId: assignedProvider.id, providerName: assignedProvider.name }
                 : { providerId: null, providerName: 'Unassigned' },
             assignmentType,
+            decisionReasonCode,
             eligibilityReasoning: eligibilityReasoning.length > 0 ? eligibilityReasoning : ['assignment_eligible'],
             blockedAlternatives: buildBlockedAlternatives(snapshot, role)
                 .filter((candidate) => candidate.providerId !== assignedProvider?.id),
@@ -413,14 +419,13 @@ export function buildRoleVisibilityModels(snapshot: StorageRegistrySnapshot): St
 
 function buildAssignmentNextSteps(errorCode: string): string[] {
     const steps: Record<string, string[]> = {
-        provider_disabled: ['enable_provider', 'reassign_role'],
-        provider_offline: ['restore_provider_connectivity', 'run_validation'],
-        auth_blocked: ['update_provider_credentials', 'run_validation'],
-        role_unsupported: ['select_provider_supporting_role', 'review_supported_roles'],
-        role_already_assigned: ['unassign_existing_provider', 'retry_assignment'],
-        canonical_role_restricted: ['assign_canonical_role_only_to_canonical_provider'],
-        sole_canonical_provider_required: ['keep_single_canonical_runtime_authority', 'assign_alternative_before_removal'],
-        provider_not_found: ['refresh_storage_registry', 'retry_assignment'],
+        blocked_capability_mismatch: ['select_capability_compatible_provider', 'run_validation'],
+        blocked_auth_invalid: ['update_provider_credentials', 'run_validation'],
+        blocked_policy_conflict: ['review_assignment_policy', 'resolve_existing_assignment'],
+        blocked_canonical_conflict: ['resolve_canonical_assignment_conflict', 'recovery_suggestion_only'],
+        provider_unreachable: ['restore_provider_connectivity', 'run_validation'],
+        provider_not_registered: ['refresh_storage_registry', 'register_provider'],
+        recovery_suggestion_only: ['review_recovery_suggestions', 'apply_explicit_assignment'],
     };
     return steps[errorCode] || ['review_assignment_eligibility', 'retry_assignment'];
 }
@@ -436,15 +441,16 @@ export function buildAssignmentFailureExplanation(
         ? { providerId: provider.id, providerName: provider.name }
         : { providerId, providerName: providerId };
     const eligibilityReasoning = provider ? buildRoleEligibilityReasons(provider, role) : ['provider_not_found'];
+    const reasonCode = (error.details?.assignmentReasonCode as StorageAssignmentReasonCode | undefined) ?? error.code;
     return {
         role,
         provider: providerRef,
         outcome: 'failed',
-        reasonCode: error.code,
+        reasonCode,
         reasonSummary: error.message,
         eligibilityReasoning: eligibilityReasoning.length > 0 ? eligibilityReasoning : ['assignment_attempt_failed'],
         blockedAlternatives: buildBlockedAlternatives(snapshot, role),
-        nextSteps: buildAssignmentNextSteps(error.code),
+        nextSteps: buildAssignmentNextSteps(reasonCode),
         timestamp: new Date().toISOString(),
     };
 }
@@ -453,6 +459,7 @@ export function buildAssignmentSuccessExplanation(
     snapshot: StorageRegistrySnapshot,
     providerId: string,
     role: StorageRole,
+    reasonCode: StorageAssignmentReasonCode = 'explicit_assignment_preserved',
 ): StorageAssignmentExplanationViewModel {
     const provider = getProviderById(snapshot, providerId);
     const providerRef: StorageAuthorityReference = provider
@@ -463,7 +470,7 @@ export function buildAssignmentSuccessExplanation(
         role,
         provider: providerRef,
         outcome: 'succeeded',
-        reasonCode: 'assignment_applied',
+        reasonCode,
         reasonSummary: 'Role assignment applied in the Storage Registry.',
         eligibilityReasoning: reasons.length > 0 ? reasons : ['assignment_eligible'],
         blockedAlternatives: buildBlockedAlternatives(snapshot, role)
