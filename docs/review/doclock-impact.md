@@ -6,42 +6,23 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 <!-- GENERATED:impact-map:start -->
 | Changed Path | Doc Owners | Generated Sections | Mode |
 | --- | --- | --- | --- |
-| `package-lock.json` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `package.json` | `docs/contracts/settings.md`<br>`docs/interfaces/configuration_contracts.md`<br>`docs/review/doclock-impact.md` | `config-env-matrix`, `impact-map` | auto |
-| `src/App.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/WorkspaceBoardModel.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/WorkspaceBoardSchema.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/WorkspaceSurfaceHelpers.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/WorkspaceSurfaceHost.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/WorkspaceSurfaceState.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/sanitization/WorkspacePreviewSanitizer.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/BoardSurface.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/HtmlSurface.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/ImageSurface.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/PdfSurface.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/WorkspaceSurfaceControls.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/workspace/surfaces/WorkspaceSurfaceTypes.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `tests/WorkspaceSurfaceRouting.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/__tests__/storage/StorageDetectionValidationService.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/__tests__/storage/StorageIpcRouter.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/__tests__/storage/StorageProviderRegistryService.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/preload.ts` | `docs/interfaces/ipc_interface_control.md`<br>`docs/review/doclock-impact.md` | `impact-map`, `ipc-inventory` | auto |
+| `electron/services/IpcRouter.ts` | `docs/architecture/service_interactions.md`<br>`docs/interfaces/ipc_interface_control.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `ipc-inventory`, `service-ownership-map` | auto |
+| `electron/services/storage/StorageAssignmentPolicyService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/StorageDetectionService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/StorageProviderRegistryService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/StorageValidationService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/storageCapabilityMatrix.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/storageConfigPersistence.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/storage/storageTypes.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 
-Summary: total_changed=19, impact_candidates=16, mapped=2, unmapped=14, manual_review=14.
+Summary: total_changed=15, impact_candidates=12, mapped=12, unmapped=0, manual_review=0.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
 <!-- REVIEW_REQUIRED:start -->
-- [x] `package-lock.json` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/App.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/WorkspaceBoardModel.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/WorkspaceBoardSchema.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/WorkspaceSurfaceHelpers.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/WorkspaceSurfaceHost.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/WorkspaceSurfaceState.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/sanitization/WorkspacePreviewSanitizer.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/BoardSurface.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/HtmlSurface.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/ImageSurface.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/PdfSurface.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/WorkspaceSurfaceControls.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/workspace/surfaces/WorkspaceSurfaceTypes.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-
-Rule: unresolved `[ ]` items block `docs:validate`.
+None.
 <!-- REVIEW_REQUIRED:end -->

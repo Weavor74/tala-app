@@ -57,6 +57,30 @@ import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardr
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
 import type { SystemCapability } from '../../shared/system-health-types';
 import { SystemModeManager } from './SystemModeManager';
+import { StorageConfigPersistenceService } from './storage/storageConfigPersistence';
+import { StorageProviderRegistryService } from './storage/StorageProviderRegistryService';
+import { StorageDetectionService } from './storage/StorageDetectionService';
+import { StorageValidationService } from './storage/StorageValidationService';
+import type {
+  StorageAddProviderRequest,
+  StorageAddProviderResponse,
+  StorageAssignRoleRequest,
+  StorageAssignRoleResponse,
+  StorageDetectProvidersResponse,
+  StorageGetSnapshotResponse,
+  StorageMutationFailure,
+  StorageRemoveProviderRequest,
+  StorageRemoveProviderResponse,
+  StorageSetProviderEnabledRequest,
+  StorageSetProviderEnabledResponse,
+  StorageUnassignRoleRequest,
+  StorageUnassignRoleResponse,
+  StorageUpdateProviderRequest,
+  StorageUpdateProviderResponse,
+  StorageValidateProviderRequest,
+  StorageValidateProviderResponse,
+} from './storage/storageTypes';
+import { checkStorageOperationError, StorageOperationErrorCode } from './storage/storageTypes';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
@@ -93,6 +117,9 @@ export interface IpcRouterContext {
   worldModelAssembler?: WorldModelAssembler;
   /** Maintenance loop service — Phase 4B self-maintenance foundation. */
   maintenanceLoopService?: import('./maintenance/MaintenanceLoopService').MaintenanceLoopService;
+  storageProviderRegistry?: StorageProviderRegistryService;
+  storageDetectionService?: StorageDetectionService;
+  storageValidationService?: StorageValidationService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;
@@ -152,6 +179,14 @@ export class IpcRouter {
       const check = SystemModeManager.assertCapability(capability, source);
       return { mode: check.effective_mode };
     };
+    const storagePersistence = new StorageConfigPersistenceService(getSettingsPath());
+    const storageRegistry = this.ctx.storageProviderRegistry
+      ?? new StorageProviderRegistryService(storagePersistence);
+    const storageDetection = this.ctx.storageDetectionService
+      ?? new StorageDetectionService(storageRegistry, getSettingsPath);
+    const storageValidation = this.ctx.storageValidationService
+      ?? new StorageValidationService(storageRegistry);
+    const storageFailure = (error: unknown): StorageMutationFailure => this.toStorageMutationFailure(error);
 
     // Phase 3A: Wire the diagnostics aggregator into AgentService so cognitive
     // contexts are recorded after each turn without exposing it in the constructor.
@@ -386,6 +421,115 @@ export class IpcRouter {
     // ═══════════════════════════════════════════════════════════════════════
     // IPC HANDLERS — SESSION PERSISTENCE
     // ═══════════════════════════════════════════════════════════════════════
+
+    // Storage provider registry (backend-authoritative)
+    ipcMain.handle('storage:getSnapshot', async (): Promise<StorageGetSnapshotResponse> => {
+      return storageRegistry.getRegistrySnapshot();
+    });
+
+    ipcMain.handle('storage:detectProviders', async (): Promise<StorageDetectProvidersResponse> => {
+      const detected = storageDetection.detectAndMergeProviders();
+      return {
+        ok: true,
+        detectedProviders: detected.detectedProviders,
+        snapshot: detected.mergedSnapshot,
+      };
+    });
+
+    ipcMain.handle('storage:addProvider', async (_e, request: StorageAddProviderRequest): Promise<StorageAddProviderResponse> => {
+      try {
+        storageRegistry.addProvider({
+          id: request.id,
+          name: request.name,
+          kind: request.kind,
+          locality: request.locality,
+          registrationMode: request.registrationMode,
+          supportedRoles: request.supportedRoles,
+          capabilities: request.capabilities,
+          enabled: request.enabled,
+          connection: request.connection,
+          auth: request.auth,
+          health: request.health,
+        });
+        const snapshot = storageRegistry.getRegistrySnapshot();
+        const changed = snapshot.providers.find((provider) => provider.id === request.id);
+        if (!changed) {
+          throw new Error('Added provider not found in snapshot');
+        }
+        return { ok: true, snapshot, changed };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:updateProvider', async (_e, request: StorageUpdateProviderRequest): Promise<StorageUpdateProviderResponse> => {
+      try {
+        storageRegistry.updateProvider({
+          id: request.id,
+          ...request.patch,
+        });
+        const snapshot = storageRegistry.getRegistrySnapshot();
+        const changed = snapshot.providers.find((provider) => provider.id === request.id);
+        if (!changed) {
+          throw new Error('Updated provider not found in snapshot');
+        }
+        return { ok: true, snapshot, changed };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:removeProvider', async (_e, request: StorageRemoveProviderRequest): Promise<StorageRemoveProviderResponse> => {
+      try {
+        const snapshot = storageRegistry.removeProvider(request.providerId);
+        return { ok: true, snapshot, changed: { providerId: request.providerId } };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:validateProvider', async (_e, request: StorageValidateProviderRequest): Promise<StorageValidateProviderResponse> => {
+      try {
+        const { result } = await storageValidation.validateProvider(request.providerId);
+        const snapshot = storageRegistry.getRegistrySnapshot();
+        return { ok: true, result, snapshot };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:assignRole', async (_e, request: StorageAssignRoleRequest): Promise<StorageAssignRoleResponse> => {
+      try {
+        const snapshot = storageRegistry.assignRole(request.providerId, request.role);
+        const changed = snapshot.assignments.find(
+          (assignment) => assignment.providerId === request.providerId && assignment.role === request.role,
+        );
+        if (!changed) {
+          throw new Error('Role assignment not found in snapshot after assignment');
+        }
+        return { ok: true, snapshot, changed };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:unassignRole', async (_e, request: StorageUnassignRoleRequest): Promise<StorageUnassignRoleResponse> => {
+      try {
+        const snapshot = storageRegistry.unassignRole(request.role);
+        return { ok: true, snapshot, changed: { role: request.role } };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:setProviderEnabled', async (_e, request: StorageSetProviderEnabledRequest): Promise<StorageSetProviderEnabledResponse> => {
+      try {
+        const snapshot = storageRegistry.setProviderEnabled(request.providerId, request.enabled);
+        return { ok: true, snapshot, changed: { providerId: request.providerId, enabled: request.enabled } };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
 
     const getSessionPath = () => {
       return path.join(USER_DATA_DIR, 'session.json');
@@ -2502,6 +2646,26 @@ export class IpcRouter {
       return TelemetryBus.getInstance().getRecentEvents().slice();
     });
 
+  }
+
+  private toStorageMutationFailure(error: unknown): StorageMutationFailure {
+    if (checkStorageOperationError(error)) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        code: StorageOperationErrorCode.PERSISTENCE_SAVE_FAILED,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
   }
 
   private installIpcErrorWrapper() {

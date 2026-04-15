@@ -57,6 +57,30 @@ import { localGuardrailsProfilePreflightService } from './guardrails/LocalGuardr
 import { guardrailActivationDiagnosticsService } from './guardrails/GuardrailActivationDiagnosticsService';
 import type { SystemCapability } from '../../shared/system-health-types';
 import { SystemModeManager } from './SystemModeManager';
+import { StorageConfigPersistenceService } from './storage/storageConfigPersistence';
+import { StorageProviderRegistryService } from './storage/StorageProviderRegistryService';
+import { StorageDetectionService } from './storage/StorageDetectionService';
+import { StorageValidationService } from './storage/StorageValidationService';
+import type {
+  StorageAddProviderRequest,
+  StorageAddProviderResponse,
+  StorageAssignRoleRequest,
+  StorageAssignRoleResponse,
+  StorageDetectProvidersResponse,
+  StorageGetSnapshotResponse,
+  StorageMutationFailure,
+  StorageRemoveProviderRequest,
+  StorageRemoveProviderResponse,
+  StorageSetProviderEnabledRequest,
+  StorageSetProviderEnabledResponse,
+  StorageUnassignRoleRequest,
+  StorageUnassignRoleResponse,
+  StorageUpdateProviderRequest,
+  StorageUpdateProviderResponse,
+  StorageValidateProviderRequest,
+  StorageValidateProviderResponse,
+} from './storage/storageTypes';
+import { checkStorageOperationError, StorageOperationErrorCode } from './storage/storageTypes';
 import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
@@ -93,6 +117,9 @@ export interface IpcRouterContext {
   worldModelAssembler?: WorldModelAssembler;
   /** Maintenance loop service — Phase 4B self-maintenance foundation. */
   maintenanceLoopService?: import('./maintenance/MaintenanceLoopService').MaintenanceLoopService;
+  storageProviderRegistry?: StorageProviderRegistryService;
+  storageDetectionService?: StorageDetectionService;
+  storageValidationService?: StorageValidationService;
   getSettingsPath: () => string;
   setSettingsPath: (p: string) => void;
   USER_DATA_DIR: string;

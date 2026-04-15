@@ -11,6 +11,24 @@
  * - Restricts communication to a whitelist of approved IPC channels.
  */
 import { contextBridge, ipcRenderer } from 'electron';
+import type {
+    StorageAddProviderRequest,
+    StorageAddProviderResponse,
+    StorageAssignRoleRequest,
+    StorageAssignRoleResponse,
+    StorageDetectProvidersResponse,
+    StorageGetSnapshotResponse,
+    StorageRemoveProviderRequest,
+    StorageRemoveProviderResponse,
+    StorageSetProviderEnabledRequest,
+    StorageSetProviderEnabledResponse,
+    StorageUnassignRoleRequest,
+    StorageUnassignRoleResponse,
+    StorageUpdateProviderRequest,
+    StorageUpdateProviderResponse,
+    StorageValidateProviderRequest,
+    StorageValidateProviderResponse,
+} from './services/storage/storageTypes';
 
 /**
  * Electron Preload Script — Main Window Context Bridge
@@ -136,6 +154,17 @@ contextBridge.exposeInMainWorld('tala', {
     importSettings: () => ipcRenderer.invoke('import-settings'),
     /** Retrieves application settings (Global + Workspace). */
     getSettings: () => ipcRenderer.invoke('get-settings'),
+    storage: {
+        getSnapshot: (): Promise<StorageGetSnapshotResponse> => ipcRenderer.invoke('storage:getSnapshot'),
+        detectProviders: (): Promise<StorageDetectProvidersResponse> => ipcRenderer.invoke('storage:detectProviders'),
+        addProvider: (request: StorageAddProviderRequest): Promise<StorageAddProviderResponse> => ipcRenderer.invoke('storage:addProvider', request),
+        updateProvider: (request: StorageUpdateProviderRequest): Promise<StorageUpdateProviderResponse> => ipcRenderer.invoke('storage:updateProvider', request),
+        removeProvider: (request: StorageRemoveProviderRequest): Promise<StorageRemoveProviderResponse> => ipcRenderer.invoke('storage:removeProvider', request),
+        validateProvider: (request: StorageValidateProviderRequest): Promise<StorageValidateProviderResponse> => ipcRenderer.invoke('storage:validateProvider', request),
+        assignRole: (request: StorageAssignRoleRequest): Promise<StorageAssignRoleResponse> => ipcRenderer.invoke('storage:assignRole', request),
+        unassignRole: (request: StorageUnassignRoleRequest): Promise<StorageUnassignRoleResponse> => ipcRenderer.invoke('storage:unassignRole', request),
+        setProviderEnabled: (request: StorageSetProviderEnabledRequest): Promise<StorageSetProviderEnabledResponse> => ipcRenderer.invoke('storage:setProviderEnabled', request),
+    },
 
     // ─── Session Persistence ──────────────────────────────────────
     /** Saves the current session state (tabs, active tab). */
