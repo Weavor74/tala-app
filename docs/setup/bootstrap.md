@@ -11,6 +11,7 @@ Runtime authority notes:
 - PostgreSQL is the canonical memory authority runtime.
 - pgvector is the Postgres vector capability when installed/available.
 - Inference selection is deterministic and local-first (Ollama-priority in auto mode).
+- Storage authority is governed by the Storage Registry (`StorageProviderRegistryService`).
 
 ---
 
@@ -86,6 +87,17 @@ Python component that exists in the repo:
 | `mcp-servers/world-engine` | `mcp-servers/world-engine/venv/` |
 
 If a module directory does not exist it is skipped silently.
+
+### Setup Bootstrap vs Storage Bootstrap
+
+- This guide describes **environment bootstrap** (install/runtime provisioning scripts).
+- Storage bootstrap is separate and runtime-managed:
+  - one-time legacy import into Storage Registry
+  - deterministic Provider hydration
+  - missing Role gap fill only
+  - explicit assignments preserved
+  - no silent post-bootstrap legacy override
+  - explicit re-import action only (`storage:reimportLegacy`)
 
 ---
 
@@ -197,6 +209,14 @@ The verify script checks each subsystem and prints a `PASS / FAIL / WARN` per it
 
 The script exits with code `0` on all-pass, `1` if any critical check fails.
 
+### Storage Authority Verification (after first app launch)
+
+In Settings:
+1. Open Storage and verify `Storage Authority Summary` reports canonical authority and registry health.
+2. Confirm Provider and Role visibility is populated (authority class, origin, validation state, reason codes).
+3. If legacy import was expected, verify bootstrap outcome and run count in summary.
+4. Use explicit legacy re-import only when operator-intended.
+
 ---
 
 ## Contributor Documentation Checks
@@ -250,6 +270,16 @@ The launch scripts resolve the repo root correctly from their own location and l
 3. A `.gguf` model file in `models/`
 
 If neither Python binary nor a model is found, the script exits with a clear diagnostic.
+
+---
+
+## Authentication Panel and Storage Credentials
+
+Storage credentials can be added from the Settings Authentication panel and applied per Provider.
+
+- Authentication panel stores credential material in settings auth keys.
+- Applying credentials updates Provider auth state in Storage Registry.
+- Layered Validation and assignment diagnostics then use the updated auth state (`blocked_auth_invalid` vs ready states).
 
 ---
 

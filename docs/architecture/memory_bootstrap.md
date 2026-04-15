@@ -5,6 +5,10 @@
 This document describes how Tala provisions and manages its local canonical
 memory store (PostgreSQL + pgvector) during startup.
 
+Scope note:
+- This file covers **database runtime bootstrap**.
+- Storage Registry bootstrap/migration is a separate runtime path handled by `StorageProviderRegistryService` and `StorageAssignmentPolicyService`.
+
 **Primary goal: local-first, zero-prerequisite memory without requiring Docker.**
 
 The default bootstrap path is a Tala-managed native PostgreSQL runtime. Docker

@@ -5,12 +5,15 @@ Tala is a local-first AI companion and agent workstation. The runtime is designe
 
 ## 2. Architecture Truths (Current Runtime)
 
-- Postgres is the canonical memory runtime and source of durable memory truth.
+- Storage authority is modeled through a **Storage Registry** (authoritative configuration model).
+- A **Provider** is a storage backend definition in the Storage Registry.
+- A **Role** is an assigned storage responsibility (for example `canonical_memory`, `vector_index`).
+- Postgres is the canonical memory runtime **when configured and assigned to canonical authority**.
 - `MemoryAuthorityService` is the required canonical write path for durable memory records.
 - mem0, graph, vector, summaries, caches, and retrieval artifacts are derived layers only.
 - Derived memory must reference canonical Postgres-backed IDs.
 - Memory authority enforcement and integrity checks exist to prevent canonical/derived drift.
-- Storage providers are managed through a registry and explicit role assignments, not a single implicit provider.
+- Storage Providers are managed through explicit Storage Registry assignments, not implicit selection.
 - Inference provider resolution is deterministic and local-first.
 
 ## 3. Canonical Memory Model
@@ -57,10 +60,31 @@ Notes:
 Storage is handled by `StorageProviderRegistryService` and `StorageAssignmentPolicyService`.
 
 - Providers are registered with capabilities, health/auth state, and supported roles.
-- Roles are explicitly assigned to provider IDs.
-- Role assignment is policy-validated (capability, locality, auth, health, and uniqueness constraints).
-- The canonical memory role is restricted and guarded against removing/disabling the sole active canonical provider.
-- Legacy bootstrap can hydrate providers from prior settings, then deterministically fill missing role assignments.
+- Roles are explicit assignments to Provider IDs in the Storage Registry.
+- Role assignment is policy-validated (capability, locality, auth, reachability, and uniqueness constraints).
+- Canonical assignment is restricted and guarded against removing/disabling the sole active canonical provider.
+- Bootstrap performs deterministic one-time legacy import and hydration, then only fills missing Role gaps.
+
+Deterministic precedence:
+1. explicit Storage Registry assignment is preserved
+2. explicit Providers are selected before bootstrap inputs
+3. bootstrap fills only missing Role gaps
+4. bootstrap never overwrites explicit assignments
+5. capability mismatch blocks assignment
+6. policy conflict blocks assignment
+7. canonical conflicts are surfaced (not auto-resolved)
+
+Stable assignment reason codes:
+- `explicit_assignment_preserved`
+- `filled_missing_role_from_bootstrap`
+- `blocked_capability_mismatch`
+- `blocked_auth_invalid`
+- `blocked_policy_conflict`
+- `blocked_canonical_conflict`
+- `provider_unreachable`
+- `provider_not_registered`
+- `legacy_import_skipped_existing_registry`
+- `recovery_suggestion_only`
 
 Standard roles:
 
@@ -71,7 +95,31 @@ Standard roles:
 - `backup_target`
 - `artifact_store`
 
-## 7. Major Runtime Subsystems
+## 7. Storage Validation Layers
+
+`StorageValidationService` returns structured layered Validation (not a single boolean) with:
+- status: `pass` / `fail` / `warn`
+- reason code
+- optional remediation hint
+
+Validation dimensions:
+- config/schema validity
+- authentication validity
+- reachability
+- capability compatibility
+- role eligibility
+- policy compliance
+- authority conflicts
+- bootstrap/migration consistency
+- recoverability
+
+The validation output distinguishes:
+- valid but not eligible
+- reachable but unauthorized
+- configured but policy-blocked
+- canonical conflict state
+
+## 8. Major Runtime Subsystems
 
 - Electron Main (`electron/`): lifecycle, IPC, orchestration.
 - React Renderer (`src/`): UI surfaces and operator workflows.
@@ -80,6 +128,6 @@ Standard roles:
 - Inference services (`electron/services/inference/`): provider registry, probing, deterministic selection/fallback.
 - Storage services (`electron/services/storage/`): provider registry plus role assignment policy.
 
-## 8. Present vs Future
+## 9. Present vs Future
 
 This document describes implemented runtime behavior only. Planned/future architecture should be documented separately in phase/roadmap documents and not mixed into present-tense system posture.

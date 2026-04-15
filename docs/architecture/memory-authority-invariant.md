@@ -44,8 +44,9 @@ Rejected or deferred candidates must not be surfaced as Canonical authority data
   - canonical runtime authority provider
   - derived provider set
   - Storage Registry health state (`healthy`, `degraded`, `conflict`)
-  - bootstrap state (`bootstrapped_legacy`, detected, explicit registry counts)
+  - bootstrap state (completed flag, outcome, run count, timestamps, plus bootstrapped/detected/explicit counts)
   - authority degradation and conflict reasons
+  - recovery actions
 - Provider-level visibility is modeled structurally and includes Provider type, reachability/auth/capability status, assigned Roles, authority class (`canonical` or `derived`), origin (`explicit_registry`, `bootstrapped_legacy`, `detected`), and layered Validation status.
 - Role-level visibility is modeled structurally and includes assigned Provider, assignment type (`explicit`, `bootstrap`, `inferred`, `unassigned`), eligibility reasoning, and blocked alternatives.
 - Assignment explanations are modeled as deterministic records with outcome, reason code, reason summary, blocked alternatives, and actionable next steps so assignment success/failure is inspectable and self-explanatory.
@@ -60,6 +61,46 @@ Rejected or deferred candidates must not be surfaced as Canonical authority data
   6. policy conflicts block assignment
   7. canonical conflicts are surfaced as recovery suggestions and are not auto-resolved
 - Assignment decisions emit stable reason codes and are persisted as assignment decision diagnostics for UI, diagnostics, and test assertions.
+
+Stable reason codes:
+- `explicit_assignment_preserved`
+- `filled_missing_role_from_bootstrap`
+- `blocked_capability_mismatch`
+- `blocked_auth_invalid`
+- `blocked_policy_conflict`
+- `blocked_canonical_conflict`
+- `provider_unreachable`
+- `provider_not_registered`
+- `legacy_import_skipped_existing_registry`
+- `recovery_suggestion_only`
+
+## Storage Validation Layers
+- Validation is layered and typed (`pass` / `fail` / `warn`) with reason code and optional remediation hint.
+- Implemented dimensions:
+  - `config_schema`
+  - `authentication`
+  - `reachability`
+  - `capability_compatibility`
+  - `role_eligibility`
+  - `policy_compliance`
+  - `authority_conflicts`
+  - `bootstrap_migration_consistency`
+  - `recoverability`
+- Classification flags expose:
+  - valid but not eligible
+  - reachable but unauthorized
+  - configured but policy blocked
+  - canonical conflict state
+
+## Bootstrap and Recovery Guarantees
+- Bootstrap is deterministic and idempotent.
+- First run with legacy config hydrates Providers and fills missing Role gaps only.
+- Partial/broken legacy input imports valid Providers and marks invalid legacy entries as blocked Providers.
+- Blocked Providers are not assigned.
+- Canonical Provider failure is surfaced as degraded authority; assignment is preserved with no silent reassignment.
+- Capability mismatch marks assignment invalid via diagnostics/reason codes; explicit reassignment or Provider fix is required.
+- Legacy config never silently overrides Storage Registry after bootstrap completion.
+- Re-import is explicit (`storage:reimportLegacy`) and remains deterministic.
 
 ## Current Rebuild Coverage
 - Executable now:

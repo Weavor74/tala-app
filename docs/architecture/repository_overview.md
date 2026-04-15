@@ -22,6 +22,12 @@ Tala is a local-first autonomous agent platform with explicit authority boundari
 - pgvector is used inside Postgres for vector capability when installed and available.
 - Missing pgvector is a vector capability availability condition, not loss of canonical memory.
 
+Storage authority posture:
+- Storage Registry is the authoritative storage configuration model.
+- Provider records define backend connection/auth/capability facts.
+- Role assignments bind responsibilities to Providers.
+- Canonical authority and Derived layers are explicit and inspectable in settings/diagnostics.
+
 ## Inference Posture (Current)
 
 Inference provider selection is deterministic and local-first (`ProviderSelectionService`):
@@ -43,7 +49,13 @@ Storage providers and assignments are managed by registry services in `electron/
 - `StorageProviderRegistryService` persists provider records and role assignments.
 - `StorageAssignmentPolicyService` enforces deterministic eligibility and safety rules.
 - Roles are explicit assignments, not implicit provider behavior.
-- Legacy bootstrap/hydration can import provider signals from prior settings and deterministically fill role gaps.
+- Bootstrap is deterministic and idempotent:
+  - imports legacy signals once into the Storage Registry
+  - hydrates deterministic Provider IDs
+  - fills missing role gaps only
+  - never overwrites explicit assignments
+  - records reasoned outcomes in assignment diagnostics
+- Post-bootstrap behavior does not silently re-import legacy config; re-import is explicit.
 
 Supported roles:
 

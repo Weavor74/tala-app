@@ -81,8 +81,8 @@
 
 - [Build Instructions - Tala System](build/build_instructions.md)
 - [Dependency Management — Tala System](build/dependency_management.md)
-- [Deployment Procedures — Tala System](build/deployment_procedures.md)
-- [Disaster Recovery — Tala System](build/disaster_recovery.md)
+- [Deployment Procedures - Tala System](build/deployment_procedures.md)
+- [Disaster Recovery - Tala System](build/disaster_recovery.md)
 - [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
 - [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
 - [Offline / Portable Build — Tala System](build/offline_portable_build.md)
@@ -217,6 +217,7 @@
 
 ## runtime
 
+- [Storage Authority Runtime](runtime/storage-authority-runtime.md)
 - [Tool Execution Policy](runtime/tool_execution_policy.md)
 
 ## security
