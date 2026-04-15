@@ -225,6 +225,29 @@ export class StorageScreenService {
         return this.state;
     }
 
+    public async reimportLegacy(force = true): Promise<StorageScreenState> {
+        if (!this.bridge.reimportLegacy) {
+            this.state = {
+                ...this.state,
+                lastError: createFallbackError('Storage legacy re-import action is unavailable in this build.'),
+            };
+            return this.state;
+        }
+        this.state = { ...this.state, loading: true, actionMessage: '', lastError: null };
+        const response = await this.bridge.reimportLegacy({ force });
+        if (!response.ok) {
+            this.state = { ...this.state, loading: false, lastError: response.error };
+            return this.state;
+        }
+        this.state = this.hydrateState({
+            ...this.state,
+            loading: false,
+            snapshot: response.snapshot,
+            actionMessage: `Legacy Bootstrap re-import completed (${response.changed.forced ? 'forced' : 'non-forced'}).`,
+        });
+        return this.state;
+    }
+
     public async updateProviderName(providerId: string, name: string): Promise<StorageScreenState> {
         this.state = { ...this.state, loading: true, actionMessage: '', lastError: null };
         const response = await this.bridge.updateProvider({ id: providerId, patch: { name } });

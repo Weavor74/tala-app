@@ -20,6 +20,8 @@ import type {
     StorageGetSnapshotResponse,
     StorageRemoveProviderRequest,
     StorageRemoveProviderResponse,
+    StorageReimportLegacyRequest,
+    StorageReimportLegacyResponse,
     StorageSetProviderEnabledRequest,
     StorageSetProviderEnabledResponse,
     StorageUnassignRoleRequest,
@@ -164,6 +166,7 @@ contextBridge.exposeInMainWorld('tala', {
         assignRole: (request: StorageAssignRoleRequest): Promise<StorageAssignRoleResponse> => ipcRenderer.invoke('storage:assignRole', request),
         unassignRole: (request: StorageUnassignRoleRequest): Promise<StorageUnassignRoleResponse> => ipcRenderer.invoke('storage:unassignRole', request),
         setProviderEnabled: (request: StorageSetProviderEnabledRequest): Promise<StorageSetProviderEnabledResponse> => ipcRenderer.invoke('storage:setProviderEnabled', request),
+        reimportLegacy: (request: StorageReimportLegacyRequest): Promise<StorageReimportLegacyResponse> => ipcRenderer.invoke('storage:reimportLegacy', request),
     },
 
     // ─── Session Persistence ──────────────────────────────────────

@@ -11,6 +11,8 @@ import type {
     StorageAssignRoleResponse,
     StorageRemoveProviderRequest,
     StorageRemoveProviderResponse,
+    StorageReimportLegacyRequest,
+    StorageReimportLegacyResponse,
     StorageSetProviderEnabledRequest,
     StorageSetProviderEnabledResponse,
 } from '../../services/storage/storageTypes';
@@ -170,6 +172,19 @@ describe('Storage IPC routes', () => {
         expect(removeResult.ok).toBe(false);
         if (!removeResult.ok) {
             expect(removeResult.error.code).toBe(StorageOperationErrorCode.SOLE_CANONICAL_PROVIDER_REQUIRED);
+        }
+    });
+
+    it('explicit legacy re-import route returns deterministic mutation response', async () => {
+        const router = new IpcRouter(makeRouterContext(settingsPath));
+        router.registerAll();
+
+        const reimport = handlers.get('storage:reimportLegacy') as ((e: any, request: StorageReimportLegacyRequest) => Promise<StorageReimportLegacyResponse>);
+        const result: StorageReimportLegacyResponse = await reimport({}, { force: true });
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.changed.forced).toBe(true);
+            expect(result.snapshot.legacyBootstrap).toBeTruthy();
         }
     });
 });

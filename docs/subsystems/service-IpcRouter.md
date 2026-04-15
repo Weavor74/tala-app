@@ -71,6 +71,8 @@ import type {
   StorageMutationFailure,
   StorageRemoveProviderRequest,
   StorageRemoveProviderResponse,
+  StorageReimportLegacyRequest,
+  StorageReimportLegacyResponse,
   StorageSetProviderEnabledRequest,
   StorageSetProviderEnabledResponse,
   StorageUnassignRoleRequest,

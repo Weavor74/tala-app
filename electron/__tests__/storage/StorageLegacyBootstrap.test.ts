@@ -147,6 +147,34 @@ describe('Storage legacy bootstrap hydration', () => {
         expect(providerIdsTwo).toEqual(providerIdsOne);
     });
 
+    it('bootstrap completion state is persisted and idempotent across reruns', () => {
+        writeSettings(settingsPath, {
+            storage: {
+                activeProviderId: 'legacy-chroma',
+                providers: [
+                    {
+                        id: 'legacy-chroma',
+                        name: 'Legacy Chroma',
+                        type: 'chroma-local',
+                        path: './data/memory',
+                    },
+                ],
+            },
+        });
+
+        const firstRegistry = makeRegistry(settingsPath);
+        const firstSnapshot = firstRegistry.getRegistrySnapshot();
+        expect(firstSnapshot.legacyBootstrap?.completed).toBe(true);
+        expect(firstSnapshot.legacyBootstrap?.lastOutcome).toMatch(/completed/);
+        const runCountAfterFirstBootstrap = firstSnapshot.legacyBootstrap?.runCount ?? 0;
+        expect(runCountAfterFirstBootstrap).toBeGreaterThan(0);
+
+        const secondRegistry = makeRegistry(settingsPath);
+        const secondSnapshot = secondRegistry.getRegistrySnapshot();
+        expect(secondSnapshot.legacyBootstrap?.completed).toBe(true);
+        expect(secondSnapshot.legacyBootstrap?.runCount).toBe(runCountAfterFirstBootstrap);
+    });
+
     it('bootstrap does not duplicate imported PostgreSQL provider across reloads', () => {
         writeSettings(settingsPath, {
             database: {
@@ -389,6 +417,40 @@ describe('Storage legacy bootstrap hydration', () => {
         expect(canonicalAssignment?.assignmentReasonCode).toBe(StorageAssignmentReasonCode.FILLED_MISSING_ROLE_FROM_BOOTSTRAP);
     });
 
+    it('partial/broken legacy input imports valid providers and blocks invalid providers from assignment', () => {
+        writeSettings(settingsPath, {
+            storage: {
+                activeProviderId: 'legacy-chroma',
+                providers: [
+                    {
+                        id: 'legacy-chroma',
+                        name: 'Legacy Chroma',
+                        type: 'chroma-local',
+                        path: './data/memory',
+                    },
+                    {
+                        id: 'legacy-invalid',
+                        name: 'Invalid Legacy Provider',
+                        type: 'supabase',
+                    },
+                    {
+                        id: 'legacy-unknown',
+                        name: 'Unknown Legacy Provider',
+                        type: 'mystery-backend',
+                    },
+                ],
+            },
+        });
+
+        const registry = makeRegistry(settingsPath);
+        const snapshot = registry.getRegistrySnapshot();
+        const blockedLegacy = snapshot.providers.filter((provider) => provider.id.startsWith('legacy-invalid:'));
+        expect(blockedLegacy.length).toBeGreaterThan(0);
+        expect(blockedLegacy.every((provider) => provider.enabled === false)).toBe(true);
+        expect(blockedLegacy.every((provider) => provider.auth.status === StorageAuthStatus.BLOCKED)).toBe(true);
+        expect(snapshot.assignments.some((assignment) => blockedLegacy.some((provider) => provider.id === assignment.providerId))).toBe(false);
+    });
+
     it('legacy bootstrap skip emits explicit registry skip reason code', () => {
         writeSettings(settingsPath, {
             storageRegistry: {
@@ -491,5 +553,65 @@ describe('Storage legacy bootstrap hydration', () => {
         expect(snapshot.assignmentDecisions?.some(
             (decision) => decision.reasonCode === StorageAssignmentReasonCode.LEGACY_IMPORT_SKIPPED_EXISTING_REGISTRY,
         )).toBe(true);
+    });
+
+    it('explicit legacy re-import is available and does not overwrite explicit assignment', () => {
+        writeSettings(settingsPath, {
+            storageRegistry: {
+                version: 1,
+                updatedAt: '2026-04-14T12:00:00.000Z',
+                providers: [
+                    {
+                        id: 'sqlite:explicit-canonical.db',
+                        name: 'Explicit Canonical SQLite',
+                        kind: StorageProviderKind.SQLITE,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.CANONICAL_MEMORY, StorageRole.DOCUMENT_STORE, StorageRole.BACKUP_TARGET],
+                        capabilities: [StorageCapability.STRUCTURED_RECORDS, StorageCapability.DOCUMENT_STORAGE, StorageCapability.BACKUP_TARGET],
+                        enabled: true,
+                        connection: { path: 'explicit-canonical.db' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [StorageRole.CANONICAL_MEMORY],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+                assignments: [
+                    {
+                        role: StorageRole.CANONICAL_MEMORY,
+                        providerId: 'sqlite:explicit-canonical.db',
+                        assignedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+            },
+            storage: {
+                activeProviderId: 'legacy-chroma',
+                providers: [
+                    {
+                        id: 'legacy-chroma',
+                        name: 'Legacy Chroma',
+                        type: 'chroma-local',
+                        path: './data/memory',
+                    },
+                ],
+            },
+        });
+
+        const registry = makeRegistry(settingsPath);
+        const reimported = registry.reimportLegacyConfig(true);
+        const canonicalAssignment = reimported.assignments.find((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY);
+        expect(canonicalAssignment?.providerId).toBe('sqlite:explicit-canonical.db');
+        expect(reimported.legacyBootstrap?.lastOutcome).toBe('explicit_reimport_completed');
     });
 });

@@ -33,6 +33,9 @@ interface InferredProviderSeed {
     kind: StorageProviderRecord['kind'];
     locality: StorageProviderRecord['locality'];
     registrationMode: StorageProviderRecord['registrationMode'];
+    enabled?: boolean;
+    supportedRoles?: StorageRole[];
+    capabilities?: StorageProviderRecord['capabilities'];
     connection: StorageProviderRecord['connection'];
     auth?: StorageProviderRecord['auth'];
     health?: StorageProviderRecord['health'];
@@ -83,6 +86,14 @@ function normalizeLocalEndpoint(endpoint: string): string {
 function isLocalHost(host: string): boolean {
     const normalized = host.trim().toLowerCase();
     return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function slugify(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'unknown';
 }
 
 export class StorageProviderRegistryService {
@@ -312,12 +323,31 @@ export class StorageProviderRegistryService {
         if (this.bootstrapApplied) {
             return;
         }
+        this.runLegacyBootstrap(false, 'auto');
+        this.bootstrapApplied = true;
+    }
 
+    public reimportLegacyConfig(force = true): StorageRegistrySnapshot {
+        this.runLegacyBootstrap(force, 'explicit');
+        this.bootstrapApplied = true;
+        return this.getRegistrySnapshot();
+    }
+
+    private runLegacyBootstrap(force: boolean, origin: 'auto' | 'explicit'): void {
         const settingsPath = this.persistence.getSettingsPath();
         const settings = loadSettings(settingsPath, 'StorageProviderRegistryService.bootstrapLegacy');
-        const bootstrapDecision = this.shouldRunLegacyBootstrap(settings);
+        const bootstrapDecision = this.shouldRunLegacyBootstrap(settings, force);
+        const bootstrapState = this.snapshot.legacyBootstrap ?? {
+            completed: false,
+            completedAt: null,
+            lastAttemptAt: null,
+            runCount: 0,
+            lastOutcome: 'not_started',
+        };
         if (!bootstrapDecision.shouldRun) {
             if (bootstrapDecision.skippedExistingExplicitRegistry) {
+                bootstrapState.lastAttemptAt = this.now();
+                bootstrapState.runCount += 1;
                 this.pushAssignmentDecision(
                     StorageRole.CANONICAL_MEMORY,
                     null,
@@ -325,19 +355,36 @@ export class StorageProviderRegistryService {
                     'skipped',
                     StorageAssignmentReasonCode.LEGACY_IMPORT_SKIPPED_EXISTING_REGISTRY,
                 );
+                bootstrapState.completed = true;
+                bootstrapState.completedAt = bootstrapState.completedAt ?? bootstrapState.lastAttemptAt;
+                bootstrapState.lastOutcome = 'skipped_existing_registry';
+                this.snapshot.legacyBootstrap = bootstrapState;
+                this.persist();
             }
-            this.bootstrapApplied = true;
             return;
         }
+        bootstrapState.lastAttemptAt = this.now();
+        bootstrapState.runCount += 1;
 
         let changed = false;
+        let hasBlockedLegacy = false;
 
         const inferredProviders = this.inferLegacyProviderSeeds(settings);
         for (const seed of inferredProviders.values()) {
+            if (seed.enabled === false) {
+                hasBlockedLegacy = true;
+            }
             changed = this.ensureProviderFromBootstrap(seed) || changed;
         }
 
         changed = this.fillDeterministicRoleGaps(inferredProviders, settings) || changed;
+
+        bootstrapState.completed = true;
+        bootstrapState.completedAt = this.now();
+        bootstrapState.lastOutcome = origin === 'explicit'
+            ? 'explicit_reimport_completed'
+            : (hasBlockedLegacy ? 'completed_with_blocked_legacy' : 'completed');
+        this.snapshot.legacyBootstrap = bootstrapState;
 
         if (changed) {
             this.snapshot = this.normalizeSnapshot(this.snapshot);
@@ -347,23 +394,31 @@ export class StorageProviderRegistryService {
                 providers: this.snapshot.providers,
                 assignments: this.snapshot.assignments,
                 assignmentDecisions: this.assignmentDecisions.slice(),
+                legacyBootstrap: this.snapshot.legacyBootstrap,
                 updatedAt: this.snapshot.updatedAt,
             };
             this.persistence.saveConfig(payload);
+        } else {
+            this.persist();
         }
-
-        this.bootstrapApplied = true;
     }
 
-    private shouldRunLegacyBootstrap(settings: Record<string, unknown>): {
+    private shouldRunLegacyBootstrap(settings: Record<string, unknown>, force: boolean): {
         shouldRun: boolean;
         skippedExistingExplicitRegistry: boolean;
     } {
+        const bootstrapState = this.snapshot.legacyBootstrap;
+        if (!force && bootstrapState?.completed) {
+            return { shouldRun: false, skippedExistingExplicitRegistry: false };
+        }
         const hasMissingRequiredRoles = this.snapshot.assignments.length < 6;
         const hasExplicitRegistryContent = this.snapshot.providers.length > 0 || this.snapshot.assignments.length > 0;
         const hasLegacySignal = this.hasLegacyBootstrapSignal(settings);
         if (!hasLegacySignal) {
             return { shouldRun: false, skippedExistingExplicitRegistry: false };
+        }
+        if (force) {
+            return { shouldRun: true, skippedExistingExplicitRegistry: false };
         }
         if (hasExplicitRegistryContent) {
             return {
@@ -404,6 +459,32 @@ export class StorageProviderRegistryService {
         const legacyProviders = Array.isArray(legacyStorage?.providers)
             ? legacyStorage.providers.filter((provider): provider is LegacyStorageProvider => !!provider && typeof provider === 'object')
             : [];
+
+        const addBlockedLegacySeed = (id: string, name: string, reason: string): void => {
+            seeds.set(id, {
+                id,
+                name: `${name} (Blocked Legacy Import)`,
+                kind: StorageProviderKind.UNKNOWN,
+                locality: StorageLocality.UNKNOWN,
+                registrationMode: StorageRegistrationMode.SYSTEM,
+                enabled: false,
+                supportedRoles: [],
+                capabilities: [],
+                connection: {},
+                auth: {
+                    mode: StorageAuthMode.NONE,
+                    status: StorageAuthStatus.BLOCKED,
+                    lastCheckedAt: null,
+                    reason,
+                },
+                health: {
+                    status: StorageHealthStatus.DEGRADED,
+                    checkedAt: null,
+                    reason,
+                },
+                explicitLegacy: true,
+            });
+        };
 
         const filesystemStoragePath = resolveStoragePath('storage');
         const filesystemStorageRelativePath = toAppRootRelativePath(filesystemStoragePath);
@@ -502,10 +583,14 @@ export class StorageProviderRegistryService {
             });
         }
 
-        for (const provider of legacyProviders) {
+        legacyProviders.forEach((provider, index) => {
             const legacyType = String(provider.type ?? '').toLowerCase();
             const rawName = String(provider.name ?? '').trim();
             const name = rawName.length > 0 ? rawName : 'Legacy Storage Provider';
+            const legacyIdentifier = typeof provider.id === 'string' && provider.id.trim().length > 0
+                ? provider.id.trim()
+                : `${legacyType || 'unknown'}-${slugify(name)}`;
+            const blockedLegacyProviderId = `legacy-invalid:${index}:${slugify(legacyIdentifier)}`;
             const rawPath = typeof provider.path === 'string' ? provider.path.trim() : '';
             const rawEndpoint = typeof provider.endpoint === 'string' ? provider.endpoint.trim() : '';
 
@@ -527,7 +612,7 @@ export class StorageProviderRegistryService {
                         },
                         explicitLegacy: true,
                     });
-                    continue;
+                    return;
                 }
                 if (rawPath.length > 0) {
                     const absolutePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(APP_ROOT, rawPath);
@@ -545,8 +630,10 @@ export class StorageProviderRegistryService {
                         },
                         explicitLegacy: true,
                     });
+                    return;
                 }
-                continue;
+                addBlockedLegacySeed(blockedLegacyProviderId, name, 'legacy_invalid_config');
+                return;
             }
 
             if (legacyType === 'supabase') {
@@ -576,8 +663,10 @@ export class StorageProviderRegistryService {
                         },
                         explicitLegacy: true,
                     });
+                    return;
                 }
-                continue;
+                addBlockedLegacySeed(blockedLegacyProviderId, name, 'legacy_invalid_config');
+                return;
             }
 
             if (legacyType === 's3') {
@@ -610,13 +699,16 @@ export class StorageProviderRegistryService {
                         },
                         explicitLegacy: true,
                     });
+                    return;
                 }
-                continue;
+                addBlockedLegacySeed(blockedLegacyProviderId, name, 'legacy_invalid_config');
+                return;
             }
 
             if (legacyType.includes('sqlite') || rawPath.toLowerCase().endsWith('.db')) {
                 if (!rawPath) {
-                    continue;
+                    addBlockedLegacySeed(blockedLegacyProviderId, name, 'legacy_invalid_config');
+                    return;
                 }
                 const absolutePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(APP_ROOT, rawPath);
                 const relativePath = toAppRootRelativePath(absolutePath);
@@ -634,8 +726,11 @@ export class StorageProviderRegistryService {
                     },
                     explicitLegacy: true,
                 });
+                return;
             }
-        }
+
+            addBlockedLegacySeed(blockedLegacyProviderId, name, 'legacy_unknown_type');
+        });
 
         return seeds;
     }
@@ -643,6 +738,8 @@ export class StorageProviderRegistryService {
     private ensureProviderFromBootstrap(seed: InferredProviderSeed): boolean {
         const existing = this.snapshot.providers.find((provider) => provider.id === seed.id);
         const profile = getStorageCapabilityProfile(seed.kind);
+        const seedSupportedRoles = seed.supportedRoles ?? profile.supportedRoles.slice();
+        const seedCapabilities = seed.capabilities ?? profile.defaultCapabilities.slice();
         if (existing) {
             let changed = false;
             if (!existing.connection.path && seed.connection.path) {
@@ -662,11 +759,19 @@ export class StorageProviderRegistryService {
                 changed = true;
             }
             if (existing.supportedRoles.length === 0) {
-                existing.supportedRoles = profile.supportedRoles.slice();
+                existing.supportedRoles = seedSupportedRoles.slice();
                 changed = true;
             }
             if (existing.capabilities.length === 0) {
-                existing.capabilities = profile.defaultCapabilities.slice();
+                existing.capabilities = seedCapabilities.slice();
+                changed = true;
+            }
+            if (seed.enabled !== undefined && existing.enabled !== seed.enabled) {
+                existing.enabled = seed.enabled;
+                changed = true;
+            }
+            if (seed.auth?.status === StorageAuthStatus.BLOCKED) {
+                existing.auth = seed.auth;
                 changed = true;
             }
             if (changed) {
@@ -682,9 +787,9 @@ export class StorageProviderRegistryService {
             kind: seed.kind,
             locality: seed.locality,
             registrationMode: seed.registrationMode,
-            supportedRoles: profile.supportedRoles.slice(),
-            capabilities: profile.defaultCapabilities.slice(),
-            enabled: true,
+            supportedRoles: seedSupportedRoles.slice(),
+            capabilities: seedCapabilities.slice(),
+            enabled: seed.enabled ?? true,
             connection: seed.connection,
             auth: seed.auth ?? {
                 mode: StorageAuthMode.NONE,
@@ -907,6 +1012,7 @@ export class StorageProviderRegistryService {
             providers: this.snapshot.providers,
             assignments: this.snapshot.assignments,
             assignmentDecisions: this.assignmentDecisions.slice(),
+            legacyBootstrap: this.snapshot.legacyBootstrap,
             updatedAt: this.snapshot.updatedAt,
         };
         this.persistence.saveConfig(payload);
@@ -970,10 +1076,45 @@ export class StorageProviderRegistryService {
             }
             const provider = providersById.get(assignment.providerId);
             if (!provider) {
+                seenRoles.add(assignment.role);
+                assignments.push({
+                    role: assignment.role,
+                    providerId: assignment.providerId,
+                    assignedAt: assignment.assignedAt || this.now(),
+                    assignmentReasonCode: assignment.assignmentReasonCode ?? StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED,
+                });
+                normalizationDecisions.push({
+                    role: assignment.role,
+                    providerId: assignment.providerId,
+                    source: 'recovery',
+                    outcome: 'blocked',
+                    reasonCode: StorageAssignmentReasonCode.PROVIDER_NOT_REGISTERED,
+                    timestamp: this.now(),
+                    details: { normalization: 'assignment_provider_missing_registry' },
+                });
                 continue;
             }
             const profile = getStorageCapabilityProfile(provider.kind);
             if (!profile.supportedRoles.includes(assignment.role) || !provider.supportedRoles.includes(assignment.role)) {
+                seenRoles.add(assignment.role);
+                assignments.push({
+                    role: assignment.role,
+                    providerId: assignment.providerId,
+                    assignedAt: assignment.assignedAt || this.now(),
+                    assignmentReasonCode: assignment.assignmentReasonCode ?? StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                });
+                normalizationDecisions.push({
+                    role: assignment.role,
+                    providerId: assignment.providerId,
+                    source: 'recovery',
+                    outcome: 'blocked',
+                    reasonCode: StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
+                    timestamp: this.now(),
+                    details: {
+                        normalization: 'assignment_provider_role_mismatch',
+                        providerKind: provider.kind,
+                    },
+                });
                 continue;
             }
             seenRoles.add(assignment.role);
@@ -1012,6 +1153,7 @@ export class StorageProviderRegistryService {
             providers,
             assignments,
             assignmentDecisions: mergedDecisions,
+            legacyBootstrap: (input as StorageRegistrySnapshot).legacyBootstrap,
             updatedAt: input.updatedAt || this.now(),
         };
     }

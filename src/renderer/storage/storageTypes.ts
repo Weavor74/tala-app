@@ -121,7 +121,21 @@ export interface StorageRegistrySnapshot {
     providers: StorageProviderRecord[];
     assignments: StorageRoleAssignment[];
     assignmentDecisions?: StorageAssignmentDecision[];
+    legacyBootstrap?: StorageLegacyBootstrapState;
     updatedAt: string;
+}
+
+export interface StorageLegacyBootstrapState {
+    completed: boolean;
+    completedAt?: string | null;
+    lastAttemptAt?: string | null;
+    runCount: number;
+    lastOutcome:
+        | 'not_started'
+        | 'completed'
+        | 'skipped_existing_registry'
+        | 'explicit_reimport_completed'
+        | 'completed_with_blocked_legacy';
 }
 
 export type StorageOperationErrorCode =
@@ -267,6 +281,12 @@ export interface StorageSetProviderEnabledRequest {
 
 export type StorageSetProviderEnabledResponse = StorageMutationResponse<{ providerId: string; enabled: boolean }>;
 
+export interface StorageReimportLegacyRequest {
+    force?: boolean;
+}
+
+export type StorageReimportLegacyResponse = StorageMutationResponse<{ forced: boolean }>;
+
 export interface StorageBridge {
     getSnapshot: () => Promise<StorageRegistrySnapshot>;
     detectProviders: () => Promise<StorageDetectProvidersResponse>;
@@ -277,6 +297,7 @@ export interface StorageBridge {
     assignRole: (request: StorageAssignRoleRequest) => Promise<StorageAssignRoleResponse>;
     unassignRole: (request: StorageUnassignRoleRequest) => Promise<StorageUnassignRoleResponse>;
     setProviderEnabled: (request: StorageSetProviderEnabledRequest) => Promise<StorageSetProviderEnabledResponse>;
+    reimportLegacy?: (request: StorageReimportLegacyRequest) => Promise<StorageReimportLegacyResponse>;
 }
 
 export interface StorageWizardDraft {

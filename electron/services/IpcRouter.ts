@@ -71,6 +71,8 @@ import type {
   StorageMutationFailure,
   StorageRemoveProviderRequest,
   StorageRemoveProviderResponse,
+  StorageReimportLegacyRequest,
+  StorageReimportLegacyResponse,
   StorageSetProviderEnabledRequest,
   StorageSetProviderEnabledResponse,
   StorageUnassignRoleRequest,
@@ -526,6 +528,16 @@ export class IpcRouter {
       try {
         const snapshot = storageRegistry.setProviderEnabled(request.providerId, request.enabled);
         return { ok: true, snapshot, changed: { providerId: request.providerId, enabled: request.enabled } };
+      } catch (error) {
+        return storageFailure(error);
+      }
+    });
+
+    ipcMain.handle('storage:reimportLegacy', async (_e, request: StorageReimportLegacyRequest): Promise<StorageReimportLegacyResponse> => {
+      try {
+        const forced = request.force !== false;
+        const snapshot = storageRegistry.reimportLegacyConfig(forced);
+        return { ok: true, snapshot, changed: { forced } };
       } catch (error) {
         return storageFailure(error);
       }

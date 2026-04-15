@@ -110,11 +110,29 @@ const buildStorageSettingsScreen = () => {
                             <div style={{ fontSize: 12, color: '#bbb', marginBottom: 6 }}>
                                 Bootstrap: {state.authoritySummary.bootstrapState.bootstrappedProviderCount} bootstrapped, {state.authoritySummary.bootstrapState.detectedProviderCount} detected, {state.authoritySummary.bootstrapState.explicitRegistryProviderCount} explicit
                             </div>
+                            <div style={{ fontSize: 11, color: '#bbb', marginBottom: 6 }}>
+                                Legacy Bootstrap state: {state.authoritySummary.bootstrapState.completed ? 'completed' : 'pending'} | outcome: {state.authoritySummary.bootstrapState.lastOutcome} | runs: {state.authoritySummary.bootstrapState.runCount}
+                            </div>
                             {state.authoritySummary.authorityState.reasons.length > 0 && (
                                 <div style={{ fontSize: 11, color: '#ffd08a' }}>
                                     Authority State: {state.authoritySummary.authorityState.reasons.join(' | ')}
                                 </div>
                             )}
+                            {state.authoritySummary.recoveryActions.length > 0 && (
+                                <div style={{ fontSize: 11, color: '#9cdcfe', marginTop: 6 }}>
+                                    Recovery Actions: {state.authoritySummary.recoveryActions.join(' | ')}
+                                </div>
+                            )}
+                            <div style={{ marginTop: 10 }}>
+                                <button
+                                    type="button"
+                                    disabled={state.loading}
+                                    onClick={() => void doAction(() => model.reimportLegacy(true))}
+                                    style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '6px 10px', fontSize: 11, cursor: 'pointer' }}
+                                >
+                                    EXPLICIT LEGACY RE-IMPORT
+                                </button>
+                            </div>
                         </div>
                     )}
 

@@ -20,6 +20,13 @@ function createDefaultConfig(): PersistedStorageConfig {
         version: STORAGE_CONFIG_VERSION,
         providers: [],
         assignments: [],
+        legacyBootstrap: {
+            completed: false,
+            completedAt: null,
+            lastAttemptAt: null,
+            runCount: 0,
+            lastOutcome: 'not_started',
+        },
         updatedAt: nowIso(),
     };
 }
@@ -71,6 +78,19 @@ function sanitizePersistedConfig(input: unknown): PersistedStorageConfig {
         providers: sanitizeProviders(candidate.providers),
         assignments: sanitizeAssignments(candidate.assignments),
         assignmentDecisions: sanitizeAssignmentDecisions((candidate as any).assignmentDecisions),
+        legacyBootstrap: (() => {
+            const raw = (candidate as any).legacyBootstrap;
+            if (!raw || typeof raw !== 'object') {
+                return createDefaultConfig().legacyBootstrap;
+            }
+            return {
+                completed: raw.completed === true,
+                completedAt: typeof raw.completedAt === 'string' ? raw.completedAt : null,
+                lastAttemptAt: typeof raw.lastAttemptAt === 'string' ? raw.lastAttemptAt : null,
+                runCount: typeof raw.runCount === 'number' ? raw.runCount : 0,
+                lastOutcome: typeof raw.lastOutcome === 'string' ? raw.lastOutcome : 'not_started',
+            };
+        })(),
         updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : nowIso(),
     };
 }

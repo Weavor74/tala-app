@@ -67,6 +67,11 @@ export interface StorageBootstrapStateViewModel {
     bootstrappedProviderCount: number;
     detectedProviderCount: number;
     explicitRegistryProviderCount: number;
+    completed: boolean;
+    completedAt: string | null;
+    lastAttemptAt: string | null;
+    runCount: number;
+    lastOutcome: string;
 }
 
 export interface StorageAuthorityDegradationViewModel {
@@ -84,6 +89,7 @@ export interface StorageAuthoritySummaryViewModel {
     };
     bootstrapState: StorageBootstrapStateViewModel;
     authorityState: StorageAuthorityDegradationViewModel;
+    recoveryActions: string[];
 }
 
 export interface StorageProviderVisibilityViewModel {
@@ -211,6 +217,14 @@ function getProviderById(snapshot: StorageRegistrySnapshot, providerId: string |
     return snapshot.providers.find((provider) => provider.id === providerId) || null;
 }
 
+function fallbackReasonCodeForEligibility(reasons: string[]): StorageAssignmentReasonCode | null {
+    if (reasons.includes('provider_unreachable')) return 'provider_unreachable';
+    if (reasons.includes('role_not_supported')) return 'blocked_capability_mismatch';
+    if (reasons.includes('auth_blocked') || reasons.includes('auth_not_ready')) return 'blocked_auth_invalid';
+    if (reasons.includes('provider_disabled')) return 'blocked_policy_conflict';
+    return null;
+}
+
 function buildRoleEligibilityReasons(provider: StorageProviderRecord, role: StorageRole): string[] {
     const reasons: string[] = [];
     if (!provider.supportedRoles.includes(role)) {
@@ -312,7 +326,9 @@ export function buildStorageAuthoritySummary(snapshot: StorageRegistrySnapshot):
     const canonicalProvider = canonicalAssignment ? getProviderById(snapshot, canonicalAssignment.providerId) : null;
     const canonicalAuthority: StorageAuthorityReference = canonicalProvider
         ? { providerId: canonicalProvider.id, providerName: canonicalProvider.name }
-        : { providerId: null, providerName: 'Unassigned' };
+        : (canonicalAssignment
+            ? { providerId: canonicalAssignment.providerId, providerName: `Unregistered Provider (${canonicalAssignment.providerId})` }
+            : { providerId: null, providerName: 'Unassigned' });
 
     const derivedProviders = snapshot.providers
         .filter((provider) => provider.id !== canonicalAuthority.providerId)
@@ -323,6 +339,11 @@ export function buildStorageAuthoritySummary(snapshot: StorageRegistrySnapshot):
         bootstrappedProviderCount: snapshot.providers.filter((provider) => provider.registrationMode === 'system').length,
         detectedProviderCount: snapshot.providers.filter((provider) => provider.registrationMode === 'auto_discovered').length,
         explicitRegistryProviderCount: snapshot.providers.filter((provider) => provider.registrationMode === 'manual').length,
+        completed: snapshot.legacyBootstrap?.completed === true,
+        completedAt: snapshot.legacyBootstrap?.completedAt ?? null,
+        lastAttemptAt: snapshot.legacyBootstrap?.lastAttemptAt ?? null,
+        runCount: snapshot.legacyBootstrap?.runCount ?? 0,
+        lastOutcome: snapshot.legacyBootstrap?.lastOutcome ?? 'not_started',
     };
 
     const authorityConflict = hasAuthorityConflict(snapshot);
@@ -330,6 +351,8 @@ export function buildStorageAuthoritySummary(snapshot: StorageRegistrySnapshot):
     const healthReasons: string[] = [];
     if (!canonicalAuthority.providerId) {
         healthReasons.push('canonical_runtime_authority_unassigned');
+    } else if (!canonicalProvider) {
+        healthReasons.push('canonical_runtime_authority_provider_not_registered');
     }
     if (authorityConflict) {
         healthReasons.push('canonical_runtime_authority_conflict');
@@ -347,6 +370,23 @@ export function buildStorageAuthoritySummary(snapshot: StorageRegistrySnapshot):
         ? 'conflict'
         : (healthReasons.length > 0 ? 'degraded' : 'healthy');
 
+    const recoveryActions: string[] = [];
+    if (healthReasons.includes('canonical_runtime_authority_unassigned')) {
+        recoveryActions.push('assign_canonical_memory_provider');
+    }
+    if (healthReasons.includes('canonical_runtime_authority_provider_not_registered')) {
+        recoveryActions.push('register_or_reassign_canonical_provider');
+    }
+    if (healthReasons.includes('canonical_runtime_authority_degraded')) {
+        recoveryActions.push('fix_canonical_provider_connectivity_or_auth');
+    }
+    if (healthReasons.includes('canonical_runtime_authority_conflict')) {
+        recoveryActions.push('resolve_canonical_conflict_explicitly');
+    }
+    if (!bootstrapState.completed && bootstrapState.lastOutcome !== 'skipped_existing_registry') {
+        recoveryActions.push('run_explicit_legacy_reimport_if_needed');
+    }
+
     return {
         canonicalRuntimeAuthority: canonicalAuthority,
         derivedProviders,
@@ -360,6 +400,7 @@ export function buildStorageAuthoritySummary(snapshot: StorageRegistrySnapshot):
             conflict: authorityConflict,
             reasons: healthReasons.filter((reason) => reason.startsWith('canonical_runtime_authority')),
         },
+        recoveryActions: Array.from(new Set(recoveryActions)),
     };
 }
 
@@ -395,22 +436,25 @@ export function buildRoleVisibilityModels(snapshot: StorageRegistrySnapshot): St
         const assignment = getAssignmentByRole(snapshot, role);
         const assignedProvider = assignment ? getProviderById(snapshot, assignment.providerId) : null;
         const assignmentType = assignedProvider ? mapAssignmentType(assignedProvider.registrationMode) : 'unassigned';
+        const computedEligibilityReasoning = assignedProvider
+            ? buildRoleEligibilityReasons(assignedProvider, role)
+            : (assignment ? ['provider_not_registered'] : ['role_unassigned']);
         const decisionReasonCode = [...(snapshot.assignmentDecisions ?? [])]
             .reverse()
-            .find((decision) => decision.role === role)?.reasonCode ?? null;
-        const eligibilityReasoning = assignedProvider
-            ? buildRoleEligibilityReasons(assignedProvider, role)
-            : ['role_unassigned'];
+            .find((decision) => decision.role === role)?.reasonCode
+            ?? (assignment && !assignedProvider ? 'provider_not_registered' : fallbackReasonCodeForEligibility(computedEligibilityReasoning));
 
         return {
             role,
             roleLabel: ROLE_LABELS[role],
             assignedProvider: assignedProvider
                 ? { providerId: assignedProvider.id, providerName: assignedProvider.name }
-                : { providerId: null, providerName: 'Unassigned' },
-            assignmentType,
+                : (assignment
+                    ? { providerId: assignment.providerId, providerName: `Unregistered Provider (${assignment.providerId})` }
+                    : { providerId: null, providerName: 'Unassigned' }),
+            assignmentType: assignment ? (assignedProvider ? assignmentType : 'inferred') : 'unassigned',
             decisionReasonCode,
-            eligibilityReasoning: eligibilityReasoning.length > 0 ? eligibilityReasoning : ['assignment_eligible'],
+            eligibilityReasoning: computedEligibilityReasoning.length > 0 ? computedEligibilityReasoning : ['assignment_eligible'],
             blockedAlternatives: buildBlockedAlternatives(snapshot, role)
                 .filter((candidate) => candidate.providerId !== assignedProvider?.id),
         };
@@ -420,7 +464,7 @@ export function buildRoleVisibilityModels(snapshot: StorageRegistrySnapshot): St
 function buildAssignmentNextSteps(errorCode: string): string[] {
     const steps: Record<string, string[]> = {
         blocked_capability_mismatch: ['select_capability_compatible_provider', 'run_validation'],
-        blocked_auth_invalid: ['update_provider_credentials', 'run_validation'],
+        blocked_auth_invalid: ['open_settings_authentication_panel', 'update_provider_credentials', 'run_validation'],
         blocked_policy_conflict: ['review_assignment_policy', 'resolve_existing_assignment'],
         blocked_canonical_conflict: ['resolve_canonical_assignment_conflict', 'recovery_suggestion_only'],
         provider_unreachable: ['restore_provider_connectivity', 'run_validation'],

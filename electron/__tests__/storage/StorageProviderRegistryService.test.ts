@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { refreshSettingsFromDisk } from '../../services/SettingsManager';
+import { refreshSettingsFromDisk, saveSettings } from '../../services/SettingsManager';
 import { StorageAssignmentPolicyService } from '../../services/storage/StorageAssignmentPolicyService';
 import { StorageConfigPersistenceService } from '../../services/storage/storageConfigPersistence';
 import { StorageProviderRegistryService } from '../../services/storage/StorageProviderRegistryService';
@@ -246,6 +246,59 @@ describe('StorageProviderRegistryService', () => {
         ]);
         expect(snapshot.assignmentDecisions?.some(
             (decision) => decision.reasonCode === StorageAssignmentReasonCode.EXPLICIT_ASSIGNMENT_PRESERVED,
+        )).toBe(true);
+    });
+
+    it('normalization preserves invalid role assignment and emits deterministic blocked reason code', () => {
+        const ok = saveSettings(settingsPath, {
+            storageRegistry: {
+                version: 1,
+                updatedAt: '2026-04-14T12:00:00.000Z',
+                providers: [
+                    {
+                        id: 'filesystem:storage',
+                        name: 'Filesystem',
+                        kind: StorageProviderKind.FILESYSTEM,
+                        locality: StorageLocality.LOCAL,
+                        registrationMode: StorageRegistrationMode.MANUAL,
+                        supportedRoles: [StorageRole.BLOB_STORE],
+                        capabilities: ['blob_storage'],
+                        enabled: true,
+                        connection: { path: 'storage' },
+                        auth: {
+                            mode: StorageAuthMode.NONE,
+                            status: StorageAuthStatus.NOT_REQUIRED,
+                            lastCheckedAt: null,
+                            reason: null,
+                        },
+                        health: {
+                            status: StorageHealthStatus.HEALTHY,
+                            checkedAt: null,
+                            reason: null,
+                        },
+                        assignedRoles: [],
+                        createdAt: '2026-04-14T12:00:00.000Z',
+                        updatedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+                assignments: [
+                    {
+                        role: StorageRole.VECTOR_INDEX,
+                        providerId: 'filesystem:storage',
+                        assignedAt: '2026-04-14T12:00:00.000Z',
+                    },
+                ],
+            },
+        });
+        expect(ok).toBe(true);
+        refreshSettingsFromDisk(settingsPath, 'StorageProviderRegistryService.test.invalid_assignment_preserved');
+
+        const registry = makeRegistry(settingsPath);
+        const snapshot = registry.getRegistrySnapshot();
+        expect(snapshot.assignments.find((assignment) => assignment.role === StorageRole.VECTOR_INDEX)?.providerId).toBe('filesystem:storage');
+        expect(snapshot.assignmentDecisions?.some(
+            (decision) => decision.role === StorageRole.VECTOR_INDEX
+                && decision.reasonCode === StorageAssignmentReasonCode.BLOCKED_CAPABILITY_MISMATCH,
         )).toBe(true);
     });
 });
