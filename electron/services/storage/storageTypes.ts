@@ -59,6 +59,7 @@ export enum StorageAuthStatus {
 
 export enum StorageCapability {
     STRUCTURED_RECORDS = 'structured_records',
+    VECTOR_SEARCH = 'vector_search',
     VECTOR_INDEXING = 'vector_indexing',
     BLOB_STORAGE = 'blob_storage',
     DOCUMENT_STORAGE = 'document_storage',

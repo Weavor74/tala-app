@@ -2,61 +2,30 @@
   "deploymentMode": "local",
   "inference": {
     "mode": "hybrid",
-    "activeLocalId": "ollama-local",
+    "activeLocalId": "default-local",
     "activeCloudId": "",
     "instances": [
       {
-        "id": "ollama-local",
+        "id": "default-local",
         "alias": "Ollama (Local)",
         "source": "local",
         "engine": "ollama",
         "endpoint": "http://127.0.0.1:11434",
+        "model": "llama3",
         "priority": 0,
         "params": {
           "knownModels": [
-            "qwen3-coder:30b",
-            "second_constantine/deepseek-coder-v2:16b",
-            "Qwen3-Coder-Next:latest",
+            "gemma4:e4b",
+            "embeddinggemma:latest",
             "ALIENTELLIGENCE/roleplaymaster:latest",
             "windffooxxyang1130764/mesugaki:0.6b",
-            "Tala01:latest",
             "codegemma:7b",
-            "haervwe/GLM-4.6V-Flash-9B:latest",
             "nomic-embed-text:latest",
             "huihui_ai/qwen3-abliterated:1.7b",
             "huihui_ai/qwen3-abliterated:8b"
-          ]
-        },
-        "model": "__custom__"
-      },
-      {
-        "id": "2cj970pmu",
-        "alias": "New Provider",
-        "source": "cloud",
-        "engine": "openai",
-        "endpoint": "https://api.openai.com",
-        "model": "gpt-4o-mini",
-        "priority": 1,
-        "apiKey": "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"
-      },
-      {
-        "id": "3yshsy3zo",
-        "alias": "Gemini 2.5 Flash",
-        "source": "cloud",
-        "engine": "gemini",
-        "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model": "gemini-2.5-flash-lite",
-        "priority": 2,
-        "apiKey": "AIzaSyA_VCuDYG6is4_niCQuxf_IE6PuWmTFjp0"
-      },
-      {
-        "id": "llama-local-cpu",
-        "alias": "Llama 3.1 8B (Local CPU)",
-        "source": "local",
-        "engine": "llamacpp",
-        "endpoint": "http://127.0.0.1:8080/v1",
-        "priority": 3,
-        "model": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+          ],
+          "selectedModelValid": false
+        }
       }
     ],
     "localEngine": {
@@ -135,7 +104,10 @@
             "astro-emotion",
             "browser-use",
             "tala-memory-graph",
-            "world-engine"
+            "world-engine",
+            "github",
+            "brave-search",
+            "google-search"
           ],
           "workspace": []
         }
@@ -307,10 +279,25 @@
     },
     "autoApplyRiskLevel": 3,
     "retentionDays": 30,
-    "maxProposalsPerDay": 5
+    "maxProposalsPerDay": 5,
+    "autoFix": {
+      "minConfidence": 0.7,
+      "maxRiskAllowedForAutoApply": "low",
+      "requireAppRootContainment": true,
+      "requireRollback": true,
+      "cooldowns": {
+        "proposedMinutes": 30,
+        "appliedSuccessMinutes": 240,
+        "failedMinutes": 60,
+        "blockedMinutes": 120,
+        "approvalRequiredMinutes": 240,
+        "rolledBackMinutes": 180
+      },
+      "materialChangeConfidenceDelta": 0.15
+    }
   },
   "agentModes": {
-    "activeMode": "assistant",
+    "activeMode": "rp",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,
@@ -359,32 +346,305 @@
   },
   "guardrailPolicy": {
     "version": 1,
-    "activeProfileId": "balanced",
+    "activeProfileId": "casual",
     "profiles": [
       {
-        "id": "permissive",
-        "name": "Permissive",
-        "description": "Minimal restrictions — allows most actions. Suitable for trusted development environments.",
+        "id": "unrestricted",
+        "name": "Unrestricted",
+        "description": "No policy rules applied.",
         "ruleIds": [],
-        "readonly": true
+        "readonly": true,
+        "isBuiltIn": true
       },
       {
-        "id": "balanced",
-        "name": "Balanced",
-        "description": "Moderate guardrails — blocks high-risk actions, warns on medium-risk actions.",
-        "ruleIds": [],
-        "readonly": true
+        "id": "casual",
+        "name": "Casual",
+        "description": "Basic safety warnings with tool validation checks.",
+        "ruleIds": [
+          "builtin-basic-safety-warn",
+          "builtin-local-tool-validation"
+        ],
+        "readonly": true,
+        "isBuiltIn": true
       },
       {
-        "id": "locked_down",
-        "name": "Locked Down",
-        "description": "Strict restrictions — requires validation for most side-effectful actions.",
-        "ruleIds": [],
-        "readonly": true
+        "id": "business_only",
+        "name": "Business Only",
+        "description": "Strict safety posture with capability restrictions.",
+        "ruleIds": [
+          "builtin-basic-safety-warn",
+          "builtin-local-tool-validation",
+          "builtin-deny-shell-run",
+          "builtin-deny-fs-write"
+        ],
+        "readonly": true,
+        "isBuiltIn": true
       }
     ],
-    "rules": [],
+    "rules": [
+      {
+        "id": "builtin-basic-safety-warn",
+        "name": "Basic Safety Warnings",
+        "description": "Warn on baseline safety-sensitive content paths.",
+        "enabled": true,
+        "scopes": [],
+        "severity": "medium",
+        "action": "warn",
+        "validatorBindings": [],
+        "createdAt": "2026-04-14T21:22:41.475Z",
+        "updatedAt": "2026-04-14T21:22:41.475Z"
+      },
+      {
+        "id": "builtin-local-tool-validation",
+        "name": "Local Tool Validation",
+        "description": "Require validation checks before high-impact tool execution.",
+        "enabled": true,
+        "scopes": [
+          {
+            "executionType": "tool_invocation"
+          }
+        ],
+        "severity": "high",
+        "action": "require_validation",
+        "validatorBindings": [],
+        "createdAt": "2026-04-14T21:22:41.475Z",
+        "updatedAt": "2026-04-14T21:22:41.475Z"
+      },
+      {
+        "id": "builtin-deny-shell-run",
+        "name": "Deny Shell Execution",
+        "description": "Block direct shell execution for business-only posture.",
+        "enabled": true,
+        "scopes": [
+          {
+            "capability": "shell_run"
+          }
+        ],
+        "severity": "critical",
+        "action": "deny",
+        "validatorBindings": [],
+        "createdAt": "2026-04-14T21:22:41.475Z",
+        "updatedAt": "2026-04-14T21:22:41.475Z"
+      },
+      {
+        "id": "builtin-deny-fs-write",
+        "name": "Deny Filesystem Writes",
+        "description": "Block direct filesystem writes for business-only posture.",
+        "enabled": true,
+        "scopes": [
+          {
+            "capability": "fs_write"
+          }
+        ],
+        "severity": "critical",
+        "action": "deny",
+        "validatorBindings": [],
+        "createdAt": "2026-04-14T21:22:41.475Z",
+        "updatedAt": "2026-04-14T21:22:41.475Z"
+      }
+    ],
     "validatorBindings": [],
     "updatedAt": "2026-04-08T00:08:13.574Z"
+  },
+  "storageRegistry": {
+    "version": 1,
+    "providers": [
+      {
+        "id": "filesystem:backups",
+        "name": "Backup Filesystem",
+        "kind": "filesystem",
+        "locality": "local",
+        "registrationMode": "manual",
+        "supportedRoles": [
+          "blob_store",
+          "document_store",
+          "backup_target",
+          "artifact_store"
+        ],
+        "capabilities": [
+          "blob_storage",
+          "document_storage",
+          "backup_target",
+          "artifact_storage",
+          "local_path",
+          "health_checks"
+        ],
+        "enabled": true,
+        "connection": {
+          "path": "D:\\src\\client1\\tala-app\\backups",
+          "workspaceRelativePath": "backups"
+        },
+        "auth": {
+          "mode": "none",
+          "status": "not_required",
+          "lastCheckedAt": null,
+          "reason": null
+        },
+        "health": {
+          "status": "unknown",
+          "checkedAt": null,
+          "reason": null
+        },
+        "assignedRoles": [
+          "backup_target"
+        ],
+        "createdAt": "2026-04-15T01:22:21.698Z",
+        "updatedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "id": "filesystem:data/reflection/artifacts",
+        "name": "Artifact Filesystem",
+        "kind": "filesystem",
+        "locality": "local",
+        "registrationMode": "system",
+        "supportedRoles": [
+          "blob_store",
+          "document_store",
+          "backup_target",
+          "artifact_store"
+        ],
+        "capabilities": [
+          "blob_storage",
+          "document_storage",
+          "backup_target",
+          "artifact_storage",
+          "local_path",
+          "health_checks"
+        ],
+        "enabled": true,
+        "connection": {
+          "path": "D:\\src\\client1\\tala-app\\data\\reflection\\artifacts",
+          "workspaceRelativePath": "data/reflection/artifacts"
+        },
+        "auth": {
+          "mode": "none",
+          "status": "not_required",
+          "lastCheckedAt": null,
+          "reason": null
+        },
+        "health": {
+          "status": "unknown",
+          "checkedAt": null,
+          "reason": null
+        },
+        "assignedRoles": [
+          "artifact_store"
+        ],
+        "createdAt": "2026-04-15T01:22:21.698Z",
+        "updatedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "id": "filesystem:data/storage",
+        "name": "Filesystem Storage",
+        "kind": "filesystem",
+        "locality": "local",
+        "registrationMode": "system",
+        "supportedRoles": [
+          "blob_store",
+          "document_store",
+          "backup_target",
+          "artifact_store"
+        ],
+        "capabilities": [
+          "blob_storage",
+          "document_storage",
+          "backup_target",
+          "artifact_storage",
+          "local_path",
+          "health_checks"
+        ],
+        "enabled": true,
+        "connection": {
+          "path": "D:\\src\\client1\\tala-app\\data\\storage",
+          "workspaceRelativePath": "data/storage"
+        },
+        "auth": {
+          "mode": "none",
+          "status": "not_required",
+          "lastCheckedAt": null,
+          "reason": null
+        },
+        "health": {
+          "status": "unknown",
+          "checkedAt": null,
+          "reason": null
+        },
+        "assignedRoles": [
+          "blob_store",
+          "document_store"
+        ],
+        "createdAt": "2026-04-15T01:22:21.698Z",
+        "updatedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "id": "postgresql:localhost:5432:tala",
+        "name": "PostgreSQL (Local)",
+        "kind": "postgresql",
+        "locality": "local",
+        "registrationMode": "system",
+        "supportedRoles": [
+          "canonical_memory",
+          "document_store",
+          "backup_target",
+          "vector_index"
+        ],
+        "capabilities": [
+          "structured_records",
+          "document_storage",
+          "backup_target",
+          "vector_indexing",
+          "health_checks"
+        ],
+        "enabled": true,
+        "connection": {
+          "endpoint": "localhost:5432",
+          "database": "tala"
+        },
+        "auth": {
+          "mode": "basic",
+          "status": "unauthenticated",
+          "lastCheckedAt": null,
+          "reason": null
+        },
+        "health": {
+          "status": "unknown",
+          "checkedAt": null,
+          "reason": null
+        },
+        "assignedRoles": [
+          "canonical_memory"
+        ],
+        "createdAt": "2026-04-15T01:22:21.698Z",
+        "updatedAt": "2026-04-15T01:22:21.698Z"
+      }
+    ],
+    "assignments": [
+      {
+        "role": "artifact_store",
+        "providerId": "filesystem:data/reflection/artifacts",
+        "assignedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "role": "backup_target",
+        "providerId": "filesystem:backups",
+        "assignedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "role": "blob_store",
+        "providerId": "filesystem:data/storage",
+        "assignedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "role": "canonical_memory",
+        "providerId": "postgresql:localhost:5432:tala",
+        "assignedAt": "2026-04-15T01:22:21.698Z"
+      },
+      {
+        "role": "document_store",
+        "providerId": "filesystem:data/storage",
+        "assignedAt": "2026-04-15T01:22:21.698Z"
+      }
+    ],
+    "updatedAt": "2026-04-15T01:22:21.707Z"
   }
 }

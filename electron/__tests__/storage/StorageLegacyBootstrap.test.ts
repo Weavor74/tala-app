@@ -142,6 +142,31 @@ describe('Storage legacy bootstrap hydration', () => {
         expect(providerIdsTwo).toEqual(providerIdsOne);
     });
 
+    it('bootstrap does not duplicate imported PostgreSQL provider across reloads', () => {
+        writeSettings(settingsPath, {
+            database: {
+                host: 'localhost',
+                port: 5432,
+                database: 'tala',
+            },
+            storage: {
+                activeProviderId: 'legacy-none',
+                providers: [],
+            },
+        });
+
+        const firstRegistry = makeRegistry(settingsPath);
+        const firstSnapshot = firstRegistry.getRegistrySnapshot();
+        const firstPgProviders = firstSnapshot.providers.filter((provider) => provider.kind === StorageProviderKind.POSTGRESQL);
+        expect(firstPgProviders).toHaveLength(1);
+
+        const secondRegistry = makeRegistry(settingsPath);
+        const secondSnapshot = secondRegistry.getRegistrySnapshot();
+        const secondPgProviders = secondSnapshot.providers.filter((provider) => provider.kind === StorageProviderKind.POSTGRESQL);
+        expect(secondPgProviders).toHaveLength(1);
+        expect(secondPgProviders[0].id).toBe(firstPgProviders[0].id);
+    });
+
     it('existing explicit registry assignments are preserved', () => {
         writeSettings(settingsPath, {
             storage: {

@@ -42,6 +42,11 @@ function findProvider(snapshot: StorageRegistrySnapshot, providerId: string): St
     return snapshot.providers.find((provider) => provider.id === providerId);
 }
 
+function hasVectorCapability(provider: StorageProviderRecord): boolean {
+    return provider.capabilities.includes(StorageCapability.VECTOR_SEARCH)
+        || provider.capabilities.includes(StorageCapability.VECTOR_INDEXING);
+}
+
 function getCanonicalAssignments(snapshot: StorageRegistrySnapshot): Array<{ providerId: string }> {
     return snapshot.assignments
         .filter((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY)
@@ -91,6 +96,13 @@ export class StorageAssignmentPolicyService {
 
         if (!profile.supportedRoles.includes(role) || !provider.supportedRoles.includes(role)) {
             return failure(StorageOperationErrorCode.ROLE_UNSUPPORTED, 'Provider does not support requested role', { providerId, role });
+        }
+        if (role === StorageRole.VECTOR_INDEX && !hasVectorCapability(provider)) {
+            return failure(StorageOperationErrorCode.ROLE_UNSUPPORTED, 'Vector index assignment requires vector search capability', {
+                providerId,
+                role,
+                capabilities: provider.capabilities,
+            });
         }
 
         if (provider.health.status === StorageHealthStatus.OFFLINE || provider.health.status === StorageHealthStatus.UNREACHABLE) {

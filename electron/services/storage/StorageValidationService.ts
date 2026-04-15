@@ -16,6 +16,7 @@ import {
     StorageOperationErrorCode,
     StorageProviderKind,
     StorageProviderValidationResult,
+    StorageRole,
     createStorageOperationError,
 } from './storageTypes';
 
@@ -25,6 +26,103 @@ function nowIso(): string {
 
 function normalizePath(targetPath: string): string {
     return path.resolve(targetPath).replace(/[\\/]+$/g, '').toLowerCase();
+}
+
+function normalizeHost(host: string): string {
+    return host.trim().toLowerCase();
+}
+
+function isLoopbackHost(host: string): boolean {
+    const normalized = normalizeHost(host);
+    return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function hostsMatch(left: string, right: string): boolean {
+    const a = normalizeHost(left);
+    const b = normalizeHost(right);
+    if (isLoopbackHost(a) && isLoopbackHost(b)) {
+        return true;
+    }
+    return a === b;
+}
+
+function parseEndpointHostPort(endpoint: string): { host: string; port: number } | null {
+    const value = endpoint.trim();
+    if (!value) {
+        return null;
+    }
+
+    try {
+        if (value.includes('://')) {
+            const parsed = new URL(value);
+            const host = parsed.hostname;
+            const parsedPort = parsed.port ? Number(parsed.port) : Number.NaN;
+            if (!host || Number.isNaN(parsedPort) || parsedPort <= 0) {
+                return null;
+            }
+            return { host, port: parsedPort };
+        }
+    } catch {
+        // fall through and attempt host:port parsing below
+    }
+
+    const lastColon = value.lastIndexOf(':');
+    if (lastColon <= 0 || lastColon >= value.length - 1) {
+        return null;
+    }
+    const host = value.slice(0, lastColon).trim().replace(/^\[|\]$/g, '');
+    const parsedPort = Number(value.slice(lastColon + 1));
+    if (!host || Number.isNaN(parsedPort) || parsedPort <= 0) {
+        return null;
+    }
+    return { host, port: parsedPort };
+}
+
+function parsePostgresIdentityFromProvider(providerId: string): { host: string; port: number; database: string } | null {
+    const match = /^postgresql:([^:]+):(\d+):(.+)$/.exec(providerId);
+    if (!match) {
+        return null;
+    }
+    return {
+        host: match[1],
+        port: Number(match[2]),
+        database: match[3],
+    };
+}
+
+function resolvePostgresProviderIdentity(
+    providerId: string,
+    connection: { endpoint?: string; database?: string },
+): { host: string; port: number; database: string } | null {
+    const parsedEndpoint = connection.endpoint ? parseEndpointHostPort(connection.endpoint) : null;
+    if (parsedEndpoint && connection.database) {
+        return {
+            host: parsedEndpoint.host,
+            port: parsedEndpoint.port,
+            database: connection.database,
+        };
+    }
+    const parsedFromId = parsePostgresIdentityFromProvider(providerId);
+    if (parsedFromId) {
+        return parsedFromId;
+    }
+    return null;
+}
+
+function withCapability(list: StorageCapability[], capability: StorageCapability): StorageCapability[] {
+    return list.includes(capability) ? list : [...list, capability];
+}
+
+function withoutCapability(list: StorageCapability[], capability: StorageCapability): StorageCapability[] {
+    return list.filter((value) => value !== capability);
+}
+
+function withRole(list: StorageRole[], role: StorageRole): StorageRole[] {
+    return list.includes(role) ? list : [...list, role];
+}
+
+function withoutRole(list: StorageRole[], role: StorageRole): StorageRole[] {
+    return list.filter((value) => value !== role);
 }
 
 function isWithinAppRoot(targetPath: string): boolean {
@@ -61,8 +159,8 @@ export class StorageValidationService {
         const profile = getStorageCapabilityProfile(provider.kind);
         const warnings: string[] = [];
         const errors: string[] = [];
-        const detectedRolesSupported = profile.supportedRoles.slice();
-        const detectedCapabilities = profile.defaultCapabilities.slice();
+        let detectedRolesSupported = profile.supportedRoles.slice();
+        let detectedCapabilities = profile.defaultCapabilities.slice();
 
         let health = { ...provider.health };
         let auth = { ...provider.auth };
@@ -101,29 +199,76 @@ export class StorageValidationService {
 
             case StorageProviderKind.POSTGRESQL: {
                 const config = resolveDatabaseConfig();
-                const cached = getLastDbHealth();
-                let healthResult = cached;
-                if (!healthResult) {
-                    try {
-                        healthResult = await checkCanonicalDbHealth();
-                    } catch (error) {
-                        warnings.push(`Canonical DB health probe failed: ${error instanceof Error ? error.message : String(error)}`);
+                const activeTarget = {
+                    host: config.host,
+                    port: config.port,
+                    database: config.database,
+                };
+                const providerTarget = resolvePostgresProviderIdentity(provider.id, provider.connection);
+                const matchesActiveTarget = !!providerTarget
+                    && hostsMatch(providerTarget.host, activeTarget.host)
+                    && providerTarget.port === activeTarget.port
+                    && providerTarget.database.toLowerCase() === activeTarget.database.toLowerCase();
+
+                if (matchesActiveTarget) {
+                    const cached = getLastDbHealth();
+                    let healthResult = cached;
+                    if (!healthResult) {
+                        try {
+                            healthResult = await checkCanonicalDbHealth();
+                        } catch (error) {
+                            warnings.push(`Canonical DB health probe failed: ${error instanceof Error ? error.message : String(error)}`);
+                        }
                     }
-                }
-                if (healthResult) {
-                    health = {
-                        status: healthResult.reachable ? StorageHealthStatus.HEALTHY : StorageHealthStatus.OFFLINE,
-                        checkedAt: nowIso(),
-                        reason: healthResult.error ?? null,
-                    };
-                    auth = {
-                        mode: StorageAuthMode.BASIC,
-                        status: healthResult.authenticated ? StorageAuthStatus.AUTHENTICATED : StorageAuthStatus.UNAUTHENTICATED,
-                        lastCheckedAt: nowIso(),
-                        reason: healthResult.error ?? null,
-                    };
+                    if (healthResult) {
+                        health = {
+                            status: healthResult.reachable ? StorageHealthStatus.HEALTHY : StorageHealthStatus.OFFLINE,
+                            checkedAt: nowIso(),
+                            reason: healthResult.error ?? null,
+                        };
+                        auth = {
+                            mode: StorageAuthMode.BASIC,
+                            status: healthResult.authenticated ? StorageAuthStatus.AUTHENTICATED : StorageAuthStatus.UNAUTHENTICATED,
+                            lastCheckedAt: nowIso(),
+                            reason: healthResult.error ?? null,
+                        };
+
+                        if (healthResult.pgvectorInstalled) {
+                            detectedCapabilities = withCapability(detectedCapabilities, StorageCapability.VECTOR_SEARCH);
+                            detectedCapabilities = withCapability(detectedCapabilities, StorageCapability.VECTOR_INDEXING);
+                            detectedRolesSupported = withRole(detectedRolesSupported, StorageRole.VECTOR_INDEX);
+                        } else {
+                            detectedCapabilities = withoutCapability(detectedCapabilities, StorageCapability.VECTOR_SEARCH);
+                            detectedCapabilities = withoutCapability(detectedCapabilities, StorageCapability.VECTOR_INDEXING);
+                            detectedRolesSupported = withoutRole(detectedRolesSupported, StorageRole.VECTOR_INDEX);
+                            warnings.push('pgvector extension is not installed on active canonical PostgreSQL target; vector_index is unavailable.');
+                        }
+                    } else {
+                        const reachable = await probeTcpPort(activeTarget.host, activeTarget.port, 2000);
+                        health = {
+                            status: reachable ? StorageHealthStatus.DEGRADED : StorageHealthStatus.OFFLINE,
+                            checkedAt: nowIso(),
+                            reason: reachable ? 'tcp_only_probe' : 'tcp_unreachable',
+                        };
+                        auth = {
+                            mode: StorageAuthMode.BASIC,
+                            status: StorageAuthStatus.UNAUTHENTICATED,
+                            lastCheckedAt: nowIso(),
+                            reason: reachable ? 'pool_not_initialized' : 'tcp_unreachable',
+                        };
+                        warnings.push('Canonical DB pool is not initialized; validation used TCP reachability only.');
+                    }
                 } else {
-                    const reachable = await probeTcpPort(config.host, config.port, 2000);
+                    const endpointTarget = providerTarget ?? (provider.connection.endpoint ? (() => {
+                        const parsed = parseEndpointHostPort(provider.connection.endpoint as string);
+                        if (!parsed) {
+                            return null;
+                        }
+                        return { host: parsed.host, port: parsed.port, database: provider.connection.database ?? '' };
+                    })() : null);
+                    const probeHost = endpointTarget?.host ?? config.host;
+                    const probePort = endpointTarget?.port ?? config.port;
+                    const reachable = await probeTcpPort(probeHost, probePort, 2000);
                     health = {
                         status: reachable ? StorageHealthStatus.DEGRADED : StorageHealthStatus.OFFLINE,
                         checkedAt: nowIso(),
@@ -131,11 +276,11 @@ export class StorageValidationService {
                     };
                     auth = {
                         mode: StorageAuthMode.BASIC,
-                        status: reachable ? StorageAuthStatus.UNAUTHENTICATED : StorageAuthStatus.UNAUTHENTICATED,
+                        status: StorageAuthStatus.UNAUTHENTICATED,
                         lastCheckedAt: nowIso(),
-                        reason: reachable ? 'pool_not_initialized' : 'tcp_unreachable',
+                        reason: reachable ? 'runtime_db_mismatch' : 'tcp_unreachable',
                     };
-                    warnings.push('Canonical DB pool is not initialized; validation used TCP reachability only.');
+                    warnings.push('Provider does not match active canonical DB target; runtime auth cannot be reused.');
                 }
                 break;
             }
@@ -241,6 +386,8 @@ export class StorageValidationService {
             id: provider.id,
             health,
             auth,
+            supportedRoles: detectedRolesSupported,
+            capabilities: detectedCapabilities,
         });
 
         return {
