@@ -25,6 +25,11 @@ AgentService The central orchestrator that governs the "Mind" of Tala. This se
 **Arguments**: `mcp: McpServiceLike`
 
 ---
+#### `setMcpAuthority`
+**Arguments**: `authority: McpAuthorityService`
+**Returns**: `void`
+
+---
 #### `setDiagnosticsAggregator`
 Wires the runtime diagnostics aggregator so cognitive contexts can be recorded after each turn (Phase 3A: Live Cognitive Path Integration)./
 

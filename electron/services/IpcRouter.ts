@@ -15,6 +15,7 @@ import { FileService } from './FileService';
 import { TerminalService } from './TerminalService';
 import { SystemService } from './SystemService';
 import { McpService } from './McpService';
+import { McpAuthorityService } from './mcp/McpAuthorityService';
 import { FunctionService } from './FunctionService';
 import { WorkflowService } from './WorkflowService';
 import { WorkflowEngine } from './WorkflowEngine';
@@ -87,6 +88,7 @@ import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
 } from '../../shared/guardrails/guardrailPolicyTypes';
+import type { McpRegistrationRequest } from '../../shared/mcpAuthorityTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -99,6 +101,7 @@ export interface IpcRouterContext {
   terminalService: TerminalService;
   systemService: SystemService;
   mcpService: McpService;
+  mcpAuthority?: McpAuthorityService;
   functionService: FunctionService;
   workflowService: WorkflowService;
   workflowEngine: WorkflowEngine;
@@ -163,7 +166,7 @@ export class IpcRouter {
    * This method effectively defines the entire backend API surface.
    */
   public registerAll() {
-    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, logViewerService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
+    const { app, getMainWindow, agent, fileService, terminalService, systemService, mcpService, mcpAuthority, functionService, workflowService, workflowEngine, guardrailService, gitService, backupService, inferenceService, userProfileService, codeControlService, logViewerService, USER_DATA_DIR, USER_DATA_PATH, APP_DIR, PORTABLE_SETTINGS_PATH, SYSTEM_SETTINGS_PATH, TEMP_SYSTEM_PATH } = this.ctx;
     this.installIpcErrorWrapper();
 
     // Helper to simulate mutable let from main.ts
@@ -299,7 +302,16 @@ export class IpcRouter {
 
       // Sync MCP Servers
       if (data.mcpServers) {
-        await mcpService.sync(data.mcpServers);
+        if (mcpAuthority) {
+          const syncResults = mcpAuthority.syncConfiguredServers(newSettings.mcpServers ?? []);
+          const rejection = syncResults.find((r) => !r.ok);
+          if (rejection) {
+            throw new Error(`MCP registration rejected (${rejection.serverId}): ${rejection.reasonCode ?? rejection.reason ?? 'unknown'}`);
+          }
+          await mcpAuthority.activateAllConfiguredServers();
+        } else {
+          await mcpService.sync(newSettings.mcpServers ?? []);
+        }
         await agent.refreshMcpTools();
       }
 
@@ -863,7 +875,75 @@ export class IpcRouter {
 
     /** Returns the tool/resource capabilities of a connected MCP server by ID. */
     ipcMain.handle('get-mcp-capabilities', async (event, serverId) => {
+      if (mcpAuthority) {
+        return await mcpAuthority.getApprovedCapabilities(serverId);
+      }
       return await mcpService.getCapabilities(serverId);
+    });
+
+    /** Returns the authority-controlled MCP registry snapshot. */
+    ipcMain.handle('mcp:getRegistrySnapshot', async () => {
+      if (!mcpAuthority) return { servers: [], updatedAt: new Date(0).toISOString() };
+      return mcpAuthority.getSnapshot();
+    });
+
+    /** Registers a new MCP server through the governed authority path. */
+    ipcMain.handle('mcp:registerServer', async (_event, payload: McpRegistrationRequest) => {
+      if (!mcpAuthority) {
+        return { ok: false, state: 'rejected', serverId: payload?.id ?? 'unknown', reasonCode: 'mcp_activation_denied', reason: 'mcp_authority_not_initialized' };
+      }
+      const settings = loadSettings(getSettingsPath());
+      const existing = settings.mcpServers ?? [];
+      const normalizedPayload: McpRegistrationRequest = payload?.transportConfig
+        ? payload
+        : {
+          id: payload?.id,
+          displayName: payload?.displayName || payload?.id || 'MCP Provider',
+          transportType: payload?.transportType || 'stdio',
+          transportConfig: payload?.transportType === 'stdio'
+            ? {
+              transportType: 'stdio',
+              command: (payload as any)?.command,
+              args: (payload as any)?.args,
+              env: (payload as any)?.env,
+              cwd: (payload as any)?.cwd,
+            }
+            : payload?.transportType === 'http'
+              ? {
+                transportType: 'http',
+                baseUrl: (payload as any)?.url || (payload as any)?.baseUrl,
+                headers: (payload as any)?.headers,
+                timeoutMs: (payload as any)?.timeoutMs,
+                healthEndpoint: (payload as any)?.healthEndpoint,
+              }
+              : {
+                transportType: 'websocket',
+                url: (payload as any)?.url,
+                timeoutMs: (payload as any)?.timeoutMs,
+              },
+          capabilityPolicy: {
+            allowedFeatureIds: (payload as any)?.allowedFeatureIds,
+            trustPolicyTier: (payload as any)?.trustPolicyTier,
+          },
+          protocolExpectation: {
+            expectedCapabilityClass: (payload as any)?.expectedCapabilityClass,
+          },
+          enabled: !!payload?.enabled,
+        };
+      return mcpAuthority.registerServerWithPersistence(normalizedPayload, existing, (nextServers) => {
+        const nextSettings = { ...settings, mcpServers: nextServers };
+        saveSettings(getSettingsPath(), nextSettings);
+      });
+    });
+
+    /** Activates a configured MCP server via authority-controlled validation and policy gates. */
+    ipcMain.handle('mcp:activateServer', async (_event, serverId: string) => {
+      if (!mcpAuthority) {
+        return { ok: false, state: 'rejected', serverId, reasonCode: 'mcp_activation_denied', reason: 'mcp_authority_not_initialized' };
+      }
+      const result = await mcpAuthority.activateServer(serverId);
+      await agent.refreshMcpTools();
+      return result;
     });
 
     /** Returns a list of all registered tools (core + MCP). */

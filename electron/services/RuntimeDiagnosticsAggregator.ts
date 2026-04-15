@@ -13,12 +13,15 @@ import type {
     SystemOperatingMode,
 } from '../../shared/system-health-types';
 import type { InferenceDiagnosticsService } from './InferenceDiagnosticsService';
-import type { McpLifecycleManager } from './McpLifecycleManager';
 import { providerHealthScorer } from './inference/ProviderHealthScorer';
 import type { RuntimeControlService } from './RuntimeControlService';
 import type { TalaCognitiveContext, MemoryContributionCategory } from '../../shared/cognitiveTurnTypes';
 import type { CompactionDiagnosticsSummary } from '../../shared/modelCapabilityTypes';
 import { SystemHealthService, type SystemHealthAdapterDeps } from './SystemHealthService';
+
+export interface McpDiagnosticsSource {
+    getDiagnosticsInventory(): McpInventoryDiagnostics;
+}
 
 export interface CognitiveTurnMeta {
     context: TalaCognitiveContext;
@@ -42,7 +45,7 @@ export class RuntimeDiagnosticsAggregator {
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
-        private readonly mcpLifecycle: McpLifecycleManager,
+        private readonly mcpLifecycle: McpDiagnosticsSource,
         private readonly runtimeControl?: RuntimeControlService,
         private readonly healthDeps?: SystemHealthAdapterDeps,
     ) {

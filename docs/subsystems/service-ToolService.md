@@ -99,6 +99,14 @@ Injects the McpService dependency./
 **Arguments**: `mcp: any`
 
 ---
+#### `setMcpAuthority`
+Injects the MCP authority service.
+ When present, MCP capability exposure is sourced only from approved authority snapshots.
+/
+
+**Arguments**: `authority: McpAuthorityService`
+
+---
 #### `refreshMcpTools`
 Refreshes the list of available MCP tools from all connected servers. This should be called whenever MCP connections change./
 

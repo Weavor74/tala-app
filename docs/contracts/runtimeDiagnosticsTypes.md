@@ -88,7 +88,7 @@ interface McpServiceDiagnostics {
     /** Human-readable display name. */
     displayName: string;
     /** Transport kind (stdio process or websocket). */
-    kind: 'stdio' | 'websocket';
+    kind: 'stdio' | 'websocket' | 'http';
     /** Whether this service is configured and enabled. */
     enabled: boolean;
     /** Current normalized lifecycle status. */
@@ -107,7 +107,21 @@ interface McpServiceDiagnostics {
     restartCount: number;
     /** Additional service-specific metadata. */
     metadata?: Record<string, unknown>;
-}
+    /** Authority-state projection: configured does not imply approved/active. */
+    classification?: McpServerClassification;
+    /** Stable machine-usable MCP authority reason codes. */
+    reasonCodes?: McpAuthorityReasonCode[];
+    /** Activation state emitted by the MCP authority seam. */
+    activationState?: 'registered' | 'rejected' | 'pending_activation' | 'active' | 'degraded' | 'blocked_by_policy';
+    /** Canonical provider/template type metadata. */
+    providerKind?: 'external_mcp_server';
+    templateKind?: 'stdio' | 'websocket' | 'http';
+    /** Approved capability counters emitted by authority normalization. */
+    approvedCapabilityCounts?: {
+        tools: number;
+        resources: number;
+        prompts: number;
+    }
 ```
 
 ### `McpInventoryDiagnostics`

@@ -13,6 +13,7 @@
 - [harmonizationTypes.ts](./harmonizationTypes.md)
 - [inferenceProviderTypes.ts](./inferenceProviderTypes.md)
 - [logs.ts](./logs.md)
+- [mcpAuthorityTypes.ts](./mcpAuthorityTypes.md)
 - [modelCapabilityTypes.ts](./modelCapabilityTypes.md)
 - [recoveryPackTypes.ts](./recoveryPackTypes.md)
 - [reflectionPlanTypes.ts](./reflectionPlanTypes.md)

@@ -22,6 +22,8 @@
 - [Copilot Rules — Tala](architecture/COPILOT_RULES.md)
 - [Data Flow](architecture/data_flow.md)
 - [Deployment Topology](architecture/deployment_topology.md)
+- [MCP Authority Doctrine](architecture/mcp-authority-doctrine.md)
+- [MCP Provider Template Contract](architecture/mcp-provider-template-contract.md)
 - [Memory Authority Invariant](architecture/memory-authority-invariant.md)
 - [Memory Bootstrap — Native-First Local PostgreSQL Runtime](architecture/memory_bootstrap.md)
 - [Memory Operator Review Surface](architecture/memory_operator_review_surface.md)
@@ -112,6 +114,7 @@
 - [Contract: harmonizationTypes.ts](contracts/harmonizationTypes.md)
 - [Contract: inferenceProviderTypes.ts](contracts/inferenceProviderTypes.md)
 - [Contract: logs.ts](contracts/logs.md)
+- [Contract: mcpAuthorityTypes.ts](contracts/mcpAuthorityTypes.md)
 - [Contract: modelCapabilityTypes.ts](contracts/modelCapabilityTypes.md)
 - [Contract: recoveryPackTypes.ts](contracts/recoveryPackTypes.md)
 - [Contract: reflectionPlanTypes.ts](contracts/reflectionPlanTypes.md)
@@ -202,6 +205,7 @@
 
 ## operations
 
+- [MCP Server Registration (Operator Guide)](operations/mcp-server-registration.md)
 - [Seam Governance Operations](operations/seam-governance.md)
 - [Tala Gatekeeper Naming Policy (Initial Operational Pass)](operations/gatekeeper-naming-policy.md)
 - [Tala Naming Maintenance Protocol (Post-Rollout)](operations/naming-maintenance-protocol.md)

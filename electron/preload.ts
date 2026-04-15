@@ -334,6 +334,9 @@ contextBridge.exposeInMainWorld('tala', {
     // ─── MCP ──────────────────────────────────────────────────────
     /** Gets the tool/resource capabilities of a connected MCP server. */
     getMcpCapabilities: (serverId: string) => ipcRenderer.invoke('get-mcp-capabilities', serverId),
+    getMcpRegistrySnapshot: () => ipcRenderer.invoke('mcp:getRegistrySnapshot'),
+    registerMcpServer: (payload: any) => ipcRenderer.invoke('mcp:registerServer', payload),
+    activateMcpServer: (serverId: string) => ipcRenderer.invoke('mcp:activateServer', serverId),
 
     // ─── Functions ────────────────────────────────────────────────
     /** Lists all user-defined custom functions. */

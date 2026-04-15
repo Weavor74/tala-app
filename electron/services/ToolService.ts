@@ -4,6 +4,7 @@ import fs from 'fs';
 import { AnnotationParser } from './AnnotationParser';
 import { auditLogger } from './AuditLogger';
 import { redact } from './log_redact';
+import type { McpAuthorityService } from './mcp/McpAuthorityService';
 
 /**
  * Standardized execution result for all tools.
@@ -56,6 +57,8 @@ export class ToolService {
     private systemInfo: any = null;
     /** Reference to the McpService for external tool integration. */
     private mcpService: any = null;
+    /** Authority seam for approved MCP capability exposure. */
+    private mcpAuthority: McpAuthorityService | null = null;
     /** Universal Repository Search Subsystem */
     private universalSearchService: any = null;
     /** Cache of available MCP tools, keyed by tool name. */
@@ -1259,6 +1262,14 @@ export class ToolService {
     }
 
     /**
+     * Injects the MCP authority service.
+     * When present, MCP capability exposure is sourced only from approved authority snapshots.
+     */
+    public setMcpAuthority(authority: McpAuthorityService) {
+        this.mcpAuthority = authority;
+    }
+
+    /**
      * Refreshes the list of available MCP tools from all connected servers.
      * This should be called whenever MCP connections change.
      */
@@ -1269,10 +1280,14 @@ export class ToolService {
         this.mcpTools.clear();
         this.invalidateCache();
 
-        const serverIds = this.mcpService.getActiveConnections();
+        const serverIds = this.mcpAuthority
+            ? this.mcpAuthority.getApprovedServerIds()
+            : this.mcpService.getActiveConnections();
         for (const serverId of serverIds) {
             try {
-                const caps = await this.mcpService.getCapabilities(serverId);
+                const caps = this.mcpAuthority
+                    ? await this.mcpAuthority.getApprovedCapabilities(serverId)
+                    : await this.mcpService.getCapabilities(serverId);
                 if (caps.tools) {
                     for (const tool of caps.tools) {
                         // Avoid overwriting core tools

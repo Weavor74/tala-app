@@ -51,12 +51,28 @@ interface InferenceConfig {
 interface McpServerConfig {
     id: string;
     name: string;
-    type: 'stdio' | 'websocket';
+    displayName?: string;
+    type: 'stdio' | 'websocket' | 'http';
+    providerKind?: 'external_mcp_server';
+    templateKind?: 'stdio' | 'websocket' | 'http';
+    activationStrategy?: 'manual' | 'startup_auto';
+    healthCheckStrategy?: 'protocol_handshake' | 'capability_refresh' | 'transport_probe' | 'none';
     command?: string;
     args?: string[];
+    env?: Record<string, string>;
     cwd?: string;
     useMcpVenv?: boolean;
     url?: string;
+    baseUrl?: string;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    startupTimeoutMs?: number;
+    healthEndpoint?: string;
+    authToken?: string;
+    expectedCapabilityClass?: string[];
+    allowedFeatureIds?: string[];
+    trustPolicyTier?: 'local' | 'trusted' | 'restricted';
+    diagnosticsTags?: string[];
     enabled: boolean;
 }
 ```

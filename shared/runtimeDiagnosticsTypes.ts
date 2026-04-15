@@ -32,6 +32,7 @@ import type {
     SystemHealthSnapshot,
 } from './system-health-types';
 import type { SeamStabilityReport } from './governance/SeamStability';
+import type { McpAuthorityReasonCode, McpServerClassification } from './mcpAuthorityTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -184,7 +185,7 @@ export interface McpServiceDiagnostics {
     /** Human-readable display name. */
     displayName: string;
     /** Transport kind (stdio process or websocket). */
-    kind: 'stdio' | 'websocket';
+    kind: 'stdio' | 'websocket' | 'http';
     /** Whether this service is configured and enabled. */
     enabled: boolean;
     /** Current normalized lifecycle status. */
@@ -203,6 +204,27 @@ export interface McpServiceDiagnostics {
     restartCount: number;
     /** Additional service-specific metadata. */
     metadata?: Record<string, unknown>;
+    /** Authority-state projection: configured does not imply approved/active. */
+    classification?: McpServerClassification;
+    /** Stable machine-usable MCP authority reason codes. */
+    reasonCodes?: McpAuthorityReasonCode[];
+    /** Activation state emitted by the MCP authority seam. */
+    activationState?: 'registered' | 'rejected' | 'pending_activation' | 'active' | 'degraded' | 'blocked_by_policy';
+    /** Canonical provider/template type metadata. */
+    providerKind?: 'external_mcp_server';
+    templateKind?: 'stdio' | 'websocket' | 'http';
+    /** Approved capability counters emitted by authority normalization. */
+    approvedCapabilityCounts?: {
+        tools: number;
+        resources: number;
+        prompts: number;
+    };
+    /** Quarantined malformed capability counters emitted by authority validation. */
+    quarantinedCapabilityCounts?: {
+        tools: number;
+        resources: number;
+        prompts: number;
+    };
 }
 
 // ─── MCP inventory diagnostics ────────────────────────────────────────────────

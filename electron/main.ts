@@ -55,6 +55,7 @@ import { LogViewerService } from './services/LogViewerService';
 import { McpLifecycleManager } from './services/McpLifecycleManager';
 import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggregator';
 import { RuntimeControlService } from './services/RuntimeControlService';
+import { McpAuthorityService } from './services/mcp/McpAuthorityService';
 import { OperatorActionService } from './services/OperatorActionService';
 import { SystemModeManager } from './services/SystemModeManager';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
@@ -634,10 +635,11 @@ const logViewerService = new LogViewerService();
 
 // ─── Runtime Diagnostics (Priority 2A) ───────────────────────────────────────
 const mcpLifecycleManager = new McpLifecycleManager(mcpService);
-const runtimeControl = new RuntimeControlService(inferenceService, mcpLifecycleManager, mcpService);
+const mcpAuthority = new McpAuthorityService(mcpService, mcpLifecycleManager);
+const runtimeControl = new RuntimeControlService(inferenceService, mcpLifecycleManager, mcpService, mcpAuthority);
 const diagnosticsAggregator = new RuntimeDiagnosticsAggregator(
   inferenceDiagnostics,
-  mcpLifecycleManager,
+  mcpAuthority as any,
   runtimeControl,
   {
     getStartupStatus: () => agent.getStartupStatus(),
@@ -724,6 +726,7 @@ ipcMain.handle('voice:status', async () => voiceService.getStatus());
 // Wire Dependencies
 agent.setLogViewerService(logViewerService);
 agent.setMcpService(mcpService);
+agent.setMcpAuthority(mcpAuthority);
 agent.setGitService(gitService);
 agent.setReflectionService(reflectionService);
 agent.setCodeControl(codeControlService);
@@ -855,6 +858,14 @@ app.on('ready', async () => {
   agent.igniteSoul(agentPythonPath);
   mcpService.setPythonPath(info.pythonPath); // Use canonical bundled python for MCP servers
   mcpService.startHealthLoop();
+  try {
+    const settings = loadSettings(SETTINGS_PATH, 'main.mcpAuthority.startup');
+    mcpAuthority.syncConfiguredServers(settings.mcpServers ?? []);
+    await mcpAuthority.activateAllConfiguredServers();
+    await agent.refreshMcpTools();
+  } catch (err) {
+    console.warn('[Main] MCP authority startup activation failed:', err);
+  }
   if (mainWindow) fileService.watchWorkspace(mainWindow);
   backupService.init();
 
@@ -894,6 +905,7 @@ const ipcRouter = new IpcRouter({
   terminalService,
   systemService,
   mcpService,
+  mcpAuthority,
   functionService,
   workflowService,
   workflowEngine,

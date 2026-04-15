@@ -15,6 +15,7 @@ import { FileService } from './FileService';
 import { TerminalService } from './TerminalService';
 import { SystemService } from './SystemService';
 import { McpService } from './McpService';
+import { McpAuthorityService } from './mcp/McpAuthorityService';
 import { FunctionService } from './FunctionService';
 import { WorkflowService } from './WorkflowService';
 import { WorkflowEngine } from './WorkflowEngine';
@@ -87,6 +88,7 @@ import {
   buildDefaultGuardrailPolicyConfig,
   normalizeGuardrailPolicyConfig,
 } from '../../shared/guardrails/guardrailPolicyTypes';
+import type { McpRegistrationRequest } from '../../shared/mcpAuthorityTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -99,6 +101,7 @@ export interface IpcRouterContext {
   terminalService: TerminalService;
   systemService: SystemService;
   mcpService: McpService;
+  mcpAuthority?: McpAuthorityService;
   functionService: FunctionService;
   workflowService: WorkflowService;
   workflowEngine: WorkflowEngine;

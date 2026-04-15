@@ -77,6 +77,7 @@ import type { DerivedCleanupRequest, DerivedCleanupReport } from '../../shared/m
 import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 import { resolveStoragePath } from './PathResolver';
+import type { McpAuthorityService } from './mcp/McpAuthorityService';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -816,6 +817,10 @@ Violation of this rule is considered a system failure.`;
     public setMcpService(mcp: McpServiceLike) {
         this.mcpService = mcp;
         this.tools.setMcpService(mcp);
+    }
+
+    public setMcpAuthority(authority: McpAuthorityService): void {
+        this.tools.setMcpAuthority(authority);
     }
 
     /**

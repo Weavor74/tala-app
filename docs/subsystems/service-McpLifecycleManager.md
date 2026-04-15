@@ -9,7 +9,7 @@
 #### `registerService`
 Registers a service for lifecycle tracking. Called when the MCP service inventory is initialized or synced./
 
-**Arguments**: `serviceId: string, displayName: string, kind: 'stdio' | 'websocket', enabled: boolean,`
+**Arguments**: `serviceId: string, displayName: string, kind: 'stdio' | 'websocket' | 'http', enabled: boolean,`
 **Returns**: `void`
 
 ---

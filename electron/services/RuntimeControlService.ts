@@ -30,6 +30,7 @@ import type { OperatorActionRecord } from '../../shared/runtimeDiagnosticsTypes'
 import type { McpServerConfig } from '../../shared/settings';
 import type { SystemCapability } from '../../shared/system-health-types';
 import { SystemModeManager } from './SystemModeManager';
+import type { McpAuthorityService } from './mcp/McpAuthorityService';
 
 // ─── Action result ────────────────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ export class RuntimeControlService {
         private readonly inferenceService: InferenceService,
         private readonly mcpLifecycle: McpLifecycleManager,
         private readonly mcpService: McpService,
+        private readonly mcpAuthority?: McpAuthorityService,
     ) {}
 
     // ─── Provider Controls ─────────────────────────────────────────────────────
@@ -333,18 +335,22 @@ export class RuntimeControlService {
         );
 
         try {
-            this.mcpLifecycle.onServiceStarting(serviceId);
-            await this.mcpService.disconnect(serviceId);
-
-            const config = mcpConfigs.find(c => c.id === serviceId);
             let newState = 'restarted';
-            if (config) {
-                const ok = await this.mcpService.connect(config);
-                newState = ok ? 'ready' : 'failed';
-                if (ok) {
-                    this.mcpLifecycle.onServiceReady(serviceId);
-                } else {
-                    this.mcpLifecycle.onServiceFailed(serviceId, 'Reconnect failed after restart');
+            if (this.mcpAuthority) {
+                const result = await this.mcpAuthority.restartServer(serviceId);
+                newState = result.ok ? 'ready' : (result.state === 'blocked_by_policy' ? 'blocked_by_policy' : 'failed');
+            } else {
+                this.mcpLifecycle.onServiceStarting(serviceId);
+                await this.mcpService.disconnect(serviceId);
+                const config = mcpConfigs.find(c => c.id === serviceId);
+                if (config) {
+                    const ok = await this.mcpService.connect(config);
+                    newState = ok ? 'ready' : 'failed';
+                    if (ok) {
+                        this.mcpLifecycle.onServiceReady(serviceId);
+                    } else {
+                        this.mcpLifecycle.onServiceFailed(serviceId, 'Reconnect failed after restart');
+                    }
                 }
             }
 
@@ -394,7 +400,11 @@ export class RuntimeControlService {
         const health = this.mcpService.getServiceHealth(serviceId);
         const priorState = health?.state?.toString() ?? 'unknown';
 
-        await this.mcpService.disconnect(serviceId);
+        if (this.mcpAuthority) {
+            await this.mcpAuthority.disableServer(serviceId);
+        } else {
+            await this.mcpService.disconnect(serviceId);
+        }
 
         telemetry.operational(
             'mcp',
@@ -433,14 +443,19 @@ export class RuntimeControlService {
         }
 
         let newState = 'connecting';
-        try {
-            const ok = await this.mcpService.connect({ ...config, enabled: true });
-            newState = ok ? 'ready' : 'failed';
-            if (ok) {
-                this.mcpLifecycle.onServiceReady(serviceId);
+        if (this.mcpAuthority) {
+            const result = await this.mcpAuthority.activateServer(serviceId);
+            newState = result.ok ? 'ready' : (result.state === 'blocked_by_policy' ? 'blocked_by_policy' : 'failed');
+        } else {
+            try {
+                const ok = await this.mcpService.connect({ ...config, enabled: true });
+                newState = ok ? 'ready' : 'failed';
+                if (ok) {
+                    this.mcpLifecycle.onServiceReady(serviceId);
+                }
+            } catch (_err: any) {
+                newState = 'failed';
             }
-        } catch (err: any) {
-            newState = 'failed';
         }
 
         telemetry.operational(

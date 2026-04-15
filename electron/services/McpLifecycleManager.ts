@@ -32,7 +32,7 @@ import type { McpServiceState } from '../../shared/telemetry';
 interface ServiceMeta {
     serviceId: string;
     displayName: string;
-    kind: 'stdio' | 'websocket';
+    kind: 'stdio' | 'websocket' | 'http';
     enabled: boolean;
     lastKnownState: ServerState;
     lastTransitionTime: string;
@@ -89,7 +89,7 @@ export class McpLifecycleManager {
     public registerService(
         serviceId: string,
         displayName: string,
-        kind: 'stdio' | 'websocket',
+        kind: 'stdio' | 'websocket' | 'http',
         enabled: boolean,
     ): void {
         if (!this.serviceMeta.has(serviceId)) {
