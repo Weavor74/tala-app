@@ -31,6 +31,7 @@ import type {
     SystemHealthSubsystemSnapshot,
     SystemHealthSnapshot,
 } from './system-health-types';
+import type { SeamStabilityReport } from './governance/SeamStability';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -520,6 +521,8 @@ export interface RuntimeDiagnosticsSnapshot {
     systemHealth: SystemHealthSnapshot;
     /** Optional Storage Registry diagnostics model for settings and diagnostics panels. */
     storage?: StorageDiagnosticsSnapshot;
+    /** Optional seam governance stability snapshot hook for future diagnostics/dashboard surfaces. */
+    seamStability?: SeamStabilityReport;
     /** Normalized cognitive diagnostics for the most recent cognitive turn. */
     cognitive?: CognitiveDiagnosticsSnapshot;
 }

@@ -31,6 +31,15 @@ jobs:
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
           git diff --name-only "origin/${{ github.base_ref }}...HEAD" > .changed-files.txt
 
+      - name: Seam governance gate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npm run governance:seams -- --changed-files-file .changed-files.txt --base-ref "origin/${{ github.base_ref }}"
+          else
+            npm run governance:seams
+          fi
+
       - name: Heal docs deterministically
         run: npm run docs:heal
 

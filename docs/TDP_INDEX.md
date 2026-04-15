@@ -128,6 +128,10 @@
 - [Contract: telemetry.ts](contracts/telemetry.md)
 - [Contract: userProfile.ts](contracts/userProfile.md)
 - [Contract: worldModelTypes.ts](contracts/worldModelTypes.md)
+- [Seam Contract: Diagnostics Truth Contracts](contracts/seam-diagnostics.md)
+- [Seam Contract: Runtime Mode Control](contracts/seam-runtime-mode.md)
+- [Seam Contract: Storage Authority](contracts/seam-storage-authority.md)
+- [Seam Contract: Workspace Surfaces](contracts/seam-workspace-surfaces.md)
 - [Shared Contracts Index](contracts/README.md)
 - [Tala Code Generation Rules (Naming Contract Enforcement)](contracts/code-generation-rules.md)
 
@@ -198,6 +202,7 @@
 
 ## operations
 
+- [Seam Governance Operations](operations/seam-governance.md)
 - [Tala Gatekeeper Naming Policy (Initial Operational Pass)](operations/gatekeeper-naming-policy.md)
 - [Tala Naming Maintenance Protocol (Post-Rollout)](operations/naming-maintenance-protocol.md)
 

@@ -41,6 +41,42 @@ export type ScanImpactResult = {
 
 const IMPACT_RULES: ImpactRule[] = [
   {
+    id: 'seam-governance-contracts',
+    description: 'Critical seam governance contracts changed.',
+    pathRegexes: [
+      /^shared\/governance\/SeamContracts\.ts$/,
+      /^shared\/governance\/SeamStability\.ts$/,
+      /^scripts\/diagnostics\/check-seam-governance\.ts$/,
+      /^docs\/contracts\/seam-.+\.md$/,
+      /^docs\/operations\/seam-governance\.md$/
+    ],
+    ownedDocs: [
+      'docs/contracts/seam-storage-authority.md',
+      'docs/contracts/seam-diagnostics.md',
+      'docs/contracts/seam-runtime-mode.md',
+      'docs/contracts/seam-workspace-surfaces.md',
+      'docs/operations/seam-governance.md',
+      'docs/review/doclock-impact.md'
+    ],
+    generatedSectionIds: ['impact-map', 'workflow-registry'],
+    requiresManualReview: false
+  },
+  {
+    id: 'runtime-diagnostics-contracts',
+    description: 'Runtime diagnostics shared contract changed.',
+    pathRegexes: [
+      /^shared\/runtimeDiagnosticsTypes\.ts$/,
+      /^docs\/contracts\/runtimeDiagnosticsTypes\.md$/
+    ],
+    ownedDocs: [
+      'docs/contracts/runtimeDiagnosticsTypes.md',
+      'docs/subsystems/service-RuntimeDiagnosticsAggregator.md',
+      'docs/review/doclock-impact.md'
+    ],
+    generatedSectionIds: ['impact-map'],
+    requiresManualReview: false
+  },
+  {
     id: 'runtime-services',
     description: 'Runtime services changed (behavior/contracts/operations).',
     pathRegexes: [

@@ -41,6 +41,7 @@
     "docs:validate": "npm run docs:verify && npm run docs:validate:naming && npm run docs:validate:doclock",
     "docs:heal-and-validate": "npm run docs:heal && npm run docs:validate",
     "docs:selfheal": "npm run docs:regen && npm run docs:heal-and-validate",
+    "governance:seams": "npx tsx scripts/diagnostics/check-seam-governance.ts",
     "code:check": "npm run repo:boundaries",
     "code:heal": "npx tsx scripts/diagnostics/maintenance/code_maintenance.ts",
     "memory:check": "npx tsx scripts/diagnostics/maintenance/memory_maintenance.ts --mode=audit",
