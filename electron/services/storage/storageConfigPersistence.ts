@@ -60,6 +60,10 @@ function sanitizePersistedConfig(input: unknown): PersistedStorageConfig {
 export class StorageConfigPersistenceService {
     constructor(private readonly settingsPath: string) {}
 
+    public getSettingsPath(): string {
+        return this.settingsPath;
+    }
+
     public loadConfig(): PersistedStorageConfig {
         try {
             const settings = loadSettings(this.settingsPath, 'StorageConfigPersistence.load');
