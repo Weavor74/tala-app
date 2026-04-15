@@ -6,16 +6,22 @@ import { APP_ROOT } from '../PathResolver';
 import { checkCanonicalDbHealth, getLastDbHealth } from '../db/initMemoryStore';
 import { probeTcpPort } from '../db/probeTcpPort';
 import { resolveDatabaseConfig } from '../db/resolveDatabaseConfig';
+import { StorageAssignmentPolicyService } from './StorageAssignmentPolicyService';
 import { StorageProviderRegistryService } from './StorageProviderRegistryService';
 import { getStorageCapabilityProfile } from './storageCapabilityMatrix';
 import {
     StorageAuthMode,
     StorageAuthStatus,
+    StorageLayeredValidationResult,
+    StorageValidationDimension,
+    StorageValidationDimensionResult,
+    StorageValidationDimensionStatus,
     StorageCapability,
     StorageHealthStatus,
     StorageOperationErrorCode,
     StorageProviderKind,
     StorageProviderValidationResult,
+    StorageRegistrationMode,
     StorageRole,
     createStorageOperationError,
 } from './storageTypes';
@@ -147,8 +153,56 @@ async function probeHttp(url: string, timeoutMs = 2500): Promise<boolean> {
     });
 }
 
+function dimensionPass(reasonCode: string, details?: Record<string, unknown>): StorageValidationDimensionResult {
+    return {
+        status: StorageValidationDimensionStatus.PASS,
+        reasonCode,
+        details,
+    };
+}
+
+function dimensionWarn(
+    reasonCode: string,
+    remediationHint?: string,
+    details?: Record<string, unknown>,
+): StorageValidationDimensionResult {
+    return {
+        status: StorageValidationDimensionStatus.WARN,
+        reasonCode,
+        remediationHint,
+        details,
+    };
+}
+
+function dimensionFail(
+    reasonCode: string,
+    remediationHint?: string,
+    details?: Record<string, unknown>,
+): StorageValidationDimensionResult {
+    return {
+        status: StorageValidationDimensionStatus.FAIL,
+        reasonCode,
+        remediationHint,
+        details,
+    };
+}
+
+function summarizeOverallStatus(dimensions: Record<StorageValidationDimension, StorageValidationDimensionResult>): StorageValidationDimensionStatus {
+    const statuses = Object.values(dimensions).map((item) => item.status);
+    if (statuses.includes(StorageValidationDimensionStatus.FAIL)) {
+        return StorageValidationDimensionStatus.FAIL;
+    }
+    if (statuses.includes(StorageValidationDimensionStatus.WARN)) {
+        return StorageValidationDimensionStatus.WARN;
+    }
+    return StorageValidationDimensionStatus.PASS;
+}
+
 export class StorageValidationService {
-    constructor(private readonly registry: StorageProviderRegistryService) {}
+    constructor(
+        private readonly registry: StorageProviderRegistryService,
+        private readonly policy = new StorageAssignmentPolicyService(),
+    ) {}
 
     public async validateProvider(providerId: string): Promise<{ result: StorageProviderValidationResult }> {
         const provider = this.registry.getProviderById(providerId);
@@ -377,6 +431,179 @@ export class StorageValidationService {
             warnings.push('Provider kind is canonical-eligible but does not advertise structured records capability.');
         }
 
+        const snapshot = this.registry.getRegistrySnapshot();
+        const providerPreview = {
+            ...provider,
+            supportedRoles: detectedRolesSupported,
+            capabilities: detectedCapabilities,
+            health,
+            auth,
+        };
+        const previewProviders = snapshot.providers.map((item) => (item.id === provider.id ? providerPreview : item));
+        const previewSnapshot = {
+            ...snapshot,
+            providers: previewProviders,
+        };
+
+        let configSchemaDimension = dimensionPass('config_schema_valid');
+        if (errors.some((error) => error.includes('missing') || error.includes('Locality') || error.includes('Unsupported role'))) {
+            configSchemaDimension = dimensionFail('config_schema_invalid', 'Review Provider configuration and schema fields.');
+        } else if (warnings.some((warning) => warning.includes('outside app root') || warning.includes('no endpoint or path configured'))) {
+            configSchemaDimension = dimensionWarn('config_schema_partial', 'Complete Provider connection configuration.');
+        }
+
+        let authenticationDimension = dimensionPass('authentication_valid');
+        if (auth.status === StorageAuthStatus.ERROR || auth.status === StorageAuthStatus.BLOCKED) {
+            authenticationDimension = dimensionFail('authentication_blocked', 'Update Authentication panel credentials and retry Validation.');
+        } else if (auth.status === StorageAuthStatus.UNAUTHENTICATED || auth.status === StorageAuthStatus.EXPIRED) {
+            authenticationDimension = dimensionWarn('authentication_not_ready', 'Authenticate provider credentials and re-run Validation.');
+        }
+
+        let reachabilityDimension = dimensionPass('reachability_reachable');
+        if (health.status === StorageHealthStatus.OFFLINE || health.status === StorageHealthStatus.UNREACHABLE) {
+            reachabilityDimension = dimensionFail('provider_unreachable', 'Verify endpoint/path connectivity and retry Validation.');
+        } else if (health.status === StorageHealthStatus.DEGRADED || health.status === StorageHealthStatus.UNKNOWN) {
+            reachabilityDimension = dimensionWarn('provider_reachability_degraded', 'Run health checks and inspect provider connectivity.');
+        }
+
+        let capabilityDimension = dimensionPass('capability_compatible');
+        if (
+            providerPreview.supportedRoles.includes(StorageRole.VECTOR_INDEX)
+            && !(
+                providerPreview.capabilities.includes(StorageCapability.VECTOR_SEARCH)
+                || providerPreview.capabilities.includes(StorageCapability.VECTOR_INDEXING)
+            )
+        ) {
+            capabilityDimension = dimensionFail('vector_capability_missing', 'Enable vector capability or remove vector_index Role support.');
+        } else if (
+            providerPreview.supportedRoles.includes(StorageRole.CANONICAL_MEMORY)
+            && !providerPreview.capabilities.includes(StorageCapability.STRUCTURED_RECORDS)
+        ) {
+            capabilityDimension = dimensionFail('canonical_capability_missing', 'Canonical Provider must support structured records capability.');
+        }
+
+        const roleEligibilityFailures: string[] = [];
+        for (const role of providerPreview.supportedRoles) {
+            if (role === StorageRole.VECTOR_INDEX
+                && !(
+                    providerPreview.capabilities.includes(StorageCapability.VECTOR_SEARCH)
+                    || providerPreview.capabilities.includes(StorageCapability.VECTOR_INDEXING)
+                )
+            ) {
+                roleEligibilityFailures.push(`role_ineligible:${role}:missing_vector_capability`);
+            }
+            if (role === StorageRole.CANONICAL_MEMORY && !profile.canonicalEligible) {
+                roleEligibilityFailures.push(`role_ineligible:${role}:canonical_restricted`);
+            }
+        }
+        if (!providerPreview.enabled) {
+            roleEligibilityFailures.push('provider_disabled');
+        }
+        if (health.status === StorageHealthStatus.OFFLINE || health.status === StorageHealthStatus.UNREACHABLE) {
+            roleEligibilityFailures.push('provider_unreachable');
+        }
+        if (
+            providerPreview.auth.mode !== StorageAuthMode.NONE
+            && auth.status !== StorageAuthStatus.AUTHENTICATED
+            && auth.status !== StorageAuthStatus.NOT_REQUIRED
+        ) {
+            roleEligibilityFailures.push('provider_unauthorized');
+        }
+        let roleEligibilityDimension = dimensionPass('role_eligible');
+        if (roleEligibilityFailures.length > 0) {
+            roleEligibilityDimension = dimensionFail(
+                'role_not_eligible',
+                'Resolve eligibility blockers before assigning Roles.',
+                { blockers: roleEligibilityFailures },
+            );
+        }
+
+        const policyChecks = providerPreview.assignedRoles.map((role) => this.policy.validateRoleAssignmentEligibility(previewSnapshot, providerPreview.id, role));
+        const policyBlocking = policyChecks.find((result) => !result.ok && result.code !== StorageOperationErrorCode.ROLE_ALREADY_ASSIGNED);
+        let policyComplianceDimension = dimensionPass('policy_compliant');
+        if (policyBlocking) {
+            policyComplianceDimension = dimensionFail(
+                policyBlocking.code ?? 'policy_blocked',
+                'Adjust provider state or reassignment policy before continuing.',
+                policyBlocking.details,
+            );
+        } else if (providerPreview.assignedRoles.length === 0) {
+            policyComplianceDimension = dimensionWarn('policy_not_evaluated', 'Assign a Role to evaluate policy compliance for active assignment paths.');
+        }
+
+        const canonicalAssignments = previewSnapshot.assignments.filter((assignment) => assignment.role === StorageRole.CANONICAL_MEMORY);
+        let authorityConflictsDimension = dimensionPass('authority_consistent');
+        if (canonicalAssignments.length > 1) {
+            authorityConflictsDimension = dimensionFail(
+                'canonical_conflict',
+                'Resolve canonical Role conflict to a single Provider assignment.',
+                { canonicalAssignments: canonicalAssignments.map((assignment) => assignment.providerId) },
+            );
+        } else if (canonicalAssignments.length === 0) {
+            authorityConflictsDimension = dimensionWarn('canonical_unassigned', 'Assign canonical_memory Role to one eligible Provider.');
+        }
+
+        let bootstrapConsistencyDimension = dimensionPass('bootstrap_consistent');
+        if (
+            providerPreview.registrationMode === 'system'
+            && providerPreview.kind === StorageProviderKind.FILESYSTEM
+            && !providerPreview.connection.workspaceRelativePath
+        ) {
+            bootstrapConsistencyDimension = dimensionWarn(
+                'bootstrap_relative_path_missing',
+                'Re-run Bootstrap or set workspaceRelativePath for deterministic portability.',
+            );
+        } else if (
+            providerPreview.registrationMode === StorageRegistrationMode.AUTO_DISCOVERED
+            && !providerPreview.connection.endpoint
+            && !providerPreview.connection.path
+        ) {
+            bootstrapConsistencyDimension = dimensionWarn(
+                'bootstrap_detection_incomplete',
+                'Hydrate Registry again to complete detected Provider connection details.',
+            );
+        }
+
+        let recoverabilityDimension = dimensionPass('recoverable_state');
+        if (providerPreview.kind === StorageProviderKind.UNKNOWN) {
+            recoverabilityDimension = dimensionFail('recoverability_unknown_provider_kind', 'Set a supported Provider kind and re-validate.');
+        } else if (
+            reachabilityDimension.status !== StorageValidationDimensionStatus.PASS
+            || authenticationDimension.status !== StorageValidationDimensionStatus.PASS
+            || policyComplianceDimension.status !== StorageValidationDimensionStatus.PASS
+        ) {
+            recoverabilityDimension = dimensionWarn(
+                'recoverability_actionable',
+                'Apply remediation hints for failed dimensions, then re-run Validation.',
+            );
+        }
+
+        const dimensions: Record<StorageValidationDimension, StorageValidationDimensionResult> = {
+            [StorageValidationDimension.CONFIG_SCHEMA]: configSchemaDimension,
+            [StorageValidationDimension.AUTHENTICATION]: authenticationDimension,
+            [StorageValidationDimension.REACHABILITY]: reachabilityDimension,
+            [StorageValidationDimension.CAPABILITY_COMPATIBILITY]: capabilityDimension,
+            [StorageValidationDimension.ROLE_ELIGIBILITY]: roleEligibilityDimension,
+            [StorageValidationDimension.POLICY_COMPLIANCE]: policyComplianceDimension,
+            [StorageValidationDimension.AUTHORITY_CONFLICTS]: authorityConflictsDimension,
+            [StorageValidationDimension.BOOTSTRAP_MIGRATION_CONSISTENCY]: bootstrapConsistencyDimension,
+            [StorageValidationDimension.RECOVERABILITY]: recoverabilityDimension,
+        };
+        const layeredValidation: StorageLayeredValidationResult = {
+            overallStatus: summarizeOverallStatus(dimensions),
+            dimensions,
+            classification: {
+                validButNotEligible: configSchemaDimension.status === StorageValidationDimensionStatus.PASS
+                    && roleEligibilityDimension.status !== StorageValidationDimensionStatus.PASS,
+                reachableButUnauthorized: (reachabilityDimension.status === StorageValidationDimensionStatus.PASS
+                    || reachabilityDimension.status === StorageValidationDimensionStatus.WARN)
+                    && authenticationDimension.status === StorageValidationDimensionStatus.FAIL,
+                configuredButPolicyBlocked: configSchemaDimension.status === StorageValidationDimensionStatus.PASS
+                    && policyComplianceDimension.status === StorageValidationDimensionStatus.FAIL,
+                canonicalConflictState: authorityConflictsDimension.reasonCode === 'canonical_conflict',
+            },
+        };
+
         const ok = errors.length === 0
             && auth.status !== StorageAuthStatus.ERROR
             && health.status !== StorageHealthStatus.OFFLINE
@@ -400,6 +627,7 @@ export class StorageValidationService {
                 detectedCapabilities,
                 warnings,
                 errors,
+                layeredValidation,
             },
         };
     }

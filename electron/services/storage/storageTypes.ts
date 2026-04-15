@@ -174,6 +174,45 @@ export interface StorageProviderValidationResult {
     detectedCapabilities: StorageCapability[];
     warnings: string[];
     errors: string[];
+    layeredValidation: StorageLayeredValidationResult;
+}
+
+export enum StorageValidationDimensionStatus {
+    PASS = 'pass',
+    FAIL = 'fail',
+    WARN = 'warn',
+}
+
+export enum StorageValidationDimension {
+    CONFIG_SCHEMA = 'config_schema',
+    AUTHENTICATION = 'authentication',
+    REACHABILITY = 'reachability',
+    CAPABILITY_COMPATIBILITY = 'capability_compatibility',
+    ROLE_ELIGIBILITY = 'role_eligibility',
+    POLICY_COMPLIANCE = 'policy_compliance',
+    AUTHORITY_CONFLICTS = 'authority_conflicts',
+    BOOTSTRAP_MIGRATION_CONSISTENCY = 'bootstrap_migration_consistency',
+    RECOVERABILITY = 'recoverability',
+}
+
+export interface StorageValidationDimensionResult {
+    status: StorageValidationDimensionStatus;
+    reasonCode: string;
+    remediationHint?: string;
+    details?: Record<string, unknown>;
+}
+
+export interface StorageValidationClassification {
+    validButNotEligible: boolean;
+    reachableButUnauthorized: boolean;
+    configuredButPolicyBlocked: boolean;
+    canonicalConflictState: boolean;
+}
+
+export interface StorageLayeredValidationResult {
+    overallStatus: StorageValidationDimensionStatus;
+    dimensions: Record<StorageValidationDimension, StorageValidationDimensionResult>;
+    classification: StorageValidationClassification;
 }
 
 export interface StorageDetectionResult {

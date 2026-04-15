@@ -179,7 +179,7 @@ const buildStorageSettingsScreen = () => {
                                         <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>
                                             capabilities: {provider.capabilities.length > 0 ? provider.capabilities.join(', ') : 'none'}
                                         </div>
-                                        <div style={{ fontSize: 11, color: provider.validation.status === 'failed' ? '#ff9e9e' : (provider.validation.status === 'passed' ? '#9be7a0' : '#bbb'), marginTop: 2 }}>
+                                        <div style={{ fontSize: 11, color: provider.validation.status === 'failed' ? '#ff9e9e' : (provider.validation.status === 'warn' ? '#ffd08a' : (provider.validation.status === 'passed' ? '#9be7a0' : '#bbb')), marginTop: 2 }}>
                                             validation: {provider.validation.status}
                                             {provider.validation.errors.length > 0 ? ` | errors: ${provider.validation.errors.join(' | ')}` : ''}
                                             {provider.validation.warnings.length > 0 ? ` | warnings: ${provider.validation.warnings.join(' | ')}` : ''}
@@ -247,6 +247,11 @@ const buildStorageSettingsScreen = () => {
                                                 Errors: {result.errors.join(' | ')}
                                             </div>
                                         )}
+                                        <div style={{ fontSize: 11, color: '#bbb', marginTop: 4 }}>
+                                            Validation Layers: {Object.entries(result.layeredValidation.dimensions)
+                                                .map(([dimension, detail]) => `${dimension}=${detail.status}(${detail.reasonCode})`)
+                                                .join(' | ')}
+                                        </div>
                                     </div>
                                 ))}
                             </div>

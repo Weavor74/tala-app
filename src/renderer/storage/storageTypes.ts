@@ -140,6 +140,40 @@ export interface StorageProviderValidationResult {
     detectedCapabilities: StorageCapability[];
     warnings: string[];
     errors: string[];
+    layeredValidation: StorageLayeredValidationResult;
+}
+
+export type StorageValidationDimensionStatus = 'pass' | 'fail' | 'warn';
+
+export type StorageValidationDimension =
+    | 'config_schema'
+    | 'authentication'
+    | 'reachability'
+    | 'capability_compatibility'
+    | 'role_eligibility'
+    | 'policy_compliance'
+    | 'authority_conflicts'
+    | 'bootstrap_migration_consistency'
+    | 'recoverability';
+
+export interface StorageValidationDimensionResult {
+    status: StorageValidationDimensionStatus;
+    reasonCode: string;
+    remediationHint?: string;
+    details?: Record<string, unknown>;
+}
+
+export interface StorageValidationClassification {
+    validButNotEligible: boolean;
+    reachableButUnauthorized: boolean;
+    configuredButPolicyBlocked: boolean;
+    canonicalConflictState: boolean;
+}
+
+export interface StorageLayeredValidationResult {
+    overallStatus: StorageValidationDimensionStatus;
+    dimensions: Record<StorageValidationDimension, StorageValidationDimensionResult>;
+    classification: StorageValidationClassification;
 }
 
 export interface StorageDetectProvidersResponse {

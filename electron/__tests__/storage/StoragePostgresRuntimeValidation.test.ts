@@ -15,6 +15,7 @@ import {
     StorageProviderKind,
     StorageRegistrationMode,
     StorageRole,
+    StorageValidationDimensionStatus,
 } from '../../services/storage/storageTypes';
 
 let mockDbConfig = {
@@ -124,6 +125,9 @@ describe('StorageValidationService PostgreSQL runtime authority', () => {
         expect(result.health.status).toBe(StorageHealthStatus.HEALTHY);
         expect(result.detectedCapabilities).toContain(StorageCapability.VECTOR_SEARCH);
         expect(result.detectedRolesSupported).toContain(StorageRole.VECTOR_INDEX);
+        expect(result.layeredValidation.dimensions.config_schema.status).toBe(StorageValidationDimensionStatus.PASS);
+        expect(result.layeredValidation.dimensions.authentication.status).toBe(StorageValidationDimensionStatus.PASS);
+        expect(result.layeredValidation.classification.reachableButUnauthorized).toBe(false);
         expect(updated?.auth.status).toBe(StorageAuthStatus.AUTHENTICATED);
         expect(updated?.capabilities).toContain(StorageCapability.VECTOR_SEARCH);
         expect(updated?.supportedRoles).toContain(StorageRole.VECTOR_INDEX);
@@ -189,7 +193,9 @@ describe('StorageValidationService PostgreSQL runtime authority', () => {
 
         expect(result.auth.status).toBe(StorageAuthStatus.UNAUTHENTICATED);
         expect(result.health.status).toBe(StorageHealthStatus.DEGRADED);
-        expect(result.warnings.some((item) => item.includes('does not match active canonical DB target'))).toBe(true);
+        expect(result.warnings.some((item) => item.toLowerCase().includes('does not match the active canonical db target'))).toBe(true);
+        expect(result.layeredValidation.classification.reachableButUnauthorized).toBe(false);
+        expect(result.layeredValidation.dimensions.authentication.status).toBe(StorageValidationDimensionStatus.WARN);
     });
 
     it('pgvector absent -> PostgreSQL remains canonical-capable but not vector_index-capable', async () => {

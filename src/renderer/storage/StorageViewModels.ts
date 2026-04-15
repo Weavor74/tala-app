@@ -52,7 +52,7 @@ export type StorageProviderOrigin = 'explicit_registry' | 'bootstrapped_legacy' 
 
 export type StorageProviderReachability = 'reachable' | 'degraded' | 'offline' | 'unknown';
 
-export type StorageProviderValidationStatus = 'not_validated' | 'passed' | 'failed';
+export type StorageProviderValidationStatus = 'not_validated' | 'passed' | 'warn' | 'failed';
 
 export type StorageRoleAssignmentType = 'explicit' | 'bootstrap' | 'inferred' | 'unassigned';
 
@@ -104,6 +104,8 @@ export interface StorageProviderVisibilityViewModel {
         warnings: string[];
         errors: string[];
         checkedAt: string | null;
+        dimensions?: StorageProviderValidationResult['layeredValidation']['dimensions'];
+        classification?: StorageProviderValidationResult['layeredValidation']['classification'];
     };
 }
 
@@ -260,11 +262,15 @@ function mapValidationState(
     }
 
     return {
-        status: result.ok ? 'passed' : 'failed',
+        status: result.layeredValidation.overallStatus === 'fail'
+            ? 'failed'
+            : (result.layeredValidation.overallStatus === 'warn' ? 'warn' : 'passed'),
         ok: result.ok,
         warnings: result.warnings,
         errors: result.errors,
         checkedAt: result.health.checkedAt || result.auth.lastCheckedAt || null,
+        dimensions: result.layeredValidation.dimensions,
+        classification: result.layeredValidation.classification,
     };
 }
 

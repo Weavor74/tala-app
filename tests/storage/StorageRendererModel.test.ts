@@ -18,6 +18,29 @@ import type {
     StorageValidateProviderResponse,
 } from '../../src/renderer/storage/storageTypes';
 
+function makeLayeredValidation(overall: 'pass' | 'warn' | 'fail' = 'pass') {
+    return {
+        overallStatus: overall,
+        dimensions: {
+            config_schema: { status: 'pass', reasonCode: 'config_schema_valid' },
+            authentication: { status: 'pass', reasonCode: 'authentication_valid' },
+            reachability: { status: 'pass', reasonCode: 'reachability_reachable' },
+            capability_compatibility: { status: 'pass', reasonCode: 'capability_compatible' },
+            role_eligibility: { status: 'pass', reasonCode: 'role_eligible' },
+            policy_compliance: { status: 'pass', reasonCode: 'policy_compliant' },
+            authority_conflicts: { status: 'pass', reasonCode: 'authority_consistent' },
+            bootstrap_migration_consistency: { status: 'pass', reasonCode: 'bootstrap_consistent' },
+            recoverability: { status: overall === 'fail' ? 'warn' : 'pass', reasonCode: 'recoverable_state' },
+        },
+        classification: {
+            validButNotEligible: false,
+            reachableButUnauthorized: false,
+            configuredButPolicyBlocked: false,
+            canonicalConflictState: false,
+        },
+    };
+}
+
 function makeSnapshot(overrides: Partial<StorageRegistrySnapshot> = {}): StorageRegistrySnapshot {
     return {
         version: 1,
@@ -47,6 +70,7 @@ function makeBridge(overrides: Partial<StorageBridge>): StorageBridge {
                 detectedCapabilities: [],
                 warnings: [],
                 errors: [],
+                layeredValidation: makeLayeredValidation(),
             },
             snapshot: emptySnapshot,
         })),
@@ -134,6 +158,7 @@ describe('Storage renderer model', () => {
                 detectedCapabilities: ['blob_storage'],
                 warnings: [],
                 errors: [],
+                layeredValidation: makeLayeredValidation(),
             },
             snapshot: validatedSnapshot,
         };
@@ -214,6 +239,7 @@ describe('Storage renderer model', () => {
                     detectedCapabilities: ['structured_records', 'document_storage'],
                     warnings: [],
                     errors: [],
+                    layeredValidation: makeLayeredValidation(),
                 },
                 snapshot: providerSnapshot,
             })),

@@ -432,6 +432,17 @@ export interface StorageProviderDiagnostics {
         status: StorageValidationStatus;
         warnings: string[];
         errors: string[];
+        dimensions?: Record<string, {
+            status: StorageValidationStatus;
+            reasonCode: string;
+            remediationHint?: string;
+        }>;
+        classification?: {
+            validButNotEligible: boolean;
+            reachableButUnauthorized: boolean;
+            configuredButPolicyBlocked: boolean;
+            canonicalConflictState: boolean;
+        };
     };
 }
 
