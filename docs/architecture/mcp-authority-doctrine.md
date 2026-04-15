@@ -37,6 +37,7 @@ Tala alone owns:
 ## Runtime Enforcement Surface
 - `electron/services/mcp/McpAuthorityService.ts` is the MCP host-control authority seam.
 - `electron/services/mcp/McpProviderTemplate.ts` provides canonical template builders, validation, normalization, exposure shaping, and diagnostics redaction helpers that feed authority.
+- `electron/services/McpService.ts` provides governed runtime transports (`stdio`, `websocket`, `http` Streamable HTTP) consumed through authority activation.
 - `ToolService.refreshMcpTools()` exposes only authority-approved MCP capabilities.
 - `IpcRouter` routes MCP registration and activation through authority APIs.
 - `RuntimeDiagnosticsAggregator` consumes authority inventory as canonical MCP status truth.

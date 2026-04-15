@@ -225,6 +225,8 @@ export interface McpServiceDiagnostics {
         resources: number;
         prompts: number;
     };
+    /** Runtime transport streaming support status for this provider. */
+    streamingSupportStatus?: 'not_applicable' | 'request_response' | 'sse_limited' | 'sse_enabled' | 'unknown';
 }
 
 // ─── MCP inventory diagnostics ────────────────────────────────────────────────

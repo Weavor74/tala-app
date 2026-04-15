@@ -18,6 +18,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
@@ -74,7 +75,7 @@ export interface McpServiceHealth {
  */
 interface Connection {
     client: Client;
-    transport: StdioClientTransport | WebSocketClientTransport;
+    transport: StdioClientTransport | WebSocketClientTransport | StreamableHTTPClientTransport;
     /** The subprocess instance (stdio only). */
     process?: ChildProcess;
     config: McpServerConfig;
@@ -93,12 +94,13 @@ export class McpService {
     private connections: Map<string, Connection> = new Map();
     /** The path to the Python executable, used to replace 'python' in stdio commands. */
     private pythonPath: string | null = null;
-    private capabilityCache: Map<string, { tools: any[], resources: any[], timestamp: number }> = new Map();
+    private capabilityCache: Map<string, { tools: any[], resources: any[], prompts: any[], timestamp: number }> = new Map();
     private static readonly CAPABILITY_CACHE_TTL_MS = 600000; // 10 minutes
 
     private systemService: any = null;
     private healthInterval: ReturnType<typeof setInterval> | null = null;
     private onRecovery: (() => void) | null = null;
+    private lastConnectionError: Map<string, string> = new Map();
 
     constructor(systemService?: any) {
         this.systemService = systemService;
@@ -209,6 +211,42 @@ export class McpService {
             } else if (config.type === 'websocket') {
                 if (!config.url) throw new Error('URL required for websocket');
                 transport = new WebSocketClientTransport(new URL(config.url));
+            } else if (config.type === 'http') {
+                const endpoint = config.baseUrl || config.url;
+                if (!endpoint) throw new Error('baseUrl required for http');
+                const headers: Record<string, string> = { ...(config.headers || {}) };
+                if (config.authToken && !headers.authorization) {
+                    headers.authorization = `Bearer ${config.authToken}`;
+                }
+                const timeoutMs = Number.isFinite(config.timeoutMs) ? Math.max(250, Number(config.timeoutMs)) : 15_000;
+                const fetchWithTimeout = async (input: RequestInfo | URL, init?: RequestInit) => {
+                    const controller = new AbortController();
+                    const onAbort = () => {
+                        controller.abort((init?.signal as any)?.reason || new Error('request aborted'));
+                    };
+                    if (init?.signal) {
+                        if (init.signal.aborted) {
+                            onAbort();
+                        } else {
+                            init.signal.addEventListener('abort', onAbort, { once: true });
+                        }
+                    }
+                    const timeout = setTimeout(() => {
+                        controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+                    }, timeoutMs);
+                    try {
+                        return await fetch(input, { ...init, signal: controller.signal });
+                    } finally {
+                        clearTimeout(timeout);
+                        if (init?.signal) {
+                            init.signal.removeEventListener('abort', onAbort);
+                        }
+                    }
+                };
+                transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+                    requestInit: { headers },
+                    fetch: fetchWithTimeout as any,
+                });
             } else {
                 throw new Error(`Unknown type: ${config.type}`);
             }
@@ -231,6 +269,7 @@ export class McpService {
                 retryCount: 0,
                 lastRetryTime: Date.now()
             });
+            this.lastConnectionError.delete(config.id);
 
             auditLogger.info('mcp_connect_ok', 'McpService', {
                 serverId: config.id,
@@ -243,6 +282,7 @@ export class McpService {
             return true;
 
         } catch (e: any) {
+            this.lastConnectionError.set(config.id, String(e?.message || e));
             auditLogger.error('mcp_connect_fail', 'McpService', {
                 serverId: config.id,
                 name: config.name,
@@ -264,6 +304,11 @@ export class McpService {
 
             return false;
         }
+    }
+
+    /** Returns the most recent connection error message for a server, if any. */
+    public getLastConnectionError(serverId: string): string | undefined {
+        return this.lastConnectionError.get(serverId);
     }
 
     /**
@@ -334,7 +379,7 @@ export class McpService {
      */
     public async getCapabilities(id: string, reason: string = 'manual') {
         const conn = this.connections.get(id);
-        if (!conn || conn.state === ServerState.DEGRADED) return { tools: [], resources: [] };
+        if (!conn || conn.state === ServerState.DEGRADED) return { tools: [], resources: [], prompts: [] };
 
         const now = Date.now();
         const cached = this.capabilityCache.get(id);
@@ -345,9 +390,10 @@ export class McpService {
         }
 
         console.log(`[McpService] list_tools reason=${reason} server=${id}`);
-        const result: { tools: any[], resources: any[], timestamp: number, error?: string } = {
+        const result: { tools: any[], resources: any[], prompts: any[], timestamp: number, error?: string } = {
             tools: [],
             resources: [],
+            prompts: [],
             timestamp: now
         };
 
@@ -365,6 +411,16 @@ export class McpService {
         } catch (e: any) {
             if (e.code !== -32601) {
                 console.error(`[McpService] Error fetching resources for ${id}:`, e);
+            }
+        }
+        try {
+            if (typeof (conn.client as any).listPrompts === 'function') {
+                const prompts = await (conn.client as any).listPrompts();
+                result.prompts = prompts?.prompts || [];
+            }
+        } catch (e: any) {
+            if (e.code !== -32601) {
+                console.error(`[McpService] Error fetching prompts for ${id}:`, e);
             }
         }
 

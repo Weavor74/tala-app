@@ -3,6 +3,7 @@
 ## What MCP Means In Tala
 - MCP servers are external capability providers.
 - Tala is the host authority that decides registration, activation, approval, and exposure.
+- Remote MCP providers are supported through governed transports (`http` Streamable HTTP and `websocket`).
 
 ## Why Configured Is Not Approved
 - A server can be configured but still blocked or degraded.
@@ -42,6 +43,11 @@ createHttpMcpProviderTemplate({
 
 Both templates must be submitted through `mcp:registerServer` and activated by authority. Template helpers reduce drift but never bypass policy or lifecycle gates.
 
+## Remote Activation Truth
+- `http` activation performs a real runtime Streamable HTTP client connect + handshake through authority.
+- `configured` never implies `active`; activation can still become `degraded` or `blocked_by_policy`.
+- `streamingSupportStatus` is exposed in diagnostics (`sse_limited` for current HTTP runtime posture).
+
 ## Diagnosing Degraded States
 - Use `diagnostics:getMcpStatus` or `mcp:getRegistrySnapshot`.
 - Inspect per-server classification and stable reason codes such as:
@@ -52,6 +58,8 @@ Both templates must be submitted through `mcp:registerServer` and activated by a
   - `mcp_capability_quarantined`
   - `mcp_policy_blocked`
   - `mcp_stdio_stream_corrupted`
+  - `mcp_request_timed_out`
+  - `mcp_server_unhealthy`
   - `mcp_registration_conflict`
   - `mcp_transport_invalid`
 

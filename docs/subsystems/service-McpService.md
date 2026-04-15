@@ -9,6 +9,7 @@ McpService - Protocol / Tool Infrastructure  This service manages the lifecycl
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
@@ -53,7 +54,7 @@ export interface McpServiceHealth {
 /** Represents an active connection to a single MCP (Model Context Protocol) server. Each connection wraps the MCP SDK `Client` instance along with its transport layer and the original configuration that was used to establish it./
 interface Connection {
     client: Client;
-    transport: StdioClientTransport | WebSocketClientTransport;
+    transport: StdioClientTransport | WebSocketClientTransport | StreamableHTTPClientTransport;
     /** The subprocess instance (stdio only). */
     process?: ChildProcess;
     config: McpServerConfig;
@@ -81,6 +82,11 @@ Establishes a connection to an MCP server using the provided configuration.  *
 
 **Arguments**: `config: McpServerConfig`
 **Returns**: `Promise<boolean>`
+
+---
+#### `getLastConnectionError`
+**Arguments**: `serverId: string`
+**Returns**: `string | undefined`
 
 ---
 #### `disconnect`

@@ -61,8 +61,15 @@ function emptyClassification(now: () => number): McpServerClassification {
 function classifyErrorReason(error: unknown, transport: 'stdio' | 'websocket' | 'http'): McpAuthorityReasonCode {
     const message = String((error as any)?.message ?? error ?? '').toLowerCase();
     if (message.includes('timeout') || message.includes('timed out')) return 'mcp_request_timed_out';
-    if (message.includes('auth') || message.includes('unauthorized') || message.includes('forbidden')) return 'mcp_auth_failed';
+    if (
+        message.includes('auth')
+        || message.includes('unauthorized')
+        || message.includes('forbidden')
+        || message.includes('401')
+        || message.includes('403')
+    ) return 'mcp_auth_failed';
     if (message.includes('version') || message.includes('protocol') || message.includes('handshake')) return 'mcp_protocol_mismatch';
+    if (message.includes('5') && message.includes('http')) return 'mcp_server_unhealthy';
     if (transport === 'stdio' && (message.includes('json') || message.includes('parse') || message.includes('stdout'))) return 'mcp_stdio_stream_corrupted';
     return 'mcp_unreachable';
 }
@@ -145,6 +152,11 @@ export class McpAuthorityService {
                 kind: cfg.type,
                 providerKind: providerRecord?.providerKind,
                 templateKind: providerRecord?.templateKind,
+                streamingSupportStatus: providerRecord?.transportType === 'http'
+                    ? 'sse_limited'
+                    : providerRecord?.transportType === 'websocket'
+                        ? 'request_response'
+                        : 'not_applicable',
                 enabled: cfg.enabled,
                 status: c.status,
                 degraded: c.degraded,
@@ -162,6 +174,11 @@ export class McpAuthorityService {
                     providerDiagnostics: providerRecord ? redactProviderDiagnostics(providerRecord) : undefined,
                     approvedCapabilityCounts: exposure?.approvedCounts ?? { tools: 0, resources: 0, prompts: 0 },
                     quarantinedCapabilityCounts: exposure?.quarantinedCounts ?? { tools: 0, resources: 0, prompts: 0 },
+                    streamingSupportStatus: providerRecord?.transportType === 'http'
+                        ? 'sse_limited'
+                        : providerRecord?.transportType === 'websocket'
+                            ? 'request_response'
+                            : 'not_applicable',
                 },
             });
         }
@@ -294,42 +311,71 @@ export class McpAuthorityService {
             return classifyActivationResult({ serverId, state: 'registered', phases, registrationAccepted: true, activationAttempted: false, transportConnected: false, authSatisfied: false, protocolCompatible: false, capabilityDeclarationsValid: false, policyApproved: false, active: false, degraded: false, blocked: false });
         }
 
-        if (cfg.type === 'http') {
-            c.reachable = false;
-            c.degraded = true;
-            c.reasonCodes = ['mcp_transport_not_supported'];
-            c.status = statusFromClassification(c);
-            c.lastEvaluatedAt = nowIso(this.now);
-            this.classification.set(serverId, c);
-            this.activationState.set(serverId, 'degraded');
-            this.approvedCapabilities.delete(serverId);
-            appendPhase(phases, 'handshake_classification', 'failed', this.now, 'mcp_transport_not_supported', 'http runtime connector is not enabled');
-            this.onboardingPhases.set(serverId, phases);
-            return classifyActivationResult({ serverId, state: 'degraded', reasonCode: 'mcp_transport_not_supported', reason: 'http runtime connector is not enabled', phases, registrationAccepted: true, activationAttempted: true, transportConnected: false, authSatisfied: false, protocolCompatible: false, capabilityDeclarationsValid: false, policyApproved: false, active: false, degraded: true, blocked: false });
-        }
-
         this.lifecycleManager.onServiceStarting(serverId);
         try {
             const connected = await this.mcpService.connect(cfg);
             if (!connected) {
+                const connectionError = this.mcpService.getLastConnectionError(serverId) || 'connect_failed';
+                const reasonCode = classifyErrorReason(connectionError, cfg.type);
                 c.reachable = false;
                 c.degraded = true;
-                c.reasonCodes = ['mcp_unreachable'];
+                c.reasonCodes = [reasonCode];
                 c.status = statusFromClassification(c);
                 c.lastEvaluatedAt = nowIso(this.now);
                 this.classification.set(serverId, c);
                 this.activationState.set(serverId, 'degraded');
                 this.lifecycleManager.onServiceUnavailable(serverId, 'connect_failed');
-                appendPhase(phases, 'handshake_classification', 'failed', this.now, 'mcp_unreachable', 'connect_failed');
+                appendPhase(phases, 'handshake_classification', 'failed', this.now, reasonCode, connectionError);
                 this.onboardingPhases.set(serverId, phases);
-                return classifyActivationResult({ serverId, state: 'degraded', reasonCode: 'mcp_unreachable', reason: 'connect_failed', phases, registrationAccepted: true, activationAttempted: true, transportConnected: false, authSatisfied: false, protocolCompatible: false, capabilityDeclarationsValid: false, policyApproved: false, active: false, degraded: true, blocked: false });
+                return classifyActivationResult({ serverId, state: 'degraded', reasonCode, reason: connectionError, phases, registrationAccepted: true, activationAttempted: true, transportConnected: false, authSatisfied: false, protocolCompatible: false, capabilityDeclarationsValid: false, policyApproved: false, active: false, degraded: true, blocked: false });
             }
             c.reachable = true;
             c.protocolCompatible = true;
             c.authenticated = true;
             appendPhase(phases, 'handshake_classification', 'succeeded', this.now);
 
-            const exposure = buildApprovedCapabilityExposure(serverId, await this.mcpService.getCapabilities(serverId, 'connect'), this.now);
+            const capabilityFetch = await this.mcpService.getCapabilities(serverId, 'connect');
+            if ((capabilityFetch as any)?.error) {
+                const rawError = String((capabilityFetch as any).error);
+                const lowered = rawError.toLowerCase();
+                const reasonCode = lowered.includes('inputschema')
+                    || lowered.includes('invalid input')
+                    || lowered.includes('zoderror')
+                    ? 'mcp_capability_invalid'
+                    : classifyErrorReason(rawError, cfg.type);
+                c.capabilityValid = false;
+                c.degraded = true;
+                c.active = false;
+                c.healthy = false;
+                c.reasonCodes = [reasonCode];
+                c.status = statusFromClassification(c);
+                c.lastEvaluatedAt = nowIso(this.now);
+                this.classification.set(serverId, c);
+                this.activationState.set(serverId, 'degraded');
+                this.approvedCapabilities.delete(serverId);
+                this.lifecycleManager.onServiceDegraded(serverId, rawError);
+                appendPhase(phases, 'capability_validation', 'failed', this.now, reasonCode, rawError);
+                this.onboardingPhases.set(serverId, phases);
+                return classifyActivationResult({
+                    serverId,
+                    state: 'degraded',
+                    reasonCode,
+                    reason: rawError,
+                    phases,
+                    registrationAccepted: true,
+                    activationAttempted: true,
+                    transportConnected: true,
+                    authSatisfied: true,
+                    protocolCompatible: true,
+                    capabilityDeclarationsValid: false,
+                    policyApproved: false,
+                    active: false,
+                    degraded: true,
+                    blocked: false,
+                });
+            }
+
+            const exposure = buildApprovedCapabilityExposure(serverId, capabilityFetch, this.now);
             if (exposure.quarantined.length > 0) {
                 c.capabilityValid = false;
                 c.degraded = true;

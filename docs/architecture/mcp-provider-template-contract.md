@@ -16,6 +16,11 @@ Tala standardizes all MCP providers behind one typed onboarding contract so futu
 - `websocket`: remote websocket providers (`url`, optional timeout/protocol expectation)
 - `http`: remote HTTP template contract (`baseUrl`, optional headers/health endpoint/timeout)
 
+## Runtime Transport Status
+- Streamable HTTP: implemented in runtime (`McpService`) and activated through `McpAuthorityService`.
+- WebSocket: implemented in runtime and governed by the same authority path.
+- SSE notifications: supported by SDK transport where server implements them; Tala currently treats HTTP streaming status as `sse_limited` in diagnostics until explicit notification handling is extended.
+
 ## Canonical Onboarding Pipeline
 1. `registration_submission`
 2. `registration_validation`
