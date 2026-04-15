@@ -39,6 +39,17 @@ Rejected or deferred candidates must not be surfaced as Canonical authority data
 - Ambiguous/invalid/inactive legacy records are skipped or quarantined with explicit reasons; they are never silently promoted.
 - Bootstrap produces a machine-usable report with per-item outcomes (`migrated`, `linked_existing`, `skipped`, `quarantined`, `failed`).
 
+## Storage Registry Authority UX Model
+- Settings and diagnostics surfaces expose a `Storage Authority Summary` view model that reports:
+  - canonical runtime authority provider
+  - derived provider set
+  - Storage Registry health state (`healthy`, `degraded`, `conflict`)
+  - bootstrap state (`bootstrapped_legacy`, detected, explicit registry counts)
+  - authority degradation and conflict reasons
+- Provider-level visibility is modeled structurally and includes Provider type, reachability/auth/capability status, assigned Roles, authority class (`canonical` or `derived`), origin (`explicit_registry`, `bootstrapped_legacy`, `detected`), and layered Validation status.
+- Role-level visibility is modeled structurally and includes assigned Provider, assignment type (`explicit`, `bootstrap`, `inferred`, `unassigned`), eligibility reasoning, and blocked alternatives.
+- Assignment explanations are modeled as deterministic records with outcome, reason code, reason summary, blocked alternatives, and actionable next steps so assignment success/failure is inspectable and self-explanatory.
+
 ## Current Rebuild Coverage
 - Executable now:
 - `memory_projections` Hydration for `mem0`, `graph`, and `vector`

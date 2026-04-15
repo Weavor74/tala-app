@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStorageScreenService } from '../../src/renderer/storage/StorageScreenModel';
 import {
+    buildAssignmentFailureExplanation,
+    buildAssignmentSuccessExplanation,
+    buildProviderVisibilityModels,
     buildRoleProviderOptions,
     buildRoleRows,
+    buildRoleVisibilityModels,
+    buildStorageAuthoritySummary,
     mapAuthBadge,
     mapHealthBadge,
     mapLocalityBadge,
@@ -84,6 +89,9 @@ describe('Storage renderer model', () => {
 
         expect(state.snapshot?.providers).toHaveLength(1);
         expect(rows.find((row) => row.role === 'canonical_memory')?.assignedProviderName).toBe('Postgres Main');
+        expect(state.authoritySummary?.canonicalRuntimeAuthority.providerId).toBe('pg-main');
+        expect(state.providerVisibilityById['pg-main']?.authorityClass).toBe('canonical');
+        expect(state.roleVisibility.find((item) => item.role === 'canonical_memory')?.assignmentType).toBe('explicit');
     });
 
     it('providers render with correct badges and states', () => {
@@ -253,5 +261,96 @@ describe('Storage renderer model', () => {
 
         expect(optionsForArtifactStore.map((provider) => provider.id)).toEqual(['manual-provider']);
         expect(optionsForCanonical).toEqual([]);
+    });
+
+    it('builds authority, provider, and role visibility models for diagnostics-friendly inspection', () => {
+        const snapshot = makeSnapshot({
+            providers: [
+                {
+                    id: 'pg-main',
+                    name: 'Postgres Main',
+                    kind: 'postgresql',
+                    locality: 'local',
+                    registrationMode: 'manual',
+                    supportedRoles: ['canonical_memory', 'document_store'],
+                    capabilities: ['structured_records', 'document_storage'],
+                    enabled: true,
+                    connection: { endpoint: 'localhost:5432', database: 'tala' },
+                    auth: { mode: 'basic', status: 'authenticated', lastCheckedAt: '2026-04-14T12:00:00.000Z', reason: null },
+                    health: { status: 'healthy', checkedAt: '2026-04-14T12:00:00.000Z', reason: null },
+                    assignedRoles: ['canonical_memory'],
+                    createdAt: '2026-04-14T12:00:00.000Z',
+                    updatedAt: '2026-04-14T12:00:00.000Z',
+                },
+                {
+                    id: 'fs-blob',
+                    name: 'Filesystem Blob',
+                    kind: 'filesystem',
+                    locality: 'local',
+                    registrationMode: 'auto_discovered',
+                    supportedRoles: ['blob_store', 'artifact_store'],
+                    capabilities: ['blob_storage', 'artifact_storage'],
+                    enabled: true,
+                    connection: { path: 'data/storage' },
+                    auth: { mode: 'none', status: 'not_required', lastCheckedAt: null, reason: null },
+                    health: { status: 'degraded', checkedAt: '2026-04-14T12:00:00.000Z', reason: 'latency' },
+                    assignedRoles: ['blob_store'],
+                    createdAt: '2026-04-14T12:00:00.000Z',
+                    updatedAt: '2026-04-14T12:00:00.000Z',
+                },
+            ],
+            assignments: [
+                { role: 'canonical_memory', providerId: 'pg-main', assignedAt: '2026-04-14T12:00:00.000Z' },
+                { role: 'blob_store', providerId: 'fs-blob', assignedAt: '2026-04-14T12:00:00.000Z' },
+            ],
+        });
+
+        const authority = buildStorageAuthoritySummary(snapshot);
+        const providers = buildProviderVisibilityModels(snapshot, {});
+        const roles = buildRoleVisibilityModels(snapshot);
+
+        expect(authority.canonicalRuntimeAuthority.providerId).toBe('pg-main');
+        expect(authority.derivedProviders.map((item) => item.providerId)).toContain('fs-blob');
+        expect(providers['pg-main']?.authorityClass).toBe('canonical');
+        expect(providers['fs-blob']?.origin).toBe('detected');
+        expect(roles.find((item) => item.role === 'canonical_memory')?.assignmentType).toBe('explicit');
+    });
+
+    it('produces assignment explanation models for success and failure', () => {
+        const snapshot = makeSnapshot({
+            providers: [
+                {
+                    id: 'pg-main',
+                    name: 'Postgres Main',
+                    kind: 'postgresql',
+                    locality: 'local',
+                    registrationMode: 'manual',
+                    supportedRoles: ['canonical_memory'],
+                    capabilities: ['structured_records'],
+                    enabled: true,
+                    connection: { endpoint: 'localhost:5432', database: 'tala' },
+                    auth: { mode: 'basic', status: 'authenticated', lastCheckedAt: null, reason: null },
+                    health: { status: 'healthy', checkedAt: null, reason: null },
+                    assignedRoles: ['canonical_memory'],
+                    createdAt: '2026-04-14T12:00:00.000Z',
+                    updatedAt: '2026-04-14T12:00:00.000Z',
+                },
+            ],
+            assignments: [{ role: 'canonical_memory', providerId: 'pg-main', assignedAt: '2026-04-14T12:00:00.000Z' }],
+        });
+
+        const success = buildAssignmentSuccessExplanation(snapshot, 'pg-main', 'canonical_memory');
+        const failure = buildAssignmentFailureExplanation(
+            snapshot,
+            'pg-main',
+            'canonical_memory',
+            { code: 'provider_disabled', message: 'Provider disabled.' },
+        );
+
+        expect(success.outcome).toBe('succeeded');
+        expect(success.nextSteps).toContain('run_validation');
+        expect(failure.outcome).toBe('failed');
+        expect(failure.reasonCode).toBe('provider_disabled');
+        expect(failure.nextSteps).toContain('enable_provider');
     });
 });

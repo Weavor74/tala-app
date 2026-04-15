@@ -391,6 +391,75 @@ export interface ProviderHealthScore {
     effectivePriority: number;
 }
 
+export type StorageAuthorityClass = 'canonical' | 'derived';
+
+export type StorageAssignmentType = 'explicit' | 'bootstrap' | 'inferred' | 'unassigned';
+
+export type StorageProviderOrigin = 'explicit_registry' | 'bootstrapped_legacy' | 'detected';
+
+export type StorageValidationStatus = 'not_validated' | 'passed' | 'failed';
+
+export interface StorageAuthoritySummaryDiagnostics {
+    canonicalRuntimeAuthorityProviderId: string | null;
+    derivedProviderIds: string[];
+    registryHealth: 'healthy' | 'degraded' | 'conflict';
+    bootstrapState: {
+        hasBootstrapImports: boolean;
+        bootstrappedProviderCount: number;
+        detectedProviderCount: number;
+        explicitRegistryProviderCount: number;
+    };
+    authorityState: {
+        degraded: boolean;
+        conflict: boolean;
+        reasons: string[];
+    };
+}
+
+export interface StorageProviderDiagnostics {
+    providerId: string;
+    providerType: string;
+    authorityClass: StorageAuthorityClass;
+    origin: StorageProviderOrigin;
+    status: {
+        reachable: 'reachable' | 'degraded' | 'offline' | 'unknown';
+        auth: string;
+        capable: boolean;
+    };
+    capabilities: string[];
+    assignedRoles: string[];
+    validation: {
+        status: StorageValidationStatus;
+        warnings: string[];
+        errors: string[];
+    };
+}
+
+export interface StorageRoleDiagnostics {
+    role: string;
+    assignedProviderId: string | null;
+    assignmentType: StorageAssignmentType;
+    eligibilityReasoning: string[];
+    blockedAlternativeProviderIds: string[];
+}
+
+export interface StorageAssignmentExplanationDiagnostics {
+    role: string;
+    providerId: string | null;
+    outcome: 'succeeded' | 'failed';
+    reasonCode: string;
+    reasonSummary: string;
+    nextSteps: string[];
+    timestamp: string;
+}
+
+export interface StorageDiagnosticsSnapshot {
+    authoritySummary: StorageAuthoritySummaryDiagnostics;
+    providers: StorageProviderDiagnostics[];
+    roles: StorageRoleDiagnostics[];
+    lastAssignmentExplanation?: StorageAssignmentExplanationDiagnostics;
+}
+
 // ─── Unified runtime diagnostics snapshot ────────────────────────────────────
 
 /**
@@ -429,6 +498,8 @@ export interface RuntimeDiagnosticsSnapshot {
     recentMcpRestarts: Array<{ serviceId: string; timestamp: string; reason: string }>;
     /** Canonical operator-facing system health snapshot (Phase D). */
     systemHealth: SystemHealthSnapshot;
+    /** Optional Storage Registry diagnostics model for settings and diagnostics panels. */
+    storage?: StorageDiagnosticsSnapshot;
     /** Normalized cognitive diagnostics for the most recent cognitive turn. */
     cognitive?: CognitiveDiagnosticsSnapshot;
 }

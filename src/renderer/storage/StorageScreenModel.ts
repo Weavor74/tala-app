@@ -6,6 +6,17 @@ import type {
     StorageRegistrySnapshot,
     StorageRole,
 } from './storageTypes';
+import {
+    buildAssignmentFailureExplanation,
+    buildAssignmentSuccessExplanation,
+    buildProviderVisibilityModels,
+    buildRoleVisibilityModels,
+    buildStorageAuthoritySummary,
+    type StorageAssignmentExplanationViewModel,
+    type StorageAuthoritySummaryViewModel,
+    type StorageProviderVisibilityViewModel,
+    type StorageRoleVisibilityViewModel,
+} from './StorageViewModels';
 
 export interface StorageScreenState {
     snapshot: StorageRegistrySnapshot | null;
@@ -13,6 +24,10 @@ export interface StorageScreenState {
     actionMessage: string;
     lastError: StorageIpcErrorPayload | null;
     validationByProviderId: Record<string, StorageProviderValidationResult>;
+    authoritySummary: StorageAuthoritySummaryViewModel | null;
+    providerVisibilityById: Record<string, StorageProviderVisibilityViewModel>;
+    roleVisibility: StorageRoleVisibilityViewModel[];
+    lastAssignmentExplanation: StorageAssignmentExplanationViewModel | null;
 }
 
 function buildInitialState(): StorageScreenState {
@@ -22,6 +37,10 @@ function buildInitialState(): StorageScreenState {
         actionMessage: '',
         lastError: null,
         validationByProviderId: {},
+        authoritySummary: null,
+        providerVisibilityById: {},
+        roleVisibility: [],
+        lastAssignmentExplanation: null,
     };
 }
 
@@ -49,7 +68,11 @@ export class StorageScreenService {
         this.state = { ...this.state, loading: true, actionMessage: '', lastError: null };
         try {
             const snapshot = await this.bridge.getSnapshot();
-            this.state = { ...this.state, snapshot, loading: false };
+            this.state = this.hydrateState({
+                ...this.state,
+                snapshot,
+                loading: false,
+            });
             return this.state;
         } catch (error) {
             this.state = {
@@ -65,12 +88,12 @@ export class StorageScreenService {
         this.state = { ...this.state, loading: true, actionMessage: '', lastError: null };
         try {
             const response = await this.bridge.detectProviders();
-            this.state = {
+            this.state = this.hydrateState({
                 ...this.state,
                 loading: false,
                 snapshot: response.snapshot,
                 actionMessage: `Hydration detected ${response.detectedProviders.length} Provider(s).`,
-            };
+            });
             return this.state;
         } catch (error) {
             this.state = {
@@ -90,7 +113,7 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
@@ -99,7 +122,7 @@ export class StorageScreenService {
                 ...this.state.validationByProviderId,
                 [providerId]: response.result,
             },
-        };
+        });
         return this.state;
     }
 
@@ -111,12 +134,12 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Registered Provider ${response.changed.name}.`,
-        };
+        });
         return this.state;
     }
 
@@ -128,12 +151,12 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Removed Provider ${providerId} from the Storage Registry.`,
-        };
+        });
         return this.state;
     }
 
@@ -145,12 +168,12 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `${enabled ? 'Enabled' : 'Disabled'} Provider ${providerId}.`,
-        };
+        });
         return this.state;
     }
 
@@ -158,16 +181,25 @@ export class StorageScreenService {
         this.state = { ...this.state, loading: true, actionMessage: '', lastError: null };
         const response = await this.bridge.assignRole({ providerId, role });
         if (!response.ok) {
-            this.state = { ...this.state, loading: false, lastError: response.error };
+            const explanation = this.state.snapshot
+                ? buildAssignmentFailureExplanation(this.state.snapshot, providerId, role, response.error)
+                : null;
+            this.state = {
+                ...this.state,
+                loading: false,
+                lastError: response.error,
+                lastAssignmentExplanation: explanation,
+            };
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Assigned Role ${role} to Provider ${providerId}.`,
-        };
+            lastAssignmentExplanation: buildAssignmentSuccessExplanation(response.snapshot, providerId, role),
+        });
         return this.state;
     }
 
@@ -179,12 +211,12 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Unassigned Role ${role}.`,
-        };
+        });
         return this.state;
     }
 
@@ -196,13 +228,31 @@ export class StorageScreenService {
             return this.state;
         }
 
-        this.state = {
+        this.state = this.hydrateState({
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
             actionMessage: `Updated Provider ${providerId}.`,
-        };
+        });
         return this.state;
+    }
+
+    private hydrateState(next: StorageScreenState): StorageScreenState {
+        if (!next.snapshot) {
+            return {
+                ...next,
+                authoritySummary: null,
+                providerVisibilityById: {},
+                roleVisibility: [],
+            };
+        }
+
+        return {
+            ...next,
+            authoritySummary: buildStorageAuthoritySummary(next.snapshot),
+            providerVisibilityById: buildProviderVisibilityModels(next.snapshot, next.validationByProviderId),
+            roleVisibility: buildRoleVisibilityModels(next.snapshot),
+        };
     }
 }
 

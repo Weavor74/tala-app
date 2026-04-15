@@ -242,6 +242,68 @@ interface ProviderHealthScore {
 }
 ```
 
+### `StorageAuthoritySummaryDiagnostics`
+```typescript
+interface StorageAuthoritySummaryDiagnostics {
+    canonicalRuntimeAuthorityProviderId: string | null;
+    derivedProviderIds: string[];
+    registryHealth: 'healthy' | 'degraded' | 'conflict';
+    bootstrapState: {
+        hasBootstrapImports: boolean;
+        bootstrappedProviderCount: number;
+        detectedProviderCount: number;
+        explicitRegistryProviderCount: number;
+    }
+```
+
+### `StorageProviderDiagnostics`
+```typescript
+interface StorageProviderDiagnostics {
+    providerId: string;
+    providerType: string;
+    authorityClass: StorageAuthorityClass;
+    origin: StorageProviderOrigin;
+    status: {
+        reachable: 'reachable' | 'degraded' | 'offline' | 'unknown';
+        auth: string;
+        capable: boolean;
+    }
+```
+
+### `StorageRoleDiagnostics`
+```typescript
+interface StorageRoleDiagnostics {
+    role: string;
+    assignedProviderId: string | null;
+    assignmentType: StorageAssignmentType;
+    eligibilityReasoning: string[];
+    blockedAlternativeProviderIds: string[];
+}
+```
+
+### `StorageAssignmentExplanationDiagnostics`
+```typescript
+interface StorageAssignmentExplanationDiagnostics {
+    role: string;
+    providerId: string | null;
+    outcome: 'succeeded' | 'failed';
+    reasonCode: string;
+    reasonSummary: string;
+    nextSteps: string[];
+    timestamp: string;
+}
+```
+
+### `StorageDiagnosticsSnapshot`
+```typescript
+interface StorageDiagnosticsSnapshot {
+    authoritySummary: StorageAuthoritySummaryDiagnostics;
+    providers: StorageProviderDiagnostics[];
+    roles: StorageRoleDiagnostics[];
+    lastAssignmentExplanation?: StorageAssignmentExplanationDiagnostics;
+}
+```
+
 ### `RuntimeDiagnosticsSnapshot`
 ```typescript
 interface RuntimeDiagnosticsSnapshot {
@@ -356,5 +418,25 @@ type OperatorActionCategory =
 ### `OperatorActionRiskLevel`
 ```typescript
 type OperatorActionRiskLevel =  'low' | 'medium' | 'high';
+```
+
+### `StorageAuthorityClass`
+```typescript
+type StorageAuthorityClass =  'canonical' | 'derived';
+```
+
+### `StorageAssignmentType`
+```typescript
+type StorageAssignmentType =  'explicit' | 'bootstrap' | 'inferred' | 'unassigned';
+```
+
+### `StorageProviderOrigin`
+```typescript
+type StorageProviderOrigin =  'explicit_registry' | 'bootstrapped_legacy' | 'detected';
+```
+
+### `StorageValidationStatus`
+```typescript
+type StorageValidationStatus =  'not_validated' | 'passed' | 'failed';
 ```
 
