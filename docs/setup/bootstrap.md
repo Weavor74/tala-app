@@ -6,6 +6,12 @@ This document describes how to set up the TALA environment on a new machine, the
 canonical entry points for each stage, and how path resolution works across all
 setup scripts.
 
+Runtime authority notes:
+
+- PostgreSQL is the canonical memory authority runtime.
+- pgvector is the Postgres vector capability when installed/available.
+- Inference selection is deterministic and local-first (Ollama-priority in auto mode).
+
 ---
 
 ## Canonical Setup Entry Points
@@ -212,10 +218,19 @@ npm run docs:heal-and-validate
 
 ---
 
-## Local Inference (llama.cpp)
+## Local Inference (provider registry)
 
-TALA's local inference engine uses `llama-cpp-python` (not a compiled `llama.cpp` binary
-directly).  It is installed into the `local-inference/venv/` by bootstrap.
+Tala uses deterministic provider selection with a local-first waterfall:
+
+1. `ollama`
+2. `vllm`
+3. `llamacpp`
+4. `koboldcpp`
+5. `embedded_vllm`
+6. `embedded_llamacpp`
+7. `cloud` (optional)
+
+Bootstrap provisions local inference dependencies (`local-inference/venv/`) so embedded/local paths can run when selected by policy.
 
 The inference server is launched automatically via `npm run dev` (Windows) or can be
 started manually:

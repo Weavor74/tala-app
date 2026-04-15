@@ -1,43 +1,46 @@
 # Technology Stack
 
-This document lists the core technologies, frameworks, and libraries used across the Tala ecosystem.
+This document lists core technologies and the current runtime posture used in Tala.
 
-## 1. Desktop Application (Host)
-- **Framework**: Electron (v31+)
-- **Runtime**: Node.js (v20+)
-- **Language**: TypeScript
-- **State Management**: React Context, TanStack Query (inferred)
-- **Styling**: Tailwind CSS (UI), Lucide React (Icons)
-- **Build System**: Vite
+## 1. Desktop Application
 
-## 2. Agent Orchestration Layer
-- **Logic Engine**: TypeScript
-- **Protocol**: Model Context Protocol (MCP)
-- **IPC Implementation**: Electron Preload Context Isolation
-- **Concurrency**: Node.js Worker Threads (for intensive non-IO tasks)
+- Framework: Electron
+- Runtime: Node.js
+- Language: TypeScript
+- UI: React
+- Build: Vite
 
-## 3. Artificial Intelligence & Inference
-- **Local Runtime**: Ollama (primary), llama-cpp-python (fallback/sidecar)
-- **Models**: llama3, phi3, mistral, code-llama (configurable)
-- **Inference Adapter**: Custom `IBrain` TypeScript drivers.
+## 2. Agent and Orchestration Layer
 
-## 4. Python Service Layer (MCP)
-- **Runtime**: Python 3.10+
-- **Environment Management**: Virtualenv / pip
-- **Core Libraries**:
-    - `mcp`: Official Model Context Protocol SDK.
-    - `sentence-transformers`: For semantic embedding generation.
-    - `chromadb` / `faiss`: Vector storage and retrieval.
-    - `networkx`: Knowledge graph manipulation.
+- Agent orchestration: Electron services (`AgentService`, router, guardrails, runtime control)
+- Protocol boundary: Model Context Protocol (MCP)
+- IPC boundary: Electron preload/context isolation
 
-## 5. Data Persistence
-- **Relational Data**: SQLite 3
-- **Graph Data**: SQLite (underlying graph representation)
-- **Metadata**: JSON (agent profiles, user settings)
-- **Large Objects**: Local filesystem (`data/bin/`)
+## 3. Inference Stack (Current)
 
-## 6. Testing & CI/CD
-- **Frontend Testing**: Vitest
-- **Backend Testing**: Vitest / Node Test Runner
-- **Audit Tooling**: Custom Python/PS1 scripts for dependency and filesystem inventory.
-- **Security Scanners**: (Planned) Snyk / GitHub Advanced Security.
+- Provider management: `InferenceProviderRegistry` + `ProviderSelectionService`
+- Selection posture: deterministic, local-first waterfall
+- Top-priority provider in auto mode: Ollama (when ready)
+- Additional local providers: vLLM, llama.cpp, KoboldCpp
+- Embedded fallbacks: `embedded_vllm`, `embedded_llamacpp`
+- Optional remote path: cloud provider (configured/available only)
+
+## 4. Canonical Memory and Retrieval
+
+- Canonical durable memory authority: PostgreSQL
+- Canonical write boundary: `MemoryAuthorityService`
+- Derived memory layers: mem0, graph projections, vector projections, summaries, caches
+- Vector capability: pgvector in Postgres when extension is installed
+
+## 5. Storage Architecture
+
+- Storage registry: `StorageProviderRegistryService`
+- Role assignment policy: `StorageAssignmentPolicyService`
+- Explicit storage roles: canonical memory, vector index, blob store, document store, backup target, artifact store
+- Assignment rules: capability/locality/auth/health validated and deterministic
+
+## 6. Operational Tooling
+
+- Testing: Vitest
+- Documentation gates: `docs:regen`, `docs:heal`, `docs:validate`, `docs:heal-and-validate`
+- Telemetry and diagnostics: runtime health, provider probes, authority and drift checks

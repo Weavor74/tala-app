@@ -1,52 +1,64 @@
 # Repository Overview: Tala
 
-Tala is a high-fidelity, autonomous agentic platform designed for secure, local-first artificial intelligence operations. It combines the power of modern LLMs with a structured desktop shell (Electron) and a modular service architecture (MCP).
+Tala is a local-first autonomous agent platform with explicit authority boundaries for memory, inference, and storage.
 
 ## Root Architecture
 
-The repository is organized following a clear concern-separation pattern:
-
 | Directory | Responsibility |
 |---|---|
-| `electron/` | **Main Process**: System orchestration, native services, IPC routing, and application lifecycle. |
-| `src/renderer/` | **Renderer Process**: High-fidelity React UI, workspace surfaces, and user interaction layer. |
-| `shared/` | **Contract Layer**: Bit-identical TypeScript types, interfaces, and constants shared between Main and Renderer. |
-| `docs/` | **Knowledge Base**: Architectural specs, interface matrices, and feature documentation. |
-| `scripts/` | **Tooling & Maintenance**: DevOps, diagnostics, self-healing, and documentation automation. |
-| `mcp-servers/` | **Capability Layer**: Isolated MCP service implementations (Python/JS). |
-| `tests/` | **Verification**: End-to-end and integration test suites. |
+| `electron/` | Main process orchestration, IPC routing, runtime services |
+| `src/renderer/` | React UI and workspace surfaces |
+| `shared/` | Cross-process contracts and pure types |
+| `mcp-servers/` | MCP service implementations |
+| `docs/` | Architecture, interfaces, operations, and policy docs |
+| `scripts/` | Build, diagnostics, and documentation automation |
+| `tests/` | Unit and integration verification suites |
 
-## Key Technologies
+## Runtime Posture (Current)
 
-- **Core Runtime**: Electron (Node.js + Chromium), TypeScript.
-- **UI Stack**: React, ReactFlow (for graph visualization), Tailwind CSS.
-- **Persistence**: PostgreSQL with `pgvector` (RAG), SQLite (metadata), and local file system.
-- **Inference**: Deterministic provider selection with local-first fallback (`ollama` -> `vllm` -> `llamacpp` -> `koboldcpp` -> `embedded_vllm` -> `embedded_llamacpp` -> `cloud`) via `InferenceService` + `ProviderSelectionService`.
-- **Extensibility**: Model Context Protocol (MCP) for tool and service abstraction.
+- Postgres is the canonical memory runtime and source of truth for canonical memory state.
+- Canonical durable memory writes go through `MemoryAuthorityService`.
+- mem0, graph, vector stores, summaries, and caches are derived/read-side layers.
+- pgvector is used inside Postgres for vector capability when installed and available.
+- Missing pgvector is a vector capability availability condition, not loss of canonical memory.
 
-## Cognitive & Memory Systems (P7B/P7D)
+## Inference Posture (Current)
 
-Tala implements a sophisticated cognitive flow:
-1.  **Retrieval Orchestration**: Multi-source retrieval (RAG, Conversation, Graph).
-2.  **Context Assembly**: Deterministic ranking and greedy selection based on authority, recency, and semantic score.
-3.  **Authority Enforcement**: Canonical-vs-derived conflict resolution (Feed 4).
-4.  **Affective Modulation**: Mood-based weighting (Astro/Emotion) integrated into scoring.
-5.  **Explainability**: Full diagnostics traceability (Feed 5).
+Inference provider selection is deterministic and local-first (`ProviderSelectionService`):
 
-## Developer Navigation
+1. `ollama`
+2. `vllm`
+3. `llamacpp`
+4. `koboldcpp`
+5. `embedded_vllm`
+6. `embedded_llamacpp`
+7. `cloud`
 
-- **Adding a Service**: Place in `electron/services/` and register in `electron/services/IpcRouter.ts`.
-- **Defining Types**: Use `shared/` for any type crossing the IPC boundary.
-- **Modifying the UI**: Focus on `src/renderer/` and `A2UIWorkspaceSurface.tsx` for structured surfaces.
-- **Running Diagnostics**: Use `npm run repo:fullcheck` for full repository checks and `npm run docs:heal-and-validate` for documentation enforcement.
+Cloud is optional and used only when configured and selected by routing/fallback policy.
 
-## Documentation Enforcement (Current Lifecycle)
+## Storage Role Assignment Model
 
-- Deterministic regeneration: `npm run docs:regen`
-- Deterministic doclock healing: `npm run docs:heal`
-- Full validation gate: `npm run docs:validate`
+Storage providers and assignments are managed by registry services in `electron/services/storage/`:
+
+- `StorageProviderRegistryService` persists provider records and role assignments.
+- `StorageAssignmentPolicyService` enforces deterministic eligibility and safety rules.
+- Roles are explicit assignments, not implicit provider behavior.
+- Legacy bootstrap/hydration can import provider signals from prior settings and deterministically fill role gaps.
+
+Supported roles:
+
+- `canonical_memory`
+- `vector_index`
+- `blob_store`
+- `document_store`
+- `backup_target`
+- `artifact_store`
+
+## Documentation and Validation Gates
+
+- Regenerate deterministic docs: `npm run docs:regen`
+- Heal doclock impact output: `npm run docs:heal`
+- Validate docs: `npm run docs:validate`
 - Canonical completion gate: `npm run docs:heal-and-validate`
-- Compatibility alias: `npm run docs:selfheal` (runs regen, then canonical completion gate)
 
----
-*This document is maintained by the documentation self-healing script (`scripts/diagnostics/maintenance/docs_maintenance.ts`).*
+This document is maintained as a top-level runtime summary and should stay aligned with implementation services under `electron/services/`.

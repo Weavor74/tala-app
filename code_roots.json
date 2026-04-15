@@ -7,13 +7,13 @@
       "path": "src/",
       "language": "TypeScript",
       "framework": "React",
-      "purpose": "Renderer UI — chat interface, settings panel, reflection dashboard, component library"
+      "purpose": "Renderer UI - chat interface, settings panel, reflection dashboard, component library"
     },
     {
       "id": "electron-main",
       "path": "electron/",
       "language": "TypeScript",
-      "purpose": "Electron main process, preload scripts, IPC router, and all backend services"
+      "purpose": "Electron main process, preload scripts, IPC router, and backend services"
     },
     {
       "id": "electron-tests",
@@ -25,37 +25,37 @@
       "id": "mcp-astro",
       "path": "mcp-servers/astro-engine/",
       "language": "Python",
-      "purpose": "Astrological emotional state engine — MCP server exposing emotional bias tools"
+      "purpose": "Astrological emotional state engine - MCP server exposing emotional bias tools"
     },
     {
       "id": "mcp-tala-core",
       "path": "mcp-servers/tala-core/",
       "language": "Python",
-      "purpose": "Core Tala tool surface — MCP server providing file I/O and memory primitives"
+      "purpose": "Core Tala MCP surface for tools, retrieval, and file/document operations"
     },
     {
       "id": "mcp-mem0",
       "path": "mcp-servers/mem0-core/",
       "language": "Python",
-      "purpose": "Mem0-backed long-term memory persistence — MCP server"
+      "purpose": "mem0 integration layer for derived memory candidates and projection workflows (not canonical authority)"
     },
     {
       "id": "mcp-memory-graph",
       "path": "mcp-servers/tala-memory-graph/",
       "language": "Python",
-      "purpose": "Graph-structured associative memory layer — MCP server"
+      "purpose": "Graph-structured derived memory projection layer"
     },
     {
       "id": "mcp-world-engine",
       "path": "mcp-servers/world-engine/",
       "language": "Python",
-      "purpose": "World-state and context persistence — MCP server"
+      "purpose": "World-state and context persistence MCP server"
     },
     {
       "id": "local-inference",
       "path": "local-inference/",
       "language": "Python",
-      "purpose": "Local model serving runtime configuration and launch scripts (Ollama / llama.cpp)"
+      "purpose": "Local inference runtime assets and launch scripts used by the deterministic provider registry path"
     },
     {
       "id": "tests",
@@ -67,13 +67,13 @@
       "id": "test-data",
       "path": "test_data/",
       "language": "JSON",
-      "purpose": "Test fixture data used by automated tests — not runtime state"
+      "purpose": "Test fixture data used by automated tests - not runtime state"
     },
     {
       "id": "scripts",
       "path": "scripts/",
       "language": "TypeScript",
-      "purpose": "Developer diagnostics, simulation harnesses, build packaging, portable distribution scripts"
+      "purpose": "Developer diagnostics, simulation harnesses, build packaging, and portable distribution scripts"
     },
     {
       "id": "tools",
@@ -85,13 +85,13 @@
       "id": "docs",
       "path": "docs/",
       "language": "Markdown",
-      "purpose": "Authoritative project documentation — architecture, features, interfaces, security, traceability"
+      "purpose": "Authoritative project documentation - architecture, features, interfaces, security, and traceability"
     },
     {
       "id": "public",
       "path": "public/",
       "language": "HTML",
-      "purpose": "Static frontend assets served by Vite (splash, icons, vendor assets)"
+      "purpose": "Static frontend assets served by Vite"
     },
     {
       "id": "shared",
@@ -103,7 +103,7 @@
       "id": "archive",
       "path": "archive/",
       "language": "Various",
-      "purpose": "Historical reference material — frozen, do not extend"
+      "purpose": "Historical reference material - frozen, do not extend"
     }
   ]
 }

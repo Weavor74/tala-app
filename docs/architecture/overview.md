@@ -6,23 +6,23 @@ This document provides an automated overview of the repository structure and sub
 
 | ID | Path | Purpose |
 |---|---|---|
-| `renderer` | `src/` | Renderer UI — chat interface, settings panel, reflection dashboard, component library |
-| `electron-main` | `electron/` | Electron main process, preload scripts, IPC router, and all backend services |
+| `renderer` | `src/` | Renderer UI - chat interface, settings panel, reflection dashboard, component library |
+| `electron-main` | `electron/` | Electron main process, preload scripts, IPC router, and backend services |
 | `electron-tests` | `electron/__tests__/` | Electron-specific unit and integration tests (owned by electron-main subsystem) |
-| `mcp-astro` | `mcp-servers/astro-engine/` | Astrological emotional state engine — MCP server exposing emotional bias tools |
-| `mcp-tala-core` | `mcp-servers/tala-core/` | Core Tala tool surface — MCP server providing file I/O and memory primitives |
-| `mcp-mem0` | `mcp-servers/mem0-core/` | Mem0-backed long-term memory persistence — MCP server |
-| `mcp-memory-graph` | `mcp-servers/tala-memory-graph/` | Graph-structured associative memory layer — MCP server |
-| `mcp-world-engine` | `mcp-servers/world-engine/` | World-state and context persistence — MCP server |
-| `local-inference` | `local-inference/` | Local model serving runtime configuration and launch scripts (Ollama / llama.cpp) |
+| `mcp-astro` | `mcp-servers/astro-engine/` | Astrological emotional state engine - MCP server exposing emotional bias tools |
+| `mcp-tala-core` | `mcp-servers/tala-core/` | Core Tala MCP surface for tools, retrieval, and file/document operations |
+| `mcp-mem0` | `mcp-servers/mem0-core/` | mem0 integration layer for derived memory candidates and projection workflows (not canonical authority) |
+| `mcp-memory-graph` | `mcp-servers/tala-memory-graph/` | Graph-structured derived memory projection layer |
+| `mcp-world-engine` | `mcp-servers/world-engine/` | World-state and context persistence MCP server |
+| `local-inference` | `local-inference/` | Local inference runtime assets and launch scripts used by the deterministic provider registry path |
 | `tests` | `tests/` | Shared cross-subsystem Vitest test suites |
-| `test-data` | `test_data/` | Test fixture data used by automated tests — not runtime state |
-| `scripts` | `scripts/` | Developer diagnostics, simulation harnesses, build packaging, portable distribution scripts |
+| `test-data` | `test_data/` | Test fixture data used by automated tests - not runtime state |
+| `scripts` | `scripts/` | Developer diagnostics, simulation harnesses, build packaging, and portable distribution scripts |
 | `tools` | `tools/` | Developer utility scripts not part of the main build or test pipeline |
-| `docs` | `docs/` | Authoritative project documentation — architecture, features, interfaces, security, traceability |
-| `public` | `public/` | Static frontend assets served by Vite (splash, icons, vendor assets) |
+| `docs` | `docs/` | Authoritative project documentation - architecture, features, interfaces, security, and traceability |
+| `public` | `public/` | Static frontend assets served by Vite |
 | `shared` | `shared/` | Shared pure types, interfaces, enums, and neutral data contracts. NO logic, UI, or side-effects. |
-| `archive` | `archive/` | Historical reference material — frozen, do not extend |
+| `archive` | `archive/` | Historical reference material - frozen, do not extend |
 
 ## Subsystems
 
