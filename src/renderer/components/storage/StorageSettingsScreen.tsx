@@ -46,10 +46,10 @@ const buildStorageSettingsScreen = () => {
         <div style={{ marginBottom: 30, animation: 'fadeIn 0.2s', background: 'rgba(30, 30, 30, 0.4)', padding: '20px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(10px)' }}>
             <h3 style={{ color: '#dcdcaa' }}>STORAGE REGISTRY</h3>
             <p style={{ fontSize: 12, opacity: 0.75, marginBottom: 16 }}>
-                Backend-authoritative storage assignments and provider registry.
+                Canonical Storage Registry configuration for Provider and Role assignments.
             </p>
 
-            {state.loading && <div style={{ marginBottom: 10, color: '#9cdcfe', fontSize: 12 }}>Loading storage state...</div>}
+            {state.loading && <div style={{ marginBottom: 10, color: '#9cdcfe', fontSize: 12 }}>Loading Storage Registry state...</div>}
 
             {!!state.actionMessage && (
                 <div style={{ marginBottom: 10, padding: 10, borderRadius: 4, border: '1px solid #2e7d32', color: '#9be7a0', background: 'rgba(46,125,50,0.12)', fontSize: 12 }}>
@@ -63,12 +63,12 @@ const buildStorageSettingsScreen = () => {
                 </div>
             )}
 
-            {!snapshot && <div style={{ color: '#aaa', fontSize: 12 }}>Storage snapshot unavailable.</div>}
+            {!snapshot && <div style={{ color: '#aaa', fontSize: 12 }}>Storage Registry snapshot unavailable.</div>}
 
             {snapshot && (
                 <>
                     <div style={{ marginBottom: 12, fontSize: 11, color: '#888' }}>
-                        Snapshot v{snapshot.version} updated {snapshot.updatedAt}
+                        Storage Registry snapshot v{snapshot.version} updated {snapshot.updatedAt}
                     </div>
 
                     {getMissingAssignments(snapshot).length > 0 && (
@@ -127,7 +127,7 @@ const buildStorageSettingsScreen = () => {
 
                     {Object.keys(state.validationByProviderId).length > 0 && (
                         <div style={{ marginTop: 14, background: '#1e1e1e', padding: 12, borderRadius: 6, border: '1px solid #3a3a3a' }}>
-                            <h4 style={{ margin: 0, marginBottom: 8, color: '#dcdcaa', fontSize: 13 }}>Validation Results</h4>
+                            <h4 style={{ margin: 0, marginBottom: 8, color: '#dcdcaa', fontSize: 13 }}>Validation (Layered Checks)</h4>
                             <div style={{ display: 'grid', gap: 8 }}>
                                 {Object.values(state.validationByProviderId).map((result) => (
                                     <div key={`validation-${result.providerId}`} style={{ padding: 8, border: '1px solid #3e3e42', borderRadius: 4, background: '#252526' }}>

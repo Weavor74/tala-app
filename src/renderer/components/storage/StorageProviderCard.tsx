@@ -212,7 +212,7 @@ const buildStorageProviderCard = ({
                         borderRadius: 4,
                     }}
                 >
-                    <option value="">Assign role...</option>
+                    <option value="">Assign Role...</option>
                     {provider.supportedRoles.map((role) => (
                         <option key={`${provider.id}-assign-option-${role}`} value={role}>
                             {getRoleLabel(role)}
@@ -229,7 +229,7 @@ const buildStorageProviderCard = ({
                     }}
                     style={{ background: '#007acc', border: 'none', color: '#fff', borderRadius: 4, padding: '6px 10px', cursor: 'pointer', fontSize: 11 }}
                 >
-                    Assign
+                    Assign Role
                 </button>
             </div>
         </div>

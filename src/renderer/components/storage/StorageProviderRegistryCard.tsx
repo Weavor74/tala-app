@@ -31,7 +31,7 @@ const buildStorageProviderRegistryCard = ({
     return (
         <div style={{ background: '#1e1e1e', padding: 16, borderRadius: 6, border: '1px solid #3a3a3a', marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Registered Providers</h4>
+                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Storage Registry Providers</h4>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ fontSize: 11, color: '#888' }}>{providers.length} total</span>
                     <button
@@ -39,7 +39,7 @@ const buildStorageProviderRegistryCard = ({
                         onClick={async () => onDetectProviders()}
                         style={{ background: '#2d2d2d', border: '1px solid #444', color: '#ccc', borderRadius: 4, padding: '6px 10px', cursor: 'pointer', fontSize: 11 }}
                     >
-                        Detect Local Providers
+                        Hydrate Registry (Local)
                     </button>
                 </div>
             </div>

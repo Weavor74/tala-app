@@ -55,7 +55,7 @@ const buildStorageRoleAssignmentsCard = ({ snapshot, busy, onAssignRole, onUnass
     return (
         <div style={{ background: '#1e1e1e', padding: 16, borderRadius: 6, border: '1px solid #3a3a3a', marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Storage Role Assignments</h4>
+                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Storage Registry Role Assignments</h4>
                 <span style={{ fontSize: 11, color: '#888' }}>{snapshot.assignments.length} assigned</span>
             </div>
 

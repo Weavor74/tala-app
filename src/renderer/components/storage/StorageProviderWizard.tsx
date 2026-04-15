@@ -89,9 +89,9 @@ function getDefaultLocality(kind: StorageProviderKind): StorageLocality {
 
 function getSetupText(kind: StorageProviderKind): string {
     if (kind === 'supabase' || kind === 's3' || kind === 'google_drive' || kind === 'sharepoint' || kind === 'gist') {
-        return 'Remote provider setup is configuration-only for now. Validation may return needs_setup or unauthenticated.';
+        return 'Remote Provider setup is configuration-only for now. Validation may return needs_setup or unauthenticated.';
     }
-    return 'This provider can be locally validated through backend health/auth probes.';
+    return 'This Provider can be locally validated through deterministic health/auth checks.';
 }
 
 interface StorageProviderWizardProps {
@@ -167,7 +167,7 @@ const buildStorageProviderWizard = ({ busy, snapshot, onAddProvider, onValidateP
     return (
         <div style={{ background: '#1e1e1e', padding: 16, borderRadius: 6, border: '1px solid #3a3a3a' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Add Provider</h4>
+                <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 14 }}>Register Provider</h4>
                 <span style={{ fontSize: 11, color: '#888' }}>Step {step} of 6</span>
             </div>
 
@@ -204,7 +204,7 @@ const buildStorageProviderWizard = ({ busy, snapshot, onAddProvider, onValidateP
                             style={{ width: '100%', background: '#121212', border: '1px solid #333', color: '#eee', padding: '10px', borderRadius: 4 }}
                         >
                             <option value="manual">Manual Config</option>
-                            <option value="auto_discovered">Detect Local</option>
+                            <option value="auto_discovered">Hydration (Auto-Discovered)</option>
                         </select>
                     </div>
 
@@ -308,19 +308,19 @@ const buildStorageProviderWizard = ({ busy, snapshot, onAddProvider, onValidateP
                         <button
                             disabled={busy}
                             onClick={handleAddProvider}
-                            style={{ background: '#007acc', border: 'none', color: '#fff', borderRadius: 4, padding: '10px 12px', cursor: 'pointer', fontWeight: 700 }}
-                        >
-                            Add Provider
-                        </button>
+                                style={{ background: '#007acc', border: 'none', color: '#fff', borderRadius: 4, padding: '10px 12px', cursor: 'pointer', fontWeight: 700 }}
+                            >
+                                Register Provider
+                            </button>
                     ) : (
                         <>
-                            <div style={{ fontSize: 12, color: '#9be7a0' }}>Provider created: {createdProviderId}</div>
+                            <div style={{ fontSize: 12, color: '#9be7a0' }}>Provider registered: {createdProviderId}</div>
                             <button
                                 disabled={busy}
                                 onClick={async () => onValidateProvider(createdProviderId)}
                                 style={{ background: '#2d2d2d', border: '1px solid #444', color: '#ccc', borderRadius: 4, padding: '10px 12px', cursor: 'pointer', fontWeight: 700 }}
                             >
-                                Validate Provider
+                                Run Validation
                             </button>
                         </>
                     )}

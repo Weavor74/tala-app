@@ -69,7 +69,7 @@ export class StorageScreenService {
                 ...this.state,
                 loading: false,
                 snapshot: response.snapshot,
-                actionMessage: `Detected ${response.detectedProviders.length} provider(s).`,
+                actionMessage: `Hydration detected ${response.detectedProviders.length} Provider(s).`,
             };
             return this.state;
         } catch (error) {
@@ -94,7 +94,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Validated ${providerId}.`,
+            actionMessage: `Validation completed for Provider ${providerId}.`,
             validationByProviderId: {
                 ...this.state.validationByProviderId,
                 [providerId]: response.result,
@@ -115,7 +115,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Added provider ${response.changed.name}.`,
+            actionMessage: `Registered Provider ${response.changed.name}.`,
         };
         return this.state;
     }
@@ -132,7 +132,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Removed provider ${providerId}.`,
+            actionMessage: `Removed Provider ${providerId} from the Storage Registry.`,
         };
         return this.state;
     }
@@ -149,7 +149,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `${enabled ? 'Enabled' : 'Disabled'} provider ${providerId}.`,
+            actionMessage: `${enabled ? 'Enabled' : 'Disabled'} Provider ${providerId}.`,
         };
         return this.state;
     }
@@ -166,7 +166,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Assigned ${role} to ${providerId}.`,
+            actionMessage: `Assigned Role ${role} to Provider ${providerId}.`,
         };
         return this.state;
     }
@@ -183,7 +183,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Unassigned ${role}.`,
+            actionMessage: `Unassigned Role ${role}.`,
         };
         return this.state;
     }
@@ -200,7 +200,7 @@ export class StorageScreenService {
             ...this.state,
             loading: false,
             snapshot: response.snapshot,
-            actionMessage: `Updated provider ${providerId}.`,
+            actionMessage: `Updated Provider ${providerId}.`,
         };
         return this.state;
     }

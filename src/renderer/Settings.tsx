@@ -170,6 +170,8 @@ export const Settings = () => {
         degraded: boolean;
         reasonUnavailable?: string;
     }>>([]);
+    const [authStorageSnapshot, setAuthStorageSnapshot] = useState<any | null>(null);
+    const [authStorageBusy, setAuthStorageBusy] = useState(false);
 
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
@@ -369,6 +371,82 @@ export const Settings = () => {
             }
         }
     };
+
+    const buildStorageAuthKey = (providerId: string, field: string): string => `storageProvider.${providerId}.${field}`;
+
+    const getStorageAuthValue = (providerId: string, field: string): string => {
+        const keys: any = settings.auth?.keys || {};
+        return String(keys[buildStorageAuthKey(providerId, field)] || '');
+    };
+
+    const setStorageAuthValue = (providerId: string, field: string, value: string): void => {
+        const current: any = { ...(settings.auth?.keys || {}) };
+        current[buildStorageAuthKey(providerId, field)] = value;
+        update('auth', 'keys', current);
+    };
+
+    const loadStorageAuthSnapshot = useCallback(async () => {
+        const storageBridge = (window as any).tala?.storage;
+        if (!storageBridge?.getSnapshot) {
+            setAuthStorageSnapshot(null);
+            return;
+        }
+        setAuthStorageBusy(true);
+        try {
+            const snapshot = await storageBridge.getSnapshot();
+            setAuthStorageSnapshot(snapshot);
+        } catch {
+            setAuthStorageSnapshot(null);
+        } finally {
+            setAuthStorageBusy(false);
+        }
+    }, []);
+
+    const applyStorageCredentialState = useCallback(async (provider: any) => {
+        const storageBridge = (window as any).tala?.storage;
+        if (!storageBridge?.updateProvider || !storageBridge?.getSnapshot) {
+            setStatus('Storage Registry bridge unavailable.');
+            return;
+        }
+
+        const mode = provider?.auth?.mode || 'none';
+        const fieldsByMode: Record<string, string[]> = {
+            basic: ['username', 'password'],
+            api_key: ['apiKey'],
+            oauth: ['clientId', 'clientSecret', 'accessToken'],
+            none: [],
+        };
+        const requiredFields = fieldsByMode[mode] || [];
+        const hasCredential = requiredFields.some((field) => getStorageAuthValue(provider.id, field).trim().length > 0);
+        const nextStatus = mode === 'none' ? 'not_required' : (hasCredential ? 'authenticated' : 'unauthenticated');
+
+        try {
+            await storageBridge.updateProvider({
+                id: provider.id,
+                patch: {
+                    auth: {
+                        ...(provider.auth || {}),
+                        mode,
+                        status: nextStatus,
+                        lastCheckedAt: new Date().toISOString(),
+                        reason: hasCredential ? 'credentials_configured_auth_panel' : 'credentials_missing_auth_panel',
+                    },
+                },
+            });
+            const snapshot = await storageBridge.getSnapshot();
+            setAuthStorageSnapshot(snapshot);
+            setStatus(`Storage Provider ${provider.id} credential state applied.`);
+        } catch (error: any) {
+            setStatus(`Storage credential update failed: ${error?.message || 'unknown error'}`);
+        }
+    }, [getStorageAuthValue]);
+
+    useEffect(() => {
+        if (activeTab !== 'auth') {
+            return;
+        }
+        void loadStorageAuthSnapshot();
+    }, [activeTab, loadStorageAuthSnapshot]);
 
     const update = (...args: any[]) => {
         if (scope === 'global') {
@@ -2453,6 +2531,163 @@ export const Settings = () => {
                                         </button>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div style={{ marginBottom: 20, background: '#1e1e1e', padding: 20, borderRadius: 4, border: '1px solid #3e3e42' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                    <h4 style={{ marginTop: 0, marginBottom: 0, color: '#9cdcfe', fontSize: 13 }}>STORAGE PROVIDER CREDENTIALS</h4>
+                                    <button
+                                        onClick={() => void loadStorageAuthSnapshot()}
+                                        style={{ background: '#2d2d2d', border: '1px solid #444', color: '#fff', padding: '4px 8px', fontSize: 10, cursor: 'pointer' }}
+                                    >
+                                        REFRESH REGISTRY
+                                    </button>
+                                </div>
+                                <p style={{ fontSize: 11, color: '#888', marginBottom: 15 }}>
+                                    Add Storage Provider credentials from Authentication settings. Apply per provider to update Storage Registry auth status.
+                                </p>
+                                {authStorageBusy && (
+                                    <div style={{ fontSize: 11, color: '#9cdcfe', marginBottom: 8 }}>Loading Storage Registry providers...</div>
+                                )}
+                                {!authStorageBusy && (!authStorageSnapshot || !Array.isArray(authStorageSnapshot.providers) || authStorageSnapshot.providers.length === 0) && (
+                                    <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>No Storage Providers found in the Storage Registry.</div>
+                                )}
+                                {!authStorageBusy && Array.isArray(authStorageSnapshot?.providers) && authStorageSnapshot.providers.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                        {authStorageSnapshot.providers.map((provider: any) => {
+                                            const mode = provider?.auth?.mode || 'none';
+                                            const status = provider?.auth?.status || 'unknown';
+                                            return (
+                                                <div key={`auth-storage-provider-${provider.id}`} style={{ background: '#252526', borderRadius: 4, border: '1px solid #3e3e42', padding: 12 }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                                        <div>
+                                                            <div style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{provider.name}</div>
+                                                            <div style={{ color: '#aaa', fontSize: 10 }}>{provider.id} • {provider.kind}</div>
+                                                        </div>
+                                                        <div style={{ color: '#ccc', fontSize: 10, textTransform: 'uppercase' }}>AUTH STATUS: {String(status).replace(/_/g, ' ')}</div>
+                                                    </div>
+
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                                                        <div>
+                                                            <label style={labelStyle}>AUTH MODE</label>
+                                                            <select
+                                                                style={selectStyle}
+                                                                value={mode}
+                                                                onChange={async (e) => {
+                                                                    const nextMode = e.target.value;
+                                                                    const storageBridge = (window as any).tala?.storage;
+                                                                    if (!storageBridge?.updateProvider) return;
+                                                                    try {
+                                                                        await storageBridge.updateProvider({
+                                                                            id: provider.id,
+                                                                            patch: {
+                                                                                auth: {
+                                                                                    ...(provider.auth || {}),
+                                                                                    mode: nextMode,
+                                                                                    status: nextMode === 'none' ? 'not_required' : 'unauthenticated',
+                                                                                    lastCheckedAt: new Date().toISOString(),
+                                                                                    reason: 'auth_mode_updated_auth_panel',
+                                                                                },
+                                                                            },
+                                                                        });
+                                                                        await loadStorageAuthSnapshot();
+                                                                    } catch (error: any) {
+                                                                        setStatus(`Storage auth mode update failed: ${error?.message || 'unknown error'}`);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <option value="none">None</option>
+                                                                <option value="basic">Basic</option>
+                                                                <option value="api_key">API Key</option>
+                                                                <option value="oauth">OAuth</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+
+                                                    {mode === 'basic' && (
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                                                            <div>
+                                                                <label style={labelStyle}>USERNAME</label>
+                                                                <input
+                                                                    style={inputStyle}
+                                                                    value={getStorageAuthValue(provider.id, 'username')}
+                                                                    onChange={(e) => setStorageAuthValue(provider.id, 'username', e.target.value)}
+                                                                    placeholder="Provider username"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={labelStyle}>PASSWORD</label>
+                                                                <input
+                                                                    type="password"
+                                                                    style={inputStyle}
+                                                                    value={getStorageAuthValue(provider.id, 'password')}
+                                                                    onChange={(e) => setStorageAuthValue(provider.id, 'password', e.target.value)}
+                                                                    placeholder="Provider password"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {mode === 'api_key' && (
+                                                        <div style={{ marginBottom: 10 }}>
+                                                            <label style={labelStyle}>API KEY</label>
+                                                            <input
+                                                                type="password"
+                                                                style={inputStyle}
+                                                                value={getStorageAuthValue(provider.id, 'apiKey')}
+                                                                onChange={(e) => setStorageAuthValue(provider.id, 'apiKey', e.target.value)}
+                                                                placeholder="Provider API key"
+                                                            />
+                                                        </div>
+                                                    )}
+
+                                                    {mode === 'oauth' && (
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                                                            <div>
+                                                                <label style={labelStyle}>CLIENT ID</label>
+                                                                <input
+                                                                    style={inputStyle}
+                                                                    value={getStorageAuthValue(provider.id, 'clientId')}
+                                                                    onChange={(e) => setStorageAuthValue(provider.id, 'clientId', e.target.value)}
+                                                                    placeholder="OAuth client id"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={labelStyle}>CLIENT SECRET</label>
+                                                                <input
+                                                                    type="password"
+                                                                    style={inputStyle}
+                                                                    value={getStorageAuthValue(provider.id, 'clientSecret')}
+                                                                    onChange={(e) => setStorageAuthValue(provider.id, 'clientSecret', e.target.value)}
+                                                                    placeholder="OAuth client secret"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={labelStyle}>ACCESS TOKEN</label>
+                                                                <input
+                                                                    type="password"
+                                                                    style={inputStyle}
+                                                                    value={getStorageAuthValue(provider.id, 'accessToken')}
+                                                                    onChange={(e) => setStorageAuthValue(provider.id, 'accessToken', e.target.value)}
+                                                                    placeholder="OAuth access token"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                                        <button
+                                                            onClick={() => void applyStorageCredentialState(provider)}
+                                                            style={{ background: '#007acc', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: 2, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                                        >
+                                                            APPLY CREDENTIAL STATE
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{ marginTop: 20, borderTop: '1px solid #444', paddingTop: 15 }}>

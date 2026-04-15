@@ -422,7 +422,7 @@ export class IpcRouter {
     // IPC HANDLERS — SESSION PERSISTENCE
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Storage provider registry (backend-authoritative)
+    // Storage Registry (canonical configuration authority)
     ipcMain.handle('storage:getSnapshot', async (): Promise<StorageGetSnapshotResponse> => {
       return storageRegistry.getRegistrySnapshot();
     });
@@ -454,7 +454,7 @@ export class IpcRouter {
         const snapshot = storageRegistry.getRegistrySnapshot();
         const changed = snapshot.providers.find((provider) => provider.id === request.id);
         if (!changed) {
-          throw new Error('Added provider not found in snapshot');
+          throw new Error('Registered Provider not found in Storage Registry snapshot');
         }
         return { ok: true, snapshot, changed };
       } catch (error) {
@@ -471,7 +471,7 @@ export class IpcRouter {
         const snapshot = storageRegistry.getRegistrySnapshot();
         const changed = snapshot.providers.find((provider) => provider.id === request.id);
         if (!changed) {
-          throw new Error('Updated provider not found in snapshot');
+          throw new Error('Updated Provider not found in Storage Registry snapshot');
         }
         return { ok: true, snapshot, changed };
       } catch (error) {
@@ -505,7 +505,7 @@ export class IpcRouter {
           (assignment) => assignment.providerId === request.providerId && assignment.role === request.role,
         );
         if (!changed) {
-          throw new Error('Role assignment not found in snapshot after assignment');
+          throw new Error('Role assignment not found in Storage Registry snapshot after assignment');
         }
         return { ok: true, snapshot, changed };
       } catch (error) {

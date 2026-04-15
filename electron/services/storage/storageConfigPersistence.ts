@@ -74,7 +74,7 @@ export class StorageConfigPersistenceService {
             }
             throw createStorageOperationError(
                 StorageOperationErrorCode.PERSISTENCE_LOAD_FAILED,
-                'Failed to load storage registry config',
+                'Failed to load Storage Registry canonical configuration',
                 { cause: error instanceof Error ? error.message : String(error) },
             );
         }
@@ -92,7 +92,7 @@ export class StorageConfigPersistenceService {
         if (!ok) {
             throw createStorageOperationError(
                 StorageOperationErrorCode.PERSISTENCE_SAVE_FAILED,
-                'Failed to persist storage registry config',
+                'Failed to persist Storage Registry canonical configuration',
                 { settingsPath: this.settingsPath },
             );
         }

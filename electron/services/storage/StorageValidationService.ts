@@ -241,7 +241,7 @@ export class StorageValidationService {
                             detectedCapabilities = withoutCapability(detectedCapabilities, StorageCapability.VECTOR_SEARCH);
                             detectedCapabilities = withoutCapability(detectedCapabilities, StorageCapability.VECTOR_INDEXING);
                             detectedRolesSupported = withoutRole(detectedRolesSupported, StorageRole.VECTOR_INDEX);
-                            warnings.push('pgvector extension is not installed on active canonical PostgreSQL target; vector_index is unavailable.');
+                            warnings.push('pgvector extension is not installed on the active Canonical PostgreSQL target; vector_index Role is unavailable.');
                         }
                     } else {
                         const reachable = await probeTcpPort(activeTarget.host, activeTarget.port, 2000);
@@ -256,7 +256,7 @@ export class StorageValidationService {
                             lastCheckedAt: nowIso(),
                             reason: reachable ? 'pool_not_initialized' : 'tcp_unreachable',
                         };
-                        warnings.push('Canonical DB pool is not initialized; validation used TCP reachability only.');
+                        warnings.push('Canonical DB pool is not initialized; Validation used TCP reachability only.');
                     }
                 } else {
                     const endpointTarget = providerTarget ?? (provider.connection.endpoint ? (() => {
@@ -280,7 +280,7 @@ export class StorageValidationService {
                         lastCheckedAt: nowIso(),
                         reason: reachable ? 'runtime_db_mismatch' : 'tcp_unreachable',
                     };
-                    warnings.push('Provider does not match active canonical DB target; runtime auth cannot be reused.');
+                    warnings.push('Provider does not match the active Canonical DB target; runtime auth cannot be reused.');
                 }
                 break;
             }
