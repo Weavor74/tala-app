@@ -85,6 +85,9 @@ npm run dev
 | `npm run dev` | Start full dev environment (Vite + Electron + local inference path) |
 | `npm run build` | TypeScript compile + Vite production build |
 | `npm run dist` | Package distributable with electron-builder |
+| `npm run package:smoke` | Run release packaging smoke gate (non-publish dir package) |
+| `npm run artifacts:validate` | Validate packaged artifact structure/content expectations |
+| `npm run release:check` | Local release readiness pass (build + tests + phase-c + package smoke + artifact validation) |
 | `npm run lint` | ESLint validation |
 | `npm run test` | Run unit tests (Vitest) |
 | `npm run docs:regen` | Deterministically regenerate architecture/contracts/index docs |

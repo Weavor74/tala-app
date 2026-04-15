@@ -10,7 +10,10 @@
     "dev:inference": ".\\scripts\\diagnostics\\launch-inference.bat",
     "build": "tsc -b && tsc -p electron && vite build",
     "dist": "npm run build && electron-builder",
-    "dist:universal": "scripts\\build\\make_universal.bat",
+    "dist:universal": "scripts\\diagnostics\\make_universal.bat",
+    "package:smoke": "npx tsx scripts/diagnostics/run-release-packaging-smoke.ts",
+    "artifacts:validate": "npx tsx scripts/diagnostics/validate-release-artifacts.ts",
+    "release:check": "npm run build && npm run test && npm run test:phase-c && npm run package:smoke && npm run artifacts:validate",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -110,9 +113,18 @@
           "**/*"
         ]
       },
-      "start_local_inference.bat",
-      "launch-inference.bat",
-      "PORTABLE_BUILD_README.txt"
+      {
+        "from": "scripts/diagnostics/launch-inference.bat",
+        "to": "launch-inference.bat"
+      },
+      {
+        "from": "scripts/diagnostics/launch-inference.sh",
+        "to": "launch-inference.sh"
+      },
+      {
+        "from": "docs/build/offline_portable_build.md",
+        "to": "PORTABLE_BUILD_README.md"
+      }
     ],
     "win": {
       "target": [

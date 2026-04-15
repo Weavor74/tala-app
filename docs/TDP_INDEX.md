@@ -79,14 +79,14 @@
 
 ## build
 
-- [Build Instructions — Tala System](build/build_instructions.md)
+- [Build Instructions - Tala System](build/build_instructions.md)
 - [Dependency Management — Tala System](build/dependency_management.md)
 - [Deployment Procedures — Tala System](build/deployment_procedures.md)
 - [Disaster Recovery — Tala System](build/disaster_recovery.md)
 - [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
 - [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
 - [Offline / Portable Build — Tala System](build/offline_portable_build.md)
-- [Release Packaging — Tala System](build/release_packaging.md)
+- [Release Packaging - Tala System](build/release_packaging.md)
 - [Update and Upgrade Process — Tala System](build/update_and_upgrade_process.md)
 
 ## compliance

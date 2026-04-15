@@ -91,3 +91,29 @@ npm run docs:heal-and-validate
 
 ### Definition of done
 A qualifying task is not done until `npm run docs:heal-and-validate` passes and no unresolved `REVIEW_REQUIRED` checklist items remain.
+
+## Release CI Lifecycle
+
+### Authoritative release workflow
+- GitHub Actions workflow: [`phase-c-integration.yml`](/D:/src/client1/tala-app/.github/workflows/phase-c-integration.yml) (workflow name: **Release Governance**).
+- This is the visible release-readiness governance path for code/package integrity.
+
+### What Release Governance enforces
+- **Build**: `npm run build`
+- **Test**: `npm run test`
+- **Integration proof**: `npm run test:phase-c`
+- **Packaging smoke**: `npm run package:smoke`  
+  Meaning in this repo: run non-publish electron packaging (`--dir --publish never`) and fail unless real unpacked package output is produced.
+- **Artifact validation**: `npm run artifacts:validate`  
+  Meaning in this repo: verify expected build outputs and packaged runtime layout/files are present and structurally sane.
+
+### What contributors should run before opening a PR
+```powershell
+npm run release:check
+npm run docs:heal-and-validate
+```
+
+### Relationship to docs governance
+- `docs-lock` remains the authoritative documentation completion gate.
+- `Release Governance` is the authoritative release-readiness gate.
+- Both are required for truthful merge readiness on release-path changes.

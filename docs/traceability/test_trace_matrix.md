@@ -9,7 +9,7 @@ Local commands:
 - `npm run test:phase-c:watch`
 
 CI enforcement:
-- GitHub Actions workflow: `.github/workflows/phase-c-integration.yml`
+- GitHub Actions workflow: `.github/workflows/phase-c-integration.yml` (workflow name: `Release Governance`)
 - CI command: `npm run test:phase-c`
 
 Phase C suite set:

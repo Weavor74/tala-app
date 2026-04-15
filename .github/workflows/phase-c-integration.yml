@@ -1,15 +1,62 @@
-name: Phase C Integration
+name: Release Governance
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+      - 'release/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  phase-c-proof:
+  release-build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  release-tests:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite
+        run: npm run test
+
+  release-phase-c-proof:
+    name: Phase C Integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -28,3 +75,27 @@ jobs:
 
       - name: Run Phase C deterministic integration suites
         run: npm run test:phase-c
+
+  release-package-smoke-and-artifacts:
+    name: Packaging Smoke + Artifact Validation
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Packaging smoke
+        run: npm run package:smoke
+
+      - name: Validate packaged artifacts
+        run: npm run artifacts:validate

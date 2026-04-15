@@ -6374,6 +6374,20 @@
       "addedAt": "2026-04-14T22:08:11.754Z"
     },
     {
+      "file": "scripts/diagnostics/run-release-packaging-smoke.ts",
+      "rule": "naming/file-pattern",
+      "value": "run-release-packaging-smoke.ts",
+      "reason": "release governance smoke script naming exception",
+      "addedAt": "2026-04-15T00:00:00.000Z"
+    },
+    {
+      "file": "scripts/diagnostics/validate-release-artifacts.ts",
+      "rule": "naming/file-pattern",
+      "value": "validate-release-artifacts.ts",
+      "reason": "release governance artifact validation naming exception",
+      "addedAt": "2026-04-15T00:00:00.000Z"
+    },
+    {
       "file": "tools/memory_validator.py",
       "rule": "naming/file-pattern",
       "value": "memory_validator.py",
