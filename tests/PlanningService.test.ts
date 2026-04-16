@@ -405,7 +405,7 @@ describe('PS31–PS38 — Execution state transitions', () => {
         svc.markExecutionStarted(plan.id);
         const payload = findEmittedEvent('planning.execution_handoff');
         expect(payload?.planId).toBe(plan.id);
-        expect(payload?.handoffTarget).toBeTruthy();
+        expect(payload?.handoffType).toBeTruthy();
     });
 
     it('PS33 — markExecutionStarted transitions goal to executing', () => {
@@ -589,18 +589,18 @@ describe('PS47–PS54 — Governance and telemetry', () => {
         expect(plan.reasonCodes.length).toBeGreaterThan(0);
     });
 
-    it('PS50 — plan handoffTarget is not none for non-blocked plans', () => {
+    it('PS50 — plan handoff type is not none for non-blocked plans', () => {
         const svc = freshService();
         const g = svc.registerGoal(basicGoalInput());
         const plan = svc.buildPlan(g.id);
-        expect(plan.handoffTarget).not.toBe('none');
+        expect(plan.handoff.type).not.toBe('none');
     });
 
-    it('PS51 — blocked plan has handoffTarget none', () => {
+    it('PS51 — blocked plan has handoff type none', () => {
         const svc = freshService([]);
         const g = svc.registerGoal(basicGoalInput({ category: 'workflow' }));
         const plan = svc.buildPlan(g.id);
-        expect(plan.handoffTarget).toBe('none');
+        expect(plan.handoff.type).toBe('none');
     });
 
     it('PS52 — registerGoal throws if getGoal is called with wrong id', () => {
