@@ -615,6 +615,10 @@ export class PlanningService {
             this._saveGoalStatus(goal, 'completed');
         }
 
+        // Release per-goal replan tracking when the goal completes
+        this._replanCounts.delete(plan.goalId);
+        this._lastReplanAt.delete(plan.goalId);
+
         this._bus.emit({
             executionId: plan.goalId,
             subsystem: 'planning',
@@ -665,6 +669,10 @@ export class PlanningService {
         if (goal) {
             this._saveGoalStatus(goal, 'failed', [`execution_failed:${reason}`]);
         }
+
+        // Release per-goal replan tracking when the goal fails (terminal state)
+        this._replanCounts.delete(plan.goalId);
+        this._lastReplanAt.delete(plan.goalId);
 
         this._bus.emit({
             executionId: plan.goalId,

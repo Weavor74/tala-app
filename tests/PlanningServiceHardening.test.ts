@@ -72,7 +72,7 @@ function basicGoalInput(overrides: Partial<RegisterGoalInput> = {}): RegisterGoa
     };
 }
 
-function findEmittedPayload(eventType: string): Record<string, unknown> | undefined {
+function findFirstEmittedPayload(eventType: string): Record<string, unknown> | undefined {
     return emittedEvents.find(e => e.event === eventType)?.payload;
 }
 
@@ -80,6 +80,17 @@ function findAllEmittedPayloads(eventType: string): Array<Record<string, unknown
     return emittedEvents
         .filter(e => e.event === eventType)
         .map(e => e.payload ?? {});
+}
+
+/** Attempts a replan and returns the thrown PlanningError, or null if no error was thrown. */
+function tryReplan(svc: PlanningService, goalId: string, planId: string): PlanningError | null {
+    try {
+        svc.replan({ goalId, priorPlanId: planId, trigger: 'manual' });
+        return null;
+    } catch (e) {
+        if (e instanceof PlanningError) return e;
+        throw e;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +202,7 @@ describe('PS61–PS66 — Correlation IDs across planning lifecycle', () => {
     it('PS64 — planning.goal_registered event includes correlationId', () => {
         const svc = freshService();
         const g = svc.registerGoal(basicGoalInput());
-        const payload = findEmittedPayload('planning.goal_registered');
+        const payload = findFirstEmittedPayload('planning.goal_registered');
         expect(payload?.correlationId).toBe(g.correlationId);
     });
 
@@ -200,7 +211,7 @@ describe('PS61–PS66 — Correlation IDs across planning lifecycle', () => {
         const g = svc.registerGoal(basicGoalInput());
         const plan = svc.buildPlan(g.id);
         svc.markExecutionStarted(plan.id);
-        const payload = findEmittedPayload('planning.execution_handoff');
+        const payload = findFirstEmittedPayload('planning.execution_handoff');
         expect(payload?.correlationId).toBe(g.correlationId);
     });
 
@@ -210,7 +221,7 @@ describe('PS61–PS66 — Correlation IDs across planning lifecycle', () => {
         const g = svc.registerGoal(basicGoalInput());
         const plan = svc.buildPlan(g.id);
         svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-        const payload = findEmittedPayload('planning.replan_requested');
+        const payload = findFirstEmittedPayload('planning.replan_requested');
         expect(payload?.correlationId).toBe(g.correlationId);
     });
 });
@@ -244,16 +255,9 @@ describe('PS67–PS72 — Replan guardrails', () => {
         let plan = svc.buildPlan(g.id);
         plan = svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
         plan = svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-        const err = (() => {
-            try {
-                svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-                return null;
-            } catch (e) {
-                return e;
-            }
-        })();
+        const err = tryReplan(svc, g.id, plan.id);
         expect(err).toBeInstanceOf(PlanningError);
-        expect((err as PlanningError).code).toBe('REPLAN_LIMIT_EXCEEDED');
+        expect(err!.code).toBe('REPLAN_LIMIT_EXCEEDED');
     });
 
     it('PS69 — replan within cooldown throws REPLAN_COOLDOWN_ACTIVE', () => {
@@ -263,16 +267,9 @@ describe('PS67–PS72 — Replan guardrails', () => {
         const g = svc.registerGoal(basicGoalInput());
         let plan = svc.buildPlan(g.id);
         plan = svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-        const err = (() => {
-            try {
-                svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-                return null;
-            } catch (e) {
-                return e;
-            }
-        })();
+        const err = tryReplan(svc, g.id, plan.id);
         expect(err).toBeInstanceOf(PlanningError);
-        expect((err as PlanningError).code).toBe('REPLAN_COOLDOWN_ACTIVE');
+        expect(err!.code).toBe('REPLAN_COOLDOWN_ACTIVE');
     });
 
     it('PS70 — replanCount on goal increments with each successful replan', () => {
@@ -307,13 +304,9 @@ describe('PS67–PS72 — Replan guardrails', () => {
         const g = svc.registerGoal(basicGoalInput());
         let plan = svc.buildPlan(g.id);
         plan = svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-        let errMsg = '';
-        try {
-            svc.replan({ goalId: g.id, priorPlanId: plan.id, trigger: 'manual' });
-        } catch (e) {
-            errMsg = (e as Error).message;
-        }
-        expect(errMsg).toContain('1');
+        const err = tryReplan(svc, g.id, plan.id);
+        expect(err).not.toBeNull();
+        expect(err!.message).toContain('1');
     });
 });
 

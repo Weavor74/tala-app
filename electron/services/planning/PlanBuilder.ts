@@ -371,6 +371,18 @@ function buildBlockedStages(blockingIssues: string[]): PlanStage[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Prefix for workflow IDs on workflow-style goals.
+ * @internal
+ */
+const WORKFLOW_ID_PREFIX = 'workflow';
+
+/**
+ * Prefix for deterministic workflow IDs.
+ * @internal
+ */
+const DETERMINISTIC_WORKFLOW_ID_PREFIX = 'workflow.deterministic';
+
+/**
  * Derives the legacy ExecutionHandoffTarget string from the typed handoff.
  */
 function handoffToTarget(handoff: ExecutionHandoff): ExecutionHandoffTarget {
@@ -400,7 +412,7 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
             return {
                 type: 'workflow',
                 contractVersion: 1,
-                workflowId: `workflow.${analysis.goalId}`,
+                workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
                 inputs: {},
             };
         case 'tool_orchestrated':
@@ -423,7 +435,7 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
             return {
                 type: 'workflow',
                 contractVersion: 1,
-                workflowId: `workflow.deterministic.${analysis.goalId}`,
+                workflowId: `${DETERMINISTIC_WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
                 inputs: {},
             };
     }
