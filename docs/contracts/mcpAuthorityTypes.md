@@ -1,6 +1,6 @@
 # Contract: mcpAuthorityTypes.ts
 
-**Source**: [shared\mcpAuthorityTypes.ts](../../shared/mcpAuthorityTypes.ts)
+**Source**: [shared/mcpAuthorityTypes.ts](../../shared/mcpAuthorityTypes.ts)
 
 ## Interfaces
 

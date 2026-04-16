@@ -1,6 +1,6 @@
 # Contract: inferenceProviderTypes.ts
 
-**Source**: [shared\inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
+**Source**: [shared/inferenceProviderTypes.ts](../../shared/inferenceProviderTypes.ts)
 
 ## Interfaces
 

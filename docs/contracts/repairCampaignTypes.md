@@ -1,6 +1,6 @@
 # Contract: repairCampaignTypes.ts
 
-**Source**: [shared\repairCampaignTypes.ts](../../shared/repairCampaignTypes.ts)
+**Source**: [shared/repairCampaignTypes.ts](../../shared/repairCampaignTypes.ts)
 
 ## Interfaces
 

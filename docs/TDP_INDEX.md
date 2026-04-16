@@ -79,18 +79,6 @@
 - [Tala Requirement and Usage Report](audit/requirement_report.md)
 - [Tala Service Index](audit/service_index.md)
 
-## build
-
-- [Build Instructions - Tala System](build/build_instructions.md)
-- [Dependency Management — Tala System](build/dependency_management.md)
-- [Deployment Procedures - Tala System](build/deployment_procedures.md)
-- [Disaster Recovery - Tala System](build/disaster_recovery.md)
-- [Environment Reconstruction — Tala System](build/environment_reconstruction.md)
-- [Maintenance Guidelines — Tala System](build/maintenance_guidelines.md)
-- [Offline / Portable Build — Tala System](build/offline_portable_build.md)
-- [Release Packaging - Tala System](build/release_packaging.md)
-- [Update and Upgrade Process — Tala System](build/update_and_upgrade_process.md)
-
 ## compliance
 
 - [Dependency License Inventory — Tala System](compliance/dependency_license_inventory.md)
@@ -185,24 +173,6 @@
 - [System Lifecycle Plan — Tala System](lifecycle/system_lifecycle_plan.md)
 - [Update Policy — Tala System](lifecycle/update_policy.md)
 
-## logs
-
-- [Architecture Generation Log](architecture/logs/architecture_generation_log.md)
-- [Audit Actions Log](audit/logs/audit_actions.md)
-- [Build Generation Log — Pass 8](build/logs/build_generation_log.md)
-- [Compliance Generation Log — Pass 9](compliance/logs/compliance_generation_log.md)
-- [Deep Catalog Generation Log](audit/logs/deep_catalog_generation_log.md)
-- [File Documentation Generation Log](audit/logs/file_doc_generation_log.md)
-- [Government-Grade Inventory Generation Log](audit/logs/government_inventory_generation_log.md)
-- [Interface Generation Log — Pass 6](interfaces/logs/interface_generation_log.md)
-- [Lifecycle Generation Log — Tala System](lifecycle/logs/lifecycle_generation_log.md)
-- [Requirements Validation Log](audit/logs/requirements_validation_log.md)
-- [requirements_generation_log.md](audit/logs/requirements_generation_log.md)
-- [Review Generation Log — Pass 7.5](review/logs/review_generation_log.md)
-- [Security Generation Log — Pass 7](security/logs/security_generation_log.md)
-- [Traceability Generation Log — Tala System](traceability/logs/traceability_generation_log.md)
-- [Unresolved Items Log](audit/logs/unresolved_items.md)
-
 ## operations
 
 - [MCP Server Registration (Operator Guide)](operations/mcp-server-registration.md)
@@ -292,6 +262,7 @@
 - [Service: OperatorActionService.ts](subsystems/service-OperatorActionService.md)
 - [Service: OrchestratorService.ts](subsystems/service-OrchestratorService.md)
 - [Service: PathResolver.ts](subsystems/service-PathResolver.md)
+- [Service: PlanningService](subsystems/service-PlanningService.md)
 - [Service: PromptAuditService.ts](subsystems/service-PromptAuditService.md)
 - [Service: RagService.ts](subsystems/service-RagService.md)
 - [Service: RuntimeControlService.ts](subsystems/service-RuntimeControlService.md)

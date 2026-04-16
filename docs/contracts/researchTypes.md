@@ -1,6 +1,6 @@
 # Contract: researchTypes.ts
 
-**Source**: [shared\researchTypes.ts](../../shared/researchTypes.ts)
+**Source**: [shared/researchTypes.ts](../../shared/researchTypes.ts)
 
 ## Interfaces
 

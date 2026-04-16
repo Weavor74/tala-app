@@ -1,6 +1,6 @@
 # Contract: governanceTypes.ts
 
-**Source**: [shared\governanceTypes.ts](../../shared/governanceTypes.ts)
+**Source**: [shared/governanceTypes.ts](../../shared/governanceTypes.ts)
 
 ## Interfaces
 

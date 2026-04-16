@@ -1,6 +1,6 @@
 # Service: SystemModeManager.ts
 
-**Source**: [electron\services\SystemModeManager.ts](../../electron/services/SystemModeManager.ts)
+**Source**: [electron/services/SystemModeManager.ts](../../electron/services/SystemModeManager.ts)
 
 ## Class: `SystemModeManager`
 
