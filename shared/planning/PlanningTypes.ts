@@ -340,6 +340,32 @@ export interface ApprovalContext {
 // ─── Execution Handoff Contract ───────────────────────────────────────────────
 
 /**
+ * A single, ordered, typed tool invocation within a tool-orchestrated plan.
+ *
+ * Each step maps to one call to ToolExecutionCoordinator.executeTool().
+ * Steps are executed in array order; a step may declare a failurePolicy to
+ * control what happens when execution fails.
+ */
+export interface PlannedToolInvocation {
+    /** Stable tool identifier (e.g. 'mem0_search', 'fs_read_text'). */
+    toolId: string;
+    /** Tool-specific input arguments for this step. */
+    input: Record<string, unknown>;
+    /** Human-readable description of this step's purpose. */
+    description?: string;
+    /**
+     * What to do if this step fails.
+     * stop     — abort remaining steps
+     * retry    — retry this step (governed by ToolExecutionCoordinator retry logic)
+     * skip     — skip this step and continue with remaining steps
+     * escalate — escalate to operator
+     */
+    failurePolicy: 'stop' | 'retry' | 'skip' | 'escalate';
+    /** Expected output keys this step will produce (informational). */
+    expectedOutputs?: string[];
+}
+
+/**
  * Typed execution handoff contract.
  *
  * Discriminated union describing exactly which downstream execution authority
@@ -364,10 +390,14 @@ export type ExecutionHandoff =
           /** Delegate to the tool execution coordinator. */
           type: 'tool';
           contractVersion: 1;
-          /** Tool identifiers to be invoked in sequence. */
-          toolIds: string[];
-          /** Shared inputs for the tool sequence. */
-          inputs: Record<string, unknown>;
+          /**
+           * Ordered list of tool invocations to execute.
+           * Each step maps to one ToolExecutionCoordinator.executeTool() call.
+           * Steps are executed in array order.
+           */
+          steps: PlannedToolInvocation[];
+          /** Inputs shared across all steps (merged with per-step input). */
+          sharedInputs: Record<string, unknown>;
       }
     | {
           /** Delegate to the agent kernel for model-assisted execution. */
@@ -434,17 +464,6 @@ export type ExecutionPlanStatus =
     | 'superseded';
 
 /**
- * The downstream execution authority the plan targets.
- * PlanningService does NOT invoke these — it only records the intended handoff.
- */
-export type ExecutionHandoffTarget =
-    | 'WorkflowExecutionService'
-    | 'ToolExecutionCoordinator'
-    | 'AgentKernel'
-    | 'OperatorActionService'
-    | 'none';
-
-/**
  * A fully structured, machine-usable execution plan.
  *
  * Plans are immutable once sealed (status transitions from 'draft').
@@ -490,14 +509,21 @@ export interface ExecutionPlan {
     denialReason?: string;
     /** Current plan lifecycle status. */
     status: ExecutionPlanStatus;
-    /** Intended downstream execution authority. PlanningService does not invoke it. */
-    handoffTarget: ExecutionHandoffTarget;
     /**
      * Typed execution handoff contract.
-     * Discriminated union describing exactly what the downstream authority should
-     * receive.  The legacy `handoffTarget` string field is derived from this.
+     * Discriminated union describing exactly which downstream authority should
+     * receive the handoff and what inputs it expects.
+     * This is the single source of truth for execution handoff targeting.
      */
     handoff: ExecutionHandoff;
+    /**
+     * Unique identifier for the current execution boundary.
+     * Generated when markExecutionStarted() is called; absent before execution.
+     * Distinct from the goal correlationId (which spans the full lifecycle) and
+     * from the plan id (which identifies the plan version).
+     * Used for correlating tool and workflow telemetry to a specific execution attempt.
+     */
+    executionBoundaryId?: string;
     /**
      * Structured approval context.
      * Populated only when requiresApproval is true.

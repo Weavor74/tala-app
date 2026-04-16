@@ -281,8 +281,27 @@ export class PlanningService {
         // Transition to 'analyzing'
         this._saveGoalStatus(goal, 'analyzing');
 
-        // Use provider-supplied capabilities if registered; otherwise fall back to manually-set ones
-        const capabilities = this._capabilityProvider?.() ?? this._availableCapabilities;
+        // Use provider-supplied capabilities if registered; otherwise fall back to manually-set ones.
+        // If the provider throws, emit a warning event and fall back to the manually-set snapshot.
+        let capabilities = this._availableCapabilities;
+        if (this._capabilityProvider) {
+            try {
+                capabilities = this._capabilityProvider();
+            } catch (err) {
+                this._bus.emit({
+                    executionId: goalId,
+                    subsystem: 'planning',
+                    event: 'planning.capability_provider_error',
+                    payload: {
+                        goalId,
+                        correlationId: goal.correlationId,
+                        error: err instanceof Error ? err.message : String(err),
+                        fallback: 'manual_capabilities',
+                    },
+                });
+                // Fall through: capabilities remains as the manually-set snapshot
+            }
+        }
 
         const analysis = GoalAnalyzer.analyze(goal, capabilities);
 
@@ -365,7 +384,7 @@ export class PlanningService {
                 approvalState: plan.approvalState,
                 status: plan.status,
                 estimatedRisk: plan.estimatedRisk,
-                handoffTarget: plan.handoffTarget,
+                handoffType: plan.handoff.type,
                 reasonCodes: plan.reasonCodes,
                 durationMs,
             },
@@ -548,9 +567,11 @@ export class PlanningService {
         }
 
         const now = new Date().toISOString();
+        const executionBoundaryId = `exec-${uuidv4()}`;
         const updated: ExecutionPlan = {
             ...plan,
             status: 'executing',
+            executionBoundaryId,
             updatedAt: now,
         };
 
@@ -570,7 +591,7 @@ export class PlanningService {
                 goalId: plan.goalId,
                 correlationId: goal?.correlationId,
                 planId,
-                handoffTarget: plan.handoffTarget,
+                executionBoundaryId,
                 handoffType: plan.handoff.type,
                 plannerType: plan.plannerType,
                 version: plan.version,
@@ -725,6 +746,20 @@ export class PlanningService {
 
         const replanCount = this._replanCounts.get(request.goalId) ?? 0;
         if (replanCount >= this._replanPolicy.maxReplans) {
+            this._bus.emit({
+                executionId: request.goalId,
+                subsystem: 'planning',
+                event: 'planning.replan_rejected',
+                payload: {
+                    goalId: request.goalId,
+                    correlationId: goal.correlationId,
+                    priorPlanId: request.priorPlanId,
+                    trigger: request.trigger,
+                    rejectionCode: 'REPLAN_LIMIT_EXCEEDED',
+                    replanCount,
+                    maxReplans: this._replanPolicy.maxReplans,
+                },
+            });
             throw new PlanningError(
                 `Goal ${request.goalId} has exceeded the replan limit (max: ${this._replanPolicy.maxReplans})`,
                 'REPLAN_LIMIT_EXCEEDED',
@@ -735,6 +770,20 @@ export class PlanningService {
         const nowMs = Date.now();
         if (nowMs - lastReplanAt < this._replanPolicy.cooldownMs) {
             const remainingMs = this._replanPolicy.cooldownMs - (nowMs - lastReplanAt);
+            this._bus.emit({
+                executionId: request.goalId,
+                subsystem: 'planning',
+                event: 'planning.replan_rejected',
+                payload: {
+                    goalId: request.goalId,
+                    correlationId: goal.correlationId,
+                    priorPlanId: request.priorPlanId,
+                    trigger: request.trigger,
+                    rejectionCode: 'REPLAN_COOLDOWN_ACTIVE',
+                    remainingMs,
+                    cooldownMs: this._replanPolicy.cooldownMs,
+                },
+            });
             throw new PlanningError(
                 `Goal ${request.goalId} replan cooldown active (${remainingMs}ms remaining)`,
                 'REPLAN_COOLDOWN_ACTIVE',
@@ -763,8 +812,27 @@ export class PlanningService {
         // Reset goal status to 'registered' for fresh analysis
         this._saveGoalStatus(goal, 'registered', [`replan_trigger:${request.trigger}`]);
 
-        // Analyse with current capabilities (use provider if registered)
-        const capabilities = this._capabilityProvider?.() ?? this._availableCapabilities;
+        // Analyse with current capabilities (use provider if registered).
+        // If the provider throws, emit a warning event and fall back to the manually-set snapshot.
+        let capabilities = this._availableCapabilities;
+        if (this._capabilityProvider) {
+            try {
+                capabilities = this._capabilityProvider();
+            } catch (err) {
+                this._bus.emit({
+                    executionId: request.goalId,
+                    subsystem: 'planning',
+                    event: 'planning.capability_provider_error',
+                    payload: {
+                        goalId: request.goalId,
+                        correlationId: goal.correlationId,
+                        error: err instanceof Error ? err.message : String(err),
+                        fallback: 'manual_capabilities',
+                    },
+                });
+                // Fall through: capabilities remains as the manually-set snapshot
+            }
+        }
         const analysis = GoalAnalyzer.analyze(
             this._repo.getGoal(request.goalId)!,
             capabilities,

@@ -32,8 +32,8 @@ import type {
     PlanStageType,
     StageExecutionMode,
     StageFailurePolicy,
-    ExecutionHandoffTarget,
     ExecutionHandoff,
+    PlannedToolInvocation,
     PlanApprovalState,
     ExecutionPlanStatus,
     GoalExecutionStyle,
@@ -383,19 +383,6 @@ const WORKFLOW_ID_PREFIX = 'workflow';
 const DETERMINISTIC_WORKFLOW_ID_PREFIX = 'workflow.deterministic';
 
 /**
- * Derives the legacy ExecutionHandoffTarget string from the typed handoff.
- */
-function handoffToTarget(handoff: ExecutionHandoff): ExecutionHandoffTarget {
-    switch (handoff.type) {
-        case 'workflow':  return 'WorkflowExecutionService';
-        case 'tool':      return 'ToolExecutionCoordinator';
-        case 'agent':     return 'AgentKernel';
-        case 'operator':  return 'OperatorActionService';
-        case 'none':      return 'none';
-    }
-}
-
-/**
  * Builds the typed ExecutionHandoff discriminated union from a GoalAnalysis.
  */
 function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
@@ -415,13 +402,22 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
                 workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
                 inputs: {},
             };
-        case 'tool_orchestrated':
+        case 'tool_orchestrated': {
+            const steps: PlannedToolInvocation[] = [
+                {
+                    toolId: 'tool_execution_preflight',
+                    input: { goalId: analysis.goalId },
+                    description: 'Verify tool execution infrastructure is available',
+                    failurePolicy: 'stop',
+                },
+            ];
             return {
                 type: 'tool',
                 contractVersion: 1,
-                toolIds: [],
-                inputs: {},
+                steps,
+                sharedInputs: { goalId: analysis.goalId },
             };
+        }
         case 'llm_assisted':
         case 'hybrid':
             return {
@@ -485,7 +481,6 @@ export class PlanBuilder {
         const dependencies = PlanBuilder._buildDependencies(stages);
 
         const handoff = buildHandoff(analysis);
-        const handoffTarget: ExecutionHandoffTarget = handoffToTarget(handoff);
 
         const approvalState: PlanApprovalState = isBlocked
             ? 'not_required'
@@ -502,7 +497,7 @@ export class PlanBuilder {
         const reasonCodes: string[] = [
             ...analysis.reasonCodes,
             isBlocked ? 'plan:blocked' : 'plan:constructed',
-            `handoff:${handoffTarget}`,
+            `handoff:${handoff.type}`,
         ];
         if (priorPlan) {
             reasonCodes.push(`replan_from:${priorPlan.id}`);
@@ -526,7 +521,6 @@ export class PlanBuilder {
             requiresApproval: analysis.requiresApproval,
             approvalState,
             status,
-            handoffTarget,
             handoff,
             ...(analysis.approvalContext && { approvalContext: analysis.approvalContext }),
             reasonCodes,

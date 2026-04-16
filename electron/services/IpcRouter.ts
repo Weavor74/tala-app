@@ -2751,6 +2751,10 @@ export class IpcRouter {
       return PlanningService.getInstance().getGoal(goalId) ?? null;
     });
 
+    ipcMain.handle('planning:analyzeGoal', (_e, goalId: string) => {
+      return PlanningService.getInstance().analyzeGoal(goalId);
+    });
+
     ipcMain.handle('planning:getPlan', (_e, planId: string) => {
       return PlanningService.getInstance().getPlan(planId) ?? null;
     });
