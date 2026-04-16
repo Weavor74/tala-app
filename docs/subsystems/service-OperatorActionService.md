@@ -1,6 +1,6 @@
 # Service: OperatorActionService.ts
 
-**Source**: [electron\services\OperatorActionService.ts](../../electron/services/OperatorActionService.ts)
+**Source**: [electron/services/OperatorActionService.ts](../../electron/services/OperatorActionService.ts)
 
 ## Class: `OperatorActionService`
 

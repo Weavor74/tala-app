@@ -1,6 +1,6 @@
 # Contract: logs.ts
 
-**Source**: [shared\logs.ts](../../shared/logs.ts)
+**Source**: [shared/logs.ts](../../shared/logs.ts)
 
 ## Interfaces
 

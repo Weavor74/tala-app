@@ -1,6 +1,6 @@
 # Service: SystemHealthService.ts
 
-**Source**: [electron\services\SystemHealthService.ts](../../electron/services/SystemHealthService.ts)
+**Source**: [electron/services/SystemHealthService.ts](../../electron/services/SystemHealthService.ts)
 
 ## Class: `SystemHealthService`
 

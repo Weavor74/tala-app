@@ -1,6 +1,6 @@
 # Contract: runtimeEventTypes.ts
 
-**Source**: [shared\runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
+**Source**: [shared/runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
 
 ## Interfaces
 
@@ -105,7 +105,19 @@ type RuntimeEventType =
     | 'context.assembled'
     | 'context.truncated'
     | 'context.section_excluded'
-    | `context.${string}`;
+    | `context.${string}`
+    | 'planning.goal_registered'
+    | 'planning.goal_analyzed'
+    | 'planning.plan_created'
+    | 'planning.plan_blocked'
+    | 'planning.plan_approved'
+    | 'planning.plan_denied'
+    | 'planning.execution_handoff'
+    | 'planning.replan_requested'
+    | 'planning.plan_superseded'
+    | 'planning.plan_completed'
+    | 'planning.plan_failed'
+    | `planning.${string}`;
 ```
 
 ### `RuntimeEventHandler`

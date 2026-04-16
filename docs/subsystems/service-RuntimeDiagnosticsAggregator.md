@@ -1,6 +1,6 @@
 # Service: RuntimeDiagnosticsAggregator.ts
 
-**Source**: [electron\services\RuntimeDiagnosticsAggregator.ts](../../electron/services/RuntimeDiagnosticsAggregator.ts)
+**Source**: [electron/services/RuntimeDiagnosticsAggregator.ts](../../electron/services/RuntimeDiagnosticsAggregator.ts)
 
 ## Class: `RuntimeDiagnosticsAggregator`
 

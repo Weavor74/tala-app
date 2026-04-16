@@ -1,6 +1,6 @@
 # Contract: dbBootstrapConfig.ts
 
-**Source**: [shared\dbBootstrapConfig.ts](../../shared/dbBootstrapConfig.ts)
+**Source**: [shared/dbBootstrapConfig.ts](../../shared/dbBootstrapConfig.ts)
 
 ## Interfaces
 
