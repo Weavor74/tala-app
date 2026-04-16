@@ -95,6 +95,8 @@ import {
   normalizeGuardrailPolicyConfig,
 } from '../../shared/guardrails/guardrailPolicyTypes';
 import type { McpRegistrationRequest } from '../../shared/mcpAuthorityTypes';
+import { PlanningService } from './planning/PlanningService';
+import type { ReplanRequest } from '../../shared/planning/PlanningTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);

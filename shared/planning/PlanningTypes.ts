@@ -80,6 +80,13 @@ export type PlanGoalStatus =
 export interface PlanGoal {
     /** Unique goal identifier. */
     id: string;
+    /**
+     * Planning-lifecycle correlation identifier.
+     * Generated at goal registration and propagated to all associated plans
+     * and telemetry events.  Use this to correlate events across the full
+     * goal → plan → execution lifecycle.
+     */
+    correlationId: string;
     /** Human-readable title. */
     title: string;
     /** Detailed goal description. */
@@ -107,6 +114,11 @@ export interface PlanGoal {
     reasonCodes?: string[];
     /** Optional caller-supplied metadata (must not contain raw user content). */
     metadata?: Record<string, unknown>;
+    /**
+     * Number of times this goal has been replanned.
+     * Starts at 0 for the initial plan; incremented on each successful replan.
+     */
+    replanCount: number;
 }
 
 // ─── Goal Analysis ────────────────────────────────────────────────────────────
@@ -168,6 +180,11 @@ export interface GoalAnalysis {
      * Absent when requiresApproval is false.
      */
     approvalReason?: string;
+    /**
+     * Structured explanation of why approval is required.
+     * Populated only when requiresApproval is true.
+     */
+    approvalContext?: ApprovalContext;
     /** Capabilities required by this goal (e.g. 'rag', 'workflow_engine'). */
     requiredCapabilities: string[];
     /** Capabilities from requiredCapabilities that are not currently available. */
@@ -283,6 +300,101 @@ export interface PlanStage {
     outputs: Record<string, string>;
 }
 
+// ─── Approval Context ─────────────────────────────────────────────────────────
+
+/**
+ * Machine-readable code for why approval is required.
+ *
+ * critical_risk           — estimated risk level is 'critical'
+ * high_risk               — estimated risk level is 'high'
+ * autonomy_source         — goal originated from autonomy with non-trivial risk
+ * operator_source         — goal originated from an operator and requires sign-off
+ * llm_non_conversation    — LLM-assisted goal that is not a conversation goal
+ * config_mutation_implied — goal description implies provider/config/canonical-state changes
+ */
+export type ApprovalTrigger =
+    | 'critical_risk'
+    | 'high_risk'
+    | 'autonomy_source'
+    | 'operator_source'
+    | 'llm_non_conversation'
+    | 'config_mutation_implied';
+
+/**
+ * Structured, machine-readable explanation of why approval is required.
+ *
+ * Populated only when GoalAnalysis.requiresApproval is true.
+ * Absent when approval is not required (approvalState: 'not_required').
+ */
+export interface ApprovalContext {
+    /** Machine-readable trigger codes that caused approval to be required. */
+    triggeredBy: ApprovalTrigger[];
+    /** Human-readable reason strings, one per trigger (parallel array to triggeredBy). */
+    reasons: string[];
+    /** Risk level as assessed at analysis time. */
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    /** Optional mitigations that, if applied, might reduce the risk level on replan. */
+    mitigations?: string[];
+}
+
+// ─── Execution Handoff Contract ───────────────────────────────────────────────
+
+/**
+ * Typed execution handoff contract.
+ *
+ * Discriminated union describing exactly which downstream execution authority
+ * should receive the handoff and what inputs it expects.
+ *
+ * PlanningService does NOT invoke these authorities.  It only records the
+ * intended handoff so downstream systems can discover, validate, and act on it.
+ *
+ * All variants carry contractVersion: 1 to support future schema evolution.
+ */
+export type ExecutionHandoff =
+    | {
+          /** Delegate to the workflow execution service. */
+          type: 'workflow';
+          contractVersion: 1;
+          /** Identifies the registered workflow to dispatch. */
+          workflowId: string;
+          /** Inputs for the workflow run. */
+          inputs: Record<string, unknown>;
+      }
+    | {
+          /** Delegate to the tool execution coordinator. */
+          type: 'tool';
+          contractVersion: 1;
+          /** Tool identifiers to be invoked in sequence. */
+          toolIds: string[];
+          /** Shared inputs for the tool sequence. */
+          inputs: Record<string, unknown>;
+      }
+    | {
+          /** Delegate to the agent kernel for model-assisted execution. */
+          type: 'agent';
+          contractVersion: 1;
+          /** Execution style (llm_assisted or hybrid). */
+          executionMode: GoalExecutionStyle;
+          /** Inputs for the agent kernel session. */
+          inputs: Record<string, unknown>;
+      }
+    | {
+          /** Requires human operator action. */
+          type: 'operator';
+          contractVersion: 1;
+          /** Classification of the operator action required. */
+          actionType: string;
+          /** Human-readable rationale for why operator action is needed. */
+          rationale: string;
+      }
+    | {
+          /** No handoff possible — plan is blocked or analysis failed. */
+          type: 'none';
+          contractVersion: 1;
+          /** Machine-readable reason why no handoff can be made. */
+          reason: string;
+      };
+
 // ─── Execution Plan ───────────────────────────────────────────────────────────
 
 /**
@@ -381,6 +493,17 @@ export interface ExecutionPlan {
     /** Intended downstream execution authority. PlanningService does not invoke it. */
     handoffTarget: ExecutionHandoffTarget;
     /**
+     * Typed execution handoff contract.
+     * Discriminated union describing exactly what the downstream authority should
+     * receive.  The legacy `handoffTarget` string field is derived from this.
+     */
+    handoff: ExecutionHandoff;
+    /**
+     * Structured approval context.
+     * Populated only when requiresApproval is true.
+     */
+    approvalContext?: ApprovalContext;
+    /**
      * Machine-readable reason codes for the current status.
      * Examples: 'blocked:missing_capability:rag', 'approved:operator:user-123'
      */
@@ -398,6 +521,22 @@ export interface ExecutionPlan {
 }
 
 // ─── Replan Request ───────────────────────────────────────────────────────────
+
+/**
+ * Policy governing replanning for a goal.
+ */
+export interface ReplanPolicy {
+    /**
+     * Maximum number of replans allowed per goal before the service throws
+     * REPLAN_LIMIT_EXCEEDED.  Defaults to 5.
+     */
+    maxReplans: number;
+    /**
+     * Minimum milliseconds that must elapse between replan calls for the same
+     * goal.  Defaults to 30 000 (30 seconds).
+     */
+    cooldownMs: number;
+}
 
 /**
  * What triggered the replanning request.
