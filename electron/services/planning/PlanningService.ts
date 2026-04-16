@@ -65,6 +65,7 @@ import type {
     ExecutionPlan,
     GoalAnalysis,
     ReplanRequest,
+    ReplanPolicy,
 } from '../../../shared/planning/PlanningTypes';
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,32 @@ export class PlanningService {
      */
     private _availableCapabilities: ReadonlySet<string> = new Set();
 
+    /**
+     * Optional non-manual capability provider.
+     * When registered, analyzeGoal() calls this function first and uses its
+     * result in preference to the manually-injected capability set.
+     * Allows PlanningService to stay current without explicit calls to
+     * setAvailableCapabilities() on every capability change.
+     */
+    private _capabilityProvider?: () => ReadonlySet<string>;
+
+    /**
+     * Replan policy — configures per-goal replan limits and cooldown.
+     */
+    private _replanPolicy: ReplanPolicy = { maxReplans: 5, cooldownMs: 30_000 };
+
+    /**
+     * Per-goal replan count.  Tracks how many times replan() has succeeded
+     * for each goal.  Cleared when the singleton is reset.
+     */
+    private readonly _replanCounts = new Map<string, number>();
+
+    /**
+     * Per-goal timestamp of the last successful replan call (Date.now() ms).
+     * Used to enforce the cooldown window.
+     */
+    private readonly _lastReplanAt = new Map<string, number>();
+
     private constructor(repo?: PlanningRepository) {
         this._repo = repo ?? new PlanningRepository();
         this._bus = TelemetryBus.getInstance();
@@ -138,8 +165,6 @@ export class PlanningService {
             : null;
     }
 
-    // ── Capability injection ─────────────────────────────────────────────────
-
     /**
      * Updates the set of available runtime capabilities used during analysis.
      * Must be called before analyzeGoal() for accurate missing-capability detection.
@@ -149,6 +174,36 @@ export class PlanningService {
      */
     setAvailableCapabilities(capabilities: ReadonlySet<string>): void {
         this._availableCapabilities = capabilities;
+    }
+
+    /**
+     * Registers a non-manual capability provider function.
+     *
+     * When a provider is registered, analyzeGoal() calls it on every analysis
+     * to retrieve the current capability set, rather than relying solely on the
+     * last setAvailableCapabilities() snapshot.  This eliminates the need for
+     * callers to explicitly refresh capabilities before every analysis.
+     *
+     * The provider is called synchronously during analyzeGoal().  It must be
+     * cheap to call (no I/O, no network), returning the current snapshot of
+     * available capability names.
+     *
+     * @param provider - Zero-argument function returning the current capability set.
+     */
+    registerCapabilityProvider(provider: () => ReadonlySet<string>): void {
+        this._capabilityProvider = provider;
+    }
+
+    /**
+     * Configures the replan policy for this service instance.
+     *
+     * Replanning beyond maxReplans per goal throws REPLAN_LIMIT_EXCEEDED.
+     * Replanning within cooldownMs of the previous replan throws REPLAN_COOLDOWN_ACTIVE.
+     *
+     * @param policy - Replan limits and cooldown configuration.
+     */
+    setReplanPolicy(policy: ReplanPolicy): void {
+        this._replanPolicy = { ...policy };
     }
 
     // ── Goal management ──────────────────────────────────────────────────────
@@ -162,6 +217,7 @@ export class PlanningService {
         const now = new Date().toISOString();
         const goal: PlanGoal = {
             id: `goal-${uuidv4()}`,
+            correlationId: `corr-${uuidv4()}`,
             title: input.title,
             description: input.description,
             source: input.source,
@@ -173,6 +229,7 @@ export class PlanningService {
             registeredAt: now,
             updatedAt: now,
             metadata: input.metadata,
+            replanCount: 0,
         };
 
         this._repo.saveGoal(goal);
@@ -183,6 +240,7 @@ export class PlanningService {
             event: 'planning.goal_registered',
             payload: {
                 goalId: goal.id,
+                correlationId: goal.correlationId,
                 source: goal.source,
                 category: goal.category,
                 priority: goal.priority,
@@ -223,7 +281,10 @@ export class PlanningService {
         // Transition to 'analyzing'
         this._saveGoalStatus(goal, 'analyzing');
 
-        const analysis = GoalAnalyzer.analyze(goal, this._availableCapabilities);
+        // Use provider-supplied capabilities if registered; otherwise fall back to manually-set ones
+        const capabilities = this._capabilityProvider?.() ?? this._availableCapabilities;
+
+        const analysis = GoalAnalyzer.analyze(goal, capabilities);
 
         const durationMs = Date.now() - start;
 
@@ -233,6 +294,7 @@ export class PlanningService {
             event: 'planning.goal_analyzed',
             payload: {
                 goalId,
+                correlationId: goal.correlationId,
                 complexity: analysis.complexity,
                 executionStyle: analysis.executionStyle,
                 requiresApproval: analysis.requiresApproval,
@@ -294,6 +356,7 @@ export class PlanningService {
             event: eventType,
             payload: {
                 goalId,
+                correlationId: this._repo.getGoal(goalId)?.correlationId,
                 planId: plan.id,
                 plannerType: plan.plannerType,
                 version: plan.version,
@@ -367,6 +430,7 @@ export class PlanningService {
             event: 'planning.plan_approved',
             payload: {
                 goalId: plan.goalId,
+                correlationId: goal?.correlationId,
                 planId,
                 actor,
                 approvedAt: now,
@@ -424,6 +488,7 @@ export class PlanningService {
             event: 'planning.plan_denied',
             payload: {
                 goalId: plan.goalId,
+                correlationId: goal?.correlationId,
                 planId,
                 actor,
                 reason,
@@ -503,8 +568,10 @@ export class PlanningService {
             event: 'planning.execution_handoff',
             payload: {
                 goalId: plan.goalId,
+                correlationId: goal?.correlationId,
                 planId,
                 handoffTarget: plan.handoffTarget,
+                handoffType: plan.handoff.type,
                 plannerType: plan.plannerType,
                 version: plan.version,
                 startedAt: now,
@@ -548,12 +615,17 @@ export class PlanningService {
             this._saveGoalStatus(goal, 'completed');
         }
 
+        // Release per-goal replan tracking when the goal completes
+        this._replanCounts.delete(plan.goalId);
+        this._lastReplanAt.delete(plan.goalId);
+
         this._bus.emit({
             executionId: plan.goalId,
             subsystem: 'planning',
             event: 'planning.plan_completed',
             payload: {
                 goalId: plan.goalId,
+                correlationId: goal?.correlationId,
                 planId,
                 version: plan.version,
                 completedAt: now,
@@ -598,12 +670,17 @@ export class PlanningService {
             this._saveGoalStatus(goal, 'failed', [`execution_failed:${reason}`]);
         }
 
+        // Release per-goal replan tracking when the goal fails (terminal state)
+        this._replanCounts.delete(plan.goalId);
+        this._lastReplanAt.delete(plan.goalId);
+
         this._bus.emit({
             executionId: plan.goalId,
             subsystem: 'planning',
             event: 'planning.plan_failed',
             payload: {
                 goalId: plan.goalId,
+                correlationId: goal?.correlationId,
                 planId,
                 reason,
                 version: plan.version,
@@ -623,10 +700,15 @@ export class PlanningService {
      * The new plan carries replannedFromPlanId linking back to the prior plan.
      * No silent overwrite of history — the prior plan record is always preserved.
      *
+     * Replan guardrails (configurable via setReplanPolicy):
+     *   - REPLAN_LIMIT_EXCEEDED  — too many replans for this goal
+     *   - REPLAN_COOLDOWN_ACTIVE — replan too soon after previous replan
+     *
      * Emits: planning.replan_requested, planning.plan_superseded, planning.plan_created
      *         (or planning.plan_blocked if the new analysis is also blocked)
      *
-     * @throws PlanningError if the goal or prior plan are not found.
+     * @throws PlanningError if the goal or prior plan are not found, or if
+     *   replan guardrails are triggered.
      */
     replan(request: ReplanRequest): ExecutionPlan {
         const goal = this._repo.getGoal(request.goalId);
@@ -639,6 +721,28 @@ export class PlanningService {
             throw new PlanningError(`Prior plan not found: ${request.priorPlanId}`, 'PLAN_NOT_FOUND');
         }
 
+        // ── Replan guardrails ────────────────────────────────────────────────
+
+        const replanCount = this._replanCounts.get(request.goalId) ?? 0;
+        if (replanCount >= this._replanPolicy.maxReplans) {
+            throw new PlanningError(
+                `Goal ${request.goalId} has exceeded the replan limit (max: ${this._replanPolicy.maxReplans})`,
+                'REPLAN_LIMIT_EXCEEDED',
+            );
+        }
+
+        const lastReplanAt = this._lastReplanAt.get(request.goalId) ?? 0;
+        const nowMs = Date.now();
+        if (nowMs - lastReplanAt < this._replanPolicy.cooldownMs) {
+            const remainingMs = this._replanPolicy.cooldownMs - (nowMs - lastReplanAt);
+            throw new PlanningError(
+                `Goal ${request.goalId} replan cooldown active (${remainingMs}ms remaining)`,
+                'REPLAN_COOLDOWN_ACTIVE',
+            );
+        }
+
+        // ── Replan execution ─────────────────────────────────────────────────
+
         const now = new Date().toISOString();
 
         this._bus.emit({
@@ -647,9 +751,11 @@ export class PlanningService {
             event: 'planning.replan_requested',
             payload: {
                 goalId: request.goalId,
+                correlationId: goal.correlationId,
                 priorPlanId: request.priorPlanId,
                 trigger: request.trigger,
                 triggerDetails: request.triggerDetails,
+                replanCount: replanCount + 1,
                 requestedAt: now,
             },
         });
@@ -657,10 +763,11 @@ export class PlanningService {
         // Reset goal status to 'registered' for fresh analysis
         this._saveGoalStatus(goal, 'registered', [`replan_trigger:${request.trigger}`]);
 
-        // Analyse with current capabilities
+        // Analyse with current capabilities (use provider if registered)
+        const capabilities = this._capabilityProvider?.() ?? this._availableCapabilities;
         const analysis = GoalAnalyzer.analyze(
             this._repo.getGoal(request.goalId)!,
-            this._availableCapabilities,
+            capabilities,
         );
 
         // Build new plan superseding the prior one
@@ -680,12 +787,21 @@ export class PlanningService {
         };
         this._repo.savePlan(supersededPrior);
 
+        // Update replan tracking
+        this._replanCounts.set(request.goalId, replanCount + 1);
+        this._lastReplanAt.set(request.goalId, nowMs);
+
+        // Update goal replanCount
+        const freshGoal = this._repo.getGoal(request.goalId)!;
+        this._repo.saveGoal({ ...freshGoal, replanCount: replanCount + 1 });
+
         this._bus.emit({
             executionId: request.goalId,
             subsystem: 'planning',
             event: 'planning.plan_superseded',
             payload: {
                 goalId: request.goalId,
+                correlationId: goal.correlationId,
                 supersededPlanId: priorPlan.id,
                 newPlanId: newPlan.id,
                 trigger: request.trigger,
@@ -701,6 +817,7 @@ export class PlanningService {
             event: isBlocked ? 'planning.plan_blocked' : 'planning.plan_created',
             payload: {
                 goalId: request.goalId,
+                correlationId: goal.correlationId,
                 planId: newPlan.id,
                 version: newPlan.version,
                 plannerType: newPlan.plannerType,

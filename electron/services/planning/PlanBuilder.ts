@@ -33,8 +33,10 @@ import type {
     StageExecutionMode,
     StageFailurePolicy,
     ExecutionHandoffTarget,
+    ExecutionHandoff,
     PlanApprovalState,
     ExecutionPlanStatus,
+    GoalExecutionStyle,
 } from '../../../shared/planning/PlanningTypes';
 
 // ---------------------------------------------------------------------------
@@ -365,19 +367,77 @@ function buildBlockedStages(blockingIssues: string[]): PlanStage[] {
 }
 
 // ---------------------------------------------------------------------------
-// Handoff target selection
+// Handoff contract construction
 // ---------------------------------------------------------------------------
 
-function selectHandoffTarget(analysis: GoalAnalysis): ExecutionHandoffTarget {
-    if (analysis.blockingIssues.length > 0) return 'none';
+/**
+ * Prefix for workflow IDs on workflow-style goals.
+ * @internal
+ */
+const WORKFLOW_ID_PREFIX = 'workflow';
 
-    switch (analysis.executionStyle) {
-        case 'workflow':         return 'WorkflowExecutionService';
-        case 'tool_orchestrated':return 'ToolExecutionCoordinator';
-        case 'llm_assisted':     return 'AgentKernel';
-        case 'hybrid':           return 'AgentKernel';
-        case 'deterministic':    return 'WorkflowExecutionService';
-        default:                 return 'none';
+/**
+ * Prefix for deterministic workflow IDs.
+ * @internal
+ */
+const DETERMINISTIC_WORKFLOW_ID_PREFIX = 'workflow.deterministic';
+
+/**
+ * Derives the legacy ExecutionHandoffTarget string from the typed handoff.
+ */
+function handoffToTarget(handoff: ExecutionHandoff): ExecutionHandoffTarget {
+    switch (handoff.type) {
+        case 'workflow':  return 'WorkflowExecutionService';
+        case 'tool':      return 'ToolExecutionCoordinator';
+        case 'agent':     return 'AgentKernel';
+        case 'operator':  return 'OperatorActionService';
+        case 'none':      return 'none';
+    }
+}
+
+/**
+ * Builds the typed ExecutionHandoff discriminated union from a GoalAnalysis.
+ */
+function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
+    if (analysis.blockingIssues.length > 0) {
+        return {
+            type: 'none',
+            contractVersion: 1,
+            reason: analysis.blockingIssues[0] ?? 'blocked',
+        };
+    }
+
+    switch (analysis.executionStyle as GoalExecutionStyle) {
+        case 'workflow':
+            return {
+                type: 'workflow',
+                contractVersion: 1,
+                workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
+                inputs: {},
+            };
+        case 'tool_orchestrated':
+            return {
+                type: 'tool',
+                contractVersion: 1,
+                toolIds: [],
+                inputs: {},
+            };
+        case 'llm_assisted':
+        case 'hybrid':
+            return {
+                type: 'agent',
+                contractVersion: 1,
+                executionMode: analysis.executionStyle,
+                inputs: {},
+            };
+        case 'deterministic':
+        default:
+            return {
+                type: 'workflow',
+                contractVersion: 1,
+                workflowId: `${DETERMINISTIC_WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
+                inputs: {},
+            };
     }
 }
 
@@ -424,7 +484,8 @@ export class PlanBuilder {
 
         const dependencies = PlanBuilder._buildDependencies(stages);
 
-        const handoffTarget: ExecutionHandoffTarget = selectHandoffTarget(analysis);
+        const handoff = buildHandoff(analysis);
+        const handoffTarget: ExecutionHandoffTarget = handoffToTarget(handoff);
 
         const approvalState: PlanApprovalState = isBlocked
             ? 'not_required'
@@ -466,6 +527,8 @@ export class PlanBuilder {
             approvalState,
             status,
             handoffTarget,
+            handoff,
+            ...(analysis.approvalContext && { approvalContext: analysis.approvalContext }),
             reasonCodes,
             ...(priorPlan && { replannedFromPlanId: priorPlan.id }),
         };

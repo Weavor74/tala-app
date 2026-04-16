@@ -89,6 +89,8 @@ import {
   normalizeGuardrailPolicyConfig,
 } from '../../shared/guardrails/guardrailPolicyTypes';
 import type { McpRegistrationRequest } from '../../shared/mcpAuthorityTypes';
+import { PlanningService } from './planning/PlanningService';
+import type { ReplanRequest } from '../../shared/planning/PlanningTypes';
 
 /** Agent modes that map directly to RuntimeExecutionMode values. */
 const VALID_EXECUTION_MODES = new Set<string>(['assistant', 'hybrid', 'rp']);
@@ -2736,6 +2738,45 @@ export class IpcRouter {
      */
     ipcMain.handle('telemetry:getRecentEvents', () => {
       return TelemetryBus.getInstance().getRecentEvents().slice();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // IPC HANDLERS — PLANNING
+    // Expose read + mutation surface for PlanningService to the renderer.
+    // PlanningService is the sole authority for planning state.
+    // These handlers do NOT execute plans — they manage planning lifecycle only.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    ipcMain.handle('planning:getGoal', (_e, goalId: string) => {
+      return PlanningService.getInstance().getGoal(goalId) ?? null;
+    });
+
+    ipcMain.handle('planning:getPlan', (_e, planId: string) => {
+      return PlanningService.getInstance().getPlan(planId) ?? null;
+    });
+
+    ipcMain.handle('planning:listPlansForGoal', (_e, goalId: string) => {
+      return PlanningService.getInstance().listPlansForGoal(goalId);
+    });
+
+    ipcMain.handle('planning:buildPlan', (_e, goalId: string) => {
+      return PlanningService.getInstance().buildPlan(goalId);
+    });
+
+    ipcMain.handle('planning:approvePlan', (_e, planId: string, actor: string) => {
+      return PlanningService.getInstance().approvePlan(planId, actor);
+    });
+
+    ipcMain.handle('planning:denyPlan', (_e, planId: string, actor: string, reason: string) => {
+      return PlanningService.getInstance().denyPlan(planId, actor, reason);
+    });
+
+    ipcMain.handle('planning:markExecutionStarted', (_e, planId: string) => {
+      return PlanningService.getInstance().markExecutionStarted(planId);
+    });
+
+    ipcMain.handle('planning:replan', (_e, request: ReplanRequest) => {
+      return PlanningService.getInstance().replan(request);
     });
 
   }

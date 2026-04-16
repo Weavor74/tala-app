@@ -49,6 +49,8 @@ import type {
     GoalComplexity,
     GoalExecutionStyle,
     RecommendedPlanner,
+    ApprovalContext,
+    ApprovalTrigger,
 } from '../../../shared/planning/PlanningTypes';
 
 // ---------------------------------------------------------------------------
@@ -143,27 +145,37 @@ function estimateRisk(goal: PlanGoal, style: GoalExecutionStyle): 'low' | 'mediu
 
 /**
  * Determines whether explicit approval is required for this goal.
+ * Returns the reason string and structured ApprovalContext when required.
  */
 function requiresApproval(
     goal: PlanGoal,
     risk: ReturnType<typeof estimateRisk>,
     style: GoalExecutionStyle,
-): { required: boolean; reason?: string } {
+): { required: boolean; reason?: string; context?: ApprovalContext } {
+    const triggers: ApprovalTrigger[] = [];
+    const reasons: string[] = [];
+
     if (risk === 'critical') {
-        return { required: true, reason: 'critical risk level requires operator approval' };
+        triggers.push('critical_risk');
+        reasons.push('critical risk level requires operator approval');
+    } else if (risk === 'high') {
+        triggers.push('high_risk');
+        reasons.push('high risk level requires approval before execution');
     }
-    if (risk === 'high') {
-        return { required: true, reason: 'high risk level requires approval before execution' };
-    }
+
     if (goal.source === 'autonomy' && risk !== 'low') {
-        return { required: true, reason: 'autonomy-sourced goal with non-trivial risk requires approval' };
+        triggers.push('autonomy_source');
+        reasons.push('autonomy-sourced goal with non-trivial risk requires approval');
     }
+
     if (goal.source === 'operator') {
-        // Operator-sourced goals require their own sign-off
-        return { required: true, reason: 'operator-sourced goal requires explicit operator approval' };
+        triggers.push('operator_source');
+        reasons.push('operator-sourced goal requires explicit operator approval');
     }
+
     if (style === 'llm_assisted' && goal.category !== 'conversation') {
-        return { required: true, reason: 'llm-assisted non-conversation goal requires approval' };
+        triggers.push('llm_non_conversation');
+        reasons.push('llm-assisted non-conversation goal requires approval');
     }
 
     const descLower = goal.description.toLowerCase();
@@ -172,10 +184,44 @@ function requiresApproval(
         'schema', 'migration', 'canonical write', 'operator action',
     ];
     if (approvalKeywords.some(k => descLower.includes(k))) {
-        return { required: true, reason: 'goal description implies provider/config/canonical-state changes' };
+        triggers.push('config_mutation_implied');
+        reasons.push('goal description implies provider/config/canonical-state changes');
     }
 
-    return { required: false };
+    if (triggers.length === 0) {
+        return { required: false };
+    }
+
+    const context: ApprovalContext = {
+        triggeredBy: triggers,
+        reasons,
+        riskLevel: risk,
+        mitigations: _suggestMitigations(triggers),
+    };
+
+    return {
+        required: true,
+        reason: reasons[0],
+        context,
+    };
+}
+
+/**
+ * Suggests mitigations for known approval triggers.
+ * Returns undefined when no specific mitigations are known.
+ */
+function _suggestMitigations(triggers: ApprovalTrigger[]): string[] | undefined {
+    const mitigations: string[] = [];
+    if (triggers.includes('critical_risk') || triggers.includes('high_risk')) {
+        mitigations.push('reduce scope to lower-risk operations and replan');
+    }
+    if (triggers.includes('config_mutation_implied')) {
+        mitigations.push('remove config/provider/credential changes from goal description');
+    }
+    if (triggers.includes('autonomy_source')) {
+        mitigations.push('convert to user-sourced goal for reduced approval friction');
+    }
+    return mitigations.length > 0 ? mitigations : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +350,7 @@ export class GoalAnalyzer {
                 executionStyle: style,
                 requiresApproval: approvalResult.required,
                 approvalReason: approvalResult.reason,
+                approvalContext: approvalResult.context,
                 requiredCapabilities,
                 missingCapabilities,
                 blockingIssues,
