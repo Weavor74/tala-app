@@ -128,6 +128,7 @@ type RuntimeEventType =
     | 'planning.workflow_handoff_completed'
     | 'planning.agent_handoff_dispatched'
     | 'planning.agent_handoff_preflight_failed'
+    | 'planning.agent_handoff_invocation_failed'
     | 'planning.agent_handoff_dispatch_failed'
     | 'planning.agent_handoff_completed'
     | 'planning.loop_started'
