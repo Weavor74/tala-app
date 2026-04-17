@@ -262,6 +262,7 @@
 - [Service: OperatorActionService.ts](subsystems/service-OperatorActionService.md)
 - [Service: OrchestratorService.ts](subsystems/service-OrchestratorService.md)
 - [Service: PathResolver.ts](subsystems/service-PathResolver.md)
+- [Service: PlanningLoopService](subsystems/service-PlanningLoopService.md)
 - [Service: PlanningService](subsystems/service-PlanningService.md)
 - [Service: PromptAuditService.ts](subsystems/service-PromptAuditService.md)
 - [Service: RagService.ts](subsystems/service-RagService.md)

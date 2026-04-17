@@ -105,6 +105,14 @@ export type RuntimeEventType =
     | 'planning.plan_superseded'
     | 'planning.plan_completed'
     | 'planning.plan_failed'
+    | 'planning.loop_started'
+    | 'planning.loop_phase_transition'
+    | 'planning.loop_iteration_started'
+    | 'planning.loop_observation'
+    | 'planning.loop_replan_decision'
+    | 'planning.loop_completed'
+    | 'planning.loop_aborted'
+    | 'planning.loop_failed'
     | `planning.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────
