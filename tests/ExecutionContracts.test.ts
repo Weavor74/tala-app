@@ -601,14 +601,26 @@ describe('EC11: AgentKernel TelemetryBus lifecycle emission', () => {
         }
     });
 
-    it('all lifecycle events have subsystem=kernel', async () => {
+    it('all kernel lifecycle events have subsystem=kernel', async () => {
         const { kernel } = makeKernel();
         const received: RuntimeEvent[] = [];
         TelemetryBus.getInstance().subscribe((evt) => received.push(evt));
 
         await kernel.execute({ userMessage: 'subsystem check' });
 
-        for (const evt of received) {
+        // Kernel lifecycle events must always carry subsystem=kernel.
+        // The classification stage may also emit planning-subsystem events
+        // (e.g. planning.loop_routing_selected) which is expected and correct.
+        const kernelEvents = received.filter((e) =>
+            e.event === 'execution.created' ||
+            e.event === 'execution.accepted' ||
+            e.event === 'execution.finalizing' ||
+            e.event === 'execution.completed' ||
+            e.event === 'execution.blocked' ||
+            e.event === 'execution.failed'
+        );
+        expect(kernelEvents.length).toBeGreaterThan(0);
+        for (const evt of kernelEvents) {
             expect(evt.subsystem).toBe('kernel');
         }
     });

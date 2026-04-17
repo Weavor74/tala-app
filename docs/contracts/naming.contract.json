@@ -307,6 +307,30 @@
         "runtime_branching",
         "state_mutation"
       ]
+    },
+    {
+      "suffix": "Executor",
+      "responsibility": "execution delegate beneath an authorised planning loop",
+      "usuallyAllowed": [
+        "execute_plan",
+        "delegate_to_execution_backend"
+      ],
+      "usuallyNotAllowed": [
+        "decide_planning_authority",
+        "bypass_planning_loop"
+      ]
+    },
+    {
+      "suffix": "Observer",
+      "responsibility": "execution result interpreter for loop observation",
+      "usuallyAllowed": [
+        "observe_execution_result",
+        "classify_outcome"
+      ],
+      "usuallyNotAllowed": [
+        "execute_work",
+        "mutate_persistent_state"
+      ]
     }
   ],
   "bannedTerms": {

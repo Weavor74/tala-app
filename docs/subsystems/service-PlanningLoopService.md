@@ -4,7 +4,7 @@
 
 ## Overview
 
-`PlanningLoopService` is the authoritative orchestrator for all non-trivial outcome-seeking work
+`PlanningLoopService` is the **default execution authority** for all non-trivial outcome-seeking work
 in Tala.  It governs the full:
 
 ```
@@ -14,6 +14,69 @@ PLAN → EXECUTE → OBSERVE → REPLAN (repeat) → COMPLETE / ABORT / FAIL
 lifecycle and is the single service responsible for driving that cycle to a deterministic
 terminal state.  It is a **planning loop authority**, not an executor — it delegates
 plan creation to `PlanningService` and execution to an injected `ILoopExecutor`.
+
+## Authority Coverage Doctrine
+
+**PlanningLoopService is the default execution authority for non-trivial work.**
+
+Non-trivial work is any work that:
+- requires tools or workflows
+- synthesises outputs from multiple sources
+- touches memory or persistent state
+- generates artifacts
+- performs external I/O
+- requires multi-step outcome-seeking behaviour
+- is a notebook/search/retrieve/summarise chain
+- can fail in meaningful operational ways
+
+Trivial work (greetings, acknowledgements, simple formatting) may proceed via a
+`trivial_direct_allowed` path without entering the loop.  Every direct path must be
+explicitly classified and emits a `planning.loop_routing_direct_allowed` telemetry event.
+
+The routing decision is made by `PlanningLoopAuthorityRouter` at the `classifyExecution`
+stage in `AgentKernel` and is stored in `KernelExecutionMeta.routingDecision` for
+inspection and audit.
+
+If the loop service is unavailable for a non-trivial request (e.g. during startup), the
+bypass is surfaced as a `planning.loop_routing_bypass_surfaced` telemetry event and
+execution falls back to the direct path.  This is a surface-only enforcement mode;
+the bypass is logged and auditable.
+
+### Runtime posture (post authority-coverage pass)
+
+```
+User / system non-trivial request
+  → AgentKernel.classifyExecution()
+      → PlanningLoopAuthorityRouter.classify(message)
+      → routingDecision: { classification: 'planning_loop_required', requiresLoop: true }
+  → AgentKernel.runDelegatedFlow()
+      → PlanningLoopService.startLoop(goal)
+          → PlanningService.registerGoal + buildPlan
+          → ChatLoopExecutor.executePlan(plan) → AgentService.chat()
+          → ChatLoopObserver.observe(result)
+          → completed / failed / aborted
+```
+
+```
+User / system trivial request
+  → AgentKernel.classifyExecution()
+      → PlanningLoopAuthorityRouter.classify(message)
+      → routingDecision: { classification: 'trivial_direct_allowed', requiresLoop: false }
+  → AgentKernel.runDelegatedFlow()
+      → AgentService.chat() directly  [doctrined_exception: trivial direct path]
+```
+
+### Hardening invariants (implemented)
+
+| Invariant | Status |
+|-----------|--------|
+| Non-trivial work routes through PlanningLoopService by default | ✅ |
+| Direct execution is not the default for non-trivial work | ✅ |
+| Tools/workflows are bounded beneath planning authority | ✅ |
+| Authority routing is inspectable and testable | ✅ |
+| Trivial direct paths are explicitly classified and telemetrised | ✅ |
+| Bypasses are surfaced via telemetry | ✅ |
+| `KernelExecutionMeta.routingDecision` carries the full routing record | ✅ |
 
 ## Architecture Position
 
@@ -55,14 +118,20 @@ Caller (AgentKernel / Autonomy / Operator)
 | Canonical memory mutation | MemoryAuthorityService |
 | Policy evaluation | PolicyGate |
 | Plan construction / analysis | PlanningService |
+| Authority routing classification | PlanningLoopAuthorityRouter |
 
 ## Subsystem Files
 
 | File | Role |
 |------|------|
 | `electron/services/planning/PlanningLoopService.ts` | Loop orchestration + telemetry |
+| `electron/services/planning/PlanningLoopAuthorityRouter.ts` | Routing classifier (trivial vs non-trivial) |
+| `electron/services/planning/ChatLoopExecutor.ts` | ILoopExecutor wrapping AgentService.chat() |
+| `electron/services/planning/ChatLoopObserver.ts` | ILoopObserver evaluating AgentTurnOutput |
 | `shared/planning/planningLoopTypes.ts` | Shared type contracts for the loop |
+| `shared/planning/executionAuthorityTypes.ts` | Authority routing shared types |
 | `tests/PlanningLoopService.test.ts` | 55 governance-grade tests (PLS01–PLS55) |
+| `tests/PlanningLoopAuthorityRouting.test.ts` | 45 authority coverage tests (PLAR-01–PLAR-45) |
 
 ## Loop Phase State Machine
 
@@ -83,7 +152,7 @@ initializing
 
 ## Telemetry Events
 
-All events are emitted through `TelemetryBus` with `subsystem: 'planning'`.
+All loop events are emitted through `TelemetryBus` with `subsystem: 'planning'`.
 
 | Event | When |
 |-------|------|
@@ -96,7 +165,16 @@ All events are emitted through `TelemetryBus` with `subsystem: 'planning'`.
 | `planning.loop_aborted` | Terminal: abort |
 | `planning.loop_failed` | Terminal: failure |
 
-All events carry `loopId` and `correlationId` for cross-subsystem traceability.
+Authority routing events (emitted by AgentKernel during classify stage):
+
+| Event | When |
+|-------|------|
+| `planning.loop_routing_selected` | Non-trivial request → loop required |
+| `planning.loop_routing_direct_allowed` | Trivial request → direct path allowed |
+| `planning.loop_routing_bypass_surfaced` | Loop required but unavailable / plan blocked |
+
+All loop events carry `loopId` and `correlationId` for cross-subsystem traceability.
+Routing events carry `classification`, `reasonCodes`, and `loopInitialized`.
 
 ## Design Invariants
 
@@ -112,6 +190,8 @@ All events carry `loopId` and `correlationId` for cross-subsystem traceability.
    callers to maintain their own copies.
 6. **Traceable** — Every event carries the `loopId` and `correlationId` generated at loop
    start, enabling full cross-subsystem telemetry correlation.
+7. **Default authority** — PlanningLoopService is the default execution authority for
+   non-trivial work.  Direct execution is not the default.
 
 ## Loop Policy
 
@@ -137,6 +217,17 @@ Configurable via `setPolicy(PlanningLoopPolicy)`:
 
 ## Usage
 
+### Production startup wiring (preferred)
+
+```typescript
+// In AgentKernel constructor — called automatically on instantiation.
+// PlanningLoopService is initialized with ChatLoopExecutor and ChatLoopObserver.
+// This wiring makes PlanningLoopService the real default execution authority.
+PlanningLoopService.initialize(chatLoopExecutor, chatLoopObserver, planning);
+```
+
+### Manual loop invocation
+
 ```typescript
 // Inject executor and observer (implementations wrap ToolExecutionCoordinator,
 // WorkflowExecutionService, or AgentKernel as appropriate).
@@ -155,7 +246,12 @@ if (run.phase === 'completed') {
 }
 ```
 
-## Test Coverage (PLS01–PLS55)
+## Test Coverage
+
+| Test file | Tests | Coverage |
+|-----------|-------|----------|
+| `tests/PlanningLoopService.test.ts` | 55 (PLS01–PLS55) | Loop lifecycle, phases, telemetry, policy |
+| `tests/PlanningLoopAuthorityRouting.test.ts` | 45 (PLAR-01–PLAR-45) | Authority routing, bypass surfacing, governance |
 
 | Range | Coverage |
 |-------|----------|
@@ -170,3 +266,13 @@ if (run.phase === 'completed') {
 | PLS41–PLS45 | Policy configuration |
 | PLS46–PLS50 | State access (getRun, listRuns, snapshot isolation) |
 | PLS51–PLS55 | Replan guardrail propagation |
+
+| Range | Coverage |
+|-------|----------|
+| PLAR-01–PLAR-10 | PlanningLoopAuthorityRouter classification correctness |
+| PLAR-11–PLAR-20 | AgentKernel routing decisions and telemetry |
+| PLAR-21–PLAR-30 | Non-trivial work routing and loop authority |
+| PLAR-31–PLAR-35 | Trivial direct path allowed for greetings/acks |
+| PLAR-36–PLAR-40 | Bypass surfacing when loop not available |
+| PLAR-41–PLAR-45 | Authority type shape contracts |
+
