@@ -37,10 +37,42 @@ The routing decision is made by `PlanningLoopAuthorityRouter` at the `classifyEx
 stage in `AgentKernel` and is stored in `KernelExecutionMeta.routingDecision` for
 inspection and audit.
 
-If the loop service is unavailable for a non-trivial request (e.g. during startup), the
-bypass is surfaced as a `planning.loop_routing_bypass_surfaced` telemetry event and
-execution falls back to the direct path.  This is a surface-only enforcement mode;
-the bypass is logged and auditable.
+### Platform-wide authority coverage
+
+The authority routing doctrine applies to **all non-trivial execution surfaces** in Tala,
+not only the chat turn pipeline.  Each surface either routes through PlanningLoopService
+or is a documented `doctrined_exception` with an explicit named authority pipeline.
+
+| Surface | Authority path | Classification | Telemetry event |
+|---------|---------------|----------------|-----------------|
+| Chat turn (non-trivial) | AgentKernel → PlanningLoopService | `planning_loop_required` | `planning.loop_routing_selected` |
+| Chat turn (trivial) | AgentKernel → AgentService.chat() directly | `trivial_direct_allowed` | `planning.loop_routing_direct_allowed` |
+| Autonomy goal execution | AutonomousRunOrchestrator → SafeChangePlanner → Governance → ExecutionOrchestrator | `doctrined_exception` | `planning.authority_routing_decision` |
+| Operator action | OperatorActionService → PolicyGate | `doctrined_exception` | `planning.authority_routing_decision` |
+
+Doctrined exceptions are named and justified:
+- `autonomy_safechangeplanner_pipeline` — Autonomy goals use SafeChangePlanner → Governance → ExecutionOrchestrator as their domain-specific authority path.
+- `operator_policy_gate` — Operator actions are synchronous control-plane mutations that go through PolicyGate + OperatorActionService.
+
+### Degraded execution contract
+
+When a non-trivial request cannot be honoured by the normal PlanningLoopService path,
+the bypass is no longer silent.  `PlanningLoopAuthorityRouter.classifyDegradedExecution()`
+produces a typed `DegradedExecutionDecision` that is:
+
+1. Emitted as a `planning.degraded_execution_decision` telemetry event.
+2. Used to determine whether direct execution is permitted (`directAllowed`).
+3. Justified by a named `doctrine` string.
+
+| Degraded reason | `directAllowed` | Doctrine | Event code |
+|-----------------|-----------------|----------|------------|
+| `loop_unavailable` | ✅ true | `chat_continuity` | `degraded_direct_allowed` |
+| `plan_blocked` | ✅ true | `chat_continuity` | `degraded_direct_allowed` |
+| `capability_unregistered` | ❌ false | `no_capability` | `degraded_execution_blocked` |
+| `policy_blocked` | ❌ false | `policy_blocked` | `degraded_execution_blocked` |
+
+**Rule**: A silent fallback from non-trivial → direct is forbidden.  Every degraded path
+must be reflected in `DegradedExecutionDecision` and surfaced via telemetry.
 
 ### Runtime posture (post authority-coverage pass)
 
@@ -55,6 +87,10 @@ User / system non-trivial request
           → ChatLoopExecutor.executePlan(plan) → AgentService.chat()
           → ChatLoopObserver.observe(result)
           → completed / failed / aborted
+      [on degraded]: → PlanningLoopAuthorityRouter.classifyDegradedExecution(reason)
+                     → emit planning.degraded_execution_decision
+                     → if degraded_direct_allowed: proceed on direct path
+                     → if degraded_execution_blocked: halt + surface failure
 ```
 
 ```
@@ -64,6 +100,21 @@ User / system trivial request
       → routingDecision: { classification: 'trivial_direct_allowed', requiresLoop: false }
   → AgentKernel.runDelegatedFlow()
       → AgentService.chat() directly  [doctrined_exception: trivial direct path]
+```
+
+```
+Autonomy goal execution (doctrined_exception)
+  → AutonomousRunOrchestrator._executeGoalPipeline()
+      → emit planning.authority_routing_decision (surface: 'autonomy', classification: 'doctrined_exception')
+      → SafeChangePlanner.plan() → GovernanceAppService.evaluate() → ExecutionOrchestrator.start()
+```
+
+```
+Operator action (doctrined_exception)
+  → OperatorActionService.executeAction()
+      → PolicyGate.checkSideEffect()
+      → emit planning.authority_routing_decision (surface: 'operator_action', classification: 'doctrined_exception')
+      → action switch
 ```
 
 ### Hardening invariants (implemented)
@@ -77,6 +128,10 @@ User / system trivial request
 | Trivial direct paths are explicitly classified and telemetrised | ✅ |
 | Bypasses are surfaced via telemetry | ✅ |
 | `KernelExecutionMeta.routingDecision` carries the full routing record | ✅ |
+| Degraded execution has a typed contract (`DegradedExecutionDecision`) | ✅ |
+| Silent non-trivial fallback to direct is forbidden | ✅ |
+| Autonomy cycle entry point emits authority routing telemetry | ✅ |
+| Operator action entry point emits authority routing telemetry | ✅ |
 
 ## Architecture Position
 
@@ -119,19 +174,22 @@ Caller (AgentKernel / Autonomy / Operator)
 | Policy evaluation | PolicyGate |
 | Plan construction / analysis | PlanningService |
 | Authority routing classification | PlanningLoopAuthorityRouter |
+| Autonomy goal execution pipeline | AutonomousRunOrchestrator + SafeChangePlanner |
+| Operator action execution | OperatorActionService + PolicyGate |
 
 ## Subsystem Files
 
 | File | Role |
 |------|------|
 | `electron/services/planning/PlanningLoopService.ts` | Loop orchestration + telemetry |
-| `electron/services/planning/PlanningLoopAuthorityRouter.ts` | Routing classifier (trivial vs non-trivial) |
+| `electron/services/planning/PlanningLoopAuthorityRouter.ts` | Routing classifier (trivial vs non-trivial) + degraded-mode contract |
 | `electron/services/planning/ChatLoopExecutor.ts` | ILoopExecutor wrapping AgentService.chat() |
 | `electron/services/planning/ChatLoopObserver.ts` | ILoopObserver evaluating AgentTurnOutput |
 | `shared/planning/planningLoopTypes.ts` | Shared type contracts for the loop |
-| `shared/planning/executionAuthorityTypes.ts` | Authority routing shared types |
+| `shared/planning/executionAuthorityTypes.ts` | Authority routing + degraded-mode shared types |
 | `tests/PlanningLoopService.test.ts` | 55 governance-grade tests (PLS01–PLS55) |
 | `tests/PlanningLoopAuthorityRouting.test.ts` | 45 authority coverage tests (PLAR-01–PLAR-45) |
+| `tests/DegradedModeAuthority.test.ts` | 30 degraded-mode contract tests (DMA-01–DMA-30) |
 
 ## Loop Phase State Machine
 
@@ -171,10 +229,12 @@ Authority routing events (emitted by AgentKernel during classify stage):
 |-------|------|
 | `planning.loop_routing_selected` | Non-trivial request → loop required |
 | `planning.loop_routing_direct_allowed` | Trivial request → direct path allowed |
-| `planning.loop_routing_bypass_surfaced` | Loop required but unavailable / plan blocked |
+| `planning.degraded_execution_decision` | Non-trivial → degraded mode (replaces silent bypass) |
+| `planning.authority_routing_decision` | Autonomy / operator doctrined-exception routing |
 
 All loop events carry `loopId` and `correlationId` for cross-subsystem traceability.
 Routing events carry `classification`, `reasonCodes`, and `loopInitialized`.
+Degraded-mode events carry `reason`, `degradedModeCode`, `doctrine`, and `directAllowed`.
 
 ## Design Invariants
 
@@ -192,6 +252,12 @@ Routing events carry `classification`, `reasonCodes`, and `loopInitialized`.
    start, enabling full cross-subsystem telemetry correlation.
 7. **Default authority** — PlanningLoopService is the default execution authority for
    non-trivial work.  Direct execution is not the default.
+8. **No silent degraded bypass** — When a non-trivial request cannot honour the loop path,
+   `PlanningLoopAuthorityRouter.classifyDegradedExecution()` must be called, its decision
+   must be emitted as `planning.degraded_execution_decision`, and `directAllowed` must be
+   respected.  Silent fallback to direct is forbidden.
+9. **Platform-wide coverage** — All execution surfaces (chat, autonomy, operator) emit
+   authority routing telemetry so the authority audit trail is complete.
 
 ## Loop Policy
 
@@ -246,12 +312,39 @@ if (run.phase === 'completed') {
 }
 ```
 
+### Degraded mode handling
+
+```typescript
+// When non-trivial work cannot use the loop, classify the degraded state explicitly:
+const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+    'loop_unavailable',
+    { detectedIn: 'MyService.myMethod' },
+);
+TelemetryBus.getInstance().emit({
+    executionId,
+    subsystem: 'planning',
+    event: 'planning.degraded_execution_decision',
+    phase: 'delegate',
+    payload: {
+        reason: degradedDecision.reason,
+        degradedModeCode: degradedDecision.degradedModeCode,
+        doctrine: degradedDecision.doctrine,
+        directAllowed: degradedDecision.directAllowed,
+    },
+});
+if (!degradedDecision.directAllowed) {
+    throw new Error(`Degraded execution blocked: ${degradedDecision.doctrine}`);
+}
+// Only here if degraded_direct_allowed (chat_continuity doctrine)
+```
+
 ## Test Coverage
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
 | `tests/PlanningLoopService.test.ts` | 55 (PLS01–PLS55) | Loop lifecycle, phases, telemetry, policy |
 | `tests/PlanningLoopAuthorityRouting.test.ts` | 45 (PLAR-01–PLAR-45) | Authority routing, bypass surfacing, governance |
+| `tests/DegradedModeAuthority.test.ts` | 30 (DMA-01–DMA-30) | Degraded-mode contract, autonomy/operator telemetry |
 
 | Range | Coverage |
 |-------|----------|
@@ -275,4 +368,12 @@ if (run.phase === 'completed') {
 | PLAR-31–PLAR-35 | Trivial direct path allowed for greetings/acks |
 | PLAR-36–PLAR-40 | Bypass surfacing when loop not available |
 | PLAR-41–PLAR-45 | Authority type shape contracts |
+
+| Range | Coverage |
+|-------|----------|
+| DMA-01–DMA-06 | DegradedExecutionDecision type shape contracts |
+| DMA-07–DMA-14 | classifyDegradedExecution() determinism per reason |
+| DMA-15–DMA-20 | AgentKernel emits planning.degraded_execution_decision |
+| DMA-21–DMA-25 | Autonomy routing: planning.authority_routing_decision |
+| DMA-26–DMA-30 | Operator action routing: planning.authority_routing_decision |
 

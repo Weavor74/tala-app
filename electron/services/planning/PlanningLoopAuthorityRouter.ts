@@ -34,6 +34,8 @@ import type {
     ExecutionAuthorityClassification,
     NonTrivialWorkReasonCode,
     PlanningLoopRoutingDecision,
+    DegradedExecutionReason,
+    DegradedExecutionDecision,
 } from '../../../shared/planning/executionAuthorityTypes';
 
 // ─── Thresholds and patterns ──────────────────────────────────────────────────
@@ -189,5 +191,86 @@ export class PlanningLoopAuthorityRouter {
      */
     static isTrivialDirectWork(message: string): boolean {
         return PlanningLoopAuthorityRouter.classify(message).classification === 'trivial_direct_allowed';
+    }
+
+    /**
+     * Classifies a degraded-execution situation and returns an explicit typed decision.
+     *
+     * Called whenever a non-trivial work request cannot be honoured by the normal
+     * PlanningLoopService path (loop unavailable, plan blocked, etc.).
+     *
+     * Replaces silent "fall through to direct" fallback with a deterministic, typed,
+     * auditable policy record.  Callers MUST:
+     *   1. Emit a `planning.degraded_execution_decision` telemetry event with the decision.
+     *   2. Respect `directAllowed`: if false, halt execution; if true, proceed on direct
+     *      path as an explicitly doctrined exception.
+     *
+     * ┌────────────────────────────┬────────────────────────────┬─────────────────────────────────────────────────────────────┐
+     * │ reason                     │ directAllowed              │ doctrine                                                    │
+     * ├────────────────────────────┼────────────────────────────┼─────────────────────────────────────────────────────────────┤
+     * │ loop_unavailable           │ true                       │ chat_continuity: loop not ready; direct path preserves UX   │
+     * │ capability_unregistered    │ false                      │ no_capability: no executor; direct forbidden                │
+     * │ plan_blocked               │ true                       │ chat_continuity: plan blocked; direct response allowed      │
+     * │ policy_blocked             │ false                      │ policy_blocked: gate denied; direct execution forbidden      │
+     * └────────────────────────────┴────────────────────────────┴─────────────────────────────────────────────────────────────┘
+     *
+     * @param reason     - The degraded execution reason code.
+     * @param context    - Caller context (used for `detectedIn` field).
+     */
+    static classifyDegradedExecution(
+        reason: DegradedExecutionReason,
+        context: { detectedIn: string },
+    ): DegradedExecutionDecision {
+        const detectedAt = new Date().toISOString();
+        const { detectedIn } = context;
+
+        switch (reason) {
+            case 'loop_unavailable':
+                return {
+                    reason,
+                    directAllowed: true,
+                    degradedModeCode: 'degraded_direct_allowed',
+                    doctrine: 'chat_continuity: PlanningLoopService not yet initialised; ' +
+                        'direct path permitted to preserve user-facing responsiveness. ' +
+                        'Emit telemetry; do not silence.',
+                    detectedIn,
+                    detectedAt,
+                };
+
+            case 'plan_blocked':
+                return {
+                    reason,
+                    directAllowed: true,
+                    degradedModeCode: 'degraded_direct_allowed',
+                    doctrine: 'chat_continuity: planning returned plan_blocked; ' +
+                        'direct response allowed so the user receives feedback. ' +
+                        'Emit telemetry; do not silence.',
+                    detectedIn,
+                    detectedAt,
+                };
+
+            case 'capability_unregistered':
+                return {
+                    reason,
+                    directAllowed: false,
+                    degradedModeCode: 'degraded_execution_blocked',
+                    doctrine: 'no_capability: loop initialised but no executor registered ' +
+                        'for the requested work type. Direct execution is forbidden; ' +
+                        'surface the failure explicitly.',
+                    detectedIn,
+                    detectedAt,
+                };
+
+            case 'policy_blocked':
+                return {
+                    reason,
+                    directAllowed: false,
+                    degradedModeCode: 'degraded_execution_blocked',
+                    doctrine: 'policy_blocked: PolicyGate denied execution. ' +
+                        'Direct execution is forbidden; the denial must be respected.',
+                    detectedIn,
+                    detectedAt,
+                };
+        }
     }
 }

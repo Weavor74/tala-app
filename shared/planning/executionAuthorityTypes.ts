@@ -140,6 +140,82 @@ export interface PlanningLoopRoutingDecision {
     summary: string;
 }
 
+// ─── Degraded Execution Contract ──────────────────────────────────────────────
+
+/**
+ * Reason codes that trigger a degraded execution decision.
+ *
+ * loop_unavailable
+ *   PlanningLoopService has not been initialised (e.g. early startup).
+ *
+ * capability_unregistered
+ *   The planning loop is initialised but has no executor registered for the
+ *   requested capability type.
+ *
+ * plan_blocked
+ *   Planning ran but the resulting plan carries status 'blocked' (missing
+ *   capabilities or policy rejection at the planning layer).
+ *
+ * policy_blocked
+ *   PolicyGate denied execution before or during the loop.
+ */
+export type DegradedExecutionReason =
+    | 'loop_unavailable'
+    | 'capability_unregistered'
+    | 'plan_blocked'
+    | 'policy_blocked';
+
+/**
+ * Outcome code for a degraded execution decision.
+ *
+ * degraded_direct_allowed
+ *   Direct execution is permitted in this degraded state.
+ *   Only set when an explicit doctrine justifies the exception
+ *   (e.g. chat_continuity, trivial_path).
+ *
+ * degraded_execution_blocked
+ *   Direct execution must NOT proceed.
+ *   The caller must surface the failure and halt.
+ */
+export type DegradedModeCode =
+    | 'degraded_direct_allowed'
+    | 'degraded_execution_blocked';
+
+/**
+ * Fully typed degraded execution decision.
+ *
+ * Produced by PlanningLoopAuthorityRouter.classifyDegradedExecution() whenever
+ * a non-trivial routing decision cannot be honoured (loop unavailable, plan blocked,
+ * etc.).  Replaces silent "fall through to direct" with an explicit, typed,
+ * auditable policy record.
+ *
+ * Callers MUST:
+ *   1. Emit a `planning.degraded_execution_decision` telemetry event.
+ *   2. Respect `directAllowed`: if false, halt execution and surface the failure.
+ *   3. If `directAllowed` is true, document the doctrined exception inline.
+ */
+export interface DegradedExecutionDecision {
+    /** Machine-readable reason for the degraded state. */
+    reason: DegradedExecutionReason;
+    /**
+     * Whether direct execution is permitted in this degraded state.
+     * Only true for explicitly doctrined exceptions.
+     */
+    directAllowed: boolean;
+    /** Final degraded mode outcome code. */
+    degradedModeCode: DegradedModeCode;
+    /**
+     * Human-readable doctrine justifying this decision.
+     * Explains WHY direct execution is (or is not) allowed.
+     * Must not contain raw user content.
+     */
+    doctrine: string;
+    /** Where in the runtime the degraded state was detected. */
+    detectedIn: string;
+    /** ISO-8601 UTC timestamp when the decision was produced. */
+    detectedAt: string;
+}
+
 // ─── Authority Bypass Record ──────────────────────────────────────────────────
 
 /**

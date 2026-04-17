@@ -96,6 +96,7 @@ import { enforceSideEffectWithGuardrails } from '../policy/PolicyEnforcement';
 import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCircuitBreaker';
 import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
+import { PlanningLoopAuthorityRouter } from '../planning/PlanningLoopAuthorityRouter';
 
 // â”€â”€â”€ Poll timeouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1704,6 +1705,36 @@ export class AutonomousRunOrchestrator {
             }),
             'AutonomousRunOrchestrator',
         );
+
+        // ── Authority routing telemetry ────────────────────────────────────
+        // Autonomy goals are always non-trivial outcome-seeking work.
+        // PlanningLoopService is not used here; the authority path is:
+        //   SafeChangePlanner → GovernanceAppService → ExecutionOrchestrator
+        // This is a doctrined_exception explicitly registered for the autonomy surface.
+        // The router decision (always planning_loop_required) is captured for auditability.
+        {
+            const authorityDecision = PlanningLoopAuthorityRouter.classify(
+                `${goal.title} ${goal.description ?? ''}`.slice(0, 200),
+            );
+            TelemetryBus.getInstance().emit({
+                executionId: run.runId,
+                subsystem: 'planning',
+                event: 'planning.authority_routing_decision',
+                phase: 'classify',
+                payload: {
+                    surface: 'autonomy',
+                    classification: 'doctrined_exception',
+                    doctrine: 'autonomy_safechangeplanner_pipeline: autonomy goals route through ' +
+                        'SafeChangePlanner → Governance → ExecutionOrchestrator. ' +
+                        'PlanningLoopService is not applicable to this surface.',
+                    routerDecision: authorityDecision.classification,
+                    routerRequiresLoop: authorityDecision.requiresLoop,
+                    reasonCodes: authorityDecision.reasonCodes,
+                    goalId: goal.goalId,
+                    subsystemId: goal.subsystemId,
+                },
+            });
+        }
 
         // â”€â”€ TelemetryBus: execution lifecycle (mirrors AgentKernel schema) â”€â”€â”€â”€â”€â”€
         const intakePayload = { type: 'autonomy_task', origin: 'autonomy_engine', mode: 'system' } as const;

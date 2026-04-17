@@ -420,7 +420,7 @@ describe('PLAR-31..35: Trivial direct path is explicitly allowed', () => {
 // ─── PLAR-36..40: Bypass surfacing ────────────────────────────────────────────
 
 describe('PLAR-36..40: Bypass surfacing when loop not available', () => {
-    it('PLAR-36: emits planning.loop_routing_bypass_surfaced when loop not initialized', async () => {
+    it('PLAR-36: emits planning.degraded_execution_decision when loop not initialized', async () => {
         // Reset loop so it's not initialized
         (PlanningLoopService as any)._instance = null;
         expect(PlanningLoopService.isInitialized()).toBe(false);
@@ -438,9 +438,10 @@ describe('PLAR-36..40: Bypass surfacing when loop not available', () => {
 
         await kernel.execute({ userMessage: 'analyze and generate a report' });
 
-        const bypassEvent = received.find((e) => e.event === 'planning.loop_routing_bypass_surfaced');
-        expect(bypassEvent).toBeDefined();
-        expect(bypassEvent!.payload?.disposition).toBe('surfaced');
+        const degradedEvent = received.find((e) => e.event === 'planning.degraded_execution_decision');
+        expect(degradedEvent).toBeDefined();
+        expect(degradedEvent!.payload?.reason).toBe('loop_unavailable');
+        expect(degradedEvent!.payload?.degradedModeCode).toBe('degraded_direct_allowed');
     });
 
     it('PLAR-37: execution succeeds via direct fallback even when bypass is surfaced', async () => {
@@ -454,7 +455,7 @@ describe('PLAR-36..40: Bypass surfacing when loop not available', () => {
         expect(agentStub.chat).toHaveBeenCalled();
     });
 
-    it('PLAR-38: bypass event carries detectedIn field', async () => {
+    it('PLAR-38: degraded event carries detectedIn field', async () => {
         const agentStub = { chat: vi.fn().mockResolvedValue(stubTurnOutput) };
         new AgentKernel(agentStub as any);
         (PlanningLoopService as any)._instance = null;
@@ -467,9 +468,9 @@ describe('PLAR-36..40: Bypass surfacing when loop not available', () => {
 
         await kernel.execute({ userMessage: 'search and analyze all files' });
 
-        const bypassEvent = received.find((e) => e.event === 'planning.loop_routing_bypass_surfaced');
-        if (bypassEvent) {
-            expect(bypassEvent.payload?.detectedIn).toBe('AgentKernel.runDelegatedFlow');
+        const degradedEvent = received.find((e) => e.event === 'planning.degraded_execution_decision');
+        if (degradedEvent) {
+            expect(degradedEvent.payload?.detectedIn).toBe('AgentKernel.runDelegatedFlow');
         }
     });
 
