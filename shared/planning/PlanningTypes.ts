@@ -23,6 +23,14 @@ import type {
     ExecutionReplanRequest,
     StructuredFailure,
 } from '../runtime/failureRecoveryTypes';
+import type {
+    PlanningMemoryReasonCode,
+    StrategyFamily,
+    VerificationDepth,
+    RetryPosture,
+    FallbackPosture,
+    StrategySelection,
+} from './PlanningMemoryTypes';
 
 // ─── Goal ─────────────────────────────────────────────────────────────────────
 
@@ -700,6 +708,23 @@ export interface ExecutionPlan {
      * Examples: 'blocked:missing_capability:rag', 'approved:operator:user-123'
      */
     reasonCodes: string[];
+    /**
+     * Deterministic planning-memory strategy metadata selected prior to plan construction.
+     * Present on all newly-built plans; absent on legacy persisted plans.
+     */
+    strategySelection?: StrategySelection;
+    /**
+     * Flattened strategy metadata for diagnostics/read surfaces that avoid nested reads.
+     * Mirrors strategySelection fields at plan seal time.
+     */
+    selectedLane?: 'trivial' | 'planning_loop' | 'workflow' | 'agent';
+    strategyFamily?: StrategyFamily;
+    verificationDepth?: VerificationDepth;
+    retryPosture?: RetryPosture;
+    fallbackPosture?: FallbackPosture;
+    artifactFirst?: boolean;
+    planningMemoryConfidence?: number;
+    planningMemoryReasonCodes?: PlanningMemoryReasonCode[];
     /**
      * If this plan supersedes a prior plan, the prior plan's id.
      * Absent for initial plans.

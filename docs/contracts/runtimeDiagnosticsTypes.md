@@ -397,6 +397,22 @@ interface HandoffDiagnosticsSnapshot {
 }
 ```
 
+### `PlanningMemoryDiagnosticsSnapshot`
+```typescript
+interface PlanningMemoryDiagnosticsSnapshot {
+    consulted: boolean;
+    similarEpisodeCount: number;
+    selectedStrategyFamily?: StrategyFamily;
+    selectedVerificationDepth?: VerificationDepth;
+    selectedLane?: 'trivial' | 'planning_loop' | 'workflow' | 'agent';
+    confidence?: number;
+    topReasonCodes: PlanningMemoryReasonCode[];
+    dominantFailurePattern?: string;
+    dominantRecoveryPattern?: string;
+    lastUpdated: string;
+}
+```
+
 ### `AuthorityLaneDiagnosticsSnapshot`
 ```typescript
 interface AuthorityLaneDiagnosticsSnapshot {

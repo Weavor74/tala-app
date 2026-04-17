@@ -35,6 +35,11 @@ import type { SeamStabilityReport } from './governance/SeamStability';
 import type { McpAuthorityReasonCode, McpServerClassification } from './mcpAuthorityTypes';
 import type { AuthorityLaneDiagnosticsRecord } from './planning/executionAuthorityTypes';
 import type { FailureClass, RecoveryOutcomeStatus } from './runtime/failureRecoveryTypes';
+import type {
+    PlanningMemoryReasonCode,
+    StrategyFamily,
+    VerificationDepth,
+} from './planning/PlanningMemoryTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -586,6 +591,23 @@ export interface HandoffDiagnosticsSnapshot {
     lastUpdated: string;
 }
 
+/**
+ * Planning-memory diagnostics snapshot derived from planning telemetry.
+ * Tracks strategy-selection evidence for the most recent planning cycle.
+ */
+export interface PlanningMemoryDiagnosticsSnapshot {
+    consulted: boolean;
+    similarEpisodeCount: number;
+    selectedStrategyFamily?: StrategyFamily;
+    selectedVerificationDepth?: VerificationDepth;
+    selectedLane?: 'trivial' | 'planning_loop' | 'workflow' | 'agent';
+    confidence?: number;
+    topReasonCodes: PlanningMemoryReasonCode[];
+    dominantFailurePattern?: string;
+    dominantRecoveryPattern?: string;
+    lastUpdated: string;
+}
+
 // ─── Execution authority lane diagnostics ─────────────────────────────────────
 
 /**
@@ -670,6 +692,11 @@ export interface RuntimeDiagnosticsSnapshot {
      * Absent until at least one workflow or agent handoff has been dispatched.
      */
     handoffDiagnostics?: HandoffDiagnosticsSnapshot;
+    /**
+     * Planning-memory strategy diagnostics.
+     * Populated after planning.memory_context_built/strategy_selected events.
+     */
+    planningMemory?: PlanningMemoryDiagnosticsSnapshot;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────

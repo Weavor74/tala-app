@@ -40,6 +40,9 @@ import type {
     ExecutionPlanStatus,
     GoalExecutionStyle,
 } from '../../../shared/planning/PlanningTypes';
+import type {
+    StrategySelection,
+} from '../../../shared/planning/PlanningMemoryTypes';
 
 // ---------------------------------------------------------------------------
 // Stage factory helpers
@@ -387,13 +390,73 @@ const DETERMINISTIC_WORKFLOW_ID_PREFIX = 'workflow.deterministic';
 /**
  * Builds the typed ExecutionHandoff discriminated union from a GoalAnalysis.
  */
-function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
+function buildHandoff(
+    analysis: GoalAnalysis,
+    strategySelection?: StrategySelection,
+): ExecutionHandoff {
     if (analysis.blockingIssues.length > 0) {
         return {
             type: 'none',
             contractVersion: 1,
             reason: analysis.blockingIssues[0] ?? 'blocked',
         };
+    }
+
+    if (strategySelection) {
+        if (strategySelection.selectedLane === 'agent') {
+            const agentInvocation: PlannedAgentInvocation = {
+                agentId: `agent.strategy.${analysis.goalId}`,
+                executionMode: analysis.executionStyle === 'deterministic'
+                    ? 'hybrid'
+                    : analysis.executionStyle,
+                input: { goalId: analysis.goalId },
+                description: 'Invoke agent kernel according to selected planning strategy',
+                failurePolicy: strategySelection.retryPosture === 'none' ? 'stop' : 'retry',
+                requiredCapabilities: ['inference'],
+                degradeAllowed: strategySelection.fallbackPosture === 'degrade',
+            };
+            return {
+                type: 'agent',
+                contractVersion: 1,
+                invocation: agentInvocation,
+                sharedInputs: { goalId: analysis.goalId },
+            };
+        }
+        if (strategySelection.selectedLane === 'workflow') {
+            const invocations: PlannedWorkflowInvocation[] = [
+                {
+                    workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
+                    input: { goalId: analysis.goalId },
+                    description: 'Dispatch strategy-selected workflow for goal',
+                    failurePolicy: strategySelection.retryPosture === 'none' ? 'stop' : 'retry',
+                    requiredCapabilities: ['workflow_engine'],
+                    degradeAllowed: strategySelection.fallbackPosture === 'degrade',
+                },
+            ];
+            return {
+                type: 'workflow',
+                contractVersion: 1,
+                invocations,
+                sharedInputs: { goalId: analysis.goalId },
+            };
+        }
+        if (strategySelection.strategyFamily === 'direct_tool') {
+            const steps: PlannedToolInvocation[] = [
+                {
+                    toolId: 'tool_execution_preflight',
+                    input: { goalId: analysis.goalId },
+                    description: 'Verify tool execution infrastructure is available',
+                    failurePolicy: strategySelection.retryPosture === 'none' ? 'stop' : 'retry',
+                    degradeAllowed: strategySelection.fallbackPosture === 'degrade',
+                },
+            ];
+            return {
+                type: 'tool',
+                contractVersion: 1,
+                steps,
+                sharedInputs: { goalId: analysis.goalId },
+            };
+        }
     }
 
     switch (analysis.executionStyle as GoalExecutionStyle) {
@@ -476,6 +539,7 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
 export interface PlanBuildInput {
     goal: PlanGoal;
     analysis: GoalAnalysis;
+    strategySelection?: StrategySelection;
     /** If this plan supersedes an existing plan, pass the prior plan here. */
     priorPlan?: ExecutionPlan;
 }
@@ -498,7 +562,7 @@ export class PlanBuilder {
      * The caller (PlanningService) is responsible for marking priorPlan as
      * 'superseded' — PlanBuilder does not mutate the prior plan.
      */
-    static build({ goal, analysis, priorPlan }: PlanBuildInput): ExecutionPlan {
+    static build({ goal, analysis, strategySelection, priorPlan }: PlanBuildInput): ExecutionPlan {
         const now = new Date().toISOString();
         const planId = uuidv4();
         const version = priorPlan ? priorPlan.version + 1 : 1;
@@ -507,11 +571,11 @@ export class PlanBuilder {
 
         const stages: PlanStage[] = isBlocked
             ? buildBlockedStages(analysis.blockingIssues)
-            : PlanBuilder._buildStages(goal, analysis);
+            : PlanBuilder._buildStages(goal, analysis, strategySelection);
 
         const dependencies = PlanBuilder._buildDependencies(stages);
 
-        const handoff = buildHandoff(analysis);
+        const handoff = buildHandoff(analysis, strategySelection);
 
         const approvalState: PlanApprovalState = isBlocked
             ? 'not_required'
@@ -530,6 +594,13 @@ export class PlanBuilder {
             isBlocked ? 'plan:blocked' : 'plan:constructed',
             `handoff:${handoff.type}`,
         ];
+        if (strategySelection) {
+            reasonCodes.push(`strategy:${strategySelection.strategyFamily}`);
+            reasonCodes.push(`verification:${strategySelection.verificationDepth}`);
+            reasonCodes.push(`retry:${strategySelection.retryPosture}`);
+            reasonCodes.push(`fallback:${strategySelection.fallbackPosture}`);
+            reasonCodes.push(...strategySelection.reasonCodes);
+        }
         if (priorPlan) {
             reasonCodes.push(`replan_from:${priorPlan.id}`);
         }
@@ -555,6 +626,15 @@ export class PlanBuilder {
             handoff,
             ...(analysis.approvalContext && { approvalContext: analysis.approvalContext }),
             reasonCodes,
+            strategySelection,
+            selectedLane: strategySelection?.selectedLane,
+            strategyFamily: strategySelection?.strategyFamily,
+            verificationDepth: strategySelection?.verificationDepth,
+            retryPosture: strategySelection?.retryPosture,
+            fallbackPosture: strategySelection?.fallbackPosture,
+            artifactFirst: strategySelection?.artifactFirst,
+            planningMemoryConfidence: strategySelection?.confidence,
+            planningMemoryReasonCodes: strategySelection?.reasonCodes,
             ...(priorPlan && { replannedFromPlanId: priorPlan.id }),
         };
 
@@ -564,15 +644,86 @@ export class PlanBuilder {
     /**
      * Selects and builds the stage list for a given goal + analysis.
      */
-    static _buildStages(goal: PlanGoal, analysis: GoalAnalysis): PlanStage[] {
-        switch (analysis.executionStyle) {
-            case 'deterministic':    return buildDeterministicStages(goal);
-            case 'workflow':         return buildWorkflowStages(goal);
-            case 'tool_orchestrated':return buildToolOrchestrationStages(goal);
-            case 'llm_assisted':     return buildLlmAssistedStages(goal);
-            case 'hybrid':           return buildHybridStages(goal);
-            default:                 return buildDeterministicStages(goal);
+    static _buildStages(
+        goal: PlanGoal,
+        analysis: GoalAnalysis,
+        strategySelection?: StrategySelection,
+    ): PlanStage[] {
+        const baseStages = (() => {
+            switch (analysis.executionStyle) {
+                case 'deterministic':    return buildDeterministicStages(goal);
+                case 'workflow':         return buildWorkflowStages(goal);
+                case 'tool_orchestrated':return buildToolOrchestrationStages(goal);
+                case 'llm_assisted':     return buildLlmAssistedStages(goal);
+                case 'hybrid':           return buildHybridStages(goal);
+                default:                 return buildDeterministicStages(goal);
+            }
+        })();
+        if (!strategySelection) {
+            return baseStages;
         }
+        return PlanBuilder._applyStrategySelection(baseStages, strategySelection);
+    }
+
+    private static _applyStrategySelection(
+        stages: PlanStage[],
+        strategySelection: StrategySelection,
+    ): PlanStage[] {
+        const adapted = stages.map(stage => ({ ...stage }));
+
+        if (strategySelection.artifactFirst) {
+            adapted.unshift(
+                makeStage(
+                    'Create artifact workspace',
+                    'Prepare artifact-first workspace before primary execution.',
+                    'write',
+                    'deterministic',
+                    'stop',
+                    ['artifact workspace prepared'],
+                    [],
+                    { artifactWorkspace: 'record' },
+                ),
+            );
+        }
+
+        if (strategySelection.verificationDepth === 'elevated' || strategySelection.verificationDepth === 'strict') {
+            adapted.push(
+                makeStage(
+                    'Deep verification',
+                    strategySelection.verificationDepth === 'strict'
+                        ? 'Run strict verification over outputs and invariants.'
+                        : 'Run elevated verification over outputs and invariants.',
+                    'verify',
+                    'deterministic',
+                    'escalate',
+                    ['verification evidence complete', 'no invariant violations detected'],
+                    [],
+                    { verificationEvidence: 'record' },
+                ),
+            );
+        }
+
+        for (const stage of adapted) {
+            if (strategySelection.retryPosture === 'none' && stage.failurePolicy === 'retry') {
+                stage.failurePolicy = 'stop';
+                stage.retryPolicy = { maxAttempts: 1, delayMs: 0 };
+            } else if (strategySelection.retryPosture === 'light' && stage.failurePolicy === 'retry') {
+                stage.retryPolicy = { maxAttempts: 2, delayMs: 250 };
+            } else if (strategySelection.retryPosture === 'conservative' && stage.failurePolicy === 'retry') {
+                stage.retryPolicy = { maxAttempts: 2, delayMs: 1000 };
+            } else if (strategySelection.retryPosture === 'standard' && stage.failurePolicy === 'retry') {
+                stage.retryPolicy = { maxAttempts: 3, delayMs: 500 };
+            }
+
+            if (
+                strategySelection.fallbackPosture === 'degrade' &&
+                (stage.type === 'retrieve' || stage.type === 'tool' || stage.type === 'workflow')
+            ) {
+                stage.failurePolicy = 'skip';
+            }
+        }
+
+        return adapted;
     }
 
     /**

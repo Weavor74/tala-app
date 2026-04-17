@@ -57,6 +57,9 @@ import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { GoalAnalyzer } from './GoalAnalyzer';
 import { PlanBuilder } from './PlanBuilder';
 import { PlanningRepository } from './PlanningRepository';
+import { PlanningEpisodeRepository } from './PlanningEpisodeRepository';
+import { PlanningContextBuilder, type PlanningContextRuntimeState } from './PlanningContextBuilder';
+import { StrategySelector } from './StrategySelector';
 import type {
     PlanGoal,
     PlanGoalSource,
@@ -106,6 +109,8 @@ export class PlanningService {
     private static _instance: PlanningService | null = null;
 
     private readonly _repo: PlanningRepository;
+    private readonly _episodeRepo: PlanningEpisodeRepository;
+    private readonly _contextBuilder: PlanningContextBuilder;
     private readonly _bus: TelemetryBus;
 
     /**
@@ -124,6 +129,14 @@ export class PlanningService {
      * setAvailableCapabilities() on every capability change.
      */
     private _capabilityProvider?: () => ReadonlySet<string>;
+    private _runtimeStateProvider?: () => PlanningContextRuntimeState;
+    private _runtimeState: PlanningContextRuntimeState = {
+        inferenceAvailable: true,
+        postgresAvailable: true,
+        semanticRetrievalAvailable: true,
+        networkAvailable: true,
+        degradedSubsystems: [],
+    };
 
     /**
      * Replan policy — configures per-goal replan limits and cooldown.
@@ -141,9 +154,12 @@ export class PlanningService {
      * Used to enforce the cooldown window.
      */
     private readonly _lastReplanAt = new Map<string, number>();
+    private readonly _episodeIdsByPlanId = new Map<string, string>();
 
     private constructor(repo?: PlanningRepository) {
         this._repo = repo ?? new PlanningRepository();
+        this._episodeRepo = new PlanningEpisodeRepository();
+        this._contextBuilder = new PlanningContextBuilder(this._episodeRepo);
         this._bus = TelemetryBus.getInstance();
     }
 
@@ -192,6 +208,21 @@ export class PlanningService {
      */
     registerCapabilityProvider(provider: () => ReadonlySet<string>): void {
         this._capabilityProvider = provider;
+    }
+
+    /**
+     * Registers a runtime-state provider for planning-memory strategy selection.
+     * Provider output is deterministic and must not perform network I/O.
+     */
+    registerRuntimeStateProvider(provider: () => PlanningContextRuntimeState): void {
+        this._runtimeStateProvider = provider;
+    }
+
+    /**
+     * Sets a static runtime-state snapshot used when no provider is registered.
+     */
+    setRuntimeState(state: PlanningContextRuntimeState): void {
+        this._runtimeState = { ...state };
     }
 
     /**
@@ -281,27 +312,7 @@ export class PlanningService {
         // Transition to 'analyzing'
         this._saveGoalStatus(goal, 'analyzing');
 
-        // Use provider-supplied capabilities if registered; otherwise fall back to manually-set ones.
-        // If the provider throws, emit a warning event and fall back to the manually-set snapshot.
-        let capabilities = this._availableCapabilities;
-        if (this._capabilityProvider) {
-            try {
-                capabilities = this._capabilityProvider();
-            } catch (err) {
-                this._bus.emit({
-                    executionId: goalId,
-                    subsystem: 'planning',
-                    event: 'planning.capability_provider_error',
-                    payload: {
-                        goalId,
-                        correlationId: goal.correlationId,
-                        error: err instanceof Error ? err.message : String(err),
-                        fallback: 'manual_capabilities',
-                    },
-                });
-                // Fall through: capabilities remains as the manually-set snapshot
-            }
-        }
+        const capabilities = this._resolveCapabilities(goalId, goal.correlationId);
 
         const analysis = GoalAnalyzer.analyze(goal, capabilities);
 
@@ -355,8 +366,52 @@ export class PlanningService {
 
         const analysis = this.analyzeGoal(goalId);
         const start = Date.now();
+        const capabilities = this._resolveCapabilities(goalId, goal.correlationId);
+        const runtimeState = this._resolveRuntimeState(capabilities);
+        const { similarityFeatures, biasProfile } = this._contextBuilder.build({
+            goal,
+            analysis,
+            runtime: runtimeState,
+        });
+        this._bus.emit({
+            executionId: goalId,
+            subsystem: 'planning',
+            event: 'planning.memory_context_built',
+            payload: {
+                goalId,
+                correlationId: goal.correlationId,
+                similarEpisodeCount: biasProfile.similarEpisodes.length,
+                confidence: biasProfile.confidence,
+                reasonCodes: biasProfile.reasonCodes,
+                knownFailurePatterns: biasProfile.knownFailurePatterns,
+                knownRecoveryPatterns: biasProfile.knownRecoveryPatterns,
+            },
+        });
+        const strategySelection = StrategySelector.select({
+            goal,
+            analysis,
+            biasProfile,
+            runtime: runtimeState,
+        });
+        this._bus.emit({
+            executionId: goalId,
+            subsystem: 'planning',
+            event: 'planning.strategy_selected',
+            payload: {
+                goalId,
+                correlationId: goal.correlationId,
+                selectedLane: strategySelection.selectedLane,
+                strategyFamily: strategySelection.strategyFamily,
+                verificationDepth: strategySelection.verificationDepth,
+                retryPosture: strategySelection.retryPosture,
+                fallbackPosture: strategySelection.fallbackPosture,
+                artifactFirst: strategySelection.artifactFirst,
+                confidence: strategySelection.confidence,
+                reasonCodes: strategySelection.reasonCodes,
+            },
+        });
 
-        const plan = PlanBuilder.build({ goal, analysis });
+        const plan = PlanBuilder.build({ goal, analysis, strategySelection });
         this._repo.savePlan(plan);
 
         const durationMs = Date.now() - start;
@@ -385,10 +440,74 @@ export class PlanningService {
                 status: plan.status,
                 estimatedRisk: plan.estimatedRisk,
                 handoffType: plan.handoff.type,
+                selectedLane: strategySelection.selectedLane,
+                strategyFamily: strategySelection.strategyFamily,
+                verificationDepth: strategySelection.verificationDepth,
+                retryPosture: strategySelection.retryPosture,
+                fallbackPosture: strategySelection.fallbackPosture,
+                artifactFirst: strategySelection.artifactFirst,
+                planningMemoryConfidence: strategySelection.confidence,
+                planningMemoryReasonCodes: strategySelection.reasonCodes,
                 reasonCodes: plan.reasonCodes,
                 durationMs,
             },
         });
+
+        const episode = this._episodeRepo.createEpisode({
+            goalClass: goal.category,
+            requestCategory: goal.category,
+            userIntentClass: goal.source,
+            executionLane: strategySelection.selectedLane,
+            strategyFamily: strategySelection.strategyFamily,
+            verificationDepth: strategySelection.verificationDepth,
+            retryPosture: strategySelection.retryPosture,
+            fallbackPosture: strategySelection.fallbackPosture,
+            toolIds: plan.handoff.type === 'tool' ? plan.handoff.steps.map(s => s.toolId) : [],
+            workflowIds: plan.handoff.type === 'workflow' ? plan.handoff.invocations.map(w => w.workflowId) : [],
+            runtimeConditions: {
+                inferenceAvailable: runtimeState.inferenceAvailable,
+                postgresAvailable: runtimeState.postgresAvailable,
+                semanticRetrievalAvailable: runtimeState.semanticRetrievalAvailable,
+                networkAvailable: runtimeState.networkAvailable,
+                degradedSubsystems: runtimeState.degradedSubsystems ?? [],
+            },
+            similarityFeatures,
+            outcome: plan.status === 'blocked' ? 'blocked' : 'abandoned',
+            failureClass: plan.status === 'blocked' ? 'blocked' : undefined,
+            userAccepted: false,
+            requiredCorrection: false,
+            notes: [`plan:${plan.id}`],
+        });
+        this._episodeIdsByPlanId.set(plan.id, episode.id);
+        this._bus.emit({
+            executionId: goalId,
+            subsystem: 'planning',
+            event: 'planning.episode_recorded',
+            payload: {
+                goalId,
+                correlationId: goal.correlationId,
+                planId: plan.id,
+                episodeId: episode.id,
+                outcome: episode.outcome,
+                strategyFamily: episode.strategyFamily,
+            },
+        });
+
+        if (plan.status === 'blocked') {
+            this._bus.emit({
+                executionId: goalId,
+                subsystem: 'planning',
+                event: 'planning.episode_completed',
+                payload: {
+                    goalId,
+                    correlationId: goal.correlationId,
+                    planId: plan.id,
+                    episodeId: episode.id,
+                    outcome: episode.outcome,
+                    failureClass: episode.failureClass,
+                },
+            });
+        }
 
         return { ...plan };
     }
@@ -653,6 +772,29 @@ export class PlanningService {
             },
         });
 
+        const episodeId = this._episodeIdsByPlanId.get(planId);
+        if (episodeId) {
+            const updatedEpisode = this._episodeRepo.completeEpisode(episodeId, {
+                outcome: 'succeeded',
+                userAccepted: true,
+                requiredCorrection: false,
+                durationMs: Math.max(0, Date.now() - new Date(plan.createdAt).getTime()),
+            });
+            this._bus.emit({
+                executionId: plan.goalId,
+                subsystem: 'planning',
+                event: 'planning.episode_completed',
+                payload: {
+                    goalId: plan.goalId,
+                    correlationId: goal?.correlationId,
+                    planId,
+                    episodeId,
+                    outcome: updatedEpisode?.outcome ?? 'succeeded',
+                    durationMs: updatedEpisode?.durationMs,
+                },
+            });
+        }
+
         return { ...updated };
     }
 
@@ -708,6 +850,34 @@ export class PlanningService {
                 failedAt: now,
             },
         });
+
+        const episodeId = this._episodeIdsByPlanId.get(planId);
+        if (episodeId) {
+            const failureClass = this._classifyFailureReason(reason);
+            const updatedEpisode = this._episodeRepo.completeEpisode(episodeId, {
+                outcome: 'failed',
+                failureClass,
+                requiredCorrection: true,
+                userAccepted: false,
+                recoveryAction: 'none',
+                durationMs: Math.max(0, Date.now() - new Date(plan.createdAt).getTime()),
+            });
+            this._bus.emit({
+                executionId: plan.goalId,
+                subsystem: 'planning',
+                event: 'planning.episode_completed',
+                payload: {
+                    goalId: plan.goalId,
+                    correlationId: goal?.correlationId,
+                    planId,
+                    episodeId,
+                    outcome: updatedEpisode?.outcome ?? 'failed',
+                    failureClass,
+                    reason,
+                    durationMs: updatedEpisode?.durationMs,
+                },
+            });
+        }
 
         return { ...updated };
     }
@@ -812,36 +982,63 @@ export class PlanningService {
         // Reset goal status to 'registered' for fresh analysis
         this._saveGoalStatus(goal, 'registered', [`replan_trigger:${request.trigger}`]);
 
-        // Analyse with current capabilities (use provider if registered).
-        // If the provider throws, emit a warning event and fall back to the manually-set snapshot.
-        let capabilities = this._availableCapabilities;
-        if (this._capabilityProvider) {
-            try {
-                capabilities = this._capabilityProvider();
-            } catch (err) {
-                this._bus.emit({
-                    executionId: request.goalId,
-                    subsystem: 'planning',
-                    event: 'planning.capability_provider_error',
-                    payload: {
-                        goalId: request.goalId,
-                        correlationId: goal.correlationId,
-                        error: err instanceof Error ? err.message : String(err),
-                        fallback: 'manual_capabilities',
-                    },
-                });
-                // Fall through: capabilities remains as the manually-set snapshot
-            }
-        }
+        // Analyse with current capabilities snapshot.
+        const capabilities = this._resolveCapabilities(request.goalId, goal.correlationId);
         const analysis = GoalAnalyzer.analyze(
             this._repo.getGoal(request.goalId)!,
             capabilities,
         );
+        const runtimeState = this._resolveRuntimeState(capabilities);
+        const replanningGoal = this._repo.getGoal(request.goalId)!;
+        const { similarityFeatures, biasProfile } = this._contextBuilder.build({
+            goal: replanningGoal,
+            analysis,
+            runtime: runtimeState,
+        });
+        this._bus.emit({
+            executionId: request.goalId,
+            subsystem: 'planning',
+            event: 'planning.memory_context_built',
+            payload: {
+                goalId: request.goalId,
+                correlationId: goal.correlationId,
+                similarEpisodeCount: biasProfile.similarEpisodes.length,
+                confidence: biasProfile.confidence,
+                reasonCodes: biasProfile.reasonCodes,
+                knownFailurePatterns: biasProfile.knownFailurePatterns,
+                knownRecoveryPatterns: biasProfile.knownRecoveryPatterns,
+            },
+        });
+        const strategySelection = StrategySelector.select({
+            goal: replanningGoal,
+            analysis,
+            biasProfile,
+            runtime: runtimeState,
+        });
+        this._bus.emit({
+            executionId: request.goalId,
+            subsystem: 'planning',
+            event: 'planning.strategy_selected',
+            payload: {
+                goalId: request.goalId,
+                correlationId: goal.correlationId,
+                selectedLane: strategySelection.selectedLane,
+                strategyFamily: strategySelection.strategyFamily,
+                verificationDepth: strategySelection.verificationDepth,
+                retryPosture: strategySelection.retryPosture,
+                fallbackPosture: strategySelection.fallbackPosture,
+                artifactFirst: strategySelection.artifactFirst,
+                confidence: strategySelection.confidence,
+                reasonCodes: strategySelection.reasonCodes,
+                replannedFromPlanId: priorPlan.id,
+            },
+        });
 
         // Build new plan superseding the prior one
         const newPlan = PlanBuilder.build({
-            goal: this._repo.getGoal(request.goalId)!,
+            goal: replanningGoal,
             analysis,
+            strategySelection,
             priorPlan,
         });
         this._repo.savePlan(newPlan);
@@ -902,10 +1099,140 @@ export class PlanningService {
         const freshGoal2 = this._repo.getGoal(request.goalId)!;
         this._saveGoalStatus(freshGoal2, isBlocked ? 'blocked' : 'planned', newPlan.reasonCodes);
 
+        const priorEpisodeId = this._episodeIdsByPlanId.get(priorPlan.id);
+        if (priorEpisodeId) {
+            this._episodeRepo.completeEpisode(priorEpisodeId, {
+                outcome: 'abandoned',
+                recoveryAction: 'replan',
+                requiredCorrection: true,
+            });
+            this._bus.emit({
+                executionId: request.goalId,
+                subsystem: 'planning',
+                event: 'planning.episode_completed',
+                payload: {
+                    goalId: request.goalId,
+                    correlationId: goal.correlationId,
+                    planId: priorPlan.id,
+                    episodeId: priorEpisodeId,
+                    outcome: 'abandoned',
+                    recoveryAction: 'replan',
+                },
+            });
+        }
+
+        const episode = this._episodeRepo.createEpisode({
+            goalClass: freshGoal2.category,
+            requestCategory: freshGoal2.category,
+            userIntentClass: freshGoal2.source,
+            executionLane: newPlan.selectedLane,
+            strategyFamily: newPlan.strategyFamily,
+            verificationDepth: newPlan.verificationDepth,
+            retryPosture: newPlan.retryPosture,
+            fallbackPosture: newPlan.fallbackPosture,
+            toolIds: newPlan.handoff.type === 'tool' ? newPlan.handoff.steps.map(s => s.toolId) : [],
+            workflowIds: newPlan.handoff.type === 'workflow' ? newPlan.handoff.invocations.map(w => w.workflowId) : [],
+            runtimeConditions: {
+                inferenceAvailable: runtimeState.inferenceAvailable,
+                postgresAvailable: runtimeState.postgresAvailable,
+                semanticRetrievalAvailable: runtimeState.semanticRetrievalAvailable,
+                networkAvailable: runtimeState.networkAvailable,
+                degradedSubsystems: runtimeState.degradedSubsystems ?? [],
+            },
+            similarityFeatures,
+            outcome: isBlocked ? 'blocked' : 'abandoned',
+            failureClass: isBlocked ? 'blocked' : undefined,
+            notes: [`plan:${newPlan.id}`, `replanned_from:${priorPlan.id}`],
+        });
+        this._episodeIdsByPlanId.set(newPlan.id, episode.id);
+        this._bus.emit({
+            executionId: request.goalId,
+            subsystem: 'planning',
+            event: 'planning.episode_recorded',
+            payload: {
+                goalId: request.goalId,
+                correlationId: goal.correlationId,
+                planId: newPlan.id,
+                episodeId: episode.id,
+                outcome: episode.outcome,
+                strategyFamily: episode.strategyFamily,
+            },
+        });
+        if (isBlocked) {
+            this._bus.emit({
+                executionId: request.goalId,
+                subsystem: 'planning',
+                event: 'planning.episode_completed',
+                payload: {
+                    goalId: request.goalId,
+                    correlationId: goal.correlationId,
+                    planId: newPlan.id,
+                    episodeId: episode.id,
+                    outcome: episode.outcome,
+                    failureClass: episode.failureClass,
+                },
+            });
+        }
+
         return { ...newPlan };
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    private _resolveCapabilities(goalId: string, correlationId?: string): ReadonlySet<string> {
+        let capabilities = this._availableCapabilities;
+        if (this._capabilityProvider) {
+            try {
+                capabilities = this._capabilityProvider();
+            } catch (err) {
+                this._bus.emit({
+                    executionId: goalId,
+                    subsystem: 'planning',
+                    event: 'planning.capability_provider_error',
+                    payload: {
+                        goalId,
+                        correlationId,
+                        error: err instanceof Error ? err.message : String(err),
+                        fallback: 'manual_capabilities',
+                    },
+                });
+            }
+        }
+        return capabilities;
+    }
+
+    private _resolveRuntimeState(capabilities: ReadonlySet<string>): PlanningContextRuntimeState {
+        let state = this._runtimeState;
+        if (this._runtimeStateProvider) {
+            try {
+                state = this._runtimeStateProvider();
+            } catch {
+                // keep local fallback snapshot
+            }
+        }
+        const degradedSubsystems = state.degradedSubsystems ?? [];
+        return {
+            inferenceAvailable: state.inferenceAvailable && capabilities.has('inference'),
+            postgresAvailable: state.postgresAvailable && capabilities.has('memory_canonical'),
+            semanticRetrievalAvailable:
+                state.semanticRetrievalAvailable &&
+                (capabilities.has('rag') || capabilities.has('semantic_retrieval')),
+            networkAvailable: state.networkAvailable,
+            degradedSubsystems,
+        };
+    }
+
+    private _classifyFailureReason(reason: string): string {
+        const text = reason.toLowerCase();
+        if (text.includes('timeout')) return 'timeout';
+        if (text.includes('policy')) return 'policy_blocked';
+        if (text.includes('permission') || text.includes('forbidden')) return 'permission_denied';
+        if (text.includes('auth')) return 'auth_required';
+        if (text.includes('unreach') || text.includes('network')) return 'dependency_unreachable';
+        if (text.includes('invalid')) return 'invalid_input';
+        if (text.includes('invariant')) return 'invariant_violation';
+        return 'unknown';
+    }
 
     /** Mutates goal status + updatedAt in the repository. */
     private _saveGoalStatus(

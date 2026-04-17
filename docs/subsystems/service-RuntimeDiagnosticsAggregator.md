@@ -68,6 +68,16 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 **Returns**: `HandoffDiagnosticsSnapshot | undefined`
 
 ---
+#### `_buildPlanningMemoryDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `PlanningMemoryDiagnosticsSnapshot | undefined`
+
+---
+#### `_handlePlanningMemoryEvent`
+**Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
 #### `_handleHandoffEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`

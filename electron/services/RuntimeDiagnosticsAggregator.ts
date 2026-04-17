@@ -7,6 +7,7 @@ import type {
     AuthorityLaneDiagnosticsSnapshot,
     HandoffExecutionRecord,
     HandoffDiagnosticsSnapshot,
+    PlanningMemoryDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
@@ -61,6 +62,7 @@ export class RuntimeDiagnosticsAggregator {
     private _agentFailureCount = 0;
     private _handoffLastUpdated?: string;
     private readonly _unsubscribeHandoff: (() => void);
+    private _planningMemorySnapshot?: PlanningMemoryDiagnosticsSnapshot;
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -83,6 +85,7 @@ export class RuntimeDiagnosticsAggregator {
         });
         this._unsubscribeHandoff = TelemetryBus.getInstance().subscribe((evt) => {
             this._handleHandoffEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+            this._handlePlanningMemoryEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
         });
     }
 
@@ -147,6 +150,7 @@ export class RuntimeDiagnosticsAggregator {
             cognitive: this._buildCognitiveDiagnostics(now),
             executionAuthority: this._buildAuthorityLaneDiagnostics(now),
             handoffDiagnostics: this._buildHandoffDiagnostics(now),
+            planningMemory: this._buildPlanningMemoryDiagnostics(now),
         };
     }
 
@@ -318,6 +322,57 @@ export class RuntimeDiagnosticsAggregator {
             agentFailureCount: this._agentFailureCount,
             lastUpdated: this._handoffLastUpdated ?? now,
         };
+    }
+
+    private _buildPlanningMemoryDiagnostics(now: string): PlanningMemoryDiagnosticsSnapshot | undefined {
+        if (!this._planningMemorySnapshot) return undefined;
+        return {
+            ...this._planningMemorySnapshot,
+            lastUpdated: this._planningMemorySnapshot.lastUpdated || now,
+        };
+    }
+
+    private _handlePlanningMemoryEvent(event: string, payload?: Record<string, unknown>): void {
+        if (!payload) return;
+        const now = new Date().toISOString();
+        if (event === 'planning.memory_context_built') {
+            this._planningMemorySnapshot = {
+                consulted: true,
+                similarEpisodeCount: Number(payload.similarEpisodeCount ?? 0),
+                topReasonCodes: Array.isArray(payload.reasonCodes)
+                    ? (payload.reasonCodes as PlanningMemoryDiagnosticsSnapshot['topReasonCodes'])
+                    : [],
+                dominantFailurePattern: Array.isArray(payload.knownFailurePatterns) &&
+                    payload.knownFailurePatterns.length > 0
+                    ? String(payload.knownFailurePatterns[0])
+                    : undefined,
+                dominantRecoveryPattern: Array.isArray(payload.knownRecoveryPatterns) &&
+                    payload.knownRecoveryPatterns.length > 0
+                    ? String(payload.knownRecoveryPatterns[0])
+                    : undefined,
+                lastUpdated: now,
+            };
+            return;
+        }
+        if (event === 'planning.strategy_selected') {
+            const existing = this._planningMemorySnapshot ?? {
+                consulted: true,
+                similarEpisodeCount: 0,
+                topReasonCodes: [],
+                lastUpdated: now,
+            };
+            this._planningMemorySnapshot = {
+                ...existing,
+                selectedLane: payload.selectedLane as PlanningMemoryDiagnosticsSnapshot['selectedLane'],
+                selectedStrategyFamily: payload.strategyFamily as PlanningMemoryDiagnosticsSnapshot['selectedStrategyFamily'],
+                selectedVerificationDepth: payload.verificationDepth as PlanningMemoryDiagnosticsSnapshot['selectedVerificationDepth'],
+                confidence: typeof payload.confidence === 'number' ? payload.confidence : existing.confidence,
+                topReasonCodes: Array.isArray(payload.reasonCodes)
+                    ? (payload.reasonCodes as PlanningMemoryDiagnosticsSnapshot['topReasonCodes'])
+                    : existing.topReasonCodes,
+                lastUpdated: now,
+            };
+        }
     }
 
     private _handleHandoffEvent(event: string, payload?: Record<string, unknown>): void {
