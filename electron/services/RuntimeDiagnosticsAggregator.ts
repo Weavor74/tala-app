@@ -5,6 +5,8 @@ import type {
     McpInventoryDiagnostics,
     CognitiveDiagnosticsSnapshot,
     AuthorityLaneDiagnosticsSnapshot,
+    HandoffExecutionRecord,
+    HandoffDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
@@ -50,6 +52,16 @@ export class RuntimeDiagnosticsAggregator {
     private _authorityDegradedDirectCount = 0;
     private readonly _unsubscribeAuthority: (() => void);
 
+    // ─── Handoff diagnostics state ─────────────────────────────────────────────
+    private _lastWorkflowHandoff?: HandoffExecutionRecord;
+    private _lastAgentHandoff?: HandoffExecutionRecord;
+    private _workflowDispatchCount = 0;
+    private _agentDispatchCount = 0;
+    private _workflowFailureCount = 0;
+    private _agentFailureCount = 0;
+    private _handoffLastUpdated?: string;
+    private readonly _unsubscribeHandoff: (() => void);
+
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
         private readonly mcpLifecycle: McpDiagnosticsSource,
@@ -69,6 +81,9 @@ export class RuntimeDiagnosticsAggregator {
                 }
             }
         });
+        this._unsubscribeHandoff = TelemetryBus.getInstance().subscribe((evt) => {
+            this._handleHandoffEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+        });
     }
 
     /**
@@ -77,6 +92,7 @@ export class RuntimeDiagnosticsAggregator {
      */
     public dispose(): void {
         this._unsubscribeAuthority();
+        this._unsubscribeHandoff();
     }
 
     public recordCognitiveContext(context: TalaCognitiveContext): void {
@@ -130,6 +146,7 @@ export class RuntimeDiagnosticsAggregator {
             systemHealth,
             cognitive: this._buildCognitiveDiagnostics(now),
             executionAuthority: this._buildAuthorityLaneDiagnostics(now),
+            handoffDiagnostics: this._buildHandoffDiagnostics(now),
         };
     }
 
@@ -281,6 +298,211 @@ export class RuntimeDiagnosticsAggregator {
                 compactionDurationMs: meta.compactionDurationMs,
             },
         };
+    }
+
+    private _buildHandoffDiagnostics(now: string): HandoffDiagnosticsSnapshot | undefined {
+        if (
+            !this._lastWorkflowHandoff &&
+            !this._lastAgentHandoff &&
+            this._workflowDispatchCount === 0 &&
+            this._agentDispatchCount === 0
+        ) {
+            return undefined;
+        }
+        return {
+            lastWorkflowRecord: this._lastWorkflowHandoff,
+            lastAgentRecord: this._lastAgentHandoff,
+            workflowDispatchCount: this._workflowDispatchCount,
+            agentDispatchCount: this._agentDispatchCount,
+            workflowFailureCount: this._workflowFailureCount,
+            agentFailureCount: this._agentFailureCount,
+            lastUpdated: this._handoffLastUpdated ?? now,
+        };
+    }
+
+    private _handleHandoffEvent(event: string, payload?: Record<string, unknown>): void {
+        if (!payload) return;
+        const now = new Date().toISOString();
+        this._handoffLastUpdated = now;
+
+        const planId = (payload.planId as string) ?? '';
+        const goalId = (payload.goalId as string) ?? '';
+        const executionBoundaryId = (payload.executionBoundaryId as string) ?? '';
+
+        switch (event) {
+            case 'planning.workflow_handoff_dispatched': {
+                this._workflowDispatchCount++;
+                this._lastWorkflowHandoff = {
+                    handoffType: 'workflow',
+                    executionBoundaryId,
+                    targetId: '',
+                    readiness: 'dispatching',
+                    policyStatus: 'clear',
+                    outcome: 'pending',
+                    startedAt: now,
+                    planId,
+                    goalId,
+                };
+                break;
+            }
+            case 'planning.workflow_handoff_preflight_failed': {
+                this._workflowFailureCount++;
+                const wfPreflightCode = payload.failureCode as string | undefined;
+                const wfPreflightReplan = payload.replanAdvised as boolean | undefined;
+                this._lastWorkflowHandoff = {
+                    handoffType: 'workflow',
+                    executionBoundaryId,
+                    targetId: (payload.workflowId as string) ?? '',
+                    readiness: 'preflight_failed',
+                    policyStatus: 'clear',
+                    outcome: 'failure',
+                    reasonCode: wfPreflightCode,
+                    replanAdvised: wfPreflightReplan,
+                    replanTrigger: wfPreflightReplan ? 'capability_loss' : undefined,
+                    startedAt: now,
+                    completedAt: now,
+                    planId,
+                    goalId,
+                    error: payload.details as string | undefined,
+                };
+                break;
+            }
+            case 'planning.workflow_handoff_dispatch_failed': {
+                if (this._lastWorkflowHandoff && this._lastWorkflowHandoff.outcome === 'pending') {
+                    this._workflowFailureCount++;
+                }
+                const wfFailCode = payload.failureCode as string | undefined;
+                const wfFailReplan = payload.replanAdvised as boolean | undefined;
+                const wfPolicyStatus: HandoffExecutionRecord['policyStatus'] =
+                    wfFailCode === 'policy:escalation_required' ? 'escalation_required' : 'clear';
+                this._lastWorkflowHandoff = {
+                    ...(this._lastWorkflowHandoff ?? {
+                        handoffType: 'workflow' as const,
+                        targetId: '',
+                        startedAt: now,
+                        planId,
+                        goalId,
+                    }),
+                    executionBoundaryId,
+                    readiness: 'failed',
+                    policyStatus: wfPolicyStatus,
+                    outcome: 'failure',
+                    reasonCode: wfFailCode,
+                    replanAdvised: wfFailReplan,
+                    replanTrigger: payload.replanTrigger as HandoffExecutionRecord['replanTrigger'],
+                    completedAt: now,
+                    error: payload.error as string | undefined,
+                };
+                break;
+            }
+            case 'planning.workflow_handoff_completed': {
+                const wfStartedAt = this._lastWorkflowHandoff?.startedAt ?? now;
+                const wfStartMs = new Date(wfStartedAt).getTime();
+                const wfEndMs = new Date(now).getTime();
+                this._lastWorkflowHandoff = {
+                    ...(this._lastWorkflowHandoff ?? {
+                        handoffType: 'workflow' as const,
+                        targetId: '',
+                        planId,
+                        goalId,
+                    }),
+                    executionBoundaryId,
+                    readiness: 'completed',
+                    policyStatus: 'clear',
+                    outcome: 'success',
+                    startedAt: wfStartedAt,
+                    completedAt: now,
+                    durationMs: wfEndMs - wfStartMs,
+                };
+                break;
+            }
+            case 'planning.agent_handoff_dispatched': {
+                this._agentDispatchCount++;
+                this._lastAgentHandoff = {
+                    handoffType: 'agent',
+                    executionBoundaryId,
+                    targetId: (payload.agentId as string) ?? '',
+                    readiness: 'dispatching',
+                    policyStatus: 'clear',
+                    outcome: 'pending',
+                    startedAt: now,
+                    planId,
+                    goalId,
+                };
+                break;
+            }
+            case 'planning.agent_handoff_preflight_failed': {
+                this._agentFailureCount++;
+                const agPreflightCode = payload.failureCode as string | undefined;
+                const agPreflightReplan = payload.replanAdvised as boolean | undefined;
+                this._lastAgentHandoff = {
+                    handoffType: 'agent',
+                    executionBoundaryId,
+                    targetId: (payload.agentId as string) ?? '',
+                    readiness: 'preflight_failed',
+                    policyStatus: 'clear',
+                    outcome: 'failure',
+                    reasonCode: agPreflightCode,
+                    replanAdvised: agPreflightReplan,
+                    replanTrigger: agPreflightReplan ? 'capability_loss' : undefined,
+                    startedAt: now,
+                    completedAt: now,
+                    planId,
+                    goalId,
+                    error: payload.details as string | undefined,
+                };
+                break;
+            }
+            case 'planning.agent_handoff_dispatch_failed': {
+                if (this._lastAgentHandoff && this._lastAgentHandoff.outcome === 'pending') {
+                    this._agentFailureCount++;
+                }
+                const agFailCode = payload.failureCode as string | undefined;
+                const agFailReplan = payload.replanAdvised as boolean | undefined;
+                const agPolicyStatus: HandoffExecutionRecord['policyStatus'] =
+                    agFailCode === 'policy:escalation_required' ? 'escalation_required' : 'clear';
+                this._lastAgentHandoff = {
+                    ...(this._lastAgentHandoff ?? {
+                        handoffType: 'agent' as const,
+                        targetId: (payload.agentId as string) ?? '',
+                        startedAt: now,
+                        planId,
+                        goalId,
+                    }),
+                    executionBoundaryId,
+                    readiness: 'failed',
+                    policyStatus: agPolicyStatus,
+                    outcome: 'failure',
+                    reasonCode: agFailCode,
+                    replanAdvised: agFailReplan,
+                    replanTrigger: payload.replanTrigger as HandoffExecutionRecord['replanTrigger'],
+                    completedAt: now,
+                    error: payload.error as string | undefined,
+                };
+                break;
+            }
+            case 'planning.agent_handoff_completed': {
+                const agStartedAt = this._lastAgentHandoff?.startedAt ?? now;
+                const agStartMs = new Date(agStartedAt).getTime();
+                const agEndMs = new Date(now).getTime();
+                this._lastAgentHandoff = {
+                    ...(this._lastAgentHandoff ?? {
+                        handoffType: 'agent' as const,
+                        targetId: (payload.agentId as string) ?? '',
+                        planId,
+                        goalId,
+                    }),
+                    executionBoundaryId,
+                    readiness: 'completed',
+                    policyStatus: 'clear',
+                    outcome: 'success',
+                    startedAt: agStartedAt,
+                    completedAt: now,
+                    durationMs: agEndMs - agStartMs,
+                };
+                break;
+            }
+        }
     }
 
     private _buildAuthorityLaneDiagnostics(now: string): AuthorityLaneDiagnosticsSnapshot | undefined {
