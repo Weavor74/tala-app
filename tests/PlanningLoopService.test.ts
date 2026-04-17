@@ -645,8 +645,11 @@ describe('PlanningLoopService — replan guardrail propagation (PLS51–PLS55)',
 
     it('PLS53: loop fails with replan_cooldown_active when cooldown blocks even first replan', async () => {
         const planning = freshPlanningService();
-        // cooldownMs > Date.now() means `Date.now() - 0 (lastReplanAt) < cooldownMs` → blocks
-        // the first replan immediately since _lastReplanAt defaults to 0 (never replanned).
+        // PlanningService tracks _lastReplanAt per goal (defaults to 0 when no replan yet).
+        // The cooldown check is: `Date.now() - lastReplanAt < cooldownMs`.
+        // With lastReplanAt=0, this becomes `Date.now() < cooldownMs`.
+        // Using Number.MAX_SAFE_INTEGER ensures Date.now() (~1.7T ms) < MAX_SAFE_INT (~9T ms),
+        // so the cooldown triggers on the very first replan attempt.
         planning.setReplanPolicy({ maxReplans: 10, cooldownMs: Number.MAX_SAFE_INTEGER });
 
         const svc = freshLoop(makeSuccessExecutor(), makeAlwaysFailObserver(), planning);
@@ -657,6 +660,8 @@ describe('PlanningLoopService — replan guardrail propagation (PLS51–PLS55)',
 
     it('PLS54: planning.loop_failed emitted with replan_cooldown_active', async () => {
         const planning = freshPlanningService();
+        // Same reasoning as PLS53: Number.MAX_SAFE_INTEGER > Date.now(), so the cooldown
+        // triggers on the first replan (Date.now() - 0 < MAX_SAFE_INT).
         planning.setReplanPolicy({ maxReplans: 10, cooldownMs: Number.MAX_SAFE_INTEGER });
         const svc = freshLoop(makeSuccessExecutor(), makeAlwaysFailObserver(), planning);
         await svc.startLoop({ goal: 'Cooldown', maxIterations: 5 });
