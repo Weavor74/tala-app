@@ -1,13 +1,11 @@
 # Service: SystemHealthService.ts
 
-**Source**: [electron/services/SystemHealthService.ts](../../electron/services/SystemHealthService.ts)
+**Source**: [electron\services\SystemHealthService.ts](../../electron/services/SystemHealthService.ts)
 
 ## Class: `SystemHealthService`
 
 ## Overview
-Deterministic system-health reduction service.
-
- Invariant: the same normalized inputs always produce the same health/status snapshot.
+Deterministic system-health reduction service. Invariant: the same normalized inputs always produce the same health/status snapshot.
 
 ### Methods
 
@@ -42,9 +40,7 @@ Deterministic system-health reduction service.
 
 ---
 #### `buildEvidenceLinksForIncident`
-Builds machine-usable evidence references for incident inspection.
- Returns explicit evidence_unavailable marker when no stable runtime artifact exists.
-/
+Builds machine-usable evidence references for incident inspection. Returns explicit evidence_unavailable marker when no stable runtime artifact exists./
 
 **Arguments**: `subsystem: SystemHealthSubsystemSnapshot, events: RuntimeEvent[],`
 **Returns**: `string[]`

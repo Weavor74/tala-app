@@ -1,6 +1,6 @@
 # Service: LogLifecycleService.ts
 
-**Source**: [electron/services/LogLifecycleService.ts](../../electron/services/LogLifecycleService.ts)
+**Source**: [electron\services\LogLifecycleService.ts](../../electron/services/LogLifecycleService.ts)
 
 ## Class: `LogLifecycleService`
 

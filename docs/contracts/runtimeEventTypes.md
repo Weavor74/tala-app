@@ -1,6 +1,6 @@
 # Contract: runtimeEventTypes.ts
 
-**Source**: [shared/runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
+**Source**: [shared\runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
 
 ## Interfaces
 
@@ -61,6 +61,15 @@ type RuntimeEventType =
     | 'execution.finalizing'
     | 'execution.completed'
     | 'execution.failed'
+    | 'execution.failure_normalized'
+    | 'execution.recovery_attempted'
+    | 'execution.recovery_retry_scheduled'
+    | 'execution.recovery_reroute_selected'
+    | 'execution.recovery_succeeded'
+    | 'execution.recovery_exhausted'
+    | 'execution.replan_requested'
+    | 'execution.escalation_requested'
+    | 'execution.degraded_completed'
     | `execution.${string}`
     | 'tool.requested'
     | 'tool.completed'

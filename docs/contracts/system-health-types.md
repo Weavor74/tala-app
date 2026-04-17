@@ -1,6 +1,6 @@
 # Contract: system-health-types.ts
 
-**Source**: [shared/system-health-types.ts](../../shared/system-health-types.ts)
+**Source**: [shared\system-health-types.ts](../../shared/system-health-types.ts)
 
 ## Interfaces
 

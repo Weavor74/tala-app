@@ -390,6 +390,11 @@ export class RuntimeDiagnosticsAggregator {
                     reasonCode: wfFailCode,
                     replanAdvised: wfFailReplan,
                     replanTrigger: payload.replanTrigger as HandoffExecutionRecord['replanTrigger'],
+                    failureClass: payload.failureClass as HandoffExecutionRecord['failureClass'],
+                    recoveryOutcome: payload.recoveryOutcome as HandoffExecutionRecord['recoveryOutcome'],
+                    recoveryAttempts: payload.recoveryAttempts as HandoffExecutionRecord['recoveryAttempts'],
+                    antiThrashSuppressed: payload.antiThrashSuppressed as HandoffExecutionRecord['antiThrashSuppressed'],
+                    degradedCompletion: payload.recoveryOutcome === 'degraded_but_completed',
                     completedAt: now,
                     error: payload.error as string | undefined,
                 };
@@ -399,6 +404,7 @@ export class RuntimeDiagnosticsAggregator {
                 const wfStartedAt = this._lastWorkflowHandoff?.startedAt ?? now;
                 const wfStartMs = new Date(wfStartedAt).getTime();
                 const wfEndMs = new Date(now).getTime();
+                const wfDegraded = payload.degradedCompletion === true;
                 this._lastWorkflowHandoff = {
                     ...(this._lastWorkflowHandoff ?? {
                         handoffType: 'workflow' as const,
@@ -413,6 +419,8 @@ export class RuntimeDiagnosticsAggregator {
                     startedAt: wfStartedAt,
                     completedAt: now,
                     durationMs: wfEndMs - wfStartMs,
+                    degradedCompletion: wfDegraded,
+                    recoveryOutcome: wfDegraded ? 'degraded_but_completed' : this._lastWorkflowHandoff?.recoveryOutcome,
                 };
                 break;
             }
@@ -476,6 +484,11 @@ export class RuntimeDiagnosticsAggregator {
                     reasonCode: agFailCode,
                     replanAdvised: agFailReplan,
                     replanTrigger: payload.replanTrigger as HandoffExecutionRecord['replanTrigger'],
+                    failureClass: payload.failureClass as HandoffExecutionRecord['failureClass'],
+                    recoveryOutcome: payload.recoveryOutcome as HandoffExecutionRecord['recoveryOutcome'],
+                    recoveryAttempts: payload.recoveryAttempts as HandoffExecutionRecord['recoveryAttempts'],
+                    antiThrashSuppressed: payload.antiThrashSuppressed as HandoffExecutionRecord['antiThrashSuppressed'],
+                    degradedCompletion: payload.recoveryOutcome === 'degraded_but_completed',
                     completedAt: now,
                     error: payload.error as string | undefined,
                 };
@@ -485,6 +498,7 @@ export class RuntimeDiagnosticsAggregator {
                 const agStartedAt = this._lastAgentHandoff?.startedAt ?? now;
                 const agStartMs = new Date(agStartedAt).getTime();
                 const agEndMs = new Date(now).getTime();
+                const agDegraded = payload.degradedCompletion === true;
                 this._lastAgentHandoff = {
                     ...(this._lastAgentHandoff ?? {
                         handoffType: 'agent' as const,
@@ -499,6 +513,8 @@ export class RuntimeDiagnosticsAggregator {
                     startedAt: agStartedAt,
                     completedAt: now,
                     durationMs: agEndMs - agStartMs,
+                    degradedCompletion: agDegraded,
+                    recoveryOutcome: agDegraded ? 'degraded_but_completed' : this._lastAgentHandoff?.recoveryOutcome,
                 };
                 break;
             }

@@ -1,66 +1,39 @@
 /**
- * AgentHandoffCoordinator.ts — Execution bridge for PlanningService agent handoffs
+ * AgentHandoffCoordinator.ts - Execution bridge for PlanningService agent handoffs.
  *
- * Consumes the typed agent ExecutionHandoff produced by PlanningService and dispatches
- * the PlannedAgentInvocation to the appropriate downstream agent execution authority.
- *
- * Design invariants
- * ─────────────────
- * 1. Not a planner — this class does not produce plans, analyse goals, or modify
- *    planning state beyond calling markExecutionCompleted / markExecutionFailed.
- * 2. Preflight first — before dispatch, preflight validation runs synchronously.
- *    Preflight failure marks the plan failed with a machine-readable reason code and
- *    signals that replanning may be appropriate (replanAdvised: true).
- * 3. Typed contract — only the 'agent' handoff type is accepted.  Any other type
- *    throws immediately so the caller knows to use the correct coordinator.
- * 4. Policy enforcement — the invocation's failurePolicy is honoured:
- *    stop     → mark the plan failed
- *    retry    → coordinator defers retry to the executor; returns result as-is
- *    skip     → mark completed (not recommended for agent; prefer 'escalate')
- *    escalate → mark result as requiring operator gate (replanAdvised: true)
- * 5. Execution-boundary propagation — the plan's executionBoundaryId is passed as
- *    executionId in AgentInvocationContext so agent telemetry is correlated to
- *    the planning lifecycle.
- * 6. Telemetry lifecycle parity — emits the same lifecycle event pattern as
- *    WorkflowHandoffCoordinator (dispatched, invocation_failed, dispatch_failed) plus
- *    preflight-specific events (agent_handoff_preflight_failed).  invocation_failed is
- *    emitted by _executeInvocation() for executor-thrown failures; dispatch_failed is
- *    emitted only at the dispatch layer (preflight, policy, outer catch).
- * 7. Stable failure reason codes — all failures carry an AgentHandoffFailureCode from
- *    the shared type contract, making them machine-actionable without string parsing.
- * 8. Honest failure — on execution failure with failurePolicy 'stop',
- *    markExecutionFailed() is called and the error is propagated to the caller.
- * 9. No silent side effects — every dispatch attempt is observable via telemetry.
+ * Owns local recovery (retry/reroute/degrade) and emits deterministic
+ * escalation/replan signals when local recovery is exhausted.
  */
 
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { PlanningService } from './PlanningService';
 import type {
-    ExecutionPlan,
-    PlannedAgentInvocation,
     AgentHandoffFailureCode,
+    ExecutionFailureEscalation,
+    ExecutionPlan,
     GoalExecutionStyle,
+    PlannedAgentInvocation,
 } from '../../../shared/planning/PlanningTypes';
+import type {
+    ExecutionReplanRequest,
+    RecoveryActionRecord,
+    RecoveryOutcomeStatus,
+    StructuredFailure,
+} from '../../../shared/runtime/failureRecoveryTypes';
+import {
+    FailureSuppressionService,
+    buildFailureSignature,
+    getDefaultRecoveryPolicy,
+    normalizeStructuredFailure,
+    selectEquivalentTarget,
+} from '../runtime/failures/FailureRecoveryPolicy';
 
-// ─── Executor interface ────────────────────────────────────────────────────────
-
-/**
- * Invocation context passed to the agent executor on dispatch.
- * Correlates agent session telemetry to the planning lifecycle.
- */
 export interface AgentInvocationContext {
-    /** Matches the plan's executionBoundaryId for cross-subsystem correlation. */
     executionId: string;
-    /** Always 'planning_handoff' — identifies this as a plan-initiated dispatch. */
     executionType: 'planning_handoff';
-    /** Always 'planning' — execution originated from the planning subsystem. */
     executionOrigin: 'planning';
 }
 
-/**
- * Minimal interface for the agent execution authority.
- * Defined here to allow injection in tests without importing the full kernel.
- */
 export interface IAgentExecutor {
     executeAgent(
         agentId: string,
@@ -70,42 +43,18 @@ export interface IAgentExecutor {
     ): Promise<{ success: boolean; data?: unknown; error?: string; durationMs?: number }>;
 }
 
-// ─── Preflight ────────────────────────────────────────────────────────────────
-
-/** Valid execution modes for agent handoffs. */
 const VALID_AGENT_EXECUTION_MODES: ReadonlySet<GoalExecutionStyle> = new Set([
     'llm_assisted',
     'hybrid',
 ]);
 
-/**
- * Result of a preflight validation for an agent invocation.
- */
 export interface AgentPreflightResult {
     passed: boolean;
-    /** Machine-readable failure code; present only when passed=false. */
     failureCode?: AgentHandoffFailureCode;
-    /** Human-readable description of the failure; present only when passed=false. */
     details?: string;
-    /**
-     * Whether replanning is advised following this preflight failure.
-     * True for capability mismatches (capability may become available after replan).
-     * False for hard invariant violations (e.g. invalid executionMode).
-     */
     replanAdvised?: boolean;
 }
 
-/**
- * Runs deterministic preflight checks on a PlannedAgentInvocation.
- *
- * Checks (in order, first failure wins):
- *   1. agentId is non-empty
- *   2. executionMode is a valid agent execution mode
- *   3. All requiredCapabilities are present in the available set
- *
- * @param invocation - The invocation to validate.
- * @param availableCapabilities - The capabilities currently available in the runtime.
- */
 export function runAgentPreflight(
     invocation: PlannedAgentInvocation,
     availableCapabilities: ReadonlySet<string> = new Set(),
@@ -142,9 +91,6 @@ export function runAgentPreflight(
     return { passed: true };
 }
 
-// ─── Result types ─────────────────────────────────────────────────────────────
-
-/** Result of the agent invocation dispatch. */
 export interface AgentInvocationResult {
     agentId: string;
     executionMode: GoalExecutionStyle;
@@ -152,81 +98,61 @@ export interface AgentInvocationResult {
     data?: unknown;
     error?: string;
     durationMs?: number;
-    /** Stable failure reason code; present only when success=false. */
     failureCode?: AgentHandoffFailureCode;
+    failureClass?: StructuredFailure['class'];
+    recoveryOutcome?: RecoveryOutcomeStatus;
+    recoveryAttempts?: number;
+    antiThrashSuppressed?: boolean;
+    recoveryActions?: RecoveryActionRecord[];
 }
 
-/** Result of a full plan agent dispatch. */
 export interface AgentDispatchResult {
     planId: string;
     executionBoundaryId: string;
     success: boolean;
-    /** Result of the agent invocation attempt. */
     invocation?: AgentInvocationResult;
-    /** Populated on overall failure. */
     error?: string;
-    /** Stable failure reason code for the overall dispatch; present on failure. */
     failureCode?: AgentHandoffFailureCode;
-    /**
-     * True when the failure is caused by a preflight check or a condition where
-     * replanning is the recommended recovery path (e.g. missing capability).
-     * Callers can use this to trigger PlanningService.replan() with the appropriate
-     * trigger (e.g. 'capability_loss').
-     */
     replanAdvised?: boolean;
-    /**
-     * Suggested replan trigger code when replanAdvised is true.
-     * Directly usable as the `trigger` field of a ReplanRequest.
-     */
     replanTrigger?: 'capability_loss' | 'policy_block' | 'dependency_failure';
+    recoveryOutcome?: RecoveryOutcomeStatus;
+    degradedCompletion?: boolean;
+    replanRequest?: ExecutionReplanRequest;
+    escalationRequest?: ExecutionFailureEscalation;
 }
 
-// ─── Coordinator ──────────────────────────────────────────────────────────────
+function mapAgentFailureCode(failure: StructuredFailure): AgentHandoffFailureCode {
+    if (
+        failure.reasonCode === 'preflight:capability_missing' ||
+        failure.reasonCode === 'preflight:invalid_agent_id' ||
+        failure.reasonCode === 'preflight:invalid_execution_mode' ||
+        failure.reasonCode === 'dispatch:executor_unavailable' ||
+        failure.reasonCode === 'execution:agent_failed' ||
+        failure.reasonCode === 'execution:timeout' ||
+        failure.reasonCode === 'policy:escalation_required'
+    ) {
+        return failure.reasonCode;
+    }
+    if (failure.class === 'timeout') return 'execution:timeout';
+    if (failure.class === 'policy_blocked') return 'policy:escalation_required';
+    if (failure.class === 'dependency_unreachable') return 'dispatch:executor_unavailable';
+    return 'execution:agent_failed';
+}
 
-/**
- * AgentHandoffCoordinator
- *
- * Wires the planning subsystem to the agent execution authority for 'agent'
- * type handoffs.  This is the single real execution path from a planning decision
- * to a governed agent kernel invocation.
- *
- * Usage:
- *   const coordinator = new AgentHandoffCoordinator(agentExecutor);
- *   const result = await coordinator.dispatch(planId, availableCapabilities);
- */
 export class AgentHandoffCoordinator {
     private readonly _planning: PlanningService;
     private readonly _bus: TelemetryBus;
+    private readonly _suppressionTracker: FailureSuppressionService;
 
     constructor(
         private readonly _agentExecutor: IAgentExecutor,
+        suppressionTracker?: FailureSuppressionService,
     ) {
         this._planning = PlanningService.getInstance();
         this._bus = TelemetryBus.getInstance();
+        this._suppressionTracker = suppressionTracker ?? new FailureSuppressionService();
     }
 
-    /**
-     * Dispatches the agent handoff for the plan identified by planId.
-     *
-     * Pre-conditions:
-     *   - Plan must exist and have status 'ready' or 'approved'.
-     *   - Plan's handoff.type must be 'agent'.
-     *
-     * Execution sequence:
-     *   1. Validate plan type (throws if wrong)
-     *   2. Call markExecutionStarted (generates executionBoundaryId)
-     *   3. Emit planning.agent_handoff_dispatched
-     *   4. Run preflight (failureCode + replanAdvised on failure)
-     *   5. Dispatch to executor
-     *   6. Apply failurePolicy if needed
-     *   7. On success: markExecutionCompleted
-     *   8. On failure: markExecutionFailed with reason code
-     *
-     * @param planId - The plan to dispatch.
-     * @param availableCapabilities - Set of capability names currently available.
-     *   Used for preflight validation of requiredCapabilities on the invocation.
-     * @throws Error if the plan is not found or has the wrong handoff type.
-     */
     async dispatch(
         planId: string,
         availableCapabilities: ReadonlySet<string> = new Set(),
@@ -243,7 +169,6 @@ export class AgentHandoffCoordinator {
             );
         }
 
-        // Transition plan to executing state (generates executionBoundaryId)
         const executingPlan = this._planning.markExecutionStarted(planId);
         const executionBoundaryId = executingPlan.executionBoundaryId ?? `exec-fallback-${planId}`;
 
@@ -263,13 +188,18 @@ export class AgentHandoffCoordinator {
 
         const { invocation, sharedInputs } = plan.handoff;
 
-        // ── Preflight ────────────────────────────────────────────────────────
         const preflightResult = runAgentPreflight(invocation, availableCapabilities);
         if (!preflightResult.passed) {
             const failureMsg = `preflight failed for agent invocation (${invocation.agentId}): ${preflightResult.details ?? preflightResult.failureCode}`;
             this._emitPreflightFailed(plan, executionBoundaryId, invocation, preflightResult);
             this._planning.markExecutionFailed(planId, failureMsg);
-            this._emitDispatchFailed(plan, executionBoundaryId, failureMsg, preflightResult.failureCode, preflightResult.replanAdvised);
+            this._emitDispatchFailed(
+                plan,
+                executionBoundaryId,
+                failureMsg,
+                preflightResult.failureCode,
+                preflightResult.replanAdvised,
+            );
             return {
                 planId,
                 executionBoundaryId,
@@ -278,10 +208,11 @@ export class AgentHandoffCoordinator {
                 failureCode: preflightResult.failureCode,
                 replanAdvised: preflightResult.replanAdvised,
                 replanTrigger: preflightResult.replanAdvised ? 'capability_loss' : undefined,
+                recoveryOutcome: 'terminal_failure',
+                degradedCompletion: false,
             };
         }
 
-        // ── Dispatch ─────────────────────────────────────────────────────────
         try {
             const invocationResult = await this._executeInvocation(
                 invocation,
@@ -291,10 +222,62 @@ export class AgentHandoffCoordinator {
             );
 
             if (!invocationResult.success) {
-                if (invocation.failurePolicy === 'escalate') {
+                if (invocationResult.recoveryOutcome === 'escalation_required' || invocation.failurePolicy === 'escalate') {
                     const escalateMsg = `Agent invocation (${invocation.agentId}) requires operator escalation`;
                     this._planning.markExecutionFailed(planId, escalateMsg);
-                    this._emitDispatchFailed(plan, executionBoundaryId, escalateMsg, 'policy:escalation_required', true);
+                    const escalationRequest: ExecutionFailureEscalation = {
+                        planId,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        failedStepId: '0',
+                        failure: {
+                            class: invocationResult.failureClass ?? 'unknown',
+                            reasonCode: invocationResult.failureCode ?? 'policy:escalation_required',
+                            retryable: false,
+                            transient: false,
+                            recoverable: false,
+                            operatorActionRequired: true,
+                            scope: 'service',
+                            message: escalateMsg,
+                            stepId: '0',
+                            providerId: invocationResult.agentId,
+                        },
+                        reasonCode: invocationResult.failureCode ?? 'policy:escalation_required',
+                        attemptsMade: invocationResult.recoveryAttempts ?? 1,
+                        recoveryActionsTried: invocationResult.recoveryActions ?? [],
+                        degradedOutputsExist: false,
+                        suggestedAdaptation: 'request_operator_action',
+                    };
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'execution.escalation_requested',
+                        payload: escalationRequest as unknown as Record<string, unknown>,
+                    });
+                    this._emitDispatchFailed(
+                        plan,
+                        executionBoundaryId,
+                        escalateMsg,
+                        'policy:escalation_required',
+                        true,
+                        invocationResult,
+                    );
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'execution.recovery_exhausted',
+                        payload: {
+                            planId,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            handoffType: 'agent',
+                            agentId: invocationResult.agentId,
+                            failureClass: invocationResult.failureClass,
+                            reasonCode: invocationResult.failureCode,
+                            recoveryAttempts: invocationResult.recoveryAttempts,
+                            antiThrashSuppressed: invocationResult.antiThrashSuppressed,
+                        },
+                    });
                     return {
                         planId,
                         executionBoundaryId,
@@ -304,13 +287,72 @@ export class AgentHandoffCoordinator {
                         failureCode: 'policy:escalation_required',
                         replanAdvised: true,
                         replanTrigger: 'policy_block',
+                        recoveryOutcome: 'escalation_required',
+                        degradedCompletion: false,
+                        escalationRequest,
                     };
                 }
 
                 if (invocation.failurePolicy === 'stop') {
                     const failureMsg = invocationResult.error ?? `Agent invocation (${invocation.agentId}) failed`;
                     this._planning.markExecutionFailed(planId, failureMsg);
-                    this._emitDispatchFailed(plan, executionBoundaryId, failureMsg, invocationResult.failureCode ?? 'execution:agent_failed');
+                    let replanRequest: ExecutionReplanRequest | undefined;
+                    if (invocationResult.recoveryOutcome === 'replan_required') {
+                        replanRequest = {
+                            goalId: plan.goalId,
+                            planId,
+                            executionBoundaryId,
+                            failedStepId: '0',
+                            failedTargetId: invocationResult.agentId,
+                            failure: {
+                                class: invocationResult.failureClass ?? 'unknown',
+                                reasonCode: invocationResult.failureCode ?? 'execution:agent_failed',
+                                retryable: false,
+                                transient: false,
+                                recoverable: false,
+                                operatorActionRequired: false,
+                                scope: 'service',
+                                message: failureMsg,
+                                stepId: '0',
+                                providerId: invocationResult.agentId,
+                            },
+                            attemptsMade: invocationResult.recoveryAttempts ?? 1,
+                            recoveryActionsTried: invocationResult.recoveryActions ?? [],
+                            degradedOutputsExist: false,
+                            reasonCode: invocationResult.failureCode ?? 'execution:agent_failed',
+                            suggestedAdaptation: 'choose_alternate_path',
+                        };
+                        this._bus.emit({
+                            executionId: plan.goalId,
+                            subsystem: 'planning',
+                            event: 'execution.replan_requested',
+                            payload: replanRequest as unknown as Record<string, unknown>,
+                        });
+                    }
+                    this._emitDispatchFailed(
+                        plan,
+                        executionBoundaryId,
+                        failureMsg,
+                        invocationResult.failureCode ?? 'execution:agent_failed',
+                        invocationResult.recoveryOutcome === 'replan_required',
+                        invocationResult,
+                    );
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'execution.recovery_exhausted',
+                        payload: {
+                            planId,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            handoffType: 'agent',
+                            agentId: invocationResult.agentId,
+                            failureClass: invocationResult.failureClass,
+                            reasonCode: invocationResult.failureCode,
+                            recoveryAttempts: invocationResult.recoveryAttempts,
+                            antiThrashSuppressed: invocationResult.antiThrashSuppressed,
+                        },
+                    });
                     return {
                         planId,
                         executionBoundaryId,
@@ -318,12 +360,31 @@ export class AgentHandoffCoordinator {
                         invocation: invocationResult,
                         error: failureMsg,
                         failureCode: invocationResult.failureCode ?? 'execution:agent_failed',
+                        replanAdvised: invocationResult.recoveryOutcome === 'replan_required',
+                        replanTrigger: invocationResult.recoveryOutcome === 'replan_required' ? 'dependency_failure' : undefined,
+                        recoveryOutcome: invocationResult.recoveryOutcome ?? 'terminal_failure',
+                        degradedCompletion: false,
+                        replanRequest,
                     };
                 }
-                // 'skip' or 'retry' — tolerate failure and mark completed
             }
 
             this._planning.markExecutionCompleted(planId);
+            if (invocationResult.recoveryOutcome === 'degraded_but_completed') {
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.degraded_completed',
+                    payload: {
+                        planId,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        handoffType: 'agent',
+                        agentId: invocationResult.agentId,
+                    },
+                });
+            }
+
             const completedAt = new Date().toISOString();
             this._bus.emit({
                 executionId: plan.goalId,
@@ -335,6 +396,7 @@ export class AgentHandoffCoordinator {
                     executionBoundaryId,
                     handoffType: 'agent',
                     agentId: invocation.agentId,
+                    degradedCompletion: invocationResult.recoveryOutcome === 'degraded_but_completed',
                     completedAt,
                 },
             });
@@ -343,6 +405,8 @@ export class AgentHandoffCoordinator {
                 executionBoundaryId,
                 success: invocationResult.success,
                 invocation: invocationResult,
+                recoveryOutcome: invocationResult.recoveryOutcome,
+                degradedCompletion: invocationResult.recoveryOutcome === 'degraded_but_completed',
             };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -354,11 +418,12 @@ export class AgentHandoffCoordinator {
                 success: false,
                 error: message,
                 failureCode: 'dispatch:executor_unavailable',
+                recoveryOutcome: 'terminal_failure',
+                degradedCompletion: false,
             };
         }
     }
 
-    /** Executes the planned agent invocation. */
     private async _executeInvocation(
         invocation: PlannedAgentInvocation,
         sharedInputs: Record<string, unknown>,
@@ -372,45 +437,263 @@ export class AgentHandoffCoordinator {
             executionOrigin: 'planning',
         };
 
-        try {
-            const result = await this._agentExecutor.executeAgent(
-                invocation.agentId,
-                invocation.executionMode,
-                mergedInput,
-                ctx,
-            );
+        const candidates = [invocation.agentId, ...selectEquivalentTarget(invocation.agentId, invocation.equivalentAgentIds)];
+        const actions: RecoveryActionRecord[] = [];
+        let attempts = 0;
+        let antiThrashSuppressed = false;
+        let lastFailure: StructuredFailure | undefined;
+        let lastError = '';
+
+        for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+            const agentId = candidates[candidateIndex];
+            if (candidateIndex > 0) {
+                actions.push({
+                    action: 'reroute',
+                    attempt: attempts + 1,
+                    targetId: agentId,
+                    reasonCode: 'reroute:selected_equivalent_agent',
+                });
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.recovery_reroute_selected',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        originalAgentId: invocation.agentId,
+                        rerouteAgentId: agentId,
+                    },
+                });
+            }
+
+            let candidateAttempts = 0;
+            while (true) {
+                attempts += 1;
+                candidateAttempts += 1;
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.recovery_attempted',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        agentId,
+                        attempt: attempts,
+                    },
+                });
+
+                try {
+                    const result = await this._agentExecutor.executeAgent(
+                        agentId,
+                        invocation.executionMode,
+                        mergedInput,
+                        ctx,
+                    );
+                    if (result.success) {
+                        const recoveryOutcome: RecoveryOutcomeStatus =
+                            candidateIndex > 0
+                                ? 'recovered_by_reroute'
+                                : attempts > 1
+                                    ? 'recovered_by_retry'
+                                    : undefined;
+                        if (recoveryOutcome) {
+                            this._bus.emit({
+                                executionId: plan.goalId,
+                                subsystem: 'planning',
+                                event: 'execution.recovery_succeeded',
+                                payload: {
+                                    planId: plan.id,
+                                    goalId: plan.goalId,
+                                    executionBoundaryId,
+                                    agentId,
+                                    recoveryOutcome,
+                                    recoveryAttempts: attempts,
+                                },
+                            });
+                        }
+                        return {
+                            agentId,
+                            executionMode: invocation.executionMode,
+                            success: true,
+                            data: result.data,
+                            durationMs: result.durationMs,
+                            recoveryOutcome,
+                            recoveryAttempts: attempts,
+                            antiThrashSuppressed,
+                            recoveryActions: actions,
+                        };
+                    }
+
+                    lastError = result.error ?? `Agent invocation (${agentId}) failed`;
+                    lastFailure = normalizeStructuredFailure({
+                        error: new Error(lastError),
+                        scope: 'service',
+                        reasonCodeFallback: 'execution:agent_failed',
+                        messageFallback: lastError,
+                        providerId: agentId,
+                        stepId: '0',
+                    });
+                } catch (err) {
+                    lastError = err instanceof Error ? err.message : String(err);
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'planning.agent_handoff_invocation_failed',
+                        payload: {
+                            planId: plan.id,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            agentId,
+                            failureCode: 'dispatch:executor_unavailable',
+                            error: lastError,
+                        },
+                    });
+                    lastFailure = normalizeStructuredFailure({
+                        error: err,
+                        scope: 'service',
+                        reasonCodeFallback: 'dispatch:executor_unavailable',
+                        messageFallback: lastError,
+                        providerId: agentId,
+                        stepId: '0',
+                    });
+                }
+
+                if (!lastFailure) break;
+
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.failure_normalized',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        agentId,
+                        failureClass: lastFailure.class,
+                        reasonCode: lastFailure.reasonCode,
+                    },
+                });
+
+                const policy = getDefaultRecoveryPolicy(lastFailure.class);
+                const signature = buildFailureSignature({
+                    targetId: agentId,
+                    failure: lastFailure,
+                    stepType: 'agent',
+                });
+                const suppression = this._suppressionTracker.record(signature);
+                antiThrashSuppressed = antiThrashSuppressed || suppression.suppressed;
+
+                const canRetry =
+                    invocation.failurePolicy === 'retry' &&
+                    policy.allowRetry &&
+                    candidateAttempts <= policy.maxRetries &&
+                    !suppression.suppressed;
+
+                if (canRetry) {
+                    const backoffMs = policy.backoffMsByAttempt[candidateAttempts - 1] ?? 0;
+                    actions.push({
+                        action: 'retry',
+                        attempt: attempts,
+                        targetId: agentId,
+                        reasonCode: lastFailure.reasonCode,
+                        detail: `backoff_ms:${backoffMs}`,
+                    });
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'execution.recovery_retry_scheduled',
+                        payload: {
+                            planId: plan.id,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            agentId,
+                            attempt: attempts,
+                            backoffMs,
+                            failureClass: lastFailure.class,
+                            reasonCode: lastFailure.reasonCode,
+                        },
+                    });
+                    if (backoffMs > 0) {
+                        await new Promise<void>((resolve) => setTimeout(resolve, backoffMs));
+                    }
+                    continue;
+                }
+
+                break;
+            }
+
+            if (!lastFailure) continue;
+
+            const policy = getDefaultRecoveryPolicy(lastFailure.class);
+            const hasNext = candidateIndex < candidates.length - 1;
+            if (policy.allowReroute && hasNext && lastFailure.class !== 'policy_blocked') {
+                continue;
+            }
+
+            const degradedAllowed = policy.degradeAllowed && (invocation.degradeAllowed === true || invocation.failurePolicy === 'skip');
+            if (degradedAllowed) {
+                actions.push({
+                    action: 'degrade',
+                    attempt: attempts,
+                    targetId: agentId,
+                    reasonCode: lastFailure.reasonCode,
+                });
+                return {
+                    agentId,
+                    executionMode: invocation.executionMode,
+                    success: false,
+                    error: lastError,
+                    failureCode: mapAgentFailureCode(lastFailure),
+                    failureClass: lastFailure.class,
+                    recoveryOutcome: 'degraded_but_completed',
+                    recoveryAttempts: attempts,
+                    antiThrashSuppressed,
+                    recoveryActions: actions,
+                };
+            }
+
+            const escalationRequired = invocation.failurePolicy === 'escalate' || lastFailure.operatorActionRequired;
+            const outcome: RecoveryOutcomeStatus =
+                escalationRequired
+                    ? 'escalation_required'
+                    : policy.allowReplan
+                        ? 'replan_required'
+                        : 'terminal_failure';
+
+            if (outcome === 'escalation_required') {
+                actions.push({ action: 'escalate', attempt: attempts, targetId: agentId, reasonCode: lastFailure.reasonCode });
+            } else if (outcome === 'replan_required') {
+                actions.push({ action: 'replan', attempt: attempts, targetId: agentId, reasonCode: lastFailure.reasonCode });
+            }
+
             return {
-                agentId: invocation.agentId,
-                executionMode: invocation.executionMode,
-                success: result.success,
-                data: result.data,
-                error: result.error,
-                durationMs: result.durationMs,
-                failureCode: result.success ? undefined : 'execution:agent_failed',
-            };
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._bus.emit({
-                executionId: plan.goalId,
-                subsystem: 'planning',
-                event: 'planning.agent_handoff_invocation_failed',
-                payload: {
-                    planId: plan.id,
-                    goalId: plan.goalId,
-                    executionBoundaryId,
-                    agentId: invocation.agentId,
-                    failureCode: 'dispatch:executor_unavailable',
-                    error: message,
-                },
-            });
-            return {
-                agentId: invocation.agentId,
+                agentId,
                 executionMode: invocation.executionMode,
                 success: false,
-                error: message,
-                failureCode: 'dispatch:executor_unavailable',
+                error: lastError,
+                failureCode: mapAgentFailureCode(lastFailure),
+                failureClass: lastFailure.class,
+                recoveryOutcome: outcome,
+                recoveryAttempts: attempts,
+                antiThrashSuppressed,
+                recoveryActions: actions,
             };
         }
+
+        return {
+            agentId: invocation.agentId,
+            executionMode: invocation.executionMode,
+            success: false,
+            error: lastError || `Agent invocation (${invocation.agentId}) failed`,
+            failureCode: lastFailure ? mapAgentFailureCode(lastFailure) : 'execution:agent_failed',
+            failureClass: lastFailure?.class ?? 'unknown',
+            recoveryOutcome: 'terminal_failure',
+            recoveryAttempts: attempts,
+            antiThrashSuppressed,
+            recoveryActions: actions,
+        };
     }
 
     private _emitPreflightFailed(
@@ -442,6 +725,7 @@ export class AgentHandoffCoordinator {
         error: string,
         failureCode?: AgentHandoffFailureCode,
         replanAdvised?: boolean,
+        invocationResult?: AgentInvocationResult,
     ): void {
         this._bus.emit({
             executionId: plan.goalId,
@@ -454,6 +738,10 @@ export class AgentHandoffCoordinator {
                 handoffType: 'agent',
                 failureCode,
                 replanAdvised: replanAdvised ?? false,
+                failureClass: invocationResult?.failureClass,
+                recoveryOutcome: invocationResult?.recoveryOutcome,
+                recoveryAttempts: invocationResult?.recoveryAttempts,
+                antiThrashSuppressed: invocationResult?.antiThrashSuppressed,
                 error,
             },
         });

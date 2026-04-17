@@ -34,6 +34,7 @@ import type {
 import type { SeamStabilityReport } from './governance/SeamStability';
 import type { McpAuthorityReasonCode, McpServerClassification } from './mcpAuthorityTypes';
 import type { AuthorityLaneDiagnosticsRecord } from './planning/executionAuthorityTypes';
+import type { FailureClass, RecoveryOutcomeStatus } from './runtime/failureRecoveryTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -552,6 +553,16 @@ export interface HandoffExecutionRecord {
     goalId: string;
     /** Human-readable error message on failure. */
     error?: string;
+    /** Normalized failure class when a structured failure was emitted. */
+    failureClass?: FailureClass;
+    /** Recovery outcome status emitted by the execution boundary. */
+    recoveryOutcome?: RecoveryOutcomeStatus;
+    /** Number of local recovery attempts made at the execution boundary. */
+    recoveryAttempts?: number;
+    /** True when anti-thrash suppression prevented additional retries/reroutes. */
+    antiThrashSuppressed?: boolean;
+    /** True when execution completed in a degraded mode rather than full success. */
+    degradedCompletion?: boolean;
 }
 
 /**

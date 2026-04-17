@@ -1,6 +1,6 @@
 # Service: SystemModeManager.ts
 
-**Source**: [electron/services/SystemModeManager.ts](../../electron/services/SystemModeManager.ts)
+**Source**: [electron\services\SystemModeManager.ts](../../electron/services/SystemModeManager.ts)
 
 ## Class: `SystemModeManager`
 
@@ -42,9 +42,7 @@
 
 ---
 #### `deriveTransitionReasonCodes`
-Deterministic transition reason-code derivation.
- Invariant: identical input + prior mode always yields identical reason_codes.
-/
+Deterministic transition reason-code derivation. Invariant: identical input + prior mode always yields identical reason_codes./
 
 **Arguments**: `nextMode: SystemOperatingMode, flags: SystemDegradationFlag[], input: ModeInput,`
 **Returns**: `string[]`

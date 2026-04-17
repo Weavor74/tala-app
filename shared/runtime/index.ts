@@ -17,6 +17,20 @@ export type {
     ExecutionState,
 } from './executionTypes';
 
+export type {
+    FailureClass,
+    FailureScope,
+    StructuredFailure,
+    RecoveryPolicy,
+    RecoveryActionKind,
+    RecoveryActionRecord,
+    RecoveryOutcomeStatus,
+    RecoveryOutcome,
+    ExecutionReplanRequest,
+    FailureSignature,
+    FailureSuppressionPolicy,
+} from './failureRecoveryTypes';
+
 export {
     createExecutionRequest,
     createInitialExecutionState,

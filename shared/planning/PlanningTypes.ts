@@ -19,6 +19,11 @@
  * 5. Blocked analysis produces a blocked plan honestly — no fake readiness.
  */
 
+import type {
+    ExecutionReplanRequest,
+    StructuredFailure,
+} from '../runtime/failureRecoveryTypes';
+
 // ─── Goal ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -363,6 +368,15 @@ export interface PlannedToolInvocation {
     failurePolicy: 'stop' | 'retry' | 'skip' | 'escalate';
     /** Expected output keys this step will produce (informational). */
     expectedOutputs?: string[];
+    /**
+     * Explicitly declared equivalent tool IDs that are safe reroute targets for this step.
+     * Selection order is deterministic and follows the array order.
+     */
+    equivalentToolIds?: string[];
+    /**
+     * True when degraded continuation is allowed if this step cannot be fully recovered.
+     */
+    degradeAllowed?: boolean;
 }
 
 /**
@@ -399,6 +413,15 @@ export interface PlannedWorkflowInvocation {
      * Absent = no explicit timeout constraint declared by the plan.
      */
     timeoutMs?: number;
+    /**
+     * Explicitly declared equivalent workflow IDs that are safe reroute targets.
+     * Selection order is deterministic and follows the array order.
+     */
+    equivalentWorkflowIds?: string[];
+    /**
+     * True when degraded continuation is allowed if this invocation cannot be fully recovered.
+     */
+    degradeAllowed?: boolean;
 }
 
 /**
@@ -467,6 +490,15 @@ export interface PlannedAgentInvocation {
      * Absent = no explicit timeout constraint declared by the plan.
      */
     timeoutMs?: number;
+    /**
+     * Explicitly declared equivalent agent IDs that are safe reroute targets.
+     * Selection order is deterministic and follows the array order.
+     */
+    equivalentAgentIds?: string[];
+    /**
+     * True when degraded continuation is allowed if this invocation cannot be fully recovered.
+     */
+    degradeAllowed?: boolean;
 }
 
 /**
@@ -726,3 +758,46 @@ export interface ReplanRequest {
     /** Optional human-readable details about the trigger event. */
     triggerDetails?: string;
 }
+
+/**
+ * Suggested adaptation mode emitted by execution boundaries when local recovery is exhausted.
+ */
+export type ExecutionAdaptationMode =
+    | 'retry_later'
+    | 'choose_alternate_path'
+    | 'request_operator_action'
+    | 'degrade_goal'
+    | 'abandon_step_continue_plan'
+    | 'full_replan';
+
+/**
+ * Structured execution failure escalation payload emitted by handoff coordinators.
+ * Carries deterministic evidence for planner-level adaptation.
+ */
+export interface ExecutionFailureEscalation {
+    planId: string;
+    goalId: string;
+    executionBoundaryId: string;
+    failedStepId?: string;
+    failure: StructuredFailure;
+    reasonCode: string;
+    attemptsMade: number;
+    recoveryActionsTried: Array<{
+        action: 'retry' | 'reroute' | 'degrade' | 'escalate' | 'replan' | 'none';
+        attempt: number;
+        targetId?: string;
+        reasonCode: string;
+        detail?: string;
+    }>;
+    degradedOutputsExist: boolean;
+    survivingArtifacts?: Record<string, unknown>;
+    remainingReachableCapabilities?: string[];
+    suggestedAdaptation: ExecutionAdaptationMode;
+}
+
+/**
+ * Alias exposed from planning contracts so planning callers can consume the same
+ * canonical replan request payload emitted by execution boundaries.
+ */
+export type PlanAdaptationInput = ExecutionReplanRequest;
+

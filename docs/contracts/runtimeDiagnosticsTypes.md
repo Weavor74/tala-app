@@ -1,6 +1,6 @@
 # Contract: runtimeDiagnosticsTypes.ts
 
-**Source**: [shared/runtimeDiagnosticsTypes.ts](../../shared/runtimeDiagnosticsTypes.ts)
+**Source**: [shared\runtimeDiagnosticsTypes.ts](../../shared/runtimeDiagnosticsTypes.ts)
 
 ## Interfaces
 
@@ -364,6 +364,16 @@ interface HandoffExecutionRecord {
     goalId: string;
     /** Human-readable error message on failure. */
     error?: string;
+    /** Normalized failure class when a structured failure was emitted. */
+    failureClass?: FailureClass;
+    /** Recovery outcome status emitted by the execution boundary. */
+    recoveryOutcome?: RecoveryOutcomeStatus;
+    /** Number of local recovery attempts made at the execution boundary. */
+    recoveryAttempts?: number;
+    /** True when anti-thrash suppression prevented additional retries/reroutes. */
+    antiThrashSuppressed?: boolean;
+    /** True when execution completed in a degraded mode rather than full success. */
+    degradedCompletion?: boolean;
 }
 ```
 

@@ -1,6 +1,6 @@
 # Contract: escalationTypes.ts
 
-**Source**: [shared/escalationTypes.ts](../../shared/escalationTypes.ts)
+**Source**: [shared\escalationTypes.ts](../../shared/escalationTypes.ts)
 
 ## Interfaces
 

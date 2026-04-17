@@ -38,6 +38,18 @@ import type {
     PlannedWorkflowInvocation,
     WorkflowHandoffFailureCode,
 } from '../../../shared/planning/PlanningTypes';
+import type {
+    RecoveryActionRecord,
+    RecoveryOutcomeStatus,
+    StructuredFailure,
+} from '../../../shared/runtime/failureRecoveryTypes';
+import {
+    FailureSuppressionService,
+    buildFailureSignature,
+    getDefaultRecoveryPolicy,
+    normalizeStructuredFailure,
+    selectEquivalentTarget,
+} from '../runtime/failures/FailureRecoveryPolicy';
 
 // ─── Executor interface ────────────────────────────────────────────────────────
 
@@ -136,6 +148,11 @@ export interface WorkflowInvocationResult {
     durationMs?: number;
     /** Stable failure reason code; present only when success=false. */
     failureCode?: WorkflowHandoffFailureCode;
+    failureClass?: StructuredFailure['class'];
+    recoveryOutcome?: RecoveryOutcomeStatus;
+    recoveryAttempts?: number;
+    antiThrashSuppressed?: boolean;
+    recoveryActions?: RecoveryActionRecord[];
 }
 
 /** Result of a full plan workflow dispatch. */
@@ -163,6 +180,27 @@ export interface WorkflowDispatchResult {
     replanTrigger?: 'capability_loss' | 'policy_block' | 'dependency_failure';
 }
 
+function mapWorkflowFailureCode(failure: StructuredFailure): WorkflowHandoffFailureCode {
+    if (
+        failure.reasonCode === 'preflight:capability_missing' ||
+        failure.reasonCode === 'preflight:invalid_workflow_id' ||
+        failure.reasonCode === 'preflight:workflow_not_registered' ||
+        failure.reasonCode === 'dispatch:executor_unavailable' ||
+        failure.reasonCode === 'dispatch:workflow_not_found' ||
+        failure.reasonCode === 'execution:workflow_failed' ||
+        failure.reasonCode === 'execution:timeout' ||
+        failure.reasonCode === 'policy:escalation_required'
+    ) {
+        return failure.reasonCode;
+    }
+    if (failure.class === 'timeout') return 'execution:timeout';
+    if (failure.class === 'unsupported_capability') return 'preflight:capability_missing';
+    if (failure.class === 'policy_blocked') return 'policy:escalation_required';
+    if (failure.class === 'resource_unavailable') return 'dispatch:workflow_not_found';
+    if (failure.class === 'dependency_unreachable') return 'dispatch:executor_unavailable';
+    return 'execution:workflow_failed';
+}
+
 // ─── Coordinator ──────────────────────────────────────────────────────────────
 
 /**
@@ -179,12 +217,15 @@ export interface WorkflowDispatchResult {
 export class WorkflowHandoffCoordinator {
     private readonly _planning: PlanningService;
     private readonly _bus: TelemetryBus;
+    private readonly _suppressionTracker: FailureSuppressionService;
 
     constructor(
         private readonly _workflowExecutor: IWorkflowExecutor,
+        suppressionTracker?: FailureSuppressionService,
     ) {
         this._planning = PlanningService.getInstance();
         this._bus = TelemetryBus.getInstance();
+        this._suppressionTracker = suppressionTracker ?? new FailureSuppressionService();
     }
 
     /**
@@ -289,21 +330,8 @@ export class WorkflowHandoffCoordinator {
                 invocationResults.push(result);
 
                 if (!result.success) {
-                    if (inv.failurePolicy === 'stop') {
-                        const dispatchResult: WorkflowDispatchResult = {
-                            planId,
-                            executionBoundaryId,
-                            success: false,
-                            invocations: invocationResults,
-                            error: result.error ?? `Invocation ${i} (${inv.workflowId}) failed`,
-                            failureCode: result.failureCode ?? 'execution:workflow_failed',
-                        };
-                        this._planning.markExecutionFailed(planId, dispatchResult.error!);
-                        this._emitDispatchFailed(plan, executionBoundaryId, dispatchResult.error!, dispatchResult.failureCode);
-                        return dispatchResult;
-                    }
-                    if (inv.failurePolicy === 'escalate') {
-                        const escalateMsg = `Invocation ${i} (${inv.workflowId}) requires operator escalation`;
+                    if (result.recoveryOutcome === 'escalation_required' || inv.failurePolicy === 'escalate') {
+                        const escalateMsg = `Invocation ${i} (${result.workflowId}) requires operator escalation`;
                         const dispatchResult: WorkflowDispatchResult = {
                             planId,
                             executionBoundaryId,
@@ -315,15 +343,94 @@ export class WorkflowHandoffCoordinator {
                             replanTrigger: 'policy_block',
                         };
                         this._planning.markExecutionFailed(planId, escalateMsg);
-                        this._emitDispatchFailed(plan, executionBoundaryId, escalateMsg, 'policy:escalation_required', true);
+                        this._bus.emit({
+                            executionId: plan.goalId,
+                            subsystem: 'planning',
+                            event: 'execution.escalation_requested',
+                            payload: {
+                                planId,
+                                goalId: plan.goalId,
+                                executionBoundaryId,
+                                invocationIndex: i,
+                                workflowId: result.workflowId,
+                                reasonCode: result.failureCode ?? 'policy:escalation_required',
+                                failureClass: result.failureClass,
+                                recoveryAttempts: result.recoveryAttempts,
+                                antiThrashSuppressed: result.antiThrashSuppressed,
+                            },
+                        });
+                        this._emitDispatchFailed(
+                            plan,
+                            executionBoundaryId,
+                            escalateMsg,
+                            'policy:escalation_required',
+                            true,
+                            result,
+                        );
                         return dispatchResult;
                     }
-                    // 'skip' or 'retry' — continue regardless of outcome
+
+                    if (inv.failurePolicy === 'stop') {
+                        const dispatchResult: WorkflowDispatchResult = {
+                            planId,
+                            executionBoundaryId,
+                            success: false,
+                            invocations: invocationResults,
+                            error: result.error ?? `Invocation ${i} (${result.workflowId}) failed`,
+                            failureCode: result.failureCode ?? 'execution:workflow_failed',
+                            replanAdvised: result.recoveryOutcome === 'replan_required',
+                            replanTrigger: result.recoveryOutcome === 'replan_required' ? 'dependency_failure' : undefined,
+                        };
+                        this._planning.markExecutionFailed(planId, dispatchResult.error!);
+                        if (dispatchResult.replanAdvised) {
+                            this._bus.emit({
+                                executionId: plan.goalId,
+                                subsystem: 'planning',
+                                event: 'execution.replan_requested',
+                                payload: {
+                                    planId,
+                                    goalId: plan.goalId,
+                                    executionBoundaryId,
+                                    failedStepId: String(i),
+                                    failedTargetId: result.workflowId,
+                                    reasonCode: result.failureCode ?? 'execution:workflow_failed',
+                                    attemptsMade: result.recoveryAttempts ?? 1,
+                                    degradedOutputsExist: false,
+                                    recoveryActionsTried: result.recoveryActions ?? [],
+                                    suggestedAdaptation: 'choose_alternate_path',
+                                },
+                            });
+                        }
+                        this._emitDispatchFailed(
+                            plan,
+                            executionBoundaryId,
+                            dispatchResult.error!,
+                            dispatchResult.failureCode,
+                            dispatchResult.replanAdvised,
+                            result,
+                        );
+                        return dispatchResult;
+                    }
+                    // 'skip' or 'retry' - continue regardless of outcome
                 }
             }
 
             // All invocations completed (or non-stop failures were tolerated)
+            const degradedCompletion = invocationResults.some((r) => r.recoveryOutcome === 'degraded_but_completed');
             this._planning.markExecutionCompleted(planId);
+            if (degradedCompletion) {
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.degraded_completed',
+                    payload: {
+                        planId,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        handoffType: 'workflow',
+                    },
+                });
+            }
             const completedAt = new Date().toISOString();
             this._bus.emit({
                 executionId: plan.goalId,
@@ -335,6 +442,7 @@ export class WorkflowHandoffCoordinator {
                     executionBoundaryId,
                     handoffType: 'workflow',
                     invocationCount: invocationResults.length,
+                    degradedCompletion,
                     completedAt,
                 },
             });
@@ -375,45 +483,261 @@ export class WorkflowHandoffCoordinator {
             executionOrigin: 'planning',
         };
 
-        try {
-            const result = await this._workflowExecutor.executeWorkflow(
-                invocation.workflowId,
-                mergedInput,
-                ctx,
-            );
-            return {
-                invocationIndex,
-                workflowId: invocation.workflowId,
-                success: result.success,
-                data: result.data,
-                error: result.error,
-                durationMs: result.durationMs,
-                failureCode: result.success ? undefined : 'execution:workflow_failed',
-            };
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._bus.emit({
-                executionId: plan.goalId,
-                subsystem: 'planning',
-                event: 'planning.workflow_handoff_invocation_failed',
-                payload: {
-                    planId: plan.id,
-                    goalId: plan.goalId,
-                    executionBoundaryId,
+        const candidates = [invocation.workflowId, ...selectEquivalentTarget(invocation.workflowId, invocation.equivalentWorkflowIds)];
+        const actions: RecoveryActionRecord[] = [];
+        let attempts = 0;
+        let antiThrashSuppressed = false;
+        let lastFailure: StructuredFailure | undefined;
+        let lastError = '';
+
+        for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+            const workflowId = candidates[candidateIndex];
+            if (candidateIndex > 0) {
+                actions.push({
+                    action: 'reroute',
+                    attempt: attempts + 1,
+                    targetId: workflowId,
+                    reasonCode: 'reroute:selected_equivalent_workflow',
+                });
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.recovery_reroute_selected',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        invocationIndex,
+                        originalWorkflowId: invocation.workflowId,
+                        rerouteWorkflowId: workflowId,
+                    },
+                });
+            }
+
+            let candidateAttempts = 0;
+            while (true) {
+                attempts += 1;
+                candidateAttempts += 1;
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.recovery_attempted',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        invocationIndex,
+                        workflowId,
+                        attempt: attempts,
+                    },
+                });
+
+                try {
+                    const result = await this._workflowExecutor.executeWorkflow(workflowId, mergedInput, ctx);
+                    if (result.success) {
+                        const recoveryOutcome: RecoveryOutcomeStatus =
+                            candidateIndex > 0 ? 'recovered_by_reroute'
+                            : attempts > 1 ? 'recovered_by_retry'
+                            : 'recovered_by_retry';
+                        if (attempts > 1 || candidateIndex > 0) {
+                            this._bus.emit({
+                                executionId: plan.goalId,
+                                subsystem: 'planning',
+                                event: 'execution.recovery_succeeded',
+                                payload: {
+                                    planId: plan.id,
+                                    goalId: plan.goalId,
+                                    executionBoundaryId,
+                                    invocationIndex,
+                                    workflowId,
+                                    recoveryOutcome,
+                                    recoveryAttempts: attempts,
+                                },
+                            });
+                        }
+                        return {
+                            invocationIndex,
+                            workflowId,
+                            success: true,
+                            data: result.data,
+                            durationMs: result.durationMs,
+                            recoveryOutcome,
+                            recoveryAttempts: attempts,
+                            antiThrashSuppressed,
+                            recoveryActions: actions,
+                        };
+                    }
+
+                    lastError = result.error ?? `Invocation ${invocationIndex} (${workflowId}) failed`;
+                    lastFailure = normalizeStructuredFailure({
+                        error: new Error(lastError),
+                        scope: 'workflow',
+                        reasonCodeFallback: 'execution:workflow_failed',
+                        messageFallback: lastError,
+                        workflowId,
+                        stepId: String(invocationIndex),
+                    });
+                } catch (err) {
+                    lastError = err instanceof Error ? err.message : String(err);
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'planning.workflow_handoff_invocation_failed',
+                        payload: {
+                            planId: plan.id,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            invocationIndex,
+                            workflowId,
+                            failureCode: 'dispatch:executor_unavailable',
+                            error: lastError,
+                        },
+                    });
+                    lastFailure = normalizeStructuredFailure({
+                        error: err,
+                        scope: 'workflow',
+                        reasonCodeFallback: 'dispatch:executor_unavailable',
+                        messageFallback: lastError,
+                        workflowId,
+                        stepId: String(invocationIndex),
+                    });
+                }
+
+                if (!lastFailure) {
+                    break;
+                }
+                this._bus.emit({
+                    executionId: plan.goalId,
+                    subsystem: 'planning',
+                    event: 'execution.failure_normalized',
+                    payload: {
+                        planId: plan.id,
+                        goalId: plan.goalId,
+                        executionBoundaryId,
+                        invocationIndex,
+                        workflowId,
+                        failureClass: lastFailure.class,
+                        reasonCode: lastFailure.reasonCode,
+                    },
+                });
+
+                const policy = getDefaultRecoveryPolicy(lastFailure.class);
+                const signature = buildFailureSignature({
+                    targetId: workflowId,
+                    failure: lastFailure,
+                    stepType: 'workflow',
+                });
+                const suppression = this._suppressionTracker.record(signature);
+                antiThrashSuppressed = antiThrashSuppressed || suppression.suppressed;
+
+                const canRetry =
+                    invocation.failurePolicy === 'retry' &&
+                    policy.allowRetry &&
+                    candidateAttempts <= policy.maxRetries &&
+                    !suppression.suppressed;
+                if (canRetry) {
+                    const backoffMs = policy.backoffMsByAttempt[candidateAttempts - 1] ?? 0;
+                    actions.push({
+                        action: 'retry',
+                        attempt: attempts,
+                        targetId: workflowId,
+                        reasonCode: lastFailure.reasonCode,
+                        detail: `backoff_ms:${backoffMs}`,
+                    });
+                    this._bus.emit({
+                        executionId: plan.goalId,
+                        subsystem: 'planning',
+                        event: 'execution.recovery_retry_scheduled',
+                        payload: {
+                            planId: plan.id,
+                            goalId: plan.goalId,
+                            executionBoundaryId,
+                            invocationIndex,
+                            workflowId,
+                            attempt: attempts,
+                            backoffMs,
+                            failureClass: lastFailure.class,
+                            reasonCode: lastFailure.reasonCode,
+                        },
+                    });
+                    if (backoffMs > 0) {
+                        await new Promise<void>((resolve) => setTimeout(resolve, backoffMs));
+                    }
+                    continue;
+                }
+
+                break;
+            }
+
+            if (!lastFailure) {
+                continue;
+            }
+            const policy = getDefaultRecoveryPolicy(lastFailure.class);
+            const hasNext = candidateIndex < candidates.length - 1;
+            if (policy.allowReroute && hasNext && lastFailure.class !== 'policy_blocked') {
+                continue;
+            }
+
+            const degradedAllowed = policy.degradeAllowed && (invocation.degradeAllowed === true || invocation.failurePolicy === 'skip');
+            if (degradedAllowed) {
+                actions.push({
+                    action: 'degrade',
+                    attempt: attempts,
+                    targetId: workflowId,
+                    reasonCode: lastFailure.reasonCode,
+                });
+                return {
                     invocationIndex,
-                    workflowId: invocation.workflowId,
-                    failureCode: 'dispatch:executor_unavailable',
-                    error: message,
-                },
-            });
+                    workflowId,
+                    success: false,
+                    error: lastError,
+                    failureCode: mapWorkflowFailureCode(lastFailure),
+                    failureClass: lastFailure.class,
+                    recoveryOutcome: 'degraded_but_completed',
+                    recoveryAttempts: attempts,
+                    antiThrashSuppressed,
+                    recoveryActions: actions,
+                };
+            }
+
+            const escalationRequired = invocation.failurePolicy === 'escalate' || lastFailure.operatorActionRequired;
+            const outcome: RecoveryOutcomeStatus =
+                escalationRequired
+                    ? 'escalation_required'
+                    : policy.allowReplan
+                        ? 'replan_required'
+                        : 'terminal_failure';
+            if (outcome === 'escalation_required') {
+                actions.push({ action: 'escalate', attempt: attempts, targetId: workflowId, reasonCode: lastFailure.reasonCode });
+            } else if (outcome === 'replan_required') {
+                actions.push({ action: 'replan', attempt: attempts, targetId: workflowId, reasonCode: lastFailure.reasonCode });
+            }
             return {
                 invocationIndex,
-                workflowId: invocation.workflowId,
+                workflowId,
                 success: false,
-                error: message,
-                failureCode: 'dispatch:executor_unavailable',
+                error: lastError,
+                failureCode: mapWorkflowFailureCode(lastFailure),
+                failureClass: lastFailure.class,
+                recoveryOutcome: outcome,
+                recoveryAttempts: attempts,
+                antiThrashSuppressed,
+                recoveryActions: actions,
             };
         }
+
+        return {
+            invocationIndex,
+            workflowId: invocation.workflowId,
+            success: false,
+            error: lastError || `Invocation ${invocationIndex} (${invocation.workflowId}) failed`,
+            failureCode: lastFailure ? mapWorkflowFailureCode(lastFailure) : 'execution:workflow_failed',
+            failureClass: lastFailure?.class ?? 'unknown',
+            recoveryOutcome: 'terminal_failure',
+            recoveryAttempts: attempts,
+            antiThrashSuppressed,
+            recoveryActions: actions,
+        };
     }
 
     private _emitPreflightFailed(
@@ -446,6 +770,7 @@ export class WorkflowHandoffCoordinator {
         error: string,
         failureCode?: WorkflowHandoffFailureCode,
         replanAdvised?: boolean,
+        invocationResult?: WorkflowInvocationResult,
     ): void {
         this._bus.emit({
             executionId: plan.goalId,
@@ -458,8 +783,13 @@ export class WorkflowHandoffCoordinator {
                 handoffType: 'workflow',
                 failureCode,
                 replanAdvised: replanAdvised ?? false,
+                failureClass: invocationResult?.failureClass,
+                recoveryOutcome: invocationResult?.recoveryOutcome,
+                recoveryAttempts: invocationResult?.recoveryAttempts,
+                antiThrashSuppressed: invocationResult?.antiThrashSuppressed,
                 error,
             },
         });
     }
 }
+
