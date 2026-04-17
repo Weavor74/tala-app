@@ -894,35 +894,39 @@ describe('RPC01–RPC05 — Replan-as-first-class signalling', () => {
         expect(result.replanTrigger).toBe('capability_loss');
     });
 
-    it('RPC03 — workflow escalation policy sets replanAdvised=true and replanTrigger=policy_block', async () => {
-        const svc = freshService(['workflow_engine']);
+    it('RPC03 — workflow invocation with escalate failurePolicy sets failureCode policy:escalation_required and replanTrigger=policy_block', async () => {
+        // Build a plan normally, then use the repo to replace the handoff with escalate policy.
+        // This directly tests the escalation code path in WorkflowHandoffCoordinator.
+        const repo = new PlanningRepository();
+        PlanningService._resetForTesting(repo);
+        const svc = PlanningService.getInstance();
+        svc.setAvailableCapabilities(new Set(['workflow_engine']));
+
         const g = svc.registerGoal(workflowGoalInput());
         const plan = svc.buildPlan(g.id);
         if (plan.handoff.type !== 'workflow') return;
 
-        // Manually mutate the invocation failurePolicy to 'escalate' via a fresh plan
-        const executor: IWorkflowExecutor = {
-            executeWorkflow: vi.fn().mockResolvedValue({ success: false, error: 'needs escalation', durationMs: 1 }),
+        // Inject escalate failurePolicy into the plan's invocations via the repo
+        const modifiedPlan = {
+            ...plan,
+            handoff: {
+                ...plan.handoff,
+                invocations: plan.handoff.invocations.map(inv => ({
+                    ...inv,
+                    failurePolicy: 'escalate' as const,
+                })),
+            },
         };
+        repo.savePlan(modifiedPlan);
 
-        // Build a plan and modify the first invocation to have escalate policy
-        const g2 = svc.registerGoal(workflowGoalInput());
-        const plan2 = svc.buildPlan(g2.id);
-        // Check invocations exist before modifying
-        if (plan2.handoff.type !== 'workflow') return;
+        // Failing executor triggers escalation code path
+        const coordinator = new WorkflowHandoffCoordinator(makeFailingWorkflowExecutor('needs operator gate'));
+        const result = await coordinator.dispatch(plan.id, new Set(['workflow_engine']));
 
-        // Simulate escalate by making executor fail and failurePolicy is escalate
-        // We need to patch the plan's invocation. Since plans are immutable, create
-        // a test that directly tests the coordinator escalation path via a custom plan.
-        // Instead, test using runWorkflowPreflight directly for RPC03 and use
-        // the escalation code path through coordinator behavior verification.
-        const coordinator = new WorkflowHandoffCoordinator(executor);
-        // This will fail with 'execution:workflow_failed' not 'policy:escalation_required'
-        // because the built plan has failurePolicy:'stop', not 'escalate'.
-        // Test the escalation path via the dispatch result failureCode check instead.
-        // RPC03 validates the code path exists — covered by WHC26 indirectly.
-        // Mark as tested via the escalation code path in coordinator.
-        expect(true).toBe(true); // code path verified in coordinator source
+        expect(result.success).toBe(false);
+        expect(result.failureCode).toBe('policy:escalation_required');
+        expect(result.replanAdvised).toBe(true);
+        expect(result.replanTrigger).toBe('policy_block');
     });
 
     it('RPC04 — workflow success does not set replanAdvised', async () => {
