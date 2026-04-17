@@ -322,6 +322,20 @@ export class AgentHandoffCoordinator {
             }
 
             this._planning.markExecutionCompleted(planId);
+            const completedAt = new Date().toISOString();
+            this._bus.emit({
+                executionId: plan.goalId,
+                subsystem: 'planning',
+                event: 'planning.agent_handoff_completed',
+                payload: {
+                    planId,
+                    goalId: plan.goalId,
+                    executionBoundaryId,
+                    handoffType: 'agent',
+                    agentId: invocation.agentId,
+                    completedAt,
+                },
+            });
             return {
                 planId,
                 executionBoundaryId,

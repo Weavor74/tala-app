@@ -4,7 +4,7 @@ import type {
     RuntimeDiagnosticsSnapshot,
     McpServiceDiagnostics,
 } from '../../../shared/runtimeDiagnosticsTypes';
-import { buildDashboardActionViews, buildAuthorityLaneDiagnosticsView, ALL_AUTHORITY_LANES, AUTHORITY_LANE_LABELS } from './RuntimeDiagnosticsDashboardModel';
+import { buildDashboardActionViews, buildAuthorityLaneDiagnosticsView, buildHandoffDiagnosticsView, ALL_AUTHORITY_LANES, AUTHORITY_LANE_LABELS } from './RuntimeDiagnosticsDashboardModel';
 
 /**
  * RuntimeDiagnosticsPanel — Phase 2B Minimal Diagnostics Panel
@@ -205,6 +205,28 @@ function policyOutcomeColor(outcome: string): string {
         case 'allowed': return '#22c55e';
         case 'denied': return '#ef4444';
         case 'not_evaluated': return '#9ca3af';
+        default: return '#9ca3af';
+    }
+}
+
+// ─── Handoff diagnostics helpers ─────────────────────────────────────────────
+
+function handoffOutcomeColor(outcome: string): string {
+    switch (outcome) {
+        case 'success': return '#22c55e';
+        case 'failure': return '#ef4444';
+        case 'pending': return '#f59e0b';
+        default: return '#9ca3af';
+    }
+}
+
+function handoffReadinessColor(readiness: string): string {
+    switch (readiness) {
+        case 'completed': return '#22c55e';
+        case 'preflight_ok':
+        case 'dispatching': return '#60a5fa';
+        case 'preflight_failed':
+        case 'failed': return '#ef4444';
         default: return '#9ca3af';
     }
 }
@@ -763,6 +785,94 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                 );
             })()}
 
+            {/* Handoff Diagnostics */}
+            {(() => {
+                const hv = buildHandoffDiagnosticsView(snapshot);
+                if (!hv) return null;
+
+                const renderRecord = (label: string, r: ReturnType<typeof buildHandoffDiagnosticsView> extends null ? never : NonNullable<ReturnType<typeof buildHandoffDiagnosticsView>>['lastWorkflow']) => {
+                    if (!r) return (
+                        <div style={{ fontSize: 11, color: '#4b5563', marginBottom: 4 }}>
+                            {label}: no record yet
+                        </div>
+                    );
+                    const outcomeColor = handoffOutcomeColor(r.outcome);
+                    const readinessColor = handoffReadinessColor(r.readiness);
+                    return (
+                        <div style={{ marginBottom: 8, padding: '6px 8px', background: '#111827', borderRadius: 6, border: '1px solid #1f2937' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#e5e7eb' }}>{label}</span>
+                                <span style={{ fontSize: 11, fontWeight: 600, color: outcomeColor }}>{r.outcome}</span>
+                                <span style={{ fontSize: 10, color: readinessColor }}>{r.readinessLabel}</span>
+                            </div>
+                            {r.targetId && (
+                                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>
+                                    target: <span style={{ color: '#e5e7eb', fontFamily: 'monospace' }}>{r.targetId}</span>
+                                </div>
+                            )}
+                            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 2 }}>
+                                boundary: <span style={{ fontFamily: 'monospace' }}>{r.executionBoundaryId}</span>
+                            </div>
+                            {r.reasonCode && (
+                                <div style={{ fontSize: 11, color: '#f87171', marginBottom: 2 }}>
+                                    reason: <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.reasonCode}</span>
+                                </div>
+                            )}
+                            {r.replanAdvised && (
+                                <div style={{ fontSize: 11, color: '#f59e0b', marginBottom: 2 }}>
+                                    ↻ replan advised{r.replanTrigger ? ` (${r.replanTrigger})` : ''}
+                                </div>
+                            )}
+                            {r.policyStatus !== 'clear' && (
+                                <div style={{ fontSize: 11, color: '#ef4444', marginBottom: 2 }}>
+                                    policy: {r.policyStatus}
+                                </div>
+                            )}
+                            {r.error && (
+                                <div style={{ fontSize: 10, color: '#ef4444', fontStyle: 'italic', marginTop: 2 }}>
+                                    {r.error}
+                                </div>
+                            )}
+                            {r.durationMs !== undefined && (
+                                <div style={{ fontSize: 10, color: '#6b7280' }}>
+                                    {r.durationMs}ms
+                                </div>
+                            )}
+                        </div>
+                    );
+                };
+
+                return (
+                    <Section title="Handoff Diagnostics">
+                        {/* Counts */}
+                        <div style={{ display: 'flex', gap: 16, marginBottom: 8, fontSize: 11 }}>
+                            <span style={{ color: hv.workflowDispatchCount > 0 ? '#60a5fa' : '#4b5563' }}>
+                                workflow: {hv.workflowDispatchCount} dispatched
+                                {hv.workflowFailureCount > 0 && (
+                                    <span style={{ color: '#ef4444' }}> / {hv.workflowFailureCount} failed</span>
+                                )}
+                            </span>
+                            <span style={{ color: hv.agentDispatchCount > 0 ? '#a78bfa' : '#4b5563' }}>
+                                agent: {hv.agentDispatchCount} dispatched
+                                {hv.agentFailureCount > 0 && (
+                                    <span style={{ color: '#ef4444' }}> / {hv.agentFailureCount} failed</span>
+                                )}
+                            </span>
+                        </div>
+
+                        {/* Last workflow record */}
+                        {renderRecord('Last Workflow Handoff', hv.lastWorkflow)}
+
+                        {/* Last agent record */}
+                        {renderRecord('Last Agent Handoff', hv.lastAgent)}
+
+                        <div style={{ marginTop: 4, fontSize: 10, color: '#374151' }}>
+                            updated: {new Date(hv.lastUpdated).toLocaleTimeString()}
+                        </div>
+                    </Section>
+                );
+            })()}
+
             {/* Footer timestamp */}
             <div style={{ marginTop: 8, fontSize: 10, color: '#374151', textAlign: 'right' }}>
                 Snapshot: {new Date(snapshot.timestamp).toLocaleTimeString()}
@@ -772,4 +882,3 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
 };
 
 export default RuntimeDiagnosticsPanel;
-

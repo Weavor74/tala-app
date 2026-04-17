@@ -2,6 +2,8 @@ import type {
     OperatorActionAvailability,
     OperatorActionStateSnapshot,
     RuntimeDiagnosticsSnapshot,
+    HandoffExecutionRecord,
+    HandoffDiagnosticsSnapshot,
 } from '../../../shared/runtimeDiagnosticsTypes';
 import type {
     AuthorityLane,
@@ -178,6 +180,104 @@ export function buildAuthorityLaneDiagnosticsView(
         lastUpdated: auth.lastUpdated,
     };
 }
+
+// ─── Handoff diagnostics UI model ─────────────────────────────────────────────
+
+/**
+ * Projected read model for a single handoff execution record in the operator UI.
+ *
+ * Derived exclusively from backend-authored HandoffExecutionRecord fields.
+ * No field is inferred or fabricated by the renderer.
+ */
+export interface HandoffRecordView {
+    handoffType: 'workflow' | 'agent';
+    executionBoundaryId: string;
+    targetId: string;
+    readiness: HandoffExecutionRecord['readiness'];
+    readinessLabel: string;
+    policyStatus: HandoffExecutionRecord['policyStatus'];
+    outcome: HandoffExecutionRecord['outcome'];
+    reasonCode: string | undefined;
+    replanAdvised: boolean;
+    replanTrigger: string | undefined;
+    startedAt: string;
+    completedAt: string | undefined;
+    durationMs: number | undefined;
+    planId: string;
+    goalId: string;
+    error: string | undefined;
+}
+
+/**
+ * Aggregated view model for the handoff diagnostics section of the operator UI.
+ *
+ * Null when no handoff has been dispatched in the current session.
+ */
+export interface HandoffDiagnosticsView {
+    lastWorkflow: HandoffRecordView | null;
+    lastAgent: HandoffRecordView | null;
+    workflowDispatchCount: number;
+    agentDispatchCount: number;
+    workflowFailureCount: number;
+    agentFailureCount: number;
+    lastUpdated: string;
+}
+
+const READINESS_LABELS: Record<HandoffExecutionRecord['readiness'], string> = {
+    dispatching: 'Dispatching',
+    preflight_ok: 'Preflight OK',
+    preflight_failed: 'Preflight Failed',
+    completed: 'Completed',
+    failed: 'Failed',
+};
+
+function toHandoffRecordView(r: HandoffExecutionRecord): HandoffRecordView {
+    return {
+        handoffType: r.handoffType,
+        executionBoundaryId: r.executionBoundaryId,
+        targetId: r.targetId,
+        readiness: r.readiness,
+        readinessLabel: READINESS_LABELS[r.readiness] ?? r.readiness,
+        policyStatus: r.policyStatus,
+        outcome: r.outcome,
+        reasonCode: r.reasonCode,
+        replanAdvised: r.replanAdvised ?? false,
+        replanTrigger: r.replanTrigger,
+        startedAt: r.startedAt,
+        completedAt: r.completedAt,
+        durationMs: r.durationMs,
+        planId: r.planId,
+        goalId: r.goalId,
+        error: r.error,
+    };
+}
+
+/**
+ * Projects `RuntimeDiagnosticsSnapshot.handoffDiagnostics` into a typed UI view model.
+ *
+ * Returns null if no handoff has been dispatched yet (handoffDiagnostics is absent).
+ * This function is pure and deterministic — all fields come from backend-authored state.
+ * The renderer must not infer missing handoff outcome or reason information.
+ */
+export function buildHandoffDiagnosticsView(
+    snapshot: RuntimeDiagnosticsSnapshot,
+): HandoffDiagnosticsView | null {
+    const hd = snapshot.handoffDiagnostics;
+    if (!hd) return null;
+
+    return {
+        lastWorkflow: hd.lastWorkflowRecord ? toHandoffRecordView(hd.lastWorkflowRecord) : null,
+        lastAgent: hd.lastAgentRecord ? toHandoffRecordView(hd.lastAgentRecord) : null,
+        workflowDispatchCount: hd.workflowDispatchCount,
+        agentDispatchCount: hd.agentDispatchCount,
+        workflowFailureCount: hd.workflowFailureCount,
+        agentFailureCount: hd.agentFailureCount,
+        lastUpdated: hd.lastUpdated,
+    };
+}
+
+// Re-export types used by the panel to keep imports co-located
+export type { HandoffExecutionRecord, HandoffDiagnosticsSnapshot };
 
 export function buildDashboardActionViews(
     _snapshot: RuntimeDiagnosticsSnapshot,

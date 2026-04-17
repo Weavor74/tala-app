@@ -324,6 +324,20 @@ export class WorkflowHandoffCoordinator {
 
             // All invocations completed (or non-stop failures were tolerated)
             this._planning.markExecutionCompleted(planId);
+            const completedAt = new Date().toISOString();
+            this._bus.emit({
+                executionId: plan.goalId,
+                subsystem: 'planning',
+                event: 'planning.workflow_handoff_completed',
+                payload: {
+                    planId,
+                    goalId: plan.goalId,
+                    executionBoundaryId,
+                    handoffType: 'workflow',
+                    invocationCount: invocationResults.length,
+                    completedAt,
+                },
+            });
             return {
                 planId,
                 executionBoundaryId,

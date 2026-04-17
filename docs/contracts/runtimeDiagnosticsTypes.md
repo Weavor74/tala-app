@@ -325,6 +325,68 @@ interface StorageDiagnosticsSnapshot {
     }
 ```
 
+### `HandoffExecutionRecord`
+```typescript
+interface HandoffExecutionRecord {
+    /** Discriminates between workflow and agent handoff types. */
+    handoffType: 'workflow' | 'agent';
+    /** Execution boundary ID propagated from the plan's executionBoundaryId. */
+    executionBoundaryId: string;
+    /** The primary target: workflowId (workflow) or agentId (agent). */
+    targetId: string;
+    /** Execution readiness after preflight. */
+    readiness: 'preflight_ok' | 'preflight_failed' | 'dispatching' | 'completed' | 'failed';
+    /** Policy evaluation status for this handoff. */
+    policyStatus: 'clear' | 'blocked' | 'escalation_required';
+    /** Terminal outcome: success, failure, or still pending. */
+    outcome: 'success' | 'failure' | 'pending';
+    /**
+     * Stable machine-readable failure reason code.
+     * Maps to WorkflowHandoffFailureCode or AgentHandoffFailureCode.
+     * Present only on failure.
+     */
+    reasonCode?: string;
+    /** The declared failure policy for the invocation. */
+    failurePolicy?: 'stop' | 'retry' | 'skip' | 'escalate';
+    /** True when the coordinator advises replanning as the recovery path. */
+    replanAdvised?: boolean;
+    /** Suggested replan trigger code when replanAdvised is true. */
+    replanTrigger?: 'capability_loss' | 'policy_block' | 'dependency_failure';
+    /** ISO-8601 timestamp when the handoff was dispatched. */
+    startedAt: string;
+    /** ISO-8601 timestamp when the handoff reached a terminal state. */
+    completedAt?: string;
+    /** Wall-clock duration in milliseconds (only populated on completion). */
+    durationMs?: number;
+    /** The plan this handoff belongs to. */
+    planId: string;
+    /** The goal this handoff traces back to. */
+    goalId: string;
+    /** Human-readable error message on failure. */
+    error?: string;
+}
+```
+
+### `HandoffDiagnosticsSnapshot`
+```typescript
+interface HandoffDiagnosticsSnapshot {
+    /** Most recent workflow handoff execution record, if any. */
+    lastWorkflowRecord?: HandoffExecutionRecord;
+    /** Most recent agent handoff execution record, if any. */
+    lastAgentRecord?: HandoffExecutionRecord;
+    /** Total workflow handoff dispatches in the current session. */
+    workflowDispatchCount: number;
+    /** Total agent handoff dispatches in the current session. */
+    agentDispatchCount: number;
+    /** Total workflow handoff failures in the current session. */
+    workflowFailureCount: number;
+    /** Total agent handoff failures in the current session. */
+    agentFailureCount: number;
+    /** ISO-8601 timestamp of the last update. */
+    lastUpdated: string;
+}
+```
+
 ### `AuthorityLaneDiagnosticsSnapshot`
 ```typescript
 interface AuthorityLaneDiagnosticsSnapshot {

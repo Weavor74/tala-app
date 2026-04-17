@@ -65,6 +65,16 @@ Stops the internal TelemetryBus subscription.
 **Returns**: `CognitiveDiagnosticsSnapshot | undefined`
 
 ---
+#### `_buildHandoffDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `HandoffDiagnosticsSnapshot | undefined`
+
+---
+#### `_handleHandoffEvent`
+**Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
 #### `_buildAuthorityLaneDiagnostics`
 **Arguments**: `now: string`
 **Returns**: `AuthorityLaneDiagnosticsSnapshot | undefined`
