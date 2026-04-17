@@ -501,7 +501,7 @@ describe('Task A — Diagnostics truth parity', () => {
         expect(dispatchFails[0].payload!.failureCode).toBe('dispatch:executor_unavailable');
     });
 
-    it('HDT-16 agent dispatch failure emits dispatch_failed event with authoritative failure code', async () => {
+    it('HDT-16 agent dispatch failure emits exactly one dispatch_failed event with authoritative failure code', async () => {
         const executor: IAgentExecutor = {
             executeAgent: vi.fn().mockRejectedValue(new Error('agent kernel down')),
         };
@@ -510,10 +510,14 @@ describe('Task A — Diagnostics truth parity', () => {
         const planId = buildAgentPlan(svc);
         await coordinator.dispatch(planId, new Set(['inference', 'rag']));
 
-        // At least one dispatch_failed event must be emitted with the authoritative failure code
+        // Exactly one dispatch_failed event must be emitted (no duplicate from inner catch)
         const dispatchFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_dispatch_failed');
-        expect(dispatchFails.length).toBeGreaterThanOrEqual(1);
-        expect(dispatchFails.some(e => e.payload!.failureCode === 'dispatch:executor_unavailable')).toBe(true);
+        expect(dispatchFails).toHaveLength(1);
+        expect(dispatchFails[0].payload!.failureCode).toBe('dispatch:executor_unavailable');
+        // invocation_failed is emitted by the inner catch instead of dispatch_failed
+        const invocationFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_invocation_failed');
+        expect(invocationFails).toHaveLength(1);
+        expect(invocationFails[0].payload!.failureCode).toBe('dispatch:executor_unavailable');
     });
 
     it('HDT-17 handoff lifecycle: dispatched event precedes completed event on success', async () => {

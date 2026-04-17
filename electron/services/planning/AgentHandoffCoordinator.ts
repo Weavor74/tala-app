@@ -22,8 +22,10 @@
  *    executionId in AgentInvocationContext so agent telemetry is correlated to
  *    the planning lifecycle.
  * 6. Telemetry lifecycle parity — emits the same lifecycle event pattern as
- *    PlanningHandoffCoordinator (dispatched, dispatch_failed) plus preflight-specific
- *    events (agent_handoff_preflight_failed).
+ *    WorkflowHandoffCoordinator (dispatched, invocation_failed, dispatch_failed) plus
+ *    preflight-specific events (agent_handoff_preflight_failed).  invocation_failed is
+ *    emitted by _executeInvocation() for executor-thrown failures; dispatch_failed is
+ *    emitted only at the dispatch layer (preflight, policy, outer catch).
  * 7. Stable failure reason codes — all failures carry an AgentHandoffFailureCode from
  *    the shared type contract, making them machine-actionable without string parsing.
  * 8. Honest failure — on execution failure with failurePolicy 'stop',
@@ -391,7 +393,7 @@ export class AgentHandoffCoordinator {
             this._bus.emit({
                 executionId: plan.goalId,
                 subsystem: 'planning',
-                event: 'planning.agent_handoff_dispatch_failed',
+                event: 'planning.agent_handoff_invocation_failed',
                 payload: {
                     planId: plan.id,
                     goalId: plan.goalId,

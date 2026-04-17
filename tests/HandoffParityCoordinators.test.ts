@@ -122,6 +122,12 @@ function makeFailingWorkflowExecutor(errorMsg = 'workflow failed'): IWorkflowExe
     };
 }
 
+function makeThrowingWorkflowExecutor(errorMsg = 'executor unavailable'): IWorkflowExecutor {
+    return {
+        executeWorkflow: vi.fn().mockRejectedValue(new Error(errorMsg)),
+    };
+}
+
 function makeSuccessfulAgentExecutor(): IAgentExecutor {
     return {
         executeAgent: vi.fn().mockResolvedValue({ success: true, data: { synthesis: 'done' }, durationMs: 10 }),
@@ -131,6 +137,12 @@ function makeSuccessfulAgentExecutor(): IAgentExecutor {
 function makeFailingAgentExecutor(errorMsg = 'agent failed'): IAgentExecutor {
     return {
         executeAgent: vi.fn().mockResolvedValue({ success: false, error: errorMsg, durationMs: 10 }),
+    };
+}
+
+function makeThrowingAgentExecutor(errorMsg = 'agent kernel down'): IAgentExecutor {
+    return {
+        executeAgent: vi.fn().mockRejectedValue(new Error(errorMsg)),
     };
 }
 
@@ -858,6 +870,102 @@ describe('AHC21–AHC26 — AgentHandoffCoordinator preflight and failure paths'
         const failedPayload = findFirstEmittedPayload('planning.agent_handoff_dispatch_failed');
         expect(failedPayload).toBeDefined();
         expect(failedPayload?.handoffType).toBe('agent');
+    });
+});
+
+// ============================================================================
+// AHC27–AHC31 — Regression: no duplicate dispatch_failed on executor throw
+// ============================================================================
+
+describe('AHC27–AHC31 — No duplicate dispatch_failed on executor throw', () => {
+    beforeEach(() => {
+        emittedEvents.length = 0;
+    });
+
+    it('AHC27 — executor throw produces exactly one dispatch_failed event (not two)', async () => {
+        const svc = freshService(['inference', 'rag']);
+        const g = svc.registerGoal(agentGoalInput({ category: 'conversation' }));
+        const plan = svc.buildPlan(g.id);
+
+        const coordinator = new AgentHandoffCoordinator(makeThrowingAgentExecutor());
+        await coordinator.dispatch(plan.id, new Set(['inference', 'rag']));
+
+        const dispatchFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_dispatch_failed');
+        expect(dispatchFails).toHaveLength(1);
+    });
+
+    it('AHC28 — executor throw emits planning.agent_handoff_invocation_failed from inner catch', async () => {
+        const svc = freshService(['inference', 'rag']);
+        const g = svc.registerGoal(agentGoalInput({ category: 'conversation' }));
+        const plan = svc.buildPlan(g.id);
+
+        const coordinator = new AgentHandoffCoordinator(makeThrowingAgentExecutor('kernel error'));
+        await coordinator.dispatch(plan.id, new Set(['inference', 'rag']));
+
+        const invocationFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_invocation_failed');
+        expect(invocationFails).toHaveLength(1);
+        expect(invocationFails[0].payload?.failureCode).toBe('dispatch:executor_unavailable');
+        expect(invocationFails[0].payload?.error).toBe('kernel error');
+    });
+
+    it('AHC29 — inner _executeInvocation catch does not emit dispatch_failed', async () => {
+        const svc = freshService(['inference', 'rag']);
+        const g = svc.registerGoal(agentGoalInput({ category: 'conversation' }));
+        const plan = svc.buildPlan(g.id);
+
+        const coordinator = new AgentHandoffCoordinator(makeThrowingAgentExecutor());
+        await coordinator.dispatch(plan.id, new Set(['inference', 'rag']));
+
+        // invocation_failed must appear before dispatch_failed (inner before outer)
+        const invocationFailIdx = emittedEvents.findIndex(e => e.event === 'planning.agent_handoff_invocation_failed');
+        const dispatchFailIdx = emittedEvents.findIndex(e => e.event === 'planning.agent_handoff_dispatch_failed');
+        expect(invocationFailIdx).toBeGreaterThanOrEqual(0);
+        expect(dispatchFailIdx).toBeGreaterThanOrEqual(0);
+        expect(invocationFailIdx).toBeLessThan(dispatchFailIdx);
+    });
+
+    it('AHC30 — executor throw => plan is failed exactly once (no double markExecutionFailed transitions)', async () => {
+        const svc = freshService(['inference', 'rag']);
+        const g = svc.registerGoal(agentGoalInput({ category: 'conversation' }));
+        const plan = svc.buildPlan(g.id);
+
+        const coordinator = new AgentHandoffCoordinator(makeThrowingAgentExecutor());
+        const result = await coordinator.dispatch(plan.id, new Set(['inference', 'rag']));
+
+        expect(result.success).toBe(false);
+        const updatedPlan = svc.getPlan(plan.id);
+        expect(updatedPlan?.status).toBe('failed');
+        // dispatch_failed carries the correct failure code
+        const dispatchFail = emittedEvents.find(e => e.event === 'planning.agent_handoff_dispatch_failed');
+        expect(dispatchFail?.payload?.failureCode).toBe('dispatch:executor_unavailable');
+    });
+
+    it('AHC31 — parity: workflow invocation_failed matches agent invocation_failed event naming pattern', async () => {
+        // Workflow: executor throw emits workflow_handoff_invocation_failed
+        const wfSvc = freshService(['workflow_engine']);
+        const wfG = wfSvc.registerGoal(workflowGoalInput());
+        const wfPlan = wfSvc.buildPlan(wfG.id);
+        const wfCoordinator = new WorkflowHandoffCoordinator(makeThrowingWorkflowExecutor());
+        await wfCoordinator.dispatch(wfPlan.id, new Set(['workflow_engine']));
+
+        const wfInvFails = emittedEvents.filter(e => e.event === 'planning.workflow_handoff_invocation_failed');
+        const wfDispFails = emittedEvents.filter(e => e.event === 'planning.workflow_handoff_dispatch_failed');
+        expect(wfInvFails).toHaveLength(1);
+        expect(wfDispFails).toHaveLength(1);
+
+        emittedEvents.length = 0;
+
+        // Agent: same pattern
+        const agSvc = freshService(['inference', 'rag']);
+        const agG = agSvc.registerGoal(agentGoalInput({ category: 'conversation' }));
+        const agPlan = agSvc.buildPlan(agG.id);
+        const agCoordinator = new AgentHandoffCoordinator(makeThrowingAgentExecutor());
+        await agCoordinator.dispatch(agPlan.id, new Set(['inference', 'rag']));
+
+        const agInvFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_invocation_failed');
+        const agDispFails = emittedEvents.filter(e => e.event === 'planning.agent_handoff_dispatch_failed');
+        expect(agInvFails).toHaveLength(1);
+        expect(agDispFails).toHaveLength(1);
     });
 });
 
