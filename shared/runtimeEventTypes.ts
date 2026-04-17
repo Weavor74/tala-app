@@ -119,6 +119,14 @@ export type RuntimeEventType =
     | 'planning.loop_routing_bypass_surfaced'
     /** Authority routing: trivial direct path was allowed for this request. */
     | 'planning.loop_routing_direct_allowed'
+    /**
+     * Authority lane resolved: the named authority lane that governed this
+     * execution turn has been determined.  Emitted once per execution boundary
+     * on all surfaces (chat, degraded chat, autonomy, operator).
+     * Payload conforms to AuthorityLaneDiagnosticsRecord from
+     * shared/planning/executionAuthorityTypes.ts.
+     */
+    | 'planning.authority_lane_resolved'
     | `planning.${string}`;
 
 // ─── Event envelope ───────────────────────────────────────────────────────────

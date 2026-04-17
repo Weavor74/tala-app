@@ -33,6 +33,7 @@ import type {
 } from './system-health-types';
 import type { SeamStabilityReport } from './governance/SeamStability';
 import type { McpAuthorityReasonCode, McpServerClassification } from './mcpAuthorityTypes';
+import type { AuthorityLaneDiagnosticsRecord } from './planning/executionAuthorityTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -505,6 +506,34 @@ export interface StorageDiagnosticsSnapshot {
     lastAssignmentExplanation?: StorageAssignmentExplanationDiagnostics;
 }
 
+// ─── Execution authority lane diagnostics ─────────────────────────────────────
+
+/**
+ * Snapshot of the most recent authority-lane resolution for a runtime turn.
+ *
+ * Surfaced in RuntimeDiagnosticsSnapshot.executionAuthority so each task/turn
+ * shows which authority lane was used and what the policy outcome was.
+ *
+ * Derived from the most recent `planning.authority_lane_resolved` event observed
+ * by RuntimeDiagnosticsAggregator.
+ */
+export interface AuthorityLaneDiagnosticsSnapshot {
+    /** The most recent authority-lane diagnostics record. */
+    lastRecord: AuthorityLaneDiagnosticsRecord;
+    /** ISO timestamp of the last update. */
+    lastUpdated: string;
+    /**
+     * Running count of authority lane resolutions per lane name in the current
+     * session (reset on TelemetryBus reset).
+     */
+    laneResolutionCounts: Partial<Record<string, number>>;
+    /**
+     * Running count of degraded-direct executions in the current session.
+     * Incremented whenever `chat_continuity_degraded_direct` is resolved.
+     */
+    degradedDirectCount: number;
+}
+
 // ─── Unified runtime diagnostics snapshot ────────────────────────────────────
 
 /**
@@ -549,6 +578,12 @@ export interface RuntimeDiagnosticsSnapshot {
     seamStability?: SeamStabilityReport;
     /** Normalized cognitive diagnostics for the most recent cognitive turn. */
     cognitive?: CognitiveDiagnosticsSnapshot;
+    /**
+     * Execution authority lane diagnostics.
+     * Populated after the first `planning.authority_lane_resolved` event is observed.
+     * Absent until at least one execution turn completes its authority classification.
+     */
+    executionAuthority?: AuthorityLaneDiagnosticsSnapshot;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────

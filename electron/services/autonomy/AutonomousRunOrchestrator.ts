@@ -97,6 +97,7 @@ import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCir
 import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
 import { PlanningLoopAuthorityRouter } from '../planning/PlanningLoopAuthorityRouter';
+import type { AuthorityLaneDiagnosticsRecord } from '../../../shared/planning/executionAuthorityTypes';
 
 // â”€â”€â”€ Poll timeouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1733,6 +1734,23 @@ export class AutonomousRunOrchestrator {
                     goalId: goal.goalId,
                     subsystemId: goal.subsystemId,
                 },
+            });
+            // Emit authority lane resolved for diagnostics surfaces.
+            const laneRecord: AuthorityLaneDiagnosticsRecord = {
+                authorityLane: 'autonomy_safechangeplanner_pipeline',
+                routingClassification: 'doctrined_exception',
+                reasonCodes: authorityDecision.reasonCodes,
+                executionBoundaryId: run.runId,
+                policyOutcome: 'allowed',
+                resolvedAt: new Date().toISOString(),
+                summary: `autonomy_safechangeplanner_pipeline: goalId=${goal.goalId} subsystem=${goal.subsystemId}`,
+            };
+            TelemetryBus.getInstance().emit({
+                executionId: run.runId,
+                subsystem: 'planning',
+                event: 'planning.authority_lane_resolved',
+                phase: 'classify',
+                payload: laneRecord as unknown as Record<string, unknown>,
             });
         }
 
