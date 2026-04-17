@@ -125,6 +125,12 @@ type RuntimeEventType =
     | 'planning.loop_completed'
     | 'planning.loop_aborted'
     | 'planning.loop_failed'
+    /** Authority routing: non-trivial work was routed through PlanningLoopService. */
+    | 'planning.loop_routing_selected'
+    /** Authority routing: non-trivial work bypassed the loop (loop not initialised). */
+    | 'planning.loop_routing_bypass_surfaced'
+    /** Authority routing: trivial direct path was allowed for this request. */
+    | 'planning.loop_routing_direct_allowed'
     | `planning.${string}`;
 ```
 

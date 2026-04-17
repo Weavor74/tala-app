@@ -182,6 +182,34 @@ export class PlanningLoopService {
     }
 
     /**
+     * Initialises (or replaces) the singleton for production runtime use.
+     *
+     * Call this during application startup to wire PlanningLoopService with
+     * the real executor and observer before the first chat turn is processed.
+     * Subsequent calls replace the existing singleton (use only during startup).
+     *
+     * @param executor - ILoopExecutor implementation (e.g. ChatLoopExecutor).
+     * @param observer - ILoopObserver implementation (e.g. ChatLoopObserver).
+     * @param planning - Optional PlanningService override; defaults to singleton.
+     */
+    static initialize(
+        executor: ILoopExecutor,
+        observer: ILoopObserver,
+        planning?: PlanningService,
+    ): void {
+        PlanningLoopService._instance = new PlanningLoopService(executor, observer, planning);
+    }
+
+    /**
+     * Returns true if the singleton has been initialised.
+     * Use this to check whether PlanningLoopService is available before routing
+     * non-trivial work through it.
+     */
+    static isInitialized(): boolean {
+        return PlanningLoopService._instance !== null;
+    }
+
+    /**
      * Initialises (or replaces) the singleton.
      * Intended for test isolation and application-startup wiring.
      */

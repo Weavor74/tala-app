@@ -12,6 +12,12 @@ import { createInitialExecutionState, createExecutionRequest, setExecutionTermin
 import { ExecutionStateStore } from './ExecutionStateStore';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
+import { PlanningLoopService } from '../planning/PlanningLoopService';
+import { PlanningLoopAuthorityRouter } from '../planning/PlanningLoopAuthorityRouter';
+import { ChatLoopExecutor } from '../planning/ChatLoopExecutor';
+import { ChatLoopObserver } from '../planning/ChatLoopObserver';
+import { PlanningService } from '../planning/PlanningService';
+import type { PlanningLoopRoutingDecision } from '../../../shared/planning/executionAuthorityTypes';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -56,6 +62,13 @@ export interface KernelExecutionMeta {
     origin: RuntimeExecutionOrigin;
     /** The Tala runtime mode in effect when this execution was created. */
     mode: RuntimeExecutionMode;
+    /**
+     * Authority routing decision made during classifyExecution().
+     * Populated after classify stage; absent before classify runs.
+     * Use this to inspect why a turn was routed through the planning loop
+     * or allowed on the trivial direct path.
+     */
+    routingDecision?: PlanningLoopRoutingDecision;
 }
 
 /**
@@ -150,9 +163,29 @@ export interface KernelResult extends AgentTurnOutput {
 export class AgentKernel {
     private readonly agent: AgentService;
     private readonly _stateStore: ExecutionStateStore = new ExecutionStateStore();
+    /**
+     * Planning loop executor — holds the ChatLoopExecutor with streaming
+     * callback support.  Wired at construction time.
+     */
+    private readonly _chatLoopExecutor: ChatLoopExecutor;
 
     constructor(agent: AgentService) {
         this.agent = agent;
+
+        // ── Wire PlanningLoopService for authority routing ──────────────────
+        // Create a ChatLoopExecutor that wraps AgentService.chat() as the
+        // ILoopExecutor beneath the planning loop.
+        // PlanningService.getInstance() lazily creates its singleton here.
+        const planning = PlanningService.getInstance();
+        this._chatLoopExecutor = new ChatLoopExecutor(
+            (message, onToken, onEvent, images) =>
+                this.agent.chat(message, onToken, onEvent, images),
+            planning,
+        );
+        const observer = new ChatLoopObserver();
+        // Initialize PlanningLoopService with the chat-based executor and observer.
+        // This makes PlanningLoopService the real runtime authority for non-trivial work.
+        PlanningLoopService.initialize(this._chatLoopExecutor, observer, planning);
     }
 
     /**
@@ -250,6 +283,8 @@ export class AgentKernel {
     // ─── Stage 3: classifyExecution ─────────────────────────────────────────
     // Classifies the turn to produce a routing hint for downstream stages.
     // Also performs the top-level policy admission check (PolicyGate).
+    // Authority routing: classifies the request as trivial or non-trivial and
+    // stores the PlanningLoopRoutingDecision on meta for use in runDelegatedFlow.
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
         // ── Policy gate — top-level execution admission check ─────────────────
@@ -281,15 +316,55 @@ export class AgentKernel {
             throw new PolicyDeniedError(decision);
         }
 
+        // ── Authority routing classification ──────────────────────────────────
+        // Classify the request as trivial or non-trivial.
+        // The routing decision is stored on meta so runDelegatedFlow can use it.
+        const routingDecision = PlanningLoopAuthorityRouter.classify(request.userMessage);
+        meta.routingDecision = routingDecision;
+
+        // Emit routing telemetry so the decision is always inspectable.
+        if (routingDecision.requiresLoop) {
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'planning',
+                event: 'planning.loop_routing_selected',
+                phase: 'classify',
+                payload: {
+                    classification: routingDecision.classification,
+                    reasonCodes: routingDecision.reasonCodes,
+                    loopInitialized: PlanningLoopService.isInitialized(),
+                },
+            });
+        } else {
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'planning',
+                event: 'planning.loop_routing_direct_allowed',
+                phase: 'classify',
+                payload: {
+                    classification: routingDecision.classification,
+                    summary: routingDecision.summary,
+                },
+            });
+        }
+
         // Advance state to 'planning' to mark that the kernel is evaluating the turn.
         this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
-        console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass}`);
+        console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass} routing=${routingDecision.classification}`);
     }
 
     // ─── Stage 4: runDelegatedFlow ──────────────────────────────────────────
-    // Hands off to AgentService.chat() — all existing orchestration unchanged.
-    // Future: inference orchestration boundary, tool execution coordination,
-    //         memory write coordination.
+    // Routes to PlanningLoopService for non-trivial work, or delegates directly
+    // to AgentService.chat() for trivially-allowed requests.
+    //
+    // Authority routing doctrine enforced here:
+    //   - planning_loop_required → PlanningLoopService.startLoop() attempted
+    //   - trivial_direct_allowed → AgentService.chat() directly
+    //
+    // Graceful fallback rules:
+    //   - plan_blocked (missing capabilities): surfaces bypass event + falls back to direct
+    //   - execution failure (chat throws): re-throws the original error
+    //   - loop unavailable: surfaces bypass event + falls back to direct
 
     private async runDelegatedFlow(
         request: KernelRequest,
@@ -297,9 +372,127 @@ export class AgentKernel {
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void
     ): Promise<AgentTurnOutput> {
-        console.log(`[AgentKernel] ── DELEGATE         ── id=${meta.executionId} class=${meta.executionClass}`);
+        const routingDecision = meta.routingDecision;
+        const loopRequired = routingDecision?.requiresLoop === true;
+        const loopAvailable = PlanningLoopService.isInitialized();
 
-        // Advance execution state to 'executing' before handing off to AgentService.
+        // ── Non-trivial: route through PlanningLoopService ───────────────────
+        if (loopRequired && loopAvailable) {
+            console.log(`[AgentKernel] ── DELEGATE→LOOP    ── id=${meta.executionId} routing=${routingDecision?.classification}`);
+            this._stateStore.advancePhase(meta.executionId, 'executing', 'planning_loop');
+
+            // Configure the executor with the per-turn streaming callbacks.
+            this._chatLoopExecutor.setStreamCallbacks(onToken, onEvent, request.images);
+
+            const loop = PlanningLoopService.getInstance();
+            let loopRun: ReturnType<typeof loop.getRun> | undefined;
+
+            try {
+                const completedRun = await loop.startLoop({
+                    goal: request.userMessage,
+                    maxIterations: 1,
+                    contextSummary: {
+                        executionId: meta.executionId,
+                        origin: meta.origin,
+                        mode: meta.mode,
+                    },
+                });
+                loopRun = completedRun;
+            } catch (err) {
+                // PlanningLoopError (e.g., invalid goal) - surface and fall through
+                console.warn(`[AgentKernel] Loop start threw (${err instanceof Error ? err.message : String(err)}); falling through to direct path (id=${meta.executionId})`);
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'planning',
+                    event: 'planning.loop_routing_bypass_surfaced',
+                    phase: 'delegate',
+                    payload: {
+                        classification: routingDecision?.classification,
+                        reasonCodes: routingDecision?.reasonCodes,
+                        disposition: 'surfaced',
+                        detectedIn: 'AgentKernel.runDelegatedFlow',
+                        reason: 'loop_start_error',
+                    },
+                });
+                // Fall through to direct path
+            }
+
+            if (loopRun !== undefined) {
+                const completedLoop = loopRun;
+
+                // ── Execution error: re-throw to preserve kernel failure semantics ──
+                const lastError = this._chatLoopExecutor.getLastError();
+                if (lastError && (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted')) {
+                    // The chat pipeline threw — re-throw so execute() emits execution.failed
+                    throw lastError;
+                }
+
+                // ── Plan blocked: surface bypass and fall back to direct ────────
+                if (completedLoop.phase === 'failed' && completedLoop.failureReason === 'plan_blocked') {
+                    console.warn(`[AgentKernel] Loop plan blocked; falling back to direct path (id=${meta.executionId})`);
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.loop_routing_bypass_surfaced',
+                        phase: 'delegate',
+                        payload: {
+                            classification: routingDecision?.classification,
+                            reasonCodes: routingDecision?.reasonCodes,
+                            disposition: 'surfaced',
+                            detectedIn: 'AgentKernel.runDelegatedFlow',
+                            reason: 'plan_blocked',
+                        },
+                    });
+                    // Fall through to direct path
+                } else if (completedLoop.phase === 'completed') {
+                    // ── Success: return loop result ────────────────────────────────
+                    const executorResult = this._chatLoopExecutor.getLastExecutionResult();
+                    if (executorResult) {
+                        return executorResult;
+                    }
+                    // Safety net: executor result unavailable — fall through to direct
+                    console.warn(`[AgentKernel] Loop completed but executor result unavailable; falling back to direct path (id=${meta.executionId})`);
+                } else if (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted') {
+                    // Other loop failure (not plan_blocked, not execution error) - fall through
+                    console.warn(`[AgentKernel] Loop ended with phase=${completedLoop.phase} reason=${completedLoop.failureReason ?? 'unknown'}; falling back to direct path (id=${meta.executionId})`);
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.loop_routing_bypass_surfaced',
+                        phase: 'delegate',
+                        payload: {
+                            classification: routingDecision?.classification,
+                            reasonCodes: routingDecision?.reasonCodes,
+                            disposition: 'surfaced',
+                            detectedIn: 'AgentKernel.runDelegatedFlow',
+                            reason: completedLoop.failureReason ?? 'loop_failure',
+                        },
+                    });
+                    // Fall through to direct path
+                }
+            }
+        }
+
+        // ── Non-trivial bypass surface (loop not available) ────────────────────
+        if (loopRequired && !loopAvailable) {
+            console.warn(`[AgentKernel] ── BYPASS SURFACED  ── id=${meta.executionId} routing=${routingDecision?.classification} loop_available=false`);
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'planning',
+                event: 'planning.loop_routing_bypass_surfaced',
+                phase: 'delegate',
+                payload: {
+                    classification: routingDecision?.classification,
+                    reasonCodes: routingDecision?.reasonCodes,
+                    disposition: 'surfaced',
+                    detectedIn: 'AgentKernel.runDelegatedFlow',
+                    reason: 'loop_not_initialized',
+                },
+            });
+        }
+
+        // ── Trivial / fallback: direct execution ──────────────────────────────
+        console.log(`[AgentKernel] ── DELEGATE→DIRECT  ── id=${meta.executionId} routing=${routingDecision?.classification ?? 'unclassified'}`);
         this._stateStore.advancePhase(meta.executionId, 'executing', 'delegated_flow');
 
         return this.agent.chat(
