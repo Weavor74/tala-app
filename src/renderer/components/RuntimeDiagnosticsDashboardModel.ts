@@ -3,6 +3,14 @@ import type {
     OperatorActionStateSnapshot,
     RuntimeDiagnosticsSnapshot,
 } from '../../../shared/runtimeDiagnosticsTypes';
+import type {
+    AuthorityLane,
+    AuthorityLanePolicyOutcome,
+    ExecutionAuthorityClassification,
+    NonTrivialWorkReasonCode,
+    DegradedExecutionReason,
+    DegradedModeCode,
+} from '../../../shared/planning/executionAuthorityTypes';
 
 export interface DashboardActionView {
     id: string;
@@ -51,6 +59,123 @@ function toActionView(action: OperatorActionAvailability): DashboardActionView {
         category: action.category,
         recommended: action.recommended,
         requiresApproval: action.requires_explicit_approval,
+    };
+}
+
+// ─── Execution Authority UI Model ─────────────────────────────────────────────
+
+/**
+ * All five canonical authority lanes ordered for display.
+ * Ensures every doctrined lane is always visible in the UI even when its count is zero.
+ */
+export const ALL_AUTHORITY_LANES: AuthorityLane[] = [
+    'planning_loop',
+    'trivial_direct',
+    'chat_continuity_degraded_direct',
+    'autonomy_safechangeplanner_pipeline',
+    'operator_policy_gate',
+];
+
+/** Human-readable label for each authority lane. */
+export const AUTHORITY_LANE_LABELS: Record<AuthorityLane, string> = {
+    planning_loop: 'Planning Loop',
+    trivial_direct: 'Trivial Direct',
+    chat_continuity_degraded_direct: 'Degraded Direct (chat continuity)',
+    autonomy_safechangeplanner_pipeline: 'Autonomy SafeChangePlanner Pipeline',
+    operator_policy_gate: 'Operator Policy Gate',
+};
+
+/**
+ * View model for a degraded execution decision.
+ * Only present when the authority lane is `chat_continuity_degraded_direct`.
+ */
+export interface DegradedDecisionView {
+    reason: DegradedExecutionReason;
+    directAllowed: boolean;
+    degradedModeCode: DegradedModeCode;
+    doctrine: string;
+    detectedIn: string;
+    detectedAt: string;
+}
+
+/**
+ * Projected read model for the execution authority section of the operator UI.
+ *
+ * Derived exclusively from `RuntimeDiagnosticsSnapshot.executionAuthority`.
+ * Null when no authority lane has been resolved yet in the current session.
+ */
+export interface AuthorityLaneDiagnosticsView {
+    /** Currently active authority lane. */
+    currentLane: AuthorityLane;
+    /** Human-readable label for the current lane. */
+    currentLaneLabel: string;
+    /** Final execution authority classification from the routing decision. */
+    routingClassification: ExecutionAuthorityClassification;
+    /** Policy outcome for this execution boundary. */
+    policyOutcome: AuthorityLanePolicyOutcome;
+    /** Machine-readable reason codes explaining the routing decision. */
+    reasonCodes: NonTrivialWorkReasonCode[];
+    /** Loop run ID, present only on the `planning_loop` lane. */
+    loopId: string | undefined;
+    /** Execution boundary ID for this turn. */
+    executionBoundaryId: string;
+    /** ISO-8601 timestamp when the authority lane was resolved. */
+    resolvedAt: string;
+    /** One-line human-readable summary. */
+    summary: string;
+    /** Degraded execution decision; present only on `chat_continuity_degraded_direct`. */
+    degradedDecision: DegradedDecisionView | undefined;
+    /** Per-lane resolution counts for all five doctrined lanes. Always populated (zero if none). */
+    laneResolutionCounts: Record<AuthorityLane, number>;
+    /** Running count of `chat_continuity_degraded_direct` resolutions this session. */
+    degradedDirectCount: number;
+    /** ISO-8601 timestamp of the last authority lane update. */
+    lastUpdated: string;
+}
+
+/**
+ * Projects `RuntimeDiagnosticsSnapshot.executionAuthority` into a typed UI view model.
+ *
+ * Returns null if no authority lane has been resolved yet (executionAuthority is absent).
+ * This function is pure and deterministic — safe to test without a DOM or renderer.
+ */
+export function buildAuthorityLaneDiagnosticsView(
+    snapshot: RuntimeDiagnosticsSnapshot,
+): AuthorityLaneDiagnosticsView | null {
+    const auth = snapshot.executionAuthority;
+    if (!auth) return null;
+
+    const r = auth.lastRecord;
+
+    const laneResolutionCounts = Object.fromEntries(
+        ALL_AUTHORITY_LANES.map((lane) => [lane, auth.laneResolutionCounts[lane] ?? 0]),
+    ) as Record<AuthorityLane, number>;
+
+    const degradedDecision: DegradedDecisionView | undefined = r.degradedExecutionDecision
+        ? {
+              reason: r.degradedExecutionDecision.reason,
+              directAllowed: r.degradedExecutionDecision.directAllowed,
+              degradedModeCode: r.degradedExecutionDecision.degradedModeCode,
+              doctrine: r.degradedExecutionDecision.doctrine,
+              detectedIn: r.degradedExecutionDecision.detectedIn,
+              detectedAt: r.degradedExecutionDecision.detectedAt,
+          }
+        : undefined;
+
+    return {
+        currentLane: r.authorityLane,
+        currentLaneLabel: AUTHORITY_LANE_LABELS[r.authorityLane] ?? r.authorityLane,
+        routingClassification: r.routingClassification,
+        policyOutcome: r.policyOutcome,
+        reasonCodes: r.reasonCodes,
+        loopId: r.loopId,
+        executionBoundaryId: r.executionBoundaryId,
+        resolvedAt: r.resolvedAt,
+        summary: r.summary,
+        degradedDecision,
+        laneResolutionCounts,
+        degradedDirectCount: auth.degradedDirectCount,
+        lastUpdated: auth.lastUpdated,
     };
 }
 

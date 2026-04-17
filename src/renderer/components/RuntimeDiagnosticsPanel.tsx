@@ -4,7 +4,7 @@ import type {
     RuntimeDiagnosticsSnapshot,
     McpServiceDiagnostics,
 } from '../../../shared/runtimeDiagnosticsTypes';
-import { buildDashboardActionViews } from './RuntimeDiagnosticsDashboardModel';
+import { buildDashboardActionViews, buildAuthorityLaneDiagnosticsView, ALL_AUTHORITY_LANES, AUTHORITY_LANE_LABELS } from './RuntimeDiagnosticsDashboardModel';
 
 /**
  * RuntimeDiagnosticsPanel — Phase 2B Minimal Diagnostics Panel
@@ -185,6 +185,28 @@ function ControlButton({ label, title, onClick, disabled }: { label: string; tit
             {label}
         </button>
     );
+}
+
+// ─── Execution Authority section ─────────────────────────────────────────────
+
+function authorityLaneColor(lane: string): string {
+    switch (lane) {
+        case 'planning_loop': return '#60a5fa';
+        case 'trivial_direct': return '#22c55e';
+        case 'chat_continuity_degraded_direct': return '#f97316';
+        case 'autonomy_safechangeplanner_pipeline': return '#a78bfa';
+        case 'operator_policy_gate': return '#f59e0b';
+        default: return '#9ca3af';
+    }
+}
+
+function policyOutcomeColor(outcome: string): string {
+    switch (outcome) {
+        case 'allowed': return '#22c55e';
+        case 'denied': return '#ef4444';
+        case 'not_evaluated': return '#9ca3af';
+        default: return '#9ca3af';
+    }
 }
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
@@ -627,6 +649,119 @@ const RuntimeDiagnosticsPanel: React.FC = () => {
                     ))}
                 </Section>
             )}
+
+            {/* Execution Authority */}
+            {(() => {
+                const authView = buildAuthorityLaneDiagnosticsView(snapshot);
+                if (!authView) return null;
+                const laneColor = authorityLaneColor(authView.currentLane);
+                return (
+                    <Section title="Execution Authority">
+                        {/* Current lane */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <span style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: laneColor,
+                                background: laneColor + '22',
+                                border: `1px solid ${laneColor}55`,
+                                borderRadius: 8,
+                                padding: '2px 9px',
+                            }}>
+                                {authView.currentLaneLabel}
+                            </span>
+                            <span style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: policyOutcomeColor(authView.policyOutcome),
+                            }}>
+                                policy: {authView.policyOutcome}
+                            </span>
+                        </div>
+
+                        {/* Classification + summary */}
+                        <div style={{ fontSize: 11, color: '#d1d5db', marginBottom: 4 }}>
+                            classification: <strong>{authView.routingClassification}</strong>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4, fontStyle: 'italic' }}>
+                            {authView.summary}
+                        </div>
+
+                        {/* Reason codes */}
+                        {authView.reasonCodes.length > 0 && (
+                            <div style={{ fontSize: 11, color: '#93c5fd', marginBottom: 4 }}>
+                                reasons: {authView.reasonCodes.join(', ')}
+                            </div>
+                        )}
+
+                        {/* Loop ID */}
+                        {authView.loopId && (
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>
+                                loop: <span style={{ color: '#e5e7eb', fontFamily: 'monospace' }}>{authView.loopId}</span>
+                            </div>
+                        )}
+
+                        {/* Execution boundary ID */}
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>
+                            boundary: <span style={{ color: '#6b7280', fontFamily: 'monospace', fontSize: 10 }}>{authView.executionBoundaryId}</span>
+                        </div>
+
+                        {/* Degraded execution decision */}
+                        {authView.degradedDecision && (
+                            <div style={{ marginTop: 6, padding: '6px 8px', background: '#7c2d1222', borderRadius: 6, border: '1px solid #f9731444', fontSize: 11 }}>
+                                <div style={{ color: '#f97316', fontWeight: 600, marginBottom: 2 }}>
+                                    ⚠ Degraded: {authView.degradedDecision.reason}
+                                </div>
+                                <div style={{ color: '#d1d5db', marginBottom: 2 }}>
+                                    mode: {authView.degradedDecision.degradedModeCode}
+                                    {' · '}direct: {authView.degradedDecision.directAllowed ? 'allowed' : 'blocked'}
+                                </div>
+                                <div style={{ color: '#9ca3af', fontStyle: 'italic' }}>
+                                    {authView.degradedDecision.doctrine}
+                                </div>
+                                <div style={{ color: '#6b7280', fontSize: 10 }}>
+                                    detected in: {authView.degradedDecision.detectedIn}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Lane resolution counts — all 5 doctrined lanes always visible */}
+                        <div style={{ marginTop: 8, borderTop: '1px solid #374151', paddingTop: 8 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 5 }}>
+                                Lane Resolution Counts
+                            </div>
+                            {ALL_AUTHORITY_LANES.map((lane) => {
+                                const count = authView.laneResolutionCounts[lane] ?? 0;
+                                const color = authorityLaneColor(lane);
+                                return (
+                                    <div key={lane} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0', fontSize: 11 }}>
+                                        <span style={{ color: count > 0 ? color : '#4b5563' }}>
+                                            {AUTHORITY_LANE_LABELS[lane]}
+                                        </span>
+                                        <span style={{
+                                            color: count > 0 ? color : '#4b5563',
+                                            fontWeight: 600,
+                                            minWidth: 22,
+                                            textAlign: 'right',
+                                        }}>
+                                            {count}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                            {authView.degradedDirectCount > 0 && (
+                                <div style={{ marginTop: 4, fontSize: 11, color: '#f97316', fontWeight: 600 }}>
+                                    degraded-direct total: {authView.degradedDirectCount}
+                                </div>
+                            )}
+                        </div>
+
+                        <div style={{ marginTop: 6, fontSize: 10, color: '#374151' }}>
+                            updated: {new Date(authView.lastUpdated).toLocaleTimeString()}
+                        </div>
+                    </Section>
+                );
+            })()}
 
             {/* Footer timestamp */}
             <div style={{ marginTop: 8, fontSize: 10, color: '#374151', textAlign: 'right' }}>
