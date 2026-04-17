@@ -83,6 +83,14 @@ export class OrchestratorService {
                             executionType: 'autonomy_task',
                             executionOrigin: 'autonomy_engine',
                             executionMode: 'system',
+                            authorityEnvelope: {
+                                turnId: `orchestrator-${turn}`,
+                                mode: 'goal_execution',
+                                authorityLevel: 'full_authority',
+                                workflowAuthority: true,
+                                canCreateDurableState: true,
+                                canReplan: true,
+                            },
                         });
                         result = invResult.data as string | { result: string; images: string[] };
                     } catch (e: unknown) {

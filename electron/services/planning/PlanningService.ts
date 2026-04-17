@@ -67,6 +67,7 @@ import type {
     PlanGoalPriority,
     ExecutionPlan,
     GoalAnalysis,
+    PlanningInvocationMetadata,
     ReplanRequest,
     ReplanPolicy,
 } from '../../../shared/planning/PlanningTypes';
@@ -237,6 +238,15 @@ export class PlanningService {
         this._replanPolicy = { ...policy };
     }
 
+    private _normalizePlanningInvocation(
+        metadata?: PlanningInvocationMetadata,
+    ): PlanningInvocationMetadata {
+        return metadata ?? {
+            invokedBy: 'system',
+            invocationReason: 'legacy_unspecified',
+        };
+    }
+
     // ── Goal management ──────────────────────────────────────────────────────
 
     /**
@@ -358,11 +368,12 @@ export class PlanningService {
      *
      * @throws PlanningError if the goal is not found.
      */
-    buildPlan(goalId: string): ExecutionPlan {
+    buildPlan(goalId: string, invocationMetadata?: PlanningInvocationMetadata): ExecutionPlan {
         const goal = this._repo.getGoal(goalId);
         if (!goal) {
             throw new PlanningError(`Goal not found: ${goalId}`, 'GOAL_NOT_FOUND');
         }
+        const invocation = this._normalizePlanningInvocation(invocationMetadata);
 
         const analysis = this.analyzeGoal(goalId);
         const start = Date.now();
@@ -380,6 +391,8 @@ export class PlanningService {
             payload: {
                 goalId,
                 correlationId: goal.correlationId,
+                planningInvokedBy: invocation.invokedBy,
+                planningInvocationReason: invocation.invocationReason,
                 similarEpisodeCount: biasProfile.similarEpisodes.length,
                 confidence: biasProfile.confidence,
                 reasonCodes: biasProfile.reasonCodes,
@@ -400,6 +413,8 @@ export class PlanningService {
             payload: {
                 goalId,
                 correlationId: goal.correlationId,
+                planningInvokedBy: invocation.invokedBy,
+                planningInvocationReason: invocation.invocationReason,
                 selectedLane: strategySelection.selectedLane,
                 strategyFamily: strategySelection.strategyFamily,
                 verificationDepth: strategySelection.verificationDepth,
@@ -411,7 +426,11 @@ export class PlanningService {
             },
         });
 
-        const plan = PlanBuilder.build({ goal, analysis, strategySelection });
+        const builtPlan = PlanBuilder.build({ goal, analysis, strategySelection });
+        const plan: ExecutionPlan = {
+            ...builtPlan,
+            planningInvocation: invocation,
+        };
         this._repo.savePlan(plan);
 
         const durationMs = Date.now() - start;
@@ -432,6 +451,8 @@ export class PlanningService {
                 goalId,
                 correlationId: this._repo.getGoal(goalId)?.correlationId,
                 planId: plan.id,
+                planningInvokedBy: invocation.invokedBy,
+                planningInvocationReason: invocation.invocationReason,
                 plannerType: plan.plannerType,
                 version: plan.version,
                 stageCount: plan.stages.length,
@@ -901,11 +922,12 @@ export class PlanningService {
      * @throws PlanningError if the goal or prior plan are not found, or if
      *   replan guardrails are triggered.
      */
-    replan(request: ReplanRequest): ExecutionPlan {
+    replan(request: ReplanRequest, invocationMetadata?: PlanningInvocationMetadata): ExecutionPlan {
         const goal = this._repo.getGoal(request.goalId);
         if (!goal) {
             throw new PlanningError(`Goal not found: ${request.goalId}`, 'GOAL_NOT_FOUND');
         }
+        const invocation = this._normalizePlanningInvocation(invocationMetadata);
 
         const priorPlan = this._repo.getPlan(request.priorPlanId);
         if (!priorPlan) {
@@ -1002,6 +1024,8 @@ export class PlanningService {
             payload: {
                 goalId: request.goalId,
                 correlationId: goal.correlationId,
+                planningInvokedBy: invocation.invokedBy,
+                planningInvocationReason: invocation.invocationReason,
                 similarEpisodeCount: biasProfile.similarEpisodes.length,
                 confidence: biasProfile.confidence,
                 reasonCodes: biasProfile.reasonCodes,
@@ -1022,6 +1046,8 @@ export class PlanningService {
             payload: {
                 goalId: request.goalId,
                 correlationId: goal.correlationId,
+                planningInvokedBy: invocation.invokedBy,
+                planningInvocationReason: invocation.invocationReason,
                 selectedLane: strategySelection.selectedLane,
                 strategyFamily: strategySelection.strategyFamily,
                 verificationDepth: strategySelection.verificationDepth,
@@ -1035,12 +1061,16 @@ export class PlanningService {
         });
 
         // Build new plan superseding the prior one
-        const newPlan = PlanBuilder.build({
+        const builtPlan = PlanBuilder.build({
             goal: replanningGoal,
             analysis,
             strategySelection,
             priorPlan,
         });
+        const newPlan: ExecutionPlan = {
+            ...builtPlan,
+            planningInvocation: invocation,
+        };
         this._repo.savePlan(newPlan);
 
         // Mark prior plan as superseded (preserve record, add forward link)

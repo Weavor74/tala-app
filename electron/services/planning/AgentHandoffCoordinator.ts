@@ -20,6 +20,7 @@ import type {
     RecoveryOutcomeStatus,
     StructuredFailure,
 } from '../../../shared/runtime/failureRecoveryTypes';
+import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 import {
     FailureSuppressionService,
     buildFailureSignature,
@@ -32,6 +33,7 @@ export interface AgentInvocationContext {
     executionId: string;
     executionType: 'planning_handoff';
     executionOrigin: 'planning';
+    authorityEnvelope: TurnAuthorityEnvelope;
 }
 
 export interface IAgentExecutor {
@@ -156,7 +158,14 @@ export class AgentHandoffCoordinator {
     async dispatch(
         planId: string,
         availableCapabilities: ReadonlySet<string> = new Set(),
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<AgentDispatchResult> {
+        if (!authorityEnvelope) {
+            throw new Error('AGENT_HANDOFF_AUTHORITY_ENVELOPE_REQUIRED');
+        }
+        if (!authorityEnvelope.workflowAuthority || authorityEnvelope.authorityLevel === 'none') {
+            throw new Error(`AGENT_HANDOFF_AUTHORITY_DENIED:${authorityEnvelope.mode}`);
+        }
         const plan = this._planning.getPlan(planId);
         if (!plan) {
             throw new Error(`AgentHandoffCoordinator: plan not found: ${planId}`);
@@ -219,6 +228,7 @@ export class AgentHandoffCoordinator {
                 sharedInputs,
                 executionBoundaryId,
                 plan,
+                authorityEnvelope,
             );
 
             if (!invocationResult.success) {
@@ -429,12 +439,14 @@ export class AgentHandoffCoordinator {
         sharedInputs: Record<string, unknown>,
         executionBoundaryId: string,
         plan: ExecutionPlan,
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<AgentInvocationResult> {
         const mergedInput: Record<string, unknown> = { ...sharedInputs, ...invocation.input };
         const ctx: AgentInvocationContext = {
             executionId: executionBoundaryId,
             executionType: 'planning_handoff',
             executionOrigin: 'planning',
+            authorityEnvelope,
         };
 
         const candidates = [invocation.agentId, ...selectEquivalentTarget(invocation.agentId, invocation.equivalentAgentIds)];
@@ -747,3 +759,4 @@ export class AgentHandoffCoordinator {
         });
     }
 }
+

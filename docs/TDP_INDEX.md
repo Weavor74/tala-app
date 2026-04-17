@@ -129,6 +129,7 @@
 - [Contract: system-health-types.ts](contracts/system-health-types.md)
 - [Contract: systemHealthTypes.ts](contracts/systemHealthTypes.md)
 - [Contract: telemetry.ts](contracts/telemetry.md)
+- [Contract: turnArbitrationTypes.ts](contracts/turnArbitrationTypes.md)
 - [Contract: userProfile.ts](contracts/userProfile.md)
 - [Contract: worldModelTypes.ts](contracts/worldModelTypes.md)
 - [Seam Contract: Diagnostics Truth Contracts](contracts/seam-diagnostics.md)

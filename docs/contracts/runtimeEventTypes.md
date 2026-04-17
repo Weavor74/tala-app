@@ -55,6 +55,17 @@ type RuntimeEventSubsystem =
 ### `RuntimeEventType`
 ```typescript
 type RuntimeEventType = 
+    | 'kernel.turn_received'
+    | 'kernel.turn_intent_analyzed'
+    | 'kernel.turn_arbitrated'
+    | 'kernel.turn_mode_conversational'
+    | 'kernel.turn_mode_hybrid'
+    | 'kernel.turn_mode_goal_execution'
+    | 'kernel.goal_created'
+    | 'kernel.goal_resumed'
+    | 'kernel.goal_promotion_requested'
+    | 'kernel.goal_promotion_rejected'
+    | `kernel.${string}`
     | 'execution.created'
     | 'execution.accepted'
     | 'execution.blocked'

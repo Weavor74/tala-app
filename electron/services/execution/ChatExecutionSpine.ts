@@ -474,6 +474,7 @@ export class ChatExecutionSpine {
                         executionType: 'chat_turn',
                         executionOrigin: 'ipc',
                         executionMode: activeMode,
+                        authorityEnvelope: capabilitiesOverride?.turnAuthorityEnvelope,
                     });
                     const rawResult = invResult.data;
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
@@ -1248,6 +1249,7 @@ export class ChatExecutionSpine {
                         executionOrigin: 'ipc',
                         executionMode: activeMode,
                         enforcePolicy: true,
+                        authorityEnvelope: capabilitiesOverride?.turnAuthorityEnvelope,
                     };
                     return (await this.agent.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx)).data;
                 })();

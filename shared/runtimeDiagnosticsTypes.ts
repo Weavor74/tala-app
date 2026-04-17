@@ -40,6 +40,7 @@ import type {
     StrategyFamily,
     VerificationDepth,
 } from './planning/PlanningMemoryTypes';
+import type { KernelTurnDiagnosticsView } from './turnArbitrationTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -697,6 +698,11 @@ export interface RuntimeDiagnosticsSnapshot {
      * Populated after planning.memory_context_built/strategy_selected events.
      */
     planningMemory?: PlanningMemoryDiagnosticsSnapshot;
+    /**
+     * Kernel turn-arbitration diagnostics.
+     * Populated after kernel.turn_arbitrated events.
+     */
+    kernelTurn?: KernelTurnDiagnosticsView;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────
@@ -794,6 +800,7 @@ export interface CognitiveDiagnosticsSnapshot {
         compactionDurationMs?: number;
     };
 }
+
 
 
 

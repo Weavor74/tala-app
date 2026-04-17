@@ -3072,6 +3072,14 @@ Exported standalone package from Tala.
         const invResult = await this.coordinator.executeTool(name, args, undefined, {
             executionType: 'direct_invocation',
             executionOrigin: 'api',
+            authorityEnvelope: {
+                turnId: `direct-${Date.now()}`,
+                mode: 'goal_execution',
+                authorityLevel: 'full_authority',
+                workflowAuthority: true,
+                canCreateDurableState: true,
+                canReplan: true,
+            },
             // Policy enforcement is performed inside ToolExecutionCoordinator.
         });
         return invResult.data;

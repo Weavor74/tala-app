@@ -1,3 +1,5 @@
+import type { PlanningInvocationMetadata } from './PlanningTypes';
+
 /**
  * planningLoopTypes.ts — Shared contracts for the Planning Loop subsystem
  *
@@ -182,6 +184,8 @@ export interface PlanningLoopRun {
     lastObservation?: LoopObservationResult;
     /** Optional caller-supplied context (must not contain raw user content). */
     contextSummary?: Record<string, unknown>;
+    /** Planning invocation authority supplied by AgentKernel at loop start. */
+    planningInvocation?: PlanningInvocationMetadata;
     /**
      * History of decisions made during replanning phases.
      * Each entry records what decision was made and why.
@@ -223,6 +227,8 @@ export interface StartLoopInput {
     maxIterations?: number;
     /** Optional caller-supplied context. */
     contextSummary?: Record<string, unknown>;
+    /** Invocation authority metadata from AgentKernel. */
+    planningInvocation?: PlanningInvocationMetadata;
 }
 
 // ─── Loop Policy ──────────────────────────────────────────────────────────────
@@ -247,3 +253,4 @@ export interface PlanningLoopPolicy {
      */
     allowReplanOnPartial: boolean;
 }
+

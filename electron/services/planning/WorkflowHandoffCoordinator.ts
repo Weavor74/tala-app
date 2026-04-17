@@ -43,6 +43,7 @@ import type {
     RecoveryOutcomeStatus,
     StructuredFailure,
 } from '../../../shared/runtime/failureRecoveryTypes';
+import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 import {
     FailureSuppressionService,
     buildFailureSignature,
@@ -64,6 +65,7 @@ export interface WorkflowInvocationContext {
     executionType: 'planning_handoff';
     /** Always 'planning' — execution originated from the planning subsystem. */
     executionOrigin: 'planning';
+    authorityEnvelope: TurnAuthorityEnvelope;
 }
 
 /**
@@ -254,7 +256,14 @@ export class WorkflowHandoffCoordinator {
     async dispatch(
         planId: string,
         availableCapabilities: ReadonlySet<string> = new Set(),
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<WorkflowDispatchResult> {
+        if (!authorityEnvelope) {
+            throw new Error('WORKFLOW_HANDOFF_AUTHORITY_ENVELOPE_REQUIRED');
+        }
+        if (!authorityEnvelope.workflowAuthority || authorityEnvelope.authorityLevel === 'none') {
+            throw new Error(`WORKFLOW_HANDOFF_AUTHORITY_DENIED:${authorityEnvelope.mode}`);
+        }
         const plan = this._planning.getPlan(planId);
         if (!plan) {
             throw new Error(`WorkflowHandoffCoordinator: plan not found: ${planId}`);
@@ -326,6 +335,7 @@ export class WorkflowHandoffCoordinator {
                     sharedInputs,
                     executionBoundaryId,
                     plan,
+                    authorityEnvelope,
                 );
                 invocationResults.push(result);
 
@@ -475,12 +485,14 @@ export class WorkflowHandoffCoordinator {
         sharedInputs: Record<string, unknown>,
         executionBoundaryId: string,
         plan: ExecutionPlan,
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<WorkflowInvocationResult> {
         const mergedInput: Record<string, unknown> = { ...sharedInputs, ...invocation.input };
         const ctx: WorkflowInvocationContext = {
             executionId: executionBoundaryId,
             executionType: 'planning_handoff',
             executionOrigin: 'planning',
+            authorityEnvelope,
         };
 
         const candidates = [invocation.workflowId, ...selectEquivalentTarget(invocation.workflowId, invocation.equivalentWorkflowIds)];
@@ -792,4 +804,6 @@ export class WorkflowHandoffCoordinator {
         });
     }
 }
+
+
 

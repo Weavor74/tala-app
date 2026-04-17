@@ -24,6 +24,9 @@ export type {
     PlanApprovalState,
     ExecutionPlanStatus,
     ExecutionPlan,
+    PlanningInvocationActor,
+    PlanningInvocationReason,
+    PlanningInvocationMetadata,
     ReplanPolicy,
     ReplanTrigger,
     ReplanRequest,
@@ -48,4 +51,3 @@ export type {
     PlanningMemoryReasonCode,
     StrategySelection,
 } from './PlanningMemoryTypes';
-

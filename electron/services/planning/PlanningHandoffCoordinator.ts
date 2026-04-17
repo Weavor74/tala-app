@@ -19,6 +19,7 @@ import type {
     StructuredFailure,
 } from '../../../shared/runtime/failureRecoveryTypes';
 import type { ToolInvocationContext } from '../tools/ToolExecutionCoordinator';
+import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 import {
     FailureSuppressionService,
     buildFailureSignature,
@@ -84,10 +85,16 @@ export class PlanningHandoffCoordinator {
         this._suppressionTracker = suppressionTracker ?? new FailureSuppressionService();
     }
 
-    async dispatch(planId: string): Promise<PlanDispatchResult> {
+    async dispatch(planId: string, authorityEnvelope: TurnAuthorityEnvelope): Promise<PlanDispatchResult> {
         const plan = this._planning.getPlan(planId);
         if (!plan) {
             throw new Error(`PlanningHandoffCoordinator: plan not found: ${planId}`);
+        }
+        if (!authorityEnvelope) {
+            throw new Error('PLANNING_HANDOFF_AUTHORITY_ENVELOPE_REQUIRED');
+        }
+        if (authorityEnvelope.mode === 'conversational' || authorityEnvelope.authorityLevel === 'none') {
+            throw new Error(`PLANNING_HANDOFF_AUTHORITY_DENIED:${authorityEnvelope.mode}`);
         }
         if (plan.handoff.type !== 'tool') {
             throw new Error(
@@ -124,6 +131,7 @@ export class PlanningHandoffCoordinator {
                     sharedInputs,
                     executionBoundaryId,
                     plan,
+                    authorityEnvelope,
                 );
                 stepResults.push(result);
                 degradedCompletion = degradedCompletion || result.degradedCompletion;
@@ -183,6 +191,7 @@ export class PlanningHandoffCoordinator {
         sharedInputs: Record<string, unknown>,
         executionBoundaryId: string,
         plan: ExecutionPlan,
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<StepDispatchResult> {
         const mergedInput: Record<string, unknown> = { ...sharedInputs, ...step.input };
         const candidateTools = [step.toolId, ...selectEquivalentTarget(step.toolId, step.equivalentToolIds)];
@@ -239,6 +248,7 @@ export class PlanningHandoffCoordinator {
                     candidateToolId,
                     mergedInput,
                     executionBoundaryId,
+                    authorityEnvelope,
                 );
                 if (single.success) {
                     const recoveryOutcome: RecoveryOutcomeStatus =
@@ -461,6 +471,7 @@ export class PlanningHandoffCoordinator {
         toolId: string,
         input: Record<string, unknown>,
         executionBoundaryId: string,
+        authorityEnvelope: TurnAuthorityEnvelope,
     ): Promise<{
         success: boolean;
         data?: unknown;
@@ -472,6 +483,7 @@ export class PlanningHandoffCoordinator {
             executionId: executionBoundaryId,
             executionType: 'planning_handoff',
             executionOrigin: 'planning',
+            authorityEnvelope,
         };
         try {
             const result = await this._toolExecutor.executeTool(toolId, input, undefined, ctx);
@@ -669,3 +681,4 @@ export class PlanningHandoffCoordinator {
         });
     }
 }
+

@@ -8,6 +8,7 @@ import type {
     HandoffExecutionRecord,
     HandoffDiagnosticsSnapshot,
     PlanningMemoryDiagnosticsSnapshot,
+    KernelTurnDiagnosticsView,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
@@ -63,6 +64,7 @@ export class RuntimeDiagnosticsAggregator {
     private _handoffLastUpdated?: string;
     private readonly _unsubscribeHandoff: (() => void);
     private _planningMemorySnapshot?: PlanningMemoryDiagnosticsSnapshot;
+    private _kernelTurnSnapshot?: KernelTurnDiagnosticsView;
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -86,6 +88,7 @@ export class RuntimeDiagnosticsAggregator {
         this._unsubscribeHandoff = TelemetryBus.getInstance().subscribe((evt) => {
             this._handleHandoffEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handlePlanningMemoryEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+            this._handleKernelTurnEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
         });
     }
 
@@ -151,6 +154,7 @@ export class RuntimeDiagnosticsAggregator {
             executionAuthority: this._buildAuthorityLaneDiagnostics(now),
             handoffDiagnostics: this._buildHandoffDiagnostics(now),
             planningMemory: this._buildPlanningMemoryDiagnostics(now),
+            kernelTurn: this._buildKernelTurnDiagnostics(now),
         };
     }
 
@@ -332,6 +336,14 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildKernelTurnDiagnostics(now: string): KernelTurnDiagnosticsView | undefined {
+        if (!this._kernelTurnSnapshot) return undefined;
+        return {
+            ...this._kernelTurnSnapshot,
+            updatedAt: this._kernelTurnSnapshot.updatedAt || now,
+        };
+    }
+
     private _handlePlanningMemoryEvent(event: string, payload?: Record<string, unknown>): void {
         if (!payload) return;
         const now = new Date().toISOString();
@@ -371,6 +383,71 @@ export class RuntimeDiagnosticsAggregator {
                     ? (payload.reasonCodes as PlanningMemoryDiagnosticsSnapshot['topReasonCodes'])
                     : existing.topReasonCodes,
                 lastUpdated: now,
+            };
+        }
+    }
+
+    private _handleKernelTurnEvent(event: string, payload?: Record<string, unknown>): void {
+        if (!payload) return;
+        const now = new Date().toISOString();
+        if (event === 'kernel.turn_arbitrated') {
+            this._kernelTurnSnapshot = {
+                turnId: String(payload.turnId ?? ''),
+                mode: payload.mode as KernelTurnDiagnosticsView['mode'],
+                arbitrationSource: payload.source as KernelTurnDiagnosticsView['arbitrationSource'],
+                confidence: Number(payload.confidence ?? 0),
+                reasonCodes: Array.isArray(payload.reasonCodes)
+                    ? payload.reasonCodes.map(String)
+                    : [],
+                planningInvoked: Boolean(payload.requiresPlan),
+                executionInvoked: Boolean(payload.requiresExecutionLoop),
+                authorityLevel: payload.authorityLevel as KernelTurnDiagnosticsView['authorityLevel'],
+                activeGoalId: payload.activeGoalId as string | undefined,
+                createdGoalId: payload.createdGoalId as string | undefined,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (!this._kernelTurnSnapshot) return;
+        if (event === 'kernel.turn_mode_conversational') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                planningInvoked: false,
+                executionInvoked: false,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'kernel.turn_mode_hybrid') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                executionInvoked: true,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'kernel.turn_mode_goal_execution') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                planningInvoked: true,
+                executionInvoked: true,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'kernel.goal_created') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                createdGoalId: payload.createdGoalId as string | undefined,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'kernel.goal_resumed') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                activeGoalId: payload.activeGoalId as string | undefined,
+                updatedAt: now,
             };
         }
     }

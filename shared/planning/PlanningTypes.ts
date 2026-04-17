@@ -31,6 +31,7 @@ import type {
     FallbackPosture,
     StrategySelection,
 } from './PlanningMemoryTypes';
+import type { TurnAuthorityLevel, TurnMode } from '../turnArbitrationTypes';
 
 // ─── Goal ─────────────────────────────────────────────────────────────────────
 
@@ -726,6 +727,11 @@ export interface ExecutionPlan {
     planningMemoryConfidence?: number;
     planningMemoryReasonCodes?: PlanningMemoryReasonCode[];
     /**
+     * Invocation authority metadata supplied by AgentKernel/planning loop.
+     * PlanningService uses this metadata for diagnostics and governance traces.
+     */
+    planningInvocation?: PlanningInvocationMetadata;
+    /**
      * If this plan supersedes a prior plan, the prior plan's id.
      * Absent for initial plans.
      */
@@ -784,6 +790,29 @@ export interface ReplanRequest {
     triggerDetails?: string;
 }
 
+export type PlanningInvocationActor =
+    | 'agent_kernel'
+    | 'planning_loop'
+    | 'operator'
+    | 'autonomy'
+    | 'system';
+
+export type PlanningInvocationReason =
+    | 'goal_execution_turn'
+    | 'hybrid_goal_commit'
+    | 'replan_after_execution_failure'
+    | 'operator_requested'
+    | 'autonomy_requested'
+    | 'legacy_unspecified';
+
+export interface PlanningInvocationMetadata {
+    invokedBy: PlanningInvocationActor;
+    invocationReason: PlanningInvocationReason;
+    turnId?: string;
+    turnMode?: TurnMode;
+    authorityLevel?: TurnAuthorityLevel;
+}
+
 /**
  * Suggested adaptation mode emitted by execution boundaries when local recovery is exhausted.
  */
@@ -825,4 +854,5 @@ export interface ExecutionFailureEscalation {
  * canonical replan request payload emitted by execution boundaries.
  */
 export type PlanAdaptationInput = ExecutionReplanRequest;
+
 

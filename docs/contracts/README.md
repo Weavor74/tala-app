@@ -27,5 +27,6 @@
 - [strategyRoutingTypes.ts](./strategyRoutingTypes.md)
 - [system-health-types.ts](./system-health-types.md)
 - [telemetry.ts](./telemetry.md)
+- [turnArbitrationTypes.ts](./turnArbitrationTypes.md)
 - [userProfile.ts](./userProfile.md)
 - [worldModelTypes.ts](./worldModelTypes.md)

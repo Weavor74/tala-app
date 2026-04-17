@@ -73,7 +73,17 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 **Returns**: `PlanningMemoryDiagnosticsSnapshot | undefined`
 
 ---
+#### `_buildKernelTurnDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `KernelTurnDiagnosticsView | undefined`
+
+---
 #### `_handlePlanningMemoryEvent`
+**Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
+#### `_handleKernelTurnEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`
 

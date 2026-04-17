@@ -6,6 +6,7 @@ import { GuardrailCircuitBreakerStore } from '../runtime/guardrails/GuardrailCir
 import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
 import { SystemModeManager } from '../SystemModeManager';
+import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 
 /**
  * Context carried through a single tool invocation.
@@ -30,6 +31,8 @@ export interface ToolInvocationContext {
     toolInvocationIdempotent?: boolean;
     /** Optional per-invocation timeout budget in milliseconds. */
     toolTimeoutMs?: number;
+    /** Immutable turn authority envelope issued by AgentKernel. */
+    authorityEnvelope?: TurnAuthorityEnvelope;
 }
 
 const SAFE_READ_ONLY_TOOLS = new Set<string>([
@@ -148,6 +151,21 @@ export class ToolExecutionCoordinator {
         allowedNames?: ReadonlySet<string>,
         ctx?: ToolInvocationContext,
     ): Promise<ToolInvocationResult> {
+        const authorityEnvelope = ctx?.authorityEnvelope;
+        const kernelManagedTurn = ctx?.executionType === 'chat_turn' || ctx?.executionType === 'planning_handoff';
+        if (kernelManagedTurn && !authorityEnvelope) {
+            throw new Error('TOOL_AUTHORITY_ENVELOPE_REQUIRED');
+        }
+        if (authorityEnvelope?.authorityLevel === 'none') {
+            throw new Error('TOOL_AUTHORITY_DENIED:none');
+        }
+        if (
+            authorityEnvelope?.authorityLevel === 'lightweight' &&
+            !SAFE_READ_ONLY_TOOLS.has(name)
+        ) {
+            throw new Error(`TOOL_AUTHORITY_DENIED:lightweight:${name}`);
+        }
+
         // ── 0. Runtime mode contract (deterministic capability gate) ─────────
         const capability = SystemModeManager.resolveToolCapability(name);
         SystemModeManager.assertCapability(
@@ -274,3 +292,5 @@ export class ToolExecutionCoordinator {
         }
     }
 }
+
+

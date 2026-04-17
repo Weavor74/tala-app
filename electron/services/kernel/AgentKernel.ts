@@ -13,11 +13,17 @@ import { ExecutionStateStore } from './ExecutionStateStore';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { policyGate, PolicyDeniedError } from '../policy/PolicyGate';
 import { PlanningLoopService } from '../planning/PlanningLoopService';
-import { PlanningLoopAuthorityRouter } from '../planning/PlanningLoopAuthorityRouter';
 import { ChatLoopExecutor } from '../planning/ChatLoopExecutor';
 import { ChatLoopObserver } from '../planning/ChatLoopObserver';
 import { PlanningService } from '../planning/PlanningService';
-import type { PlanningLoopRoutingDecision, AuthorityLaneDiagnosticsRecord } from '../../../shared/planning/executionAuthorityTypes';
+import type { PlanningLoopRoutingDecision } from '../../../shared/planning/executionAuthorityTypes';
+import type {
+    TurnArbitrationDecision,
+    TurnAuthorityEnvelope,
+} from '../../../shared/turnArbitrationTypes';
+import { TurnContextService } from './TurnContextBuilder';
+import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
+import { TurnArbitrationService } from './TurnArbitrator';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -63,12 +69,19 @@ export interface KernelExecutionMeta {
     /** The Tala runtime mode in effect when this execution was created. */
     mode: RuntimeExecutionMode;
     /**
-     * Authority routing decision made during classifyExecution().
-     * Populated after classify stage; absent before classify runs.
-     * Use this to inspect why a turn was routed through the planning loop
-     * or allowed on the trivial direct path.
+     * Legacy authority routing projection for diagnostics parity.
+     * Derived from turn arbitration mode.
      */
     routingDecision?: PlanningLoopRoutingDecision;
+    /**
+     * Immutable turn arbitration decision for this turn.
+     * Set once during classifyExecution and never mutated afterward.
+     */
+    turnArbitration?: TurnArbitrationDecision;
+    /**
+     * Execution authority envelope propagated to downstream coordinators.
+     */
+    authorityEnvelope?: TurnAuthorityEnvelope;
 }
 
 /**
@@ -85,6 +98,13 @@ export interface KernelRequest {
     userMessage: string;
     images?: string[];
     capabilitiesOverride?: any;
+    turnId?: string;
+    conversationId?: string;
+    attachments?: unknown[];
+    workspaceContext?: Record<string, unknown>;
+    activeGoalId?: string;
+    operatorMode?: 'chat' | 'goal' | 'auto';
+    requestedSurface?: string;
     /**
      * Caller-provided execution origin.
      * Defaults to `'ipc'` inside `intake()` when not supplied.
@@ -168,6 +188,9 @@ export class AgentKernel {
      * callback support.  Wired at construction time.
      */
     private readonly _chatLoopExecutor: ChatLoopExecutor;
+    private readonly _turnContextBuilder = new TurnContextService();
+    private readonly _turnIntentAnalyzer = new TurnIntentAnalysisService();
+    private readonly _turnArbitrator = new TurnArbitrationService();
 
     constructor(agent: AgentService) {
         this.agent = agent;
@@ -216,6 +239,19 @@ export class AgentKernel {
         });
     }
 
+    private _composeCapabilitiesOverride(
+        capabilitiesOverride: any,
+        authorityEnvelope: TurnAuthorityEnvelope,
+    ): any {
+        if (capabilitiesOverride && typeof capabilitiesOverride === 'object') {
+            return {
+                ...capabilitiesOverride,
+                turnAuthorityEnvelope: authorityEnvelope,
+            };
+        }
+        return { turnAuthorityEnvelope: authorityEnvelope };
+    }
+
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
     // Validates and normalizes the inbound request before anything else runs.
     // Future: coerce malformed payloads, strip disallowed fields, source ACL.
@@ -225,6 +261,13 @@ export class AgentKernel {
             userMessage: raw.userMessage ?? '',
             images: raw.images ?? [],
             capabilitiesOverride: raw.capabilitiesOverride,
+            turnId: raw.turnId,
+            conversationId: raw.conversationId,
+            attachments: raw.attachments ?? [],
+            workspaceContext: raw.workspaceContext,
+            activeGoalId: raw.activeGoalId,
+            operatorMode: raw.operatorMode ?? 'auto',
+            requestedSurface: raw.requestedSurface,
             origin: raw.origin,
             executionMode: raw.executionMode,
         };
@@ -287,9 +330,6 @@ export class AgentKernel {
     // stores the PlanningLoopRoutingDecision on meta for use in runDelegatedFlow.
 
     private classifyExecution(request: KernelRequest, meta: KernelExecutionMeta): void {
-        // ── Policy gate — top-level execution admission check ─────────────────
-        // Evaluate before any further execution state is advanced.  If denied,
-        // mark the state as blocked, emit execution.blocked, and stop cleanly.
         const decision = policyGate.evaluate({
             action: 'execution.admit',
             mode: meta.mode,
@@ -298,7 +338,7 @@ export class AgentKernel {
         });
 
         if (!decision.allowed) {
-            console.log(`[AgentKernel] ── POLICY BLOCKED   ── id=${meta.executionId} code=${decision.code ?? 'none'} reason=${decision.reason}`);
+            console.log(`[AgentKernel] POLICY BLOCKED id=${meta.executionId} code=${decision.code ?? 'none'} reason=${decision.reason}`);
             this._stateStore.blockExecution(meta.executionId, decision.reason);
             TelemetryBus.getInstance().emit({
                 executionId: meta.executionId,
@@ -316,77 +356,177 @@ export class AgentKernel {
             throw new PolicyDeniedError(decision);
         }
 
-        // ── Authority routing classification ──────────────────────────────────
-        // Classify the request as trivial or non-trivial.
-        // The routing decision is stored on meta so runDelegatedFlow can use it.
-        const routingDecision = PlanningLoopAuthorityRouter.classify(request.userMessage);
-        meta.routingDecision = routingDecision;
+        const context = this._turnContextBuilder.build(request, meta);
+        const bus = TelemetryBus.getInstance();
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'kernel.turn_received',
+            phase: 'classify',
+            payload: {
+                turnId: context.request.turnId,
+                conversationId: context.request.conversationId,
+                hasActiveGoal: context.hasActiveGoal,
+                operatorMode: context.request.operatorMode,
+            },
+        });
 
-        // Emit routing telemetry so the decision is always inspectable.
-        if (routingDecision.requiresLoop) {
-            TelemetryBus.getInstance().emit({
+        const intent = this._turnIntentAnalyzer.analyze(context);
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'kernel.turn_intent_analyzed',
+            phase: 'classify',
+            payload: {
+                turnId: context.request.turnId,
+                conversationalWeight: intent.conversationalWeight,
+                hybridWeight: intent.hybridWeight,
+                goalExecutionWeight: intent.goalExecutionWeight,
+                hasExecutionVerb: intent.hasExecutionVerb,
+                containsBuildOrFixRequest: intent.containsBuildOrFixRequest,
+                likelyNeedsOnlyExplanation: intent.likelyNeedsOnlyExplanation,
+                referencesActiveWork: intent.referencesActiveWork,
+                reasonCodes: intent.reasonCodes,
+            },
+        });
+
+        const { decision: turnDecision, envelope } = this._turnArbitrator.arbitrate(context, intent);
+        meta.turnArbitration = turnDecision;
+        meta.authorityEnvelope = envelope;
+        meta.routingDecision = turnDecision.mode === 'goal_execution'
+            ? {
+                complexity: 'non_trivial',
+                classification: 'planning_loop_required',
+                requiresLoop: true,
+                reasonCodes: ['execution_keyword_detected'],
+                summary: 'derived_from_turn_mode:goal_execution',
+            }
+            : {
+                complexity: 'trivial',
+                classification: 'trivial_direct_allowed',
+                requiresLoop: false,
+                reasonCodes: [],
+                summary: `derived_from_turn_mode:${turnDecision.mode}`,
+            };
+        if (meta.routingDecision.requiresLoop) {
+            bus.emit({
                 executionId: meta.executionId,
                 subsystem: 'planning',
                 event: 'planning.loop_routing_selected',
                 phase: 'classify',
                 payload: {
-                    classification: routingDecision.classification,
-                    reasonCodes: routingDecision.reasonCodes,
+                    classification: meta.routingDecision.classification,
+                    reasonCodes: turnDecision.reasonCodes,
                     loopInitialized: PlanningLoopService.isInitialized(),
                 },
             });
         } else {
-            TelemetryBus.getInstance().emit({
+            bus.emit({
                 executionId: meta.executionId,
                 subsystem: 'planning',
                 event: 'planning.loop_routing_direct_allowed',
                 phase: 'classify',
                 payload: {
-                    classification: routingDecision.classification,
-                    summary: routingDecision.summary,
+                    classification: meta.routingDecision.classification,
+                    summary: meta.routingDecision.summary,
                 },
             });
         }
 
-        // Emit authority lane resolved: planning_loop or trivial_direct.
-        // For degraded-direct (chat_continuity) the lane record is emitted later
-        // in runDelegatedFlow once the degraded decision is available.
-        if (!routingDecision.requiresLoop) {
-            const laneRecord: AuthorityLaneDiagnosticsRecord = {
-                authorityLane: 'trivial_direct',
-                routingClassification: routingDecision.classification,
-                reasonCodes: routingDecision.reasonCodes,
-                executionBoundaryId: meta.executionId,
-                policyOutcome: 'allowed',
-                resolvedAt: new Date().toISOString(),
-                summary: `trivial_direct: ${routingDecision.summary}`,
-            };
-            TelemetryBus.getInstance().emit({
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: 'kernel.turn_arbitrated',
+            phase: 'classify',
+            payload: {
+                turnId: turnDecision.turnId,
+                mode: turnDecision.mode,
+                source: turnDecision.source,
+                confidence: turnDecision.confidence,
+                reasonCodes: turnDecision.reasonCodes,
+                goalIntent: turnDecision.goalIntent,
+                shouldCreateGoal: turnDecision.shouldCreateGoal,
+                shouldResumeGoal: turnDecision.shouldResumeGoal,
+                activeGoalId: turnDecision.activeGoalId,
+                requiresPlan: turnDecision.requiresPlan,
+                requiresExecutionLoop: turnDecision.requiresExecutionLoop,
+                authorityLevel: turnDecision.authorityLevel,
+                memoryWriteMode: turnDecision.memoryWriteMode,
+            },
+        });
+
+        const modeEvent =
+            turnDecision.mode === 'goal_execution'
+                ? 'kernel.turn_mode_goal_execution'
+                : turnDecision.mode === 'hybrid'
+                    ? 'kernel.turn_mode_hybrid'
+                    : 'kernel.turn_mode_conversational';
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'kernel',
+            event: modeEvent,
+            phase: 'classify',
+            payload: {
+                turnId: turnDecision.turnId,
+                authorityLevel: turnDecision.authorityLevel,
+                activeGoalId: turnDecision.activeGoalId,
+            },
+        });
+
+        if (turnDecision.shouldCreateGoal) {
+            bus.emit({
                 executionId: meta.executionId,
-                subsystem: 'planning',
-                event: 'planning.authority_lane_resolved',
+                subsystem: 'kernel',
+                event: 'kernel.goal_created',
                 phase: 'classify',
-                payload: laneRecord as unknown as Record<string, unknown>,
+                payload: {
+                    turnId: turnDecision.turnId,
+                    createdGoalId: `pending:${meta.executionId}`,
+                },
+            });
+        } else if (turnDecision.shouldResumeGoal && turnDecision.activeGoalId) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'kernel',
+                event: 'kernel.goal_resumed',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    activeGoalId: turnDecision.activeGoalId,
+                },
             });
         }
 
-        // Advance state to 'planning' to mark that the kernel is evaluating the turn.
-        this._stateStore.advancePhase(meta.executionId, 'planning', 'classifying');
-        console.log(`[AgentKernel] ── CLASSIFY         ── id=${meta.executionId} class=${meta.executionClass} routing=${routingDecision.classification}`);
-    }
+        if (
+            context.request.operatorMode === 'chat' &&
+            (intent.containsBuildOrFixRequest || intent.hasExecutionVerb)
+        ) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'kernel',
+                event: 'kernel.goal_promotion_rejected',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    reasonCode: 'operator_chat_override',
+                },
+            });
+        } else if (turnDecision.mode === 'hybrid' && turnDecision.shouldResumeGoal) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'kernel',
+                event: 'kernel.goal_promotion_requested',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    activeGoalId: turnDecision.activeGoalId,
+                },
+            });
+        }
 
-    // ─── Stage 4: runDelegatedFlow ──────────────────────────────────────────
-    // Routes to PlanningLoopService for non-trivial work, or delegates directly
-    // to AgentService.chat() for trivially-allowed requests.
-    //
-    // Authority routing doctrine enforced here:
-    //   - planning_loop_required → PlanningLoopService.startLoop() attempted
-    //   - trivial_direct_allowed → AgentService.chat() directly
-    //
-    // Graceful fallback rules:
-    //   - plan_blocked (missing capabilities): surfaces bypass event + falls back to direct
-    //   - execution failure (chat throws): re-throws the original error
-    //   - loop unavailable: surfaces bypass event + falls back to direct
+        this._stateStore.advancePhase(meta.executionId, 'planning', 'turn_arbitration');
+        console.log(`[AgentKernel] CLASSIFY id=${meta.executionId} mode=${turnDecision.mode} source=${turnDecision.source}`);
+    }
 
     private async runDelegatedFlow(
         request: KernelRequest,
@@ -394,229 +534,90 @@ export class AgentKernel {
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void
     ): Promise<AgentTurnOutput> {
-        const routingDecision = meta.routingDecision;
-        const loopRequired = routingDecision?.requiresLoop === true;
-        const loopAvailable = PlanningLoopService.isInitialized();
-
-        // ── Non-trivial: route through PlanningLoopService ───────────────────
-        if (loopRequired && loopAvailable) {
-            console.log(`[AgentKernel] ── DELEGATE→LOOP    ── id=${meta.executionId} routing=${routingDecision?.classification}`);
-            this._stateStore.advancePhase(meta.executionId, 'executing', 'planning_loop');
-
-            // Configure the executor with the per-turn streaming callbacks.
-            this._chatLoopExecutor.setStreamCallbacks(onToken, onEvent, request.images);
-
-            const loop = PlanningLoopService.getInstance();
-            let loopRun: ReturnType<typeof loop.getRun> | undefined;
-
-            try {
-                const completedRun = await loop.startLoop({
-                    goal: request.userMessage,
-                    maxIterations: 1,
-                    contextSummary: {
-                        executionId: meta.executionId,
-                        origin: meta.origin,
-                        mode: meta.mode,
-                    },
-                });
-                loopRun = completedRun;
-            } catch (err) {
-                // PlanningLoopError (e.g., invalid goal) — classify as loop_unavailable,
-                // emit explicit degraded-mode decision, then fall through to direct path
-                // (chat_continuity doctrine: direct path preserves user-facing responsiveness).
-                const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
-                    'loop_unavailable',
-                    { detectedIn: 'AgentKernel.runDelegatedFlow' },
-                );
-                console.warn(`[AgentKernel] Loop start threw (${err instanceof Error ? err.message : String(err)}); degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
-                TelemetryBus.getInstance().emit({
-                    executionId: meta.executionId,
-                    subsystem: 'planning',
-                    event: 'planning.degraded_execution_decision',
-                    phase: 'delegate',
-                    payload: {
-                        reason: degradedDecision.reason,
-                        degradedModeCode: degradedDecision.degradedModeCode,
-                        doctrine: degradedDecision.doctrine,
-                        directAllowed: degradedDecision.directAllowed,
-                        classification: routingDecision?.classification,
-                        detectedIn: degradedDecision.detectedIn,
-                    },
-                });
-                // degraded_direct_allowed (chat_continuity): fall through to direct path
-            }
-
-            if (loopRun !== undefined) {
-                const completedLoop = loopRun;
-
-                // ── Execution error: re-throw to preserve kernel failure semantics ──
-                const lastError = this._chatLoopExecutor.getLastError();
-                if (lastError && (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted')) {
-                    // The chat pipeline threw — re-throw so execute() emits execution.failed
-                    throw lastError;
-                }
-
-                // ── Plan blocked: emit explicit degraded-mode decision, fall back to direct ──
-                if (completedLoop.phase === 'failed' && completedLoop.failureReason === 'plan_blocked') {
-                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
-                        'plan_blocked',
-                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
-                    );
-                    console.warn(`[AgentKernel] Loop plan blocked; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
-                    TelemetryBus.getInstance().emit({
-                        executionId: meta.executionId,
-                        subsystem: 'planning',
-                        event: 'planning.degraded_execution_decision',
-                        phase: 'delegate',
-                        payload: {
-                            reason: degradedDecision.reason,
-                            degradedModeCode: degradedDecision.degradedModeCode,
-                            doctrine: degradedDecision.doctrine,
-                            directAllowed: degradedDecision.directAllowed,
-                            classification: routingDecision?.classification,
-                            detectedIn: degradedDecision.detectedIn,
-                        },
-                    });
-                    // degraded_direct_allowed (chat_continuity): fall through to direct path
-                } else if (completedLoop.phase === 'completed') {
-                    // ── Success: return loop result ────────────────────────────────
-                    const executorResult = this._chatLoopExecutor.getLastExecutionResult();
-                    if (executorResult) {
-                        // Emit planning_loop authority lane — loop ran to completion.
-                        const laneRecord: AuthorityLaneDiagnosticsRecord = {
-                            authorityLane: 'planning_loop',
-                            routingClassification: routingDecision?.classification ?? 'planning_loop_required',
-                            reasonCodes: routingDecision?.reasonCodes ?? [],
-                            loopId: completedLoop.loopId,
-                            executionBoundaryId: meta.executionId,
-                            policyOutcome: 'allowed',
-                            resolvedAt: new Date().toISOString(),
-                            summary: `planning_loop: loop completed successfully (loopId=${completedLoop.loopId})`,
-                        };
-                        TelemetryBus.getInstance().emit({
-                            executionId: meta.executionId,
-                            subsystem: 'planning',
-                            event: 'planning.authority_lane_resolved',
-                            phase: 'delegate',
-                            payload: laneRecord as unknown as Record<string, unknown>,
-                        });
-                        return executorResult;
-                    }
-                    // Safety net: executor result unavailable — classify and fall through
-                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
-                        'loop_unavailable',
-                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
-                    );
-                    console.warn(`[AgentKernel] Loop completed but executor result unavailable; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
-                    TelemetryBus.getInstance().emit({
-                        executionId: meta.executionId,
-                        subsystem: 'planning',
-                        event: 'planning.degraded_execution_decision',
-                        phase: 'delegate',
-                        payload: {
-                            reason: degradedDecision.reason,
-                            degradedModeCode: degradedDecision.degradedModeCode,
-                            doctrine: degradedDecision.doctrine,
-                            directAllowed: degradedDecision.directAllowed,
-                            classification: routingDecision?.classification,
-                            detectedIn: degradedDecision.detectedIn,
-                        },
-                    });
-                } else if (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted') {
-                    // Other loop failure (not plan_blocked, not execution error):
-                    // classify as loop_unavailable for the degraded-mode contract.
-                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
-                        'loop_unavailable',
-                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
-                    );
-                    console.warn(`[AgentKernel] Loop ended with phase=${completedLoop.phase} reason=${completedLoop.failureReason ?? 'unknown'}; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
-                    TelemetryBus.getInstance().emit({
-                        executionId: meta.executionId,
-                        subsystem: 'planning',
-                        event: 'planning.degraded_execution_decision',
-                        phase: 'delegate',
-                        payload: {
-                            reason: degradedDecision.reason,
-                            degradedModeCode: degradedDecision.degradedModeCode,
-                            doctrine: degradedDecision.doctrine,
-                            directAllowed: degradedDecision.directAllowed,
-                            classification: routingDecision?.classification,
-                            detectedIn: degradedDecision.detectedIn,
-                            loopPhase: completedLoop.phase,
-                            loopFailureReason: completedLoop.failureReason,
-                        },
-                    });
-                    // degraded_direct_allowed (chat_continuity): fall through to direct path
-                }
-            }
+        const turnDecision = meta.turnArbitration;
+        const envelope = meta.authorityEnvelope;
+        if (!turnDecision || !envelope) {
+            throw new Error('AgentKernel.runDelegatedFlow: missing immutable turn arbitration decision');
         }
 
-        // ── Non-trivial: loop not available — explicit degraded-mode decision ──────
-        // This replaces the silent "loop not available → direct fallback" pattern.
-        // The decision is explicitly doctrined (chat_continuity) and surfaced via
-        // planning.degraded_execution_decision telemetry.
-        if (loopRequired && !loopAvailable) {
-            const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
-                'loop_unavailable',
-                { detectedIn: 'AgentKernel.runDelegatedFlow' },
-            );
-            console.warn(`[AgentKernel] ── DEGRADED DECISION ── id=${meta.executionId} routing=${routingDecision?.classification} reason=${degradedDecision.reason} code=${degradedDecision.degradedModeCode}`);
-            TelemetryBus.getInstance().emit({
-                executionId: meta.executionId,
-                subsystem: 'planning',
-                event: 'planning.degraded_execution_decision',
-                phase: 'delegate',
-                payload: {
-                    reason: degradedDecision.reason,
-                    degradedModeCode: degradedDecision.degradedModeCode,
-                    doctrine: degradedDecision.doctrine,
-                    directAllowed: degradedDecision.directAllowed,
-                    classification: routingDecision?.classification,
-                    detectedIn: degradedDecision.detectedIn,
+        if (turnDecision.mode === 'goal_execution') {
+            if (!PlanningLoopService.isInitialized()) {
+                throw new Error('PlanningLoopService unavailable for goal_execution turn');
+            }
+
+            this._stateStore.advancePhase(meta.executionId, 'executing', 'goal_execution_loop');
+            this._chatLoopExecutor.setStreamCallbacks(onToken, onEvent, request.images);
+            const loop = PlanningLoopService.getInstance();
+            const loopRun = await loop.startLoop({
+                goal: request.userMessage,
+                maxIterations: 1,
+                contextSummary: {
+                    executionId: meta.executionId,
+                    origin: meta.origin,
+                    mode: meta.mode,
+                    turnMode: turnDecision.mode,
+                },
+                planningInvocation: {
+                    invokedBy: 'agent_kernel',
+                    invocationReason: 'goal_execution_turn',
+                    turnId: turnDecision.turnId,
+                    turnMode: turnDecision.mode,
+                    authorityLevel: turnDecision.authorityLevel,
                 },
             });
-            // degraded_direct_allowed (chat_continuity): fall through to direct path below
-        }
 
-        // ── Trivial / degraded_direct_allowed fallback: direct execution ──────────
-        console.log(`[AgentKernel] ── DELEGATE→DIRECT  ── id=${meta.executionId} routing=${routingDecision?.classification ?? 'unclassified'}`);
-        this._stateStore.advancePhase(meta.executionId, 'executing', 'delegated_flow');
+            if (loopRun.phase !== 'completed') {
+                throw new Error(
+                    `goal_execution loop terminated with phase=${loopRun.phase} reason=${loopRun.failureReason ?? 'unknown'}`,
+                );
+            }
 
-        // Emit authority lane for degraded-direct path (chat_continuity doctrine).
-        // Only emitted here if loop was required but could not run (degraded).
-        // Trivial-direct lane was already emitted in classifyExecution().
-        if (loopRequired) {
-            const degradedLaneRecord: AuthorityLaneDiagnosticsRecord = {
-                authorityLane: 'chat_continuity_degraded_direct',
-                routingClassification: routingDecision?.classification ?? 'planning_loop_required',
-                reasonCodes: routingDecision?.reasonCodes ?? [],
-                executionBoundaryId: meta.executionId,
-                policyOutcome: 'allowed',
-                resolvedAt: new Date().toISOString(),
-                summary: 'chat_continuity_degraded_direct: loop unavailable or plan blocked; direct path allowed by doctrine',
-            };
+            const executorResult = this._chatLoopExecutor.getLastExecutionResult();
+            if (!executorResult) {
+                throw new Error('goal_execution loop completed without executor result');
+            }
             TelemetryBus.getInstance().emit({
                 executionId: meta.executionId,
                 subsystem: 'planning',
                 event: 'planning.authority_lane_resolved',
                 phase: 'delegate',
-                payload: degradedLaneRecord as unknown as Record<string, unknown>,
+                payload: {
+                    authorityLane: 'planning_loop',
+                    routingClassification: meta.routingDecision?.classification ?? 'planning_loop_required',
+                    reasonCodes: meta.turnArbitration?.reasonCodes ?? [],
+                    executionBoundaryId: meta.executionId,
+                    policyOutcome: 'allowed',
+                    resolvedAt: new Date().toISOString(),
+                    summary: 'planning_loop: selected by kernel turn arbitration',
+                },
             });
+            return executorResult;
         }
 
+        this._stateStore.advancePhase(meta.executionId, 'executing', turnDecision.mode);
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'planning',
+            event: 'planning.authority_lane_resolved',
+            phase: 'delegate',
+            payload: {
+                authorityLane: 'trivial_direct',
+                routingClassification: meta.routingDecision?.classification ?? 'trivial_direct_allowed',
+                reasonCodes: meta.turnArbitration?.reasonCodes ?? [],
+                executionBoundaryId: meta.executionId,
+                policyOutcome: 'allowed',
+                resolvedAt: new Date().toISOString(),
+                summary: `trivial_direct: kernel mode ${turnDecision.mode}`,
+            },
+        });
         return this.agent.chat(
             request.userMessage,
             onToken,
             onEvent,
             request.images,
-            request.capabilitiesOverride
+            this._composeCapabilitiesOverride(request.capabilitiesOverride, envelope),
         );
     }
-
-    // ─── Stage 5: finalizeExecution ─────────────────────────────────────────
-    // Records wall-clock duration, builds terminal ExecutionState, and assembles
-    // the KernelResult.
-    // Future: post-turn telemetry emission, outcome learning, audit records.
 
     private finalizeExecution(meta: KernelExecutionMeta, turnOutput: AgentTurnOutput, request: KernelRequest): KernelResult {
         meta.durationMs = Date.now() - meta.startedAt;
@@ -709,4 +710,7 @@ export class AgentKernel {
         }
     }
 }
+
+
+
 

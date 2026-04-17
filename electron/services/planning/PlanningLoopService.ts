@@ -66,6 +66,7 @@ import { PlanningService } from './PlanningService';
 import type { RegisterGoalInput } from './PlanningService';
 import type {
     ExecutionPlan,
+    PlanningInvocationMetadata,
     ReplanTrigger,
 } from '../../../shared/planning/PlanningTypes';
 import type {
@@ -294,6 +295,7 @@ export class PlanningLoopService {
             currentIteration: 0,
             maxIterations,
             contextSummary: input.contextSummary,
+            planningInvocation: input.planningInvocation,
             replanHistory: [],
         };
 
@@ -489,6 +491,12 @@ export class PlanningLoopService {
                         priorPlanId: plan.id,
                         trigger,
                         triggerDetails: observation.summary,
+                    }, {
+                        ...(run.planningInvocation ?? {
+                            invokedBy: 'planning_loop',
+                            invocationReason: 'legacy_unspecified',
+                        }),
+                        invocationReason: 'replan_after_execution_failure',
                     });
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : String(err);
@@ -538,7 +546,11 @@ export class PlanningLoopService {
         run.goalId = goal.id;
         run.normalizedIntent = goal.title;
         this._saveRun(run);
-        return this._planning.buildPlan(goal.id);
+        const invocation: PlanningInvocationMetadata = run.planningInvocation ?? {
+            invokedBy: 'planning_loop',
+            invocationReason: 'legacy_unspecified',
+        };
+        return this._planning.buildPlan(goal.id, invocation);
     }
 
     private _makeReplanDecision(
