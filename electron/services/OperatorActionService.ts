@@ -10,6 +10,7 @@ import { checkCanonicalDbHealth } from './db/initMemoryStore';
 import { loadSettings } from './SettingsManager';
 import { auditLogger } from './AuditLogger';
 import { PlanningLoopAuthorityRouter } from './planning/PlanningLoopAuthorityRouter';
+import type { AuthorityLaneDiagnosticsRecord } from '../../shared/planning/executionAuthorityTypes';
 import type { McpServerConfig } from '../../shared/settings';
 import type {
     OperatorActionAvailability,
@@ -150,6 +151,23 @@ export class OperatorActionService {
                     requestedBy,
                     source,
                 },
+            });
+            // Emit authority lane resolved for diagnostics surfaces.
+            const laneRecord: AuthorityLaneDiagnosticsRecord = {
+                authorityLane: 'operator_policy_gate',
+                routingClassification: 'doctrined_exception',
+                reasonCodes: authorityDecision.reasonCodes,
+                executionBoundaryId: actionId,
+                policyOutcome: 'allowed',
+                resolvedAt: new Date().toISOString(),
+                summary: `operator_policy_gate: action=${action} riskLevel=${riskLevel} requestedBy=${requestedBy}`,
+            };
+            TelemetryBus.getInstance().emit({
+                executionId: actionId,
+                subsystem: 'planning',
+                event: 'planning.authority_lane_resolved',
+                phase: 'classify',
+                payload: laneRecord as unknown as Record<string, unknown>,
             });
         }
 

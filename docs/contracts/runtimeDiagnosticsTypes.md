@@ -325,6 +325,26 @@ interface StorageDiagnosticsSnapshot {
     }
 ```
 
+### `AuthorityLaneDiagnosticsSnapshot`
+```typescript
+interface AuthorityLaneDiagnosticsSnapshot {
+    /** The most recent authority-lane diagnostics record. */
+    lastRecord: AuthorityLaneDiagnosticsRecord;
+    /** ISO timestamp of the last update. */
+    lastUpdated: string;
+    /**
+     * Running count of authority lane resolutions per lane name in the current
+     * session (reset on TelemetryBus reset).
+     */
+    laneResolutionCounts: Partial<Record<string, number>>;
+    /**
+     * Running count of degraded-direct executions in the current session.
+     * Incremented whenever `chat_continuity_degraded_direct` is resolved.
+     */
+    degradedDirectCount: number;
+}
+```
+
 ### `RuntimeDiagnosticsSnapshot`
 ```typescript
 interface RuntimeDiagnosticsSnapshot {

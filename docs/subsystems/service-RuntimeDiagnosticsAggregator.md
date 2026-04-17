@@ -6,6 +6,15 @@
 
 ### Methods
 
+#### `dispose`
+Stops the internal TelemetryBus subscription.
+ Call during teardown if the aggregator instance is being discarded.
+/
+
+**Arguments**: ``
+**Returns**: `void`
+
+---
 #### `recordCognitiveContext`
 **Arguments**: `context: TalaCognitiveContext`
 **Returns**: `void`
@@ -54,6 +63,11 @@
 #### `_buildCognitiveDiagnostics`
 **Arguments**: `now: string`
 **Returns**: `CognitiveDiagnosticsSnapshot | undefined`
+
+---
+#### `_buildAuthorityLaneDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `AuthorityLaneDiagnosticsSnapshot | undefined`
 
 ---
 #### `_computeDegradedSubsystems`

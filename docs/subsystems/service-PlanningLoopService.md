@@ -45,14 +45,38 @@ or is a documented `doctrined_exception` with an explicit named authority pipeli
 
 | Surface | Authority path | Classification | Telemetry event |
 |---------|---------------|----------------|-----------------|
-| Chat turn (non-trivial) | AgentKernel → PlanningLoopService | `planning_loop_required` | `planning.loop_routing_selected` |
-| Chat turn (trivial) | AgentKernel → AgentService.chat() directly | `trivial_direct_allowed` | `planning.loop_routing_direct_allowed` |
-| Autonomy goal execution | AutonomousRunOrchestrator → SafeChangePlanner → Governance → ExecutionOrchestrator | `doctrined_exception` | `planning.authority_routing_decision` |
-| Operator action | OperatorActionService → PolicyGate | `doctrined_exception` | `planning.authority_routing_decision` |
+| Chat turn (non-trivial) | AgentKernel → PlanningLoopService | `planning_loop_required` | `planning.loop_routing_selected` + `planning.authority_lane_resolved` (lane: `planning_loop`) |
+| Chat turn (trivial) | AgentKernel → AgentService.chat() directly | `trivial_direct_allowed` | `planning.loop_routing_direct_allowed` + `planning.authority_lane_resolved` (lane: `trivial_direct`) |
+| Chat turn (degraded) | AgentKernel → AgentService.chat() directly (doctrined fallback) | `planning_loop_required` | `planning.degraded_execution_decision` + `planning.authority_lane_resolved` (lane: `chat_continuity_degraded_direct`) |
+| Autonomy goal execution | AutonomousRunOrchestrator → SafeChangePlanner → Governance → ExecutionOrchestrator | `doctrined_exception` | `planning.authority_routing_decision` + `planning.authority_lane_resolved` (lane: `autonomy_safechangeplanner_pipeline`) |
+| Operator action | OperatorActionService → PolicyGate | `doctrined_exception` | `planning.authority_routing_decision` + `planning.authority_lane_resolved` (lane: `operator_policy_gate`) |
 
 Doctrined exceptions are named and justified:
 - `autonomy_safechangeplanner_pipeline` — Autonomy goals use SafeChangePlanner → Governance → ExecutionOrchestrator as their domain-specific authority path.
 - `operator_policy_gate` — Operator actions are synchronous control-plane mutations that go through PolicyGate + OperatorActionService.
+
+### Runtime diagnostics visibility
+
+Every `planning.authority_lane_resolved` event is observed by `RuntimeDiagnosticsAggregator`,
+which maintains a session-scoped authority-lane diagnostics snapshot accessible via
+`RuntimeDiagnosticsSnapshot.executionAuthority`.  This snapshot includes:
+
+| Field | Description |
+|-------|-------------|
+| `lastRecord` | The most recent `AuthorityLaneDiagnosticsRecord` — shows which lane was last used |
+| `lastUpdated` | ISO timestamp of the last update |
+| `laneResolutionCounts` | Per-lane resolution counts for the current session |
+| `degradedDirectCount` | Count of `chat_continuity_degraded_direct` resolutions |
+
+**Authority lanes** (all five labeled in `AuthorityLane` type):
+
+| Lane | Meaning |
+|------|---------|
+| `planning_loop` | Standard non-trivial chat through PlanningLoopService |
+| `trivial_direct` | Trivially-allowed direct path (greetings, acks) |
+| `chat_continuity_degraded_direct` | Degraded fallback — loop required but unavailable/blocked |
+| `autonomy_safechangeplanner_pipeline` | Autonomy goal execution doctrined exception |
+| `operator_policy_gate` | Operator control-plane action doctrined exception |
 
 ### Degraded execution contract
 
@@ -132,6 +156,9 @@ Operator action (doctrined_exception)
 | Silent non-trivial fallback to direct is forbidden | ✅ |
 | Autonomy cycle entry point emits authority routing telemetry | ✅ |
 | Operator action entry point emits authority routing telemetry | ✅ |
+| Named `AuthorityLane` emitted on every execution boundary | ✅ |
+| `RuntimeDiagnosticsSnapshot.executionAuthority` surfaces last authority lane | ✅ |
+| All five doctrined lanes labeled and diagnostics-visible | ✅ |
 
 ## Architecture Position
 
@@ -185,11 +212,14 @@ Caller (AgentKernel / Autonomy / Operator)
 | `electron/services/planning/PlanningLoopAuthorityRouter.ts` | Routing classifier (trivial vs non-trivial) + degraded-mode contract |
 | `electron/services/planning/ChatLoopExecutor.ts` | ILoopExecutor wrapping AgentService.chat() |
 | `electron/services/planning/ChatLoopObserver.ts` | ILoopObserver evaluating AgentTurnOutput |
+| `electron/services/RuntimeDiagnosticsAggregator.ts` | Subscribes to authority_lane_resolved; exposes executionAuthority in snapshot |
 | `shared/planning/planningLoopTypes.ts` | Shared type contracts for the loop |
-| `shared/planning/executionAuthorityTypes.ts` | Authority routing + degraded-mode shared types |
+| `shared/planning/executionAuthorityTypes.ts` | Authority routing + degraded-mode + AuthorityLane diagnostics types |
+| `shared/runtimeDiagnosticsTypes.ts` | AuthorityLaneDiagnosticsSnapshot + RuntimeDiagnosticsSnapshot.executionAuthority |
 | `tests/PlanningLoopService.test.ts` | 55 governance-grade tests (PLS01–PLS55) |
 | `tests/PlanningLoopAuthorityRouting.test.ts` | 45 authority coverage tests (PLAR-01–PLAR-45) |
 | `tests/DegradedModeAuthority.test.ts` | 30 degraded-mode contract tests (DMA-01–DMA-30) |
+| `tests/ExecutionAuthorityDiagnostics.test.ts` | 32 authority lane diagnostics tests (EADIAG-01–EADIAG-32) |
 
 ## Loop Phase State Machine
 
@@ -231,10 +261,12 @@ Authority routing events (emitted by AgentKernel during classify stage):
 | `planning.loop_routing_direct_allowed` | Trivial request → direct path allowed |
 | `planning.degraded_execution_decision` | Non-trivial → degraded mode (replaces silent bypass) |
 | `planning.authority_routing_decision` | Autonomy / operator doctrined-exception routing |
+| `planning.authority_lane_resolved` | Named authority lane resolved for this execution boundary |
 
 All loop events carry `loopId` and `correlationId` for cross-subsystem traceability.
 Routing events carry `classification`, `reasonCodes`, and `loopInitialized`.
 Degraded-mode events carry `reason`, `degradedModeCode`, `doctrine`, and `directAllowed`.
+Authority-lane events carry `AuthorityLaneDiagnosticsRecord` fields as payload.
 
 ## Design Invariants
 
@@ -345,6 +377,7 @@ if (!degradedDecision.directAllowed) {
 | `tests/PlanningLoopService.test.ts` | 55 (PLS01–PLS55) | Loop lifecycle, phases, telemetry, policy |
 | `tests/PlanningLoopAuthorityRouting.test.ts` | 45 (PLAR-01–PLAR-45) | Authority routing, bypass surfacing, governance |
 | `tests/DegradedModeAuthority.test.ts` | 30 (DMA-01–DMA-30) | Degraded-mode contract, autonomy/operator telemetry |
+| `tests/ExecutionAuthorityDiagnostics.test.ts` | 32 (EADIAG-01–EADIAG-32) | Authority lane types, AgentKernel lane emissions, RuntimeDiagnosticsAggregator snapshot visibility |
 
 | Range | Coverage |
 |-------|----------|
@@ -376,4 +409,14 @@ if (!degradedDecision.directAllowed) {
 | DMA-15–DMA-20 | AgentKernel emits planning.degraded_execution_decision |
 | DMA-21–DMA-25 | Autonomy routing: planning.authority_routing_decision |
 | DMA-26–DMA-30 | Operator action routing: planning.authority_routing_decision |
+
+| Range | Coverage |
+|-------|----------|
+| EADIAG-01–EADIAG-06 | AuthorityLaneDiagnosticsRecord type shape contracts |
+| EADIAG-07–EADIAG-12 | AuthorityLane values well-formed and distinct |
+| EADIAG-13–EADIAG-18 | AgentKernel emits trivial_direct lane record |
+| EADIAG-19–EADIAG-24 | AgentKernel emits planning_loop lane record |
+| EADIAG-25–EADIAG-27 | AgentKernel emits chat_continuity_degraded_direct when loop unavailable |
+| EADIAG-28–EADIAG-30 | RuntimeDiagnosticsAggregator snapshot.executionAuthority visibility |
+| EADIAG-31–EADIAG-32 | Lane resolution counts and degraded-direct counts accumulate |
 

@@ -4,6 +4,7 @@ import type {
     InferenceDiagnosticsState,
     McpInventoryDiagnostics,
     CognitiveDiagnosticsSnapshot,
+    AuthorityLaneDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
@@ -18,6 +19,8 @@ import type { RuntimeControlService } from './RuntimeControlService';
 import type { TalaCognitiveContext, MemoryContributionCategory } from '../../shared/cognitiveTurnTypes';
 import type { CompactionDiagnosticsSummary } from '../../shared/modelCapabilityTypes';
 import { SystemHealthService, type SystemHealthAdapterDeps } from './SystemHealthService';
+import { TelemetryBus } from './telemetry/TelemetryBus';
+import type { AuthorityLaneDiagnosticsRecord } from '../../shared/planning/executionAuthorityTypes';
 
 export interface McpDiagnosticsSource {
     getDiagnosticsInventory(): McpInventoryDiagnostics;
@@ -42,6 +45,10 @@ export interface CognitiveTurnMeta {
 export class RuntimeDiagnosticsAggregator {
     private lastCognitiveMeta?: CognitiveTurnMeta;
     private readonly systemHealthService: SystemHealthService;
+    private _lastAuthorityRecord?: AuthorityLaneDiagnosticsRecord;
+    private _authorityLaneResolutionCounts: Partial<Record<string, number>> = {};
+    private _authorityDegradedDirectCount = 0;
+    private readonly _unsubscribeAuthority: (() => void);
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -50,6 +57,26 @@ export class RuntimeDiagnosticsAggregator {
         private readonly healthDeps?: SystemHealthAdapterDeps,
     ) {
         this.systemHealthService = new SystemHealthService(healthDeps);
+        this._unsubscribeAuthority = TelemetryBus.getInstance().subscribe((evt) => {
+            if (evt.event === 'planning.authority_lane_resolved' && evt.payload) {
+                const record = evt.payload as unknown as AuthorityLaneDiagnosticsRecord;
+                this._lastAuthorityRecord = record;
+                const lane = record.authorityLane;
+                this._authorityLaneResolutionCounts[lane] =
+                    (this._authorityLaneResolutionCounts[lane] ?? 0) + 1;
+                if (lane === 'chat_continuity_degraded_direct') {
+                    this._authorityDegradedDirectCount++;
+                }
+            }
+        });
+    }
+
+    /**
+     * Stops the internal TelemetryBus subscription.
+     * Call during teardown if the aggregator instance is being discarded.
+     */
+    public dispose(): void {
+        this._unsubscribeAuthority();
     }
 
     public recordCognitiveContext(context: TalaCognitiveContext): void {
@@ -102,6 +129,7 @@ export class RuntimeDiagnosticsAggregator {
             recentMcpRestarts,
             systemHealth,
             cognitive: this._buildCognitiveDiagnostics(now),
+            executionAuthority: this._buildAuthorityLaneDiagnostics(now),
         };
     }
 
@@ -252,6 +280,16 @@ export class RuntimeDiagnosticsAggregator {
                 cognitiveAssemblyDurationMs: meta.cognitiveAssemblyDurationMs,
                 compactionDurationMs: meta.compactionDurationMs,
             },
+        };
+    }
+
+    private _buildAuthorityLaneDiagnostics(now: string): AuthorityLaneDiagnosticsSnapshot | undefined {
+        if (!this._lastAuthorityRecord) return undefined;
+        return {
+            lastRecord: this._lastAuthorityRecord,
+            lastUpdated: now,
+            laneResolutionCounts: { ...this._authorityLaneResolutionCounts },
+            degradedDirectCount: this._authorityDegradedDirectCount,
         };
     }
 

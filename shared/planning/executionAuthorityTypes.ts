@@ -216,6 +216,96 @@ export interface DegradedExecutionDecision {
     detectedAt: string;
 }
 
+// ─── Authority Lane Diagnostics ──────────────────────────────────────────────
+
+/**
+ * Named authority lanes for all execution surfaces in Tala.
+ *
+ * Each non-trivial execution request must resolve to exactly one named lane.
+ * Lanes are used to label runtime diagnostics so every task/turn shows which
+ * authority path governed it.
+ *
+ * planning_loop
+ *   Standard non-trivial chat: AgentKernel → PlanningLoopService.
+ *
+ * trivial_direct
+ *   Trivially-allowed direct path (greetings, acks) — no loop required.
+ *
+ * chat_continuity_degraded_direct
+ *   Degraded chat path: loop was required but unavailable or plan was blocked.
+ *   Direct execution permitted by the chat_continuity doctrine only.
+ *   Always surfaces a DegradedExecutionDecision.
+ *
+ * autonomy_safechangeplanner_pipeline
+ *   Autonomy goal execution: SafeChangePlanner → Governance → ExecutionOrchestrator.
+ *   Doctrined exception — PlanningLoopService is not applicable to this surface.
+ *
+ * operator_policy_gate
+ *   Operator control-plane actions: PolicyGate + OperatorActionService.
+ *   Doctrined exception — PlanningLoopService is not applicable to this surface.
+ */
+export type AuthorityLane =
+    | 'planning_loop'
+    | 'trivial_direct'
+    | 'chat_continuity_degraded_direct'
+    | 'autonomy_safechangeplanner_pipeline'
+    | 'operator_policy_gate';
+
+/**
+ * Policy outcome for an authority lane resolution.
+ *
+ * allowed         — execution was permitted to proceed.
+ * denied          — execution was blocked by policy or authority check.
+ * not_evaluated   — no policy check was applicable to this lane.
+ */
+export type AuthorityLanePolicyOutcome = 'allowed' | 'denied' | 'not_evaluated';
+
+/**
+ * Fully typed authority-lane diagnostics record.
+ *
+ * Produced once per execution turn and emitted as a `planning.authority_lane_resolved`
+ * telemetry event.  Consumed by RuntimeDiagnosticsAggregator so the most recent
+ * authority lane decision is always visible in the runtime diagnostics snapshot.
+ *
+ * Design invariants:
+ *   - One record per execution boundary (one per task/turn).
+ *   - `authorityLane` is always set; other fields are optional by surface.
+ *   - `degradedExecutionDecision` is only present on `chat_continuity_degraded_direct`.
+ *   - Records must never contain raw user content.
+ */
+export interface AuthorityLaneDiagnosticsRecord {
+    /** Named authority lane that governed this execution. */
+    authorityLane: AuthorityLane;
+    /** The ExecutionAuthorityClassification from the routing decision. */
+    routingClassification: ExecutionAuthorityClassification;
+    /**
+     * Machine-readable reason codes explaining the routing decision.
+     * Non-empty for non-trivial work; empty for trivial_direct.
+     */
+    reasonCodes: NonTrivialWorkReasonCode[];
+    /**
+     * The loop run ID if this execution was routed through PlanningLoopService.
+     * Only present on the `planning_loop` lane.
+     */
+    loopId?: string;
+    /**
+     * The execution boundary ID for this turn (matches ExecutionRequest.executionId
+     * or autonomy run ID or operator action ID).
+     */
+    executionBoundaryId: string;
+    /** Policy outcome for this execution boundary. */
+    policyOutcome: AuthorityLanePolicyOutcome;
+    /**
+     * Degraded execution decision, present only when the authority lane is
+     * `chat_continuity_degraded_direct`.
+     */
+    degradedExecutionDecision?: DegradedExecutionDecision;
+    /** ISO-8601 UTC timestamp when this record was produced. */
+    resolvedAt: string;
+    /** Human-readable one-line summary for logs and diagnostics UI. */
+    summary: string;
+}
+
 // ─── Authority Bypass Record ──────────────────────────────────────────────────
 
 /**
