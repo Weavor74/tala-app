@@ -109,14 +109,15 @@ describe('PS55–PS60 — Typed ExecutionHandoff discriminated union', () => {
         expect(plan.handoff.type).toBe('workflow');
     });
 
-    it('PS56 — workflow plan handoff has workflowId populated', () => {
+    it('PS56 — workflow plan handoff has workflowId in first invocation', () => {
         const svc = freshService(['workflow_engine']);
         const g = svc.registerGoal(basicGoalInput({ category: 'workflow' }));
         const plan = svc.buildPlan(g.id);
         expect(plan.handoff.type).toBe('workflow');
         if (plan.handoff.type === 'workflow') {
-            expect(plan.handoff.workflowId).toBeTruthy();
-            expect(typeof plan.handoff.workflowId).toBe('string');
+            expect(plan.handoff.invocations.length).toBeGreaterThan(0);
+            expect(plan.handoff.invocations[0].workflowId).toBeTruthy();
+            expect(typeof plan.handoff.invocations[0].workflowId).toBe('string');
         }
     });
 
@@ -127,13 +128,13 @@ describe('PS55–PS60 — Typed ExecutionHandoff discriminated union', () => {
         expect(plan.handoff.type).toBe('tool');
     });
 
-    it('PS58 — llm_assisted plan produces handoff type agent', () => {
+    it('PS58 — llm_assisted plan produces handoff type agent with executionMode in invocation', () => {
         const svc = freshService(['inference', 'rag']);
         const g = svc.registerGoal(basicGoalInput({ category: 'conversation' }));
         const plan = svc.buildPlan(g.id);
         expect(plan.handoff.type).toBe('agent');
         if (plan.handoff.type === 'agent') {
-            expect(['llm_assisted', 'hybrid']).toContain(plan.handoff.executionMode);
+            expect(['llm_assisted', 'hybrid']).toContain(plan.handoff.invocation.executionMode);
         }
     });
 

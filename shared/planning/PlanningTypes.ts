@@ -366,6 +366,133 @@ export interface PlannedToolInvocation {
 }
 
 /**
+ * A single, ordered, typed workflow invocation within a workflow-orchestrated plan.
+ *
+ * Each invocation maps to one call to the workflow execution service.
+ * Invocations are executed in array order; each may declare a failurePolicy to
+ * control what happens when the workflow fails.
+ */
+export interface PlannedWorkflowInvocation {
+    /** Stable workflow identifier (e.g. 'workflow.memory_repair', 'workflow.doc_heal'). */
+    workflowId: string;
+    /** Workflow-specific input arguments for this invocation. */
+    input: Record<string, unknown>;
+    /** Human-readable description of this invocation's purpose. */
+    description?: string;
+    /**
+     * What to do if this invocation fails.
+     * stop     — abort remaining invocations
+     * retry    — retry this invocation (governed by workflow executor retry logic)
+     * skip     — skip this invocation and continue with remaining ones
+     * escalate — escalate to operator
+     */
+    failurePolicy: 'stop' | 'retry' | 'skip' | 'escalate';
+    /** Expected output keys this invocation will produce (informational). */
+    expectedOutputs?: string[];
+    /**
+     * Capabilities required for this invocation (e.g. 'workflow_engine').
+     * Used by preflight validation before dispatch.
+     */
+    requiredCapabilities?: string[];
+    /**
+     * Machine-readable timeout constraint in milliseconds.
+     * Absent = no explicit timeout constraint declared by the plan.
+     */
+    timeoutMs?: number;
+}
+
+/**
+ * Machine-readable failure reason codes for workflow handoff dispatches.
+ *
+ * All codes are stable across releases so operators and tooling can act on them
+ * deterministically without string matching.
+ *
+ * preflight:capability_missing      — a required capability is unavailable
+ * preflight:invalid_workflow_id     — workflowId is empty or malformed
+ * preflight:workflow_not_registered — workflowId is not registered in the registry
+ * dispatch:executor_unavailable     — workflow executor returned unavailable
+ * dispatch:workflow_not_found       — executor could not find the workflow at dispatch time
+ * execution:workflow_failed         — workflow reached a failed terminal state
+ * execution:timeout                 — workflow exceeded declared timeoutMs
+ * policy:escalation_required        — failurePolicy 'escalate' reached operator gate
+ */
+export type WorkflowHandoffFailureCode =
+    | 'preflight:capability_missing'
+    | 'preflight:invalid_workflow_id'
+    | 'preflight:workflow_not_registered'
+    | 'dispatch:executor_unavailable'
+    | 'dispatch:workflow_not_found'
+    | 'execution:workflow_failed'
+    | 'execution:timeout'
+    | 'policy:escalation_required';
+
+/**
+ * A single, typed agent invocation within an agent-assisted plan.
+ *
+ * Maps to one agent kernel session opened by AgentKernel or equivalent authority.
+ * Declares the execution mode, inputs, and failure contract up front.
+ */
+export interface PlannedAgentInvocation {
+    /**
+     * Stable agent identifier for this invocation session.
+     * Examples: 'agent.llm_synthesis', 'agent.hybrid_decompose'.
+     */
+    agentId: string;
+    /**
+     * Execution mode for the agent kernel session.
+     * Only 'llm_assisted' and 'hybrid' are valid for agent handoffs.
+     */
+    executionMode: GoalExecutionStyle;
+    /** Inputs for the agent kernel session. */
+    input: Record<string, unknown>;
+    /** Human-readable description of this invocation's purpose. */
+    description?: string;
+    /**
+     * What to do if this invocation fails.
+     * stop     — mark the plan failed
+     * retry    — retry the agent session (governed by coordinator retry logic)
+     * skip     — skip (not recommended for agent invocations; prefer 'escalate')
+     * escalate — escalate to operator
+     */
+    failurePolicy: 'stop' | 'retry' | 'skip' | 'escalate';
+    /** Expected output keys this invocation will produce (informational). */
+    expectedOutputs?: string[];
+    /**
+     * Capabilities required for this invocation (e.g. 'inference').
+     * Used by preflight validation before dispatch.
+     */
+    requiredCapabilities?: string[];
+    /**
+     * Machine-readable timeout constraint in milliseconds.
+     * Absent = no explicit timeout constraint declared by the plan.
+     */
+    timeoutMs?: number;
+}
+
+/**
+ * Machine-readable failure reason codes for agent handoff dispatches.
+ *
+ * All codes are stable across releases so operators and tooling can act on them
+ * deterministically without string matching.
+ *
+ * preflight:capability_missing      — a required capability (e.g. 'inference') is unavailable
+ * preflight:invalid_agent_id        — agentId is empty or malformed
+ * preflight:invalid_execution_mode  — executionMode is not valid for agent handoffs
+ * dispatch:executor_unavailable     — agent executor returned unavailable
+ * execution:agent_failed            — agent invocation reached a failed terminal state
+ * execution:timeout                 — agent invocation exceeded declared timeoutMs
+ * policy:escalation_required        — failurePolicy 'escalate' reached operator gate
+ */
+export type AgentHandoffFailureCode =
+    | 'preflight:capability_missing'
+    | 'preflight:invalid_agent_id'
+    | 'preflight:invalid_execution_mode'
+    | 'dispatch:executor_unavailable'
+    | 'execution:agent_failed'
+    | 'execution:timeout'
+    | 'policy:escalation_required';
+
+/**
  * Typed execution handoff contract.
  *
  * Discriminated union describing exactly which downstream execution authority
@@ -381,10 +508,14 @@ export type ExecutionHandoff =
           /** Delegate to the workflow execution service. */
           type: 'workflow';
           contractVersion: 1;
-          /** Identifies the registered workflow to dispatch. */
-          workflowId: string;
-          /** Inputs for the workflow run. */
-          inputs: Record<string, unknown>;
+          /**
+           * Ordered list of workflow invocations to execute.
+           * Each invocation maps to one workflow execution service dispatch.
+           * Invocations are executed in array order.
+           */
+          invocations: PlannedWorkflowInvocation[];
+          /** Inputs shared across all invocations (merged with per-invocation input). */
+          sharedInputs: Record<string, unknown>;
       }
     | {
           /** Delegate to the tool execution coordinator. */
@@ -403,10 +534,13 @@ export type ExecutionHandoff =
           /** Delegate to the agent kernel for model-assisted execution. */
           type: 'agent';
           contractVersion: 1;
-          /** Execution style (llm_assisted or hybrid). */
-          executionMode: GoalExecutionStyle;
-          /** Inputs for the agent kernel session. */
-          inputs: Record<string, unknown>;
+          /**
+           * Typed agent invocation contract.
+           * Declares execution mode, inputs, and failure contract up front.
+           */
+          invocation: PlannedAgentInvocation;
+          /** Shared inputs for the agent invocation (merged with per-invocation input). */
+          sharedInputs: Record<string, unknown>;
       }
     | {
           /** Requires human operator action. */

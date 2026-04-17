@@ -34,6 +34,8 @@ import type {
     StageFailurePolicy,
     ExecutionHandoff,
     PlannedToolInvocation,
+    PlannedWorkflowInvocation,
+    PlannedAgentInvocation,
     PlanApprovalState,
     ExecutionPlanStatus,
     GoalExecutionStyle,
@@ -395,13 +397,23 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
     }
 
     switch (analysis.executionStyle as GoalExecutionStyle) {
-        case 'workflow':
+        case 'workflow': {
+            const invocations: PlannedWorkflowInvocation[] = [
+                {
+                    workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
+                    input: { goalId: analysis.goalId },
+                    description: 'Dispatch primary workflow for goal',
+                    failurePolicy: 'stop',
+                    requiredCapabilities: ['workflow_engine'],
+                },
+            ];
             return {
                 type: 'workflow',
                 contractVersion: 1,
-                workflowId: `${WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
-                inputs: {},
+                invocations,
+                sharedInputs: { goalId: analysis.goalId },
             };
+        }
         case 'tool_orchestrated': {
             const steps: PlannedToolInvocation[] = [
                 {
@@ -419,21 +431,40 @@ function buildHandoff(analysis: GoalAnalysis): ExecutionHandoff {
             };
         }
         case 'llm_assisted':
-        case 'hybrid':
+        case 'hybrid': {
+            const agentInvocation: PlannedAgentInvocation = {
+                agentId: `agent.${analysis.executionStyle}.${analysis.goalId}`,
+                executionMode: analysis.executionStyle,
+                input: { goalId: analysis.goalId },
+                description: 'Invoke agent kernel for model-assisted execution',
+                failurePolicy: 'stop',
+                requiredCapabilities: ['inference'],
+            };
             return {
                 type: 'agent',
                 contractVersion: 1,
-                executionMode: analysis.executionStyle,
-                inputs: {},
+                invocation: agentInvocation,
+                sharedInputs: { goalId: analysis.goalId },
             };
+        }
         case 'deterministic':
-        default:
+        default: {
+            const invocations: PlannedWorkflowInvocation[] = [
+                {
+                    workflowId: `${DETERMINISTIC_WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
+                    input: { goalId: analysis.goalId },
+                    description: 'Dispatch deterministic workflow for goal',
+                    failurePolicy: 'stop',
+                    requiredCapabilities: ['workflow_engine'],
+                },
+            ];
             return {
                 type: 'workflow',
                 contractVersion: 1,
-                workflowId: `${DETERMINISTIC_WORKFLOW_ID_PREFIX}.${analysis.goalId}`,
-                inputs: {},
+                invocations,
+                sharedInputs: { goalId: analysis.goalId },
             };
+        }
     }
 }
 
