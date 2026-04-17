@@ -399,22 +399,29 @@ export class AgentKernel {
                 });
                 loopRun = completedRun;
             } catch (err) {
-                // PlanningLoopError (e.g., invalid goal) - surface and fall through
-                console.warn(`[AgentKernel] Loop start threw (${err instanceof Error ? err.message : String(err)}); falling through to direct path (id=${meta.executionId})`);
+                // PlanningLoopError (e.g., invalid goal) — classify as loop_unavailable,
+                // emit explicit degraded-mode decision, then fall through to direct path
+                // (chat_continuity doctrine: direct path preserves user-facing responsiveness).
+                const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                    'loop_unavailable',
+                    { detectedIn: 'AgentKernel.runDelegatedFlow' },
+                );
+                console.warn(`[AgentKernel] Loop start threw (${err instanceof Error ? err.message : String(err)}); degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
                 TelemetryBus.getInstance().emit({
                     executionId: meta.executionId,
                     subsystem: 'planning',
-                    event: 'planning.loop_routing_bypass_surfaced',
+                    event: 'planning.degraded_execution_decision',
                     phase: 'delegate',
                     payload: {
+                        reason: degradedDecision.reason,
+                        degradedModeCode: degradedDecision.degradedModeCode,
+                        doctrine: degradedDecision.doctrine,
+                        directAllowed: degradedDecision.directAllowed,
                         classification: routingDecision?.classification,
-                        reasonCodes: routingDecision?.reasonCodes,
-                        disposition: 'surfaced',
-                        detectedIn: 'AgentKernel.runDelegatedFlow',
-                        reason: 'loop_start_error',
+                        detectedIn: degradedDecision.detectedIn,
                     },
                 });
-                // Fall through to direct path
+                // degraded_direct_allowed (chat_continuity): fall through to direct path
             }
 
             if (loopRun !== undefined) {
@@ -427,71 +434,111 @@ export class AgentKernel {
                     throw lastError;
                 }
 
-                // ── Plan blocked: surface bypass and fall back to direct ────────
+                // ── Plan blocked: emit explicit degraded-mode decision, fall back to direct ──
                 if (completedLoop.phase === 'failed' && completedLoop.failureReason === 'plan_blocked') {
-                    console.warn(`[AgentKernel] Loop plan blocked; falling back to direct path (id=${meta.executionId})`);
+                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                        'plan_blocked',
+                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
+                    );
+                    console.warn(`[AgentKernel] Loop plan blocked; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
                     TelemetryBus.getInstance().emit({
                         executionId: meta.executionId,
                         subsystem: 'planning',
-                        event: 'planning.loop_routing_bypass_surfaced',
+                        event: 'planning.degraded_execution_decision',
                         phase: 'delegate',
                         payload: {
+                            reason: degradedDecision.reason,
+                            degradedModeCode: degradedDecision.degradedModeCode,
+                            doctrine: degradedDecision.doctrine,
+                            directAllowed: degradedDecision.directAllowed,
                             classification: routingDecision?.classification,
-                            reasonCodes: routingDecision?.reasonCodes,
-                            disposition: 'surfaced',
-                            detectedIn: 'AgentKernel.runDelegatedFlow',
-                            reason: 'plan_blocked',
+                            detectedIn: degradedDecision.detectedIn,
                         },
                     });
-                    // Fall through to direct path
+                    // degraded_direct_allowed (chat_continuity): fall through to direct path
                 } else if (completedLoop.phase === 'completed') {
                     // ── Success: return loop result ────────────────────────────────
                     const executorResult = this._chatLoopExecutor.getLastExecutionResult();
                     if (executorResult) {
                         return executorResult;
                     }
-                    // Safety net: executor result unavailable — fall through to direct
-                    console.warn(`[AgentKernel] Loop completed but executor result unavailable; falling back to direct path (id=${meta.executionId})`);
-                } else if (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted') {
-                    // Other loop failure (not plan_blocked, not execution error) - fall through
-                    console.warn(`[AgentKernel] Loop ended with phase=${completedLoop.phase} reason=${completedLoop.failureReason ?? 'unknown'}; falling back to direct path (id=${meta.executionId})`);
+                    // Safety net: executor result unavailable — classify and fall through
+                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                        'loop_unavailable',
+                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
+                    );
+                    console.warn(`[AgentKernel] Loop completed but executor result unavailable; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
                     TelemetryBus.getInstance().emit({
                         executionId: meta.executionId,
                         subsystem: 'planning',
-                        event: 'planning.loop_routing_bypass_surfaced',
+                        event: 'planning.degraded_execution_decision',
                         phase: 'delegate',
                         payload: {
+                            reason: degradedDecision.reason,
+                            degradedModeCode: degradedDecision.degradedModeCode,
+                            doctrine: degradedDecision.doctrine,
+                            directAllowed: degradedDecision.directAllowed,
                             classification: routingDecision?.classification,
-                            reasonCodes: routingDecision?.reasonCodes,
-                            disposition: 'surfaced',
-                            detectedIn: 'AgentKernel.runDelegatedFlow',
-                            reason: completedLoop.failureReason ?? 'loop_failure',
+                            detectedIn: degradedDecision.detectedIn,
                         },
                     });
-                    // Fall through to direct path
+                } else if (completedLoop.phase === 'failed' || completedLoop.phase === 'aborted') {
+                    // Other loop failure (not plan_blocked, not execution error):
+                    // classify as loop_unavailable for the degraded-mode contract.
+                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                        'loop_unavailable',
+                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
+                    );
+                    console.warn(`[AgentKernel] Loop ended with phase=${completedLoop.phase} reason=${completedLoop.failureReason ?? 'unknown'}; degraded=${degradedDecision.degradedModeCode} (id=${meta.executionId})`);
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.degraded_execution_decision',
+                        phase: 'delegate',
+                        payload: {
+                            reason: degradedDecision.reason,
+                            degradedModeCode: degradedDecision.degradedModeCode,
+                            doctrine: degradedDecision.doctrine,
+                            directAllowed: degradedDecision.directAllowed,
+                            classification: routingDecision?.classification,
+                            detectedIn: degradedDecision.detectedIn,
+                            loopPhase: completedLoop.phase,
+                            loopFailureReason: completedLoop.failureReason,
+                        },
+                    });
+                    // degraded_direct_allowed (chat_continuity): fall through to direct path
                 }
             }
         }
 
-        // ── Non-trivial bypass surface (loop not available) ────────────────────
+        // ── Non-trivial: loop not available — explicit degraded-mode decision ──────
+        // This replaces the silent "loop not available → direct fallback" pattern.
+        // The decision is explicitly doctrined (chat_continuity) and surfaced via
+        // planning.degraded_execution_decision telemetry.
         if (loopRequired && !loopAvailable) {
-            console.warn(`[AgentKernel] ── BYPASS SURFACED  ── id=${meta.executionId} routing=${routingDecision?.classification} loop_available=false`);
+            const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                'loop_unavailable',
+                { detectedIn: 'AgentKernel.runDelegatedFlow' },
+            );
+            console.warn(`[AgentKernel] ── DEGRADED DECISION ── id=${meta.executionId} routing=${routingDecision?.classification} reason=${degradedDecision.reason} code=${degradedDecision.degradedModeCode}`);
             TelemetryBus.getInstance().emit({
                 executionId: meta.executionId,
                 subsystem: 'planning',
-                event: 'planning.loop_routing_bypass_surfaced',
+                event: 'planning.degraded_execution_decision',
                 phase: 'delegate',
                 payload: {
+                    reason: degradedDecision.reason,
+                    degradedModeCode: degradedDecision.degradedModeCode,
+                    doctrine: degradedDecision.doctrine,
+                    directAllowed: degradedDecision.directAllowed,
                     classification: routingDecision?.classification,
-                    reasonCodes: routingDecision?.reasonCodes,
-                    disposition: 'surfaced',
-                    detectedIn: 'AgentKernel.runDelegatedFlow',
-                    reason: 'loop_not_initialized',
+                    detectedIn: degradedDecision.detectedIn,
                 },
             });
+            // degraded_direct_allowed (chat_continuity): fall through to direct path below
         }
 
-        // ── Trivial / fallback: direct execution ──────────────────────────────
+        // ── Trivial / degraded_direct_allowed fallback: direct execution ──────────
         console.log(`[AgentKernel] ── DELEGATE→DIRECT  ── id=${meta.executionId} routing=${routingDecision?.classification ?? 'unclassified'}`);
         this._stateStore.advancePhase(meta.executionId, 'executing', 'delegated_flow');
 

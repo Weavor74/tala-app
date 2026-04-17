@@ -9,6 +9,7 @@ import { TelemetryBus } from './telemetry/TelemetryBus';
 import { checkCanonicalDbHealth } from './db/initMemoryStore';
 import { loadSettings } from './SettingsManager';
 import { auditLogger } from './AuditLogger';
+import { PlanningLoopAuthorityRouter } from './planning/PlanningLoopAuthorityRouter';
 import type { McpServerConfig } from '../../shared/settings';
 import type {
     OperatorActionAvailability,
@@ -117,6 +118,39 @@ export class OperatorActionService {
         });
         if (!decision.allowed) {
             return deny(`policy_denied:${decision.reason}`, ['policy_gate']);
+        }
+
+        // ── Authority routing telemetry ───────────────────────────────────────
+        // Operator actions are synchronous control-plane mutations that go through
+        // PolicyGate + OperatorActionService as their authority path.
+        // PlanningLoopService is not applicable to this surface (doctrined_exception).
+        // Routing telemetry is emitted here so operator actions are part of the
+        // platform-wide authority audit trail.
+        {
+            const catalogEntry = ACTION_CATALOG.find(e => e.action === action);
+            const riskLevel = catalogEntry?.riskLevel ?? 'medium';
+            // Operator actions are non-trivial control-plane work; classify descriptively.
+            const authorityDecision = PlanningLoopAuthorityRouter.classify(
+                `operator action: ${action}`,
+            );
+            TelemetryBus.getInstance().emit({
+                executionId: actionId,
+                subsystem: 'planning',
+                event: 'planning.authority_routing_decision',
+                phase: 'classify',
+                payload: {
+                    surface: 'operator_action',
+                    classification: 'doctrined_exception',
+                    doctrine: 'operator_policy_gate: operator actions route through PolicyGate + ' +
+                        'OperatorActionService. PlanningLoopService is not applicable.',
+                    routerDecision: authorityDecision.classification,
+                    routerRequiresLoop: authorityDecision.requiresLoop,
+                    action,
+                    riskLevel,
+                    requestedBy,
+                    source,
+                },
+            });
         }
 
         if (this.selfImprovementLocked && this._isSelfImprovementAction(action)) {
