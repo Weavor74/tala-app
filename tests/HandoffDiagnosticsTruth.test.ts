@@ -622,6 +622,7 @@ describe('Task A — Diagnostics truth parity', () => {
             'completedAt',
             'durationMs',
             'planId',
+            'goalId',
         ];
         for (const field of required14) {
             expect(field in record, `field '${field}' must be present`).toBe(true);
