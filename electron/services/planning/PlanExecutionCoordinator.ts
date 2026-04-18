@@ -10,8 +10,16 @@ import type {
     PlannedToolInvocation,
     StageFailurePolicy,
 } from '../../../shared/planning/PlanningTypes';
+import type {
+    ArtifactEvidence,
+    StateMutationEvidence,
+    StepCompletionEvidence,
+    StepCompletionStatus,
+} from '../../../shared/execution/CompletionEvidenceTypes';
+import type { SuccessCriterionResult } from '../../../shared/planning/SuccessCriteriaTypes';
 import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 import type { ToolInvocationContext, ToolInvocationResult } from '../tools/ToolExecutionCoordinator';
+import { OutcomeEvaluationService } from '../execution/OutcomeEvaluationService';
 
 export interface PlanToolExecutionAuthority {
     executeTool(
@@ -62,6 +70,7 @@ type StageExecutionDispatch = {
 
 export class PlanExecutionCoordinator {
     private readonly _bus = TelemetryBus.getInstance();
+    private readonly _outcomeEvaluator = new OutcomeEvaluationService();
 
     constructor(
         private readonly _toolAuthority?: PlanToolExecutionAuthority,
@@ -90,7 +99,7 @@ export class PlanExecutionCoordinator {
             }
         }
 
-        const result = this.buildFinalResult(plan, stageResults);
+        const result = this.buildFinalResult(plan, stageResults, context);
         const durationMs = Date.now() - startedAtMs;
         if (result.status === 'failed') {
             this._emit('planning.plan_execution_failed', {
@@ -98,6 +107,12 @@ export class PlanExecutionCoordinator {
                 executionBoundaryId: plan.executionBoundaryId,
                 status: result.status,
                 reasonCodes: result.reasonCodes,
+                executionQuality: result.outcomeEvaluation?.executionQuality,
+                criteriaSatisfiedCount: result.outcomeEvaluation?.criteriaSatisfiedCount,
+                criteriaUnmetCount: result.outcomeEvaluation?.criteriaUnmetCount,
+                unmetRequiredCriteria: result.outcomeEvaluation?.unmetRequiredCriteria,
+                requiredCriteriaSatisfied: result.outcomeEvaluation?.requiredCriteriaSatisfied,
+                operatorInputRequired: result.outcomeEvaluation?.operatorInputRequired,
                 durationMs,
             }, context);
         } else {
@@ -106,6 +121,12 @@ export class PlanExecutionCoordinator {
                 executionBoundaryId: plan.executionBoundaryId,
                 status: result.status,
                 reasonCodes: result.reasonCodes,
+                executionQuality: result.outcomeEvaluation?.executionQuality,
+                criteriaSatisfiedCount: result.outcomeEvaluation?.criteriaSatisfiedCount,
+                criteriaUnmetCount: result.outcomeEvaluation?.criteriaUnmetCount,
+                unmetRequiredCriteria: result.outcomeEvaluation?.unmetRequiredCriteria,
+                requiredCriteriaSatisfied: result.outcomeEvaluation?.requiredCriteriaSatisfied,
+                operatorInputRequired: result.outcomeEvaluation?.operatorInputRequired,
                 durationMs,
             }, context);
         }
@@ -198,7 +219,12 @@ export class PlanExecutionCoordinator {
             failureReason: dispatch.failureReason,
             reasonCodes: [...dispatch.reasonCodes, ...expected.reasonCodes],
             attempts: dispatch.attempts,
+            completionEvidence: this._buildCompletionEvidence(stage, handoff.type, status, dispatch.outputs, dispatch.failureReason, expected.satisfied),
+            criterionResults: this._buildStageCriterionResults(stage, expected.satisfied, status, dispatch.failureReason),
         };
+        if (result.completionEvidence) {
+            result.completionEvidence.criterionResults = result.criterionResults ?? [];
+        }
 
         const eventName = status === 'failed' || status === 'blocked'
             ? 'planning.plan_stage_failed'
@@ -211,6 +237,12 @@ export class PlanExecutionCoordinator {
             status,
             reasonCodes: result.reasonCodes,
             attempts: result.attempts,
+            expectedOutputsSatisfied: result.expectedOutputsSatisfied,
+            failureReason: result.failureReason,
+            completionStatus: result.completionEvidence?.status,
+            operatorInputRequired: result.completionEvidence?.operatorInputRequired,
+            validationPerformed: result.completionEvidence?.validationPerformed,
+            validationPassed: result.completionEvidence?.validationPassed,
         }, context);
 
         return result;
@@ -459,6 +491,7 @@ export class PlanExecutionCoordinator {
     private buildFinalResult(
         plan: ExecutionPlan,
         stageResults: PlanStageExecutionResult[],
+        context: PlanExecutionContext,
     ): PlanExecutionResult {
         const completedStageCount = stageResults.filter((result) => result.status === 'completed').length;
         const failedStageCount = stageResults.filter((result) => result.status === 'failed' || result.status === 'blocked').length;
@@ -484,17 +517,226 @@ export class PlanExecutionCoordinator {
             }
         }
 
+        const outcomeEvaluation = this._outcomeEvaluator.evaluatePlanOutcome({
+            executionId: context.executionId,
+            planId: plan.id,
+            criteria: plan.successCriteriaContract,
+            stageResults,
+            responseProduced: false,
+            responseQuality: 'not_produced',
+        });
+
+        const adjustedStatus: PlanExecutionResult['status'] = outcomeEvaluation.executionQuality === 'successful'
+            ? status
+            : outcomeEvaluation.executionQuality === 'partial'
+                ? 'partial'
+                : 'failed';
+
         return {
             planId: plan.id,
             executionBoundaryId: plan.executionBoundaryId,
-            status,
+            status: adjustedStatus,
             stageResults,
             completedStageCount,
             failedStageCount,
             degradedStageCount,
             finalOutputs: Object.keys(finalOutputs).length > 0 ? finalOutputs : undefined,
-            reasonCodes: stageResults.flatMap((stage) => stage.reasonCodes),
+            reasonCodes: [
+                ...stageResults.flatMap((stage) => stage.reasonCodes),
+                ...outcomeEvaluation.reasonCodes,
+            ],
+            outcomeEvaluation,
         };
+    }
+
+    private _buildStageCriterionResults(
+        stage: PlanStage,
+        expectedOutputsSatisfied: boolean,
+        status: PlanStageExecutionStatus,
+        failureReason?: string,
+    ): SuccessCriterionResult[] {
+        const criteria = stage.outcomeCriteria ?? [];
+        return criteria.map((criterion) => {
+            const satisfied = status === 'completed' && expectedOutputsSatisfied;
+            return {
+                criterionId: criterion.id,
+                type: criterion.type,
+                required: criterion.required,
+                satisfied,
+                validationPerformed: stage.type === 'verify' || criterion.validationMethod !== 'custom_rule',
+                validationMethod: criterion.validationMethod,
+                reasonCodes: satisfied
+                    ? ['required_criteria_satisfied']
+                    : ['required_criteria_unmet', ...(failureReason ? [failureReason] : [])],
+                evidenceRefs: criterion.targetRef ? [criterion.targetRef] : undefined,
+                detail: criterion.label,
+            };
+        });
+    }
+
+    private _buildCompletionEvidence(
+        stage: PlanStage,
+        handoffType: 'tool' | 'workflow' | 'agent' | 'none',
+        status: PlanStageExecutionStatus,
+        outputs?: Record<string, unknown>,
+        failureReason?: string,
+        expectedOutputsSatisfied?: boolean,
+    ): StepCompletionEvidence {
+        const completionStatus: StepCompletionStatus =
+            status === 'completed' ? 'succeeded'
+                : status === 'degraded' ? 'partial'
+                    : status === 'blocked' ? 'blocked'
+                        : stage.failurePolicy === 'escalate' ? 'requires_operator_input'
+                            : 'failed';
+        const artifacts = this._extractArtifactEvidence(stage.id, outputs);
+        const stateMutations = this._extractStateMutationEvidence(outputs, failureReason);
+        const reasonCodes = new Set<string>([
+            status,
+            ...(failureReason ? [failureReason] : []),
+            expectedOutputsSatisfied === false ? 'required_criteria_unmet' : 'required_criteria_satisfied',
+        ]);
+        if (completionStatus === 'requires_operator_input') {
+            reasonCodes.add('operator_input_required');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'memory' && mutation.persisted)) {
+            reasonCodes.add('memory_update_verified');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'memory' && mutation.attempted && !mutation.persisted)) {
+            reasonCodes.add('memory_update_missing');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'notebook' && mutation.persisted)) {
+            reasonCodes.add('notebook_update_verified');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'notebook' && mutation.attempted && !mutation.persisted)) {
+            reasonCodes.add('notebook_update_missing');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'search_results' && mutation.persisted)) {
+            reasonCodes.add('search_results_persisted');
+        }
+        if (stateMutations.some((mutation) => mutation.mutationType === 'search_results' && mutation.attempted && !mutation.persisted)) {
+            reasonCodes.add('search_results_not_persisted');
+        }
+        return {
+            stepId: stage.id,
+            status: completionStatus,
+            validationPerformed: stage.type === 'verify' || (stage.expectedOutputs?.length ?? 0) > 0,
+            validationPassed: status === 'completed' && expectedOutputsSatisfied !== false,
+            operatorInputRequired: completionStatus === 'requires_operator_input',
+            artifacts,
+            stateMutations,
+            criterionResults: [],
+            reasonCodes: Array.from(reasonCodes),
+        };
+    }
+
+    private _extractArtifactEvidence(
+        stageId: string,
+        outputs?: Record<string, unknown>,
+    ): ArtifactEvidence[] {
+        if (!outputs) return [];
+        const evidence: ArtifactEvidence[] = [];
+        const filePath = typeof outputs.filePath === 'string' ? outputs.filePath : undefined;
+        const artifactPath = typeof outputs.artifactPath === 'string' ? outputs.artifactPath : undefined;
+        const summary = typeof outputs.summary === 'string' ? outputs.summary : undefined;
+        const searchResultsPath = typeof outputs.searchResultsPath === 'string' ? outputs.searchResultsPath : undefined;
+        const notebookPath = typeof outputs.notebookPath === 'string' ? outputs.notebookPath : undefined;
+
+        if (filePath || artifactPath) {
+            evidence.push({
+                id: `${stageId}:artifact:file`,
+                artifactType: 'file',
+                reference: artifactPath ?? filePath!,
+                persisted: true,
+                validated: outputs.artifactValidated === true,
+                reasonCodes: [outputs.artifactValidated === true ? 'artifact_generated_verified' : 'artifact_generated_verified'],
+            });
+        }
+        if (summary) {
+            evidence.push({
+                id: `${stageId}:artifact:summary`,
+                artifactType: 'summary',
+                reference: 'summary',
+                persisted: true,
+                validated: outputs.summaryValidated === true,
+                reasonCodes: ['artifact_generated_verified'],
+            });
+        }
+        if (searchResultsPath) {
+            evidence.push({
+                id: `${stageId}:artifact:search`,
+                artifactType: 'search_results',
+                reference: searchResultsPath,
+                persisted: true,
+                validated: outputs.searchResultsValidated === true,
+                reasonCodes: ['search_results_persisted'],
+            });
+        }
+        if (notebookPath) {
+            evidence.push({
+                id: `${stageId}:artifact:notebook`,
+                artifactType: 'notebook_entry',
+                reference: notebookPath,
+                persisted: true,
+                validated: outputs.notebookVerified === true,
+                reasonCodes: ['notebook_update_verified'],
+            });
+        }
+        return evidence;
+    }
+
+    private _extractStateMutationEvidence(
+        outputs?: Record<string, unknown>,
+        failureReason?: string,
+    ): StateMutationEvidence[] {
+        if (!outputs && !failureReason) return [];
+        const evidence: StateMutationEvidence[] = [];
+        const memoryAttempted = outputs?.memoryWriteAttempted === true || outputs?.memoryWriteRejected === true || outputs?.memoryUpdated === true;
+        if (memoryAttempted) {
+            evidence.push({
+                mutationType: 'memory',
+                targetRef: typeof outputs?.memoryTarget === 'string' ? outputs.memoryTarget : undefined,
+                attempted: true,
+                persisted: outputs?.memoryUpdated === true || outputs?.memoryWritePersisted === true,
+                rejected: outputs?.memoryWriteRejected === true,
+                reasonCodes: outputs?.memoryUpdated === true || outputs?.memoryWritePersisted === true
+                    ? ['memory_update_verified']
+                    : ['memory_update_missing'],
+            });
+        }
+        const notebookAttempted = outputs?.notebookUpdated === true || typeof outputs?.notebookPath === 'string';
+        if (notebookAttempted) {
+            evidence.push({
+                mutationType: 'notebook',
+                targetRef: typeof outputs?.notebookPath === 'string' ? outputs.notebookPath : undefined,
+                attempted: true,
+                persisted: outputs?.notebookUpdated === true,
+                reasonCodes: outputs?.notebookUpdated === true
+                    ? ['notebook_update_verified']
+                    : ['notebook_update_missing'],
+            });
+        }
+        const searchAttempted = outputs?.searchResultsPersisted === true || typeof outputs?.searchResultsPath === 'string';
+        if (searchAttempted) {
+            evidence.push({
+                mutationType: 'search_results',
+                targetRef: typeof outputs?.searchResultsPath === 'string' ? outputs.searchResultsPath : undefined,
+                attempted: true,
+                persisted: outputs?.searchResultsPersisted === true,
+                reasonCodes: outputs?.searchResultsPersisted === true
+                    ? ['search_results_persisted']
+                    : ['search_results_not_persisted'],
+            });
+        }
+        if (failureReason?.includes('policy') || failureReason?.includes('blocked')) {
+            evidence.push({
+                mutationType: 'other',
+                attempted: false,
+                persisted: false,
+                rejected: true,
+                reasonCodes: ['execution_blocked_policy'],
+            });
+        }
+        return evidence;
     }
 
     private _resolveStageHandoff(stage: PlanStage, plan: ExecutionPlan): PlanStageHandoff | undefined {

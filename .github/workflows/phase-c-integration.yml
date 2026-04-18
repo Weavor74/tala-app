@@ -76,6 +76,27 @@ jobs:
       - name: Run Phase C deterministic integration suites
         run: npm run test:phase-c
 
+  release-phase1-execution-gate:
+    name: Phase 1 Execution Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Phase 1 execution release gate
+        run: npm run release:phase1-check
+
   release-package-smoke-and-artifacts:
     name: Packaging Smoke + Artifact Validation
     runs-on: windows-latest

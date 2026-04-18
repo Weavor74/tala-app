@@ -512,6 +512,17 @@ export class RuntimeDiagnosticsAggregator {
                 },
                 lastFailureReason: undefined,
                 expectedOutputsSatisfied: true,
+                responseProduced: false,
+                responseQuality: 'not_produced',
+                executionQuality: 'failed',
+                criteriaSatisfiedCount: 0,
+                criteriaUnmetCount: 0,
+                unmetRequiredCriteria: [],
+                requiredCriteriaSatisfied: false,
+                operatorInputRequired: false,
+                taskAttempted: true,
+                userVisibleCompletion: false,
+                outcomeVerified: false,
                 recentStages: [],
                 lastUpdated: now,
             };
@@ -555,6 +566,9 @@ export class RuntimeDiagnosticsAggregator {
                 this._planExecutionDiagnostics.lastFailureReason =
                     stageRecord.failureReason ?? stageRecord.reasonCodes[0];
             }
+            if (payload.operatorInputRequired === true) {
+                this._planExecutionDiagnostics.operatorInputRequired = true;
+            }
             this._planExecutionDiagnostics.lastUpdated = now;
             return;
         }
@@ -568,10 +582,69 @@ export class RuntimeDiagnosticsAggregator {
                 payload.executionBoundaryId as string | undefined;
             if (Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0) {
                 const reasonCodes = payload.reasonCodes.map(String);
+                this._planExecutionDiagnostics.outcomeReasonCodes = reasonCodes;
                 const firstFailure = reasonCodes.find((code) => code.startsWith('failure') || code.includes('failed'));
                 if (firstFailure) {
                     this._planExecutionDiagnostics.lastFailureReason = firstFailure;
                 }
+            }
+            this._planExecutionDiagnostics.executionQuality =
+                payload.executionQuality as PlanExecutionDiagnosticsSnapshot['executionQuality'] | undefined;
+            this._planExecutionDiagnostics.criteriaSatisfiedCount =
+                typeof payload.criteriaSatisfiedCount === 'number'
+                    ? payload.criteriaSatisfiedCount
+                    : this._planExecutionDiagnostics.criteriaSatisfiedCount;
+            this._planExecutionDiagnostics.criteriaUnmetCount =
+                typeof payload.criteriaUnmetCount === 'number'
+                    ? payload.criteriaUnmetCount
+                    : this._planExecutionDiagnostics.criteriaUnmetCount;
+            this._planExecutionDiagnostics.unmetRequiredCriteria = Array.isArray(payload.unmetRequiredCriteria)
+                ? payload.unmetRequiredCriteria.map(String)
+                : this._planExecutionDiagnostics.unmetRequiredCriteria;
+            if (typeof payload.requiredCriteriaSatisfied === 'boolean') {
+                this._planExecutionDiagnostics.requiredCriteriaSatisfied = payload.requiredCriteriaSatisfied;
+            }
+            if (typeof payload.operatorInputRequired === 'boolean') {
+                this._planExecutionDiagnostics.operatorInputRequired = payload.operatorInputRequired;
+            }
+            this._planExecutionDiagnostics.taskAttempted = true;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.turn_completion_assessed') {
+            this._planExecutionDiagnostics.responseProduced = payload.responseProduced === true;
+            this._planExecutionDiagnostics.responseQuality =
+                payload.responseQuality as PlanExecutionDiagnosticsSnapshot['responseQuality'] | undefined;
+            this._planExecutionDiagnostics.executionQuality =
+                payload.executionQuality as PlanExecutionDiagnosticsSnapshot['executionQuality'] | undefined;
+            this._planExecutionDiagnostics.criteriaSatisfiedCount =
+                typeof payload.criteriaSatisfiedCount === 'number'
+                    ? payload.criteriaSatisfiedCount
+                    : this._planExecutionDiagnostics.criteriaSatisfiedCount;
+            this._planExecutionDiagnostics.criteriaUnmetCount =
+                typeof payload.criteriaUnmetCount === 'number'
+                    ? payload.criteriaUnmetCount
+                    : this._planExecutionDiagnostics.criteriaUnmetCount;
+            this._planExecutionDiagnostics.unmetRequiredCriteria = Array.isArray(payload.unmetRequiredCriteria)
+                ? payload.unmetRequiredCriteria.map(String)
+                : this._planExecutionDiagnostics.unmetRequiredCriteria;
+            if (typeof payload.taskAttempted === 'boolean') {
+                this._planExecutionDiagnostics.taskAttempted = payload.taskAttempted;
+            }
+            if (typeof payload.userVisibleCompletion === 'boolean') {
+                this._planExecutionDiagnostics.userVisibleCompletion = payload.userVisibleCompletion;
+            } else {
+                this._planExecutionDiagnostics.userVisibleCompletion = payload.responseProduced === true;
+            }
+            if (typeof payload.outcomeVerified === 'boolean') {
+                this._planExecutionDiagnostics.outcomeVerified = payload.outcomeVerified;
+            }
+            if (Array.isArray(payload.reasonCodes)) {
+                this._planExecutionDiagnostics.outcomeReasonCodes = payload.reasonCodes.map(String);
+            }
+            if (typeof payload.requiredCriteriaSatisfied === 'boolean') {
+                this._planExecutionDiagnostics.requiredCriteriaSatisfied = payload.requiredCriteriaSatisfied;
             }
             this._planExecutionDiagnostics.lastUpdated = now;
         }

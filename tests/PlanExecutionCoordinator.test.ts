@@ -34,6 +34,13 @@ function makeBasePlan(overrides: Partial<ExecutionPlan> = {}): ExecutionPlan {
             steps: [],
             sharedInputs: {},
         },
+        successCriteriaContract: [{
+            id: 'plan.tool.validated',
+            type: 'tool_result_validated',
+            label: 'tool results validated',
+            required: true,
+            validationMethod: 'tool_output_validation',
+        }],
         reasonCodes: ['test'],
         ...overrides,
     };
@@ -182,7 +189,7 @@ describe('PlanExecutionCoordinator', () => {
         expect(result.stageResults[0].attempts).toBe(2);
         expect(result.stageResults[0].status).toBe('completed');
         expect(result.stageResults[1].status).toBe('degraded');
-        expect(result.status).toBe('degraded');
+        expect(result.status).toBe('partial');
     });
 
     it('marks expected outputs unsatisfied when keys are missing', async () => {

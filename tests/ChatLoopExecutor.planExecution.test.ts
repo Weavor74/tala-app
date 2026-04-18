@@ -52,6 +52,13 @@ function makePlan(goalId: string, stages: PlanStage[]): ExecutionPlan {
             steps: [],
             sharedInputs: {},
         },
+        successCriteriaContract: [{
+            id: 'plan.tool.validated',
+            type: 'tool_result_validated',
+            label: 'tool results validated',
+            required: true,
+            validationMethod: 'tool_output_validation',
+        }],
         reasonCodes: ['test'],
     };
 }

@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:phase-c": "vitest run tests/StartupResilienceIntegration.test.ts tests/ToolExecutionRuntimeLoop.integration.test.ts tests/MemoryAuthorityStrictEnforcement.test.ts tests/InferenceProviderFallback.integration.test.ts tests/autonomy/AutonomyCycleIntegration.test.ts",
+    "release:phase1-check": "npx tsx tests/governance/Phase1ReleaseGate.ts",
     "test:phase-c:watch": "vitest tests/StartupResilienceIntegration.test.ts tests/ToolExecutionRuntimeLoop.integration.test.ts tests/MemoryAuthorityStrictEnforcement.test.ts tests/InferenceProviderFallback.integration.test.ts tests/autonomy/AutonomyCycleIntegration.test.ts",
     "preview": "vite preview",
     "postinstall": "patch-package",

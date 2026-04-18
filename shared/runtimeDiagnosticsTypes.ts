@@ -647,6 +647,18 @@ export interface PlanExecutionDiagnosticsSnapshot {
     };
     lastFailureReason?: string;
     expectedOutputsSatisfied: boolean;
+    responseProduced?: boolean;
+    responseQuality?: 'produced' | 'suppressed' | 'empty' | 'not_produced';
+    executionQuality?: 'successful' | 'partial' | 'blocked' | 'failed' | 'not_applicable';
+    criteriaSatisfiedCount?: number;
+    criteriaUnmetCount?: number;
+    unmetRequiredCriteria?: string[];
+    requiredCriteriaSatisfied?: boolean;
+    operatorInputRequired?: boolean;
+    outcomeReasonCodes?: string[];
+    taskAttempted?: boolean;
+    userVisibleCompletion?: boolean;
+    outcomeVerified?: boolean;
     recentStages: PlanStageExecutionDiagnosticsRecord[];
     lastUpdated: string;
 }

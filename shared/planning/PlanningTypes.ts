@@ -32,6 +32,15 @@ import type {
     StrategySelection,
 } from './PlanningMemoryTypes';
 import type { MemoryWriteMode, TurnAuthorityLevel, TurnMode } from '../turnArbitrationTypes';
+import type {
+    StepCompletionEvidence,
+    TurnCompletionAssessment,
+    OutcomeEvaluationResult,
+} from '../execution/CompletionEvidenceTypes';
+import type {
+    SuccessCriterion,
+    SuccessCriterionResult,
+} from './SuccessCriteriaTypes';
 
 // ─── Goal ─────────────────────────────────────────────────────────────────────
 
@@ -365,6 +374,11 @@ export interface PlanStage {
      * Legacy plans may omit this field.
      */
     handoff?: PlanStageHandoff;
+    /**
+     * Machine-testable success criteria for this stage.
+     * Complements legacy string successCriteria without replacing it.
+     */
+    outcomeCriteria?: SuccessCriterion[];
 }
 
 // ─── Approval Context ─────────────────────────────────────────────────────────
@@ -749,6 +763,10 @@ export interface ExecutionPlan {
      */
     expectedOutcome?: string;
     /**
+     * Machine-testable success criteria for full-plan execution outcome.
+     */
+    successCriteriaContract?: SuccessCriterion[];
+    /**
      * Plan-level failure policy for stage-runner behavior.
      */
     failurePolicy?: PlanFailurePolicy;
@@ -828,6 +846,8 @@ export interface PlanStageExecutionResult {
     failureReason?: string;
     reasonCodes: string[];
     attempts: number;
+    completionEvidence?: StepCompletionEvidence;
+    criterionResults?: SuccessCriterionResult[];
 }
 
 /**
@@ -843,6 +863,8 @@ export interface PlanExecutionResult {
     degradedStageCount: number;
     finalOutputs?: Record<string, unknown>;
     reasonCodes: string[];
+    outcomeEvaluation?: OutcomeEvaluationResult;
+    turnCompletionAssessment?: TurnCompletionAssessment;
 }
 
 // ─── Replan Request ───────────────────────────────────────────────────────────

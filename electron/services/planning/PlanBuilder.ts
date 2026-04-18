@@ -41,6 +41,7 @@ import type {
     ExecutionPlanStatus,
     GoalExecutionStyle,
 } from '../../../shared/planning/PlanningTypes';
+import type { SuccessCriterion } from '../../../shared/planning/SuccessCriteriaTypes';
 import type {
     StrategySelection,
 } from '../../../shared/planning/PlanningMemoryTypes';
@@ -130,6 +131,172 @@ function attachStageHandoffs(stages: PlanStage[], handoff: ExecutionHandoff): Pl
     }
 
     return withNone;
+}
+
+function buildStageOutcomeCriteria(stage: PlanStage): SuccessCriterion[] {
+    const criteria: SuccessCriterion[] = [];
+    if (stage.expectedOutputs && stage.expectedOutputs.length > 0) {
+        for (const key of stage.expectedOutputs) {
+            criteria.push({
+                id: `stage.${stage.id}.output.${key}`,
+                type: stage.type === 'workflow' ? 'workflow_completed' : 'tool_result_validated',
+                label: `Stage ${stage.title} produced output key ${key}`,
+                targetRef: key,
+                required: stage.completionPolicy !== 'best_effort',
+                validationMethod: 'presence_of_output_key',
+                metadata: { stageId: stage.id, outputKey: key },
+            });
+        }
+    }
+    if (stage.type === 'write' || stage.type === 'finalize') {
+        criteria.push({
+            id: `stage.${stage.id}.artifact`,
+            type: 'artifact_generated',
+            label: `Stage ${stage.title} generated a persisted artifact`,
+            required: true,
+            validationMethod: 'artifact_persisted',
+            metadata: { stageId: stage.id },
+        });
+    }
+    if (stage.type === 'verify') {
+        criteria.push({
+            id: `stage.${stage.id}.validation`,
+            type: 'tool_result_validated',
+            label: `Stage ${stage.title} completed validation`,
+            required: true,
+            validationMethod: 'tool_output_validation',
+            metadata: { stageId: stage.id },
+        });
+    }
+    if (stage.type === 'operator') {
+        criteria.push({
+            id: `stage.${stage.id}.operator`,
+            type: 'operator_response_recorded',
+            label: `Stage ${stage.title} recorded operator response`,
+            required: true,
+            validationMethod: 'operator_acknowledged',
+            metadata: { stageId: stage.id },
+        });
+    }
+    return criteria;
+}
+
+function buildPlanSuccessCriteria(
+    goal: PlanGoal,
+    analysis: GoalAnalysis,
+    handoff: ExecutionHandoff,
+): SuccessCriterion[] {
+    const criteria: SuccessCriterion[] = [];
+    if (handoff.type === 'workflow') {
+        criteria.push({
+            id: 'plan.workflow.completed',
+            type: 'workflow_completed',
+            label: 'Workflow completed with terminal success',
+            targetRef: handoff.invocations[0]?.workflowId,
+            required: true,
+            validationMethod: 'workflow_terminal_success',
+            metadata: { handoffType: handoff.type },
+        });
+        criteria.push({
+            id: 'plan.workflow.outputs.validated',
+            type: 'tool_result_validated',
+            label: 'Workflow outputs validated',
+            required: true,
+            validationMethod: 'tool_output_validation',
+            metadata: { handoffType: handoff.type },
+        });
+    } else if (handoff.type === 'tool') {
+        criteria.push({
+            id: 'plan.tool.outputs.validated',
+            type: 'tool_result_validated',
+            label: 'Tool results validated',
+            required: true,
+            validationMethod: 'tool_output_validation',
+            metadata: { handoffType: handoff.type },
+        });
+    } else if (handoff.type === 'agent') {
+        criteria.push({
+            id: 'plan.agent.output',
+            type: 'summary_created',
+            label: 'Agent execution produced structured output summary',
+            required: true,
+            validationMethod: 'presence_of_output_key',
+            metadata: { handoffType: handoff.type },
+        });
+    }
+
+    const title = `${goal.title} ${goal.description}`.toLowerCase();
+    if (title.includes('artifact') || analysis.executionStyle === 'llm_assisted' || analysis.executionStyle === 'hybrid') {
+        criteria.push({
+            id: 'plan.artifact.generated',
+            type: 'artifact_generated',
+            label: 'Requested artifact generated and persisted',
+            required: true,
+            validationMethod: 'artifact_persisted',
+            metadata: { goalCategory: goal.category },
+        });
+        criteria.push({
+            id: 'plan.artifact.validated',
+            type: 'artifact_validated',
+            label: 'Generated artifact validated',
+            required: true,
+            validationMethod: 'artifact_validated',
+            metadata: { goalCategory: goal.category },
+        });
+    }
+    if (title.includes('search') && (title.includes('save') || title.includes('persist'))) {
+        criteria.push({
+            id: 'plan.search.persisted',
+            type: 'search_results_persisted',
+            label: 'Search results persisted',
+            required: true,
+            validationMethod: 'state_mutation_verified',
+            metadata: { goalCategory: goal.category },
+        });
+    }
+    if (title.includes('summary')) {
+        criteria.push({
+            id: 'plan.summary.created',
+            type: 'summary_created',
+            label: 'Summary created',
+            required: true,
+            validationMethod: 'presence_of_output_key',
+            metadata: { goalCategory: goal.category },
+        });
+    }
+    if (title.includes('notebook')) {
+        criteria.push({
+            id: 'plan.notebook.updated',
+            type: 'notebook_updated',
+            label: 'Notebook updated and verified',
+            required: true,
+            validationMethod: 'state_mutation_verified',
+            metadata: { goalCategory: goal.category },
+        });
+    }
+    if (title.includes('memory')) {
+        criteria.push({
+            id: 'plan.memory.updated',
+            type: 'memory_updated',
+            label: 'Memory update persisted',
+            required: true,
+            validationMethod: 'state_mutation_verified',
+            metadata: { goalCategory: goal.category },
+        });
+    }
+
+    if (criteria.length === 0) {
+        criteria.push({
+            id: 'plan.default.outcome',
+            type: 'custom',
+            label: 'Plan required outputs validated',
+            required: true,
+            validationMethod: 'custom_rule',
+            metadata: { goalCategory: goal.category, executionStyle: analysis.executionStyle },
+        });
+    }
+
+    return criteria;
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +802,11 @@ export class PlanBuilder {
             : PlanBuilder._buildStages(goal, analysis, strategySelection);
 
         const handoff = buildHandoff(analysis, strategySelection);
-        const stages = attachStageHandoffs(baseStages, handoff);
+        const stages = attachStageHandoffs(baseStages, handoff).map((stage) => ({
+            ...stage,
+            outcomeCriteria: buildStageOutcomeCriteria(stage),
+        }));
+        const successCriteriaContract = buildPlanSuccessCriteria(goal, analysis, handoff);
         const dependencies = PlanBuilder._buildDependencies(stages);
 
         const approvalState: PlanApprovalState = isBlocked
@@ -686,6 +857,7 @@ export class PlanBuilder {
             status,
             handoff,
             expectedOutcome: summary,
+            successCriteriaContract,
             failurePolicy: strategySelection?.fallbackPosture === 'degrade' ? 'degrade' : 'stop',
             ...(analysis.approvalContext && { approvalContext: analysis.approvalContext }),
             reasonCodes,
