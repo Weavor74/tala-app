@@ -16,7 +16,9 @@ import { PlanningLoopService } from '../planning/PlanningLoopService';
 import { ChatLoopExecutor } from '../planning/ChatLoopExecutor';
 import { ChatLoopObserver } from '../planning/ChatLoopObserver';
 import { PlanningService } from '../planning/PlanningService';
+import { PlanningLoopAuthorityRouter } from '../planning/PlanningLoopAuthorityRouter';
 import type { PlanningLoopRoutingDecision } from '../../../shared/planning/executionAuthorityTypes';
+import { SystemModeManager } from '../SystemModeManager';
 import type {
     TurnArbitrationDecision,
     TurnAuthorityEnvelope,
@@ -43,6 +45,101 @@ import { TurnArbitrationService } from './TurnArbitrator';
  * routing logic inside classifyExecution().
  */
 export type ExecutionClass = 'standard' | 'direct_answer' | 'tool_heavy';
+
+export type PlanBlockedRecoveryAction =
+    | 'replan'
+    | 'degrade_to_chat'
+    | 'escalate'
+    | 'terminate';
+
+export interface PlanBlockedRecoveryDecision {
+    action: PlanBlockedRecoveryAction;
+    reasonCode: string;
+    userSafeMessage?: string;
+    metadata?: Record<string, unknown>;
+}
+
+type PlanBlockedTaskClass =
+    | 'source_summary'
+    | 'notebook_summary'
+    | 'retrieval_answer'
+    | 'document_synthesis'
+    | 'non_critical_response'
+    | 'authority_required';
+
+function classifyPlanBlockedTaskClass(userMessage: string): PlanBlockedTaskClass {
+    const text = userMessage.toLowerCase();
+    if (/(notebook|source).{0,20}(summary|summarize)|summarize.{0,20}(notebook|source)/.test(text)) {
+        return text.includes('notebook') ? 'notebook_summary' : 'source_summary';
+    }
+    if (/(summarize|summary|synthesize|synthesis|digest|overview)/.test(text)) {
+        return 'document_synthesis';
+    }
+    if (/(retrieve|retrieval|find|search|lookup|source[- ]grounded|factual)/.test(text)) {
+        return 'retrieval_answer';
+    }
+    if (/(explain|clarify|help me understand|what is|why is)/.test(text)) {
+        return 'non_critical_response';
+    }
+    return 'authority_required';
+}
+
+function resolvePlanBlockedRecovery(args: {
+    blockedReason: string;
+    activeMode: string;
+    autonomyDegraded: boolean;
+    policyGateDegraded: boolean;
+    availableCapabilities: ReadonlySet<string>;
+    taskClass?: PlanBlockedTaskClass;
+    planId?: string;
+    goalId?: string;
+}): PlanBlockedRecoveryDecision {
+    const reason = args.blockedReason.toLowerCase();
+    const taskClass = args.taskClass ?? 'authority_required';
+    const nonCriticalTask = taskClass === 'source_summary'
+        || taskClass === 'notebook_summary'
+        || taskClass === 'retrieval_answer'
+        || taskClass === 'document_synthesis'
+        || taskClass === 'non_critical_response';
+    const autonomyUnavailable = args.autonomyDegraded
+        || args.activeMode === 'DEGRADED_AUTONOMY'
+        || !args.availableCapabilities.has('autonomy_execute');
+    const policyBlocked = args.policyGateDegraded
+        || reason.includes('policy')
+        || reason.includes('approval')
+        || reason.includes('denied');
+    const unrecoverable = reason.includes('unrecoverable')
+        || reason.includes('no_valid_path')
+        || reason.includes('no_fallback');
+    const replannable = Boolean(args.goalId && args.planId);
+
+    if (policyBlocked) {
+        return {
+            action: 'escalate',
+            reasonCode: 'plan_blocked.recover.escalate.policy_or_approval_block',
+            userSafeMessage: 'This task needs operator review before planning can continue.',
+        };
+    }
+    if (autonomyUnavailable && nonCriticalTask) {
+        return {
+            action: 'degrade_to_chat',
+            reasonCode: 'plan_blocked.recover.degrade_to_chat.degraded_autonomy_non_critical',
+            userSafeMessage: 'Planning is temporarily constrained, so I am continuing with a safe direct response path.',
+            metadata: { taskClass },
+        };
+    }
+    if (!unrecoverable && replannable) {
+        return {
+            action: 'replan',
+            reasonCode: 'plan_blocked.recover.replan.blocked_plan_replannable',
+        };
+    }
+    return {
+        action: 'terminate',
+        reasonCode: 'plan_blocked.recover.terminate.no_safe_path',
+        userSafeMessage: 'I could not safely recover this blocked plan path.',
+    };
+}
 
 /**
  * Lightweight metadata stamped onto every kernel execution.
@@ -582,8 +679,261 @@ export class AgentKernel {
             });
 
             if (loopRun.phase !== 'completed') {
+                const blockedReason = [loopRun.failureReason, loopRun.failureDetail]
+                    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+                    .join(':') || 'unknown';
+
+                if (loopRun.failureReason !== 'plan_blocked') {
+                    throw new Error(
+                        `goal_execution loop terminated with phase=${loopRun.phase} reason=${blockedReason}`,
+                    );
+                }
+
+                const healthSnapshot = SystemModeManager.getSystemHealthSnapshot();
+                const availableCapabilities = new Set(
+                    (healthSnapshot?.capability_matrix ?? [])
+                        .filter((capability) => capability.status === 'available' || capability.status === 'degraded')
+                        .map((capability) => capability.capability),
+                );
+                const degradedAutonomy = healthSnapshot?.effective_mode === 'DEGRADED_AUTONOMY'
+                    || Boolean(healthSnapshot?.active_degradation_flags.includes('DEGRADED_AUTONOMY'));
+                const policyGateDegraded = Boolean(
+                    healthSnapshot?.subsystem_entries.some(
+                        (entry) => entry.name.toLowerCase().includes('policy') && entry.status !== 'healthy',
+                    ),
+                );
+                const taskClass = classifyPlanBlockedTaskClass(request.userMessage);
+
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'planning',
+                    event: 'planning.plan_blocked_recovery_requested',
+                    phase: 'delegate',
+                    payload: {
+                        executionId: meta.executionId,
+                        executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                        goalId: loopRun.goalId,
+                        planId: loopRun.currentPlanId,
+                        blockedReason,
+                        degradedAutonomy,
+                    },
+                });
+
+                const recoveryDecision = resolvePlanBlockedRecovery({
+                    blockedReason,
+                    activeMode: healthSnapshot?.effective_mode ?? meta.mode,
+                    autonomyDegraded: degradedAutonomy,
+                    policyGateDegraded,
+                    availableCapabilities,
+                    taskClass,
+                    planId: loopRun.currentPlanId,
+                    goalId: loopRun.goalId,
+                });
+
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'planning',
+                    event: 'planning.plan_blocked_recovery_resolved',
+                    phase: 'delegate',
+                    payload: {
+                        executionId: meta.executionId,
+                        executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                        goalId: loopRun.goalId,
+                        planId: loopRun.currentPlanId,
+                        blockedReason,
+                        degradedAutonomy,
+                        recoveryAction: recoveryDecision.action,
+                        reasonCode: recoveryDecision.reasonCode,
+                    },
+                });
+
+                if (recoveryDecision.action === 'degrade_to_chat') {
+                    const degradedDecision = PlanningLoopAuthorityRouter.classifyDegradedExecution(
+                        'plan_blocked',
+                        { detectedIn: 'AgentKernel.runDelegatedFlow' },
+                    );
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.degraded_execution_decision',
+                        phase: 'delegate',
+                        payload: {
+                            reason: degradedDecision.reason,
+                            directAllowed: degradedDecision.directAllowed,
+                            degradedModeCode: degradedDecision.degradedModeCode,
+                            doctrine: degradedDecision.doctrine,
+                            detectedIn: degradedDecision.detectedIn,
+                            detectedAt: degradedDecision.detectedAt,
+                        },
+                    });
+                    if (!degradedDecision.directAllowed) {
+                        throw new Error(
+                            `goal_execution plan_blocked recovery denied reason=${recoveryDecision.reasonCode}`,
+                        );
+                    }
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.authority_lane_resolved',
+                        phase: 'delegate',
+                        payload: {
+                            authorityLane: 'chat_continuity_degraded_direct',
+                            routingClassification: meta.routingDecision?.classification ?? 'planning_loop_required',
+                            reasonCodes: meta.turnArbitration?.reasonCodes ?? [],
+                            executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                            policyOutcome: 'allowed',
+                            resolvedAt: new Date().toISOString(),
+                            summary: 'chat continuity fallback after plan_blocked',
+                            degradedExecutionDecision: degradedDecision,
+                        },
+                    });
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'kernel',
+                        event: 'execution.degraded_fallback_applied',
+                        phase: 'delegate',
+                        payload: {
+                            executionId: meta.executionId,
+                            executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                            goalId: loopRun.goalId,
+                            planId: loopRun.currentPlanId,
+                            blockedReason,
+                            recoveryAction: recoveryDecision.action,
+                            reasonCode: recoveryDecision.reasonCode,
+                            degradedAutonomy,
+                        },
+                    });
+                    const output = await this._runDirectChatFallback(request, meta, turnDecision, envelope, onToken, onEvent);
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.plan_blocked_recovered',
+                        phase: 'delegate',
+                        payload: {
+                            executionId: meta.executionId,
+                            executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                            goalId: loopRun.goalId,
+                            planId: loopRun.currentPlanId,
+                            blockedReason,
+                            recoveryAction: recoveryDecision.action,
+                            reasonCode: recoveryDecision.reasonCode,
+                            degradedAutonomy,
+                        },
+                    });
+                    return output;
+                }
+
+                if (recoveryDecision.action === 'replan') {
+                    if (!loopRun.goalId || !loopRun.currentPlanId) {
+                        throw new Error(
+                            'goal_execution plan_blocked replan requested without goalId/currentPlanId',
+                        );
+                    }
+                    try {
+                        PlanningService.getInstance().replan(
+                            {
+                                goalId: loopRun.goalId,
+                                priorPlanId: loopRun.currentPlanId,
+                                trigger: blockedReason.includes('policy') ? 'policy_block' : 'dependency_failure',
+                                triggerDetails: `plan_blocked_recovery:${recoveryDecision.reasonCode}`,
+                            },
+                            {
+                                invokedBy: 'agent_kernel',
+                                invocationReason: 'replan_after_execution_failure',
+                                turnId: turnDecision.turnId,
+                                turnMode: turnDecision.mode,
+                                authorityLevel: turnDecision.authorityLevel,
+                                memoryWriteMode: turnDecision.memoryWriteMode,
+                            },
+                        );
+                    } catch (error) {
+                        const failureDetail = error instanceof Error ? error.message : String(error);
+                        TelemetryBus.getInstance().emit({
+                            executionId: meta.executionId,
+                            subsystem: 'planning',
+                            event: 'planning.plan_blocked_escalated',
+                            phase: 'delegate',
+                            payload: {
+                                executionId: meta.executionId,
+                                executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                                goalId: loopRun.goalId,
+                                planId: loopRun.currentPlanId,
+                                blockedReason,
+                                recoveryAction: 'escalate',
+                                reasonCode: 'plan_blocked.recover.escalate.replan_failed',
+                                degradedAutonomy,
+                                failureDetail,
+                            },
+                        });
+                        return {
+                            message: 'Planning recovery requested a replan, but replan could not be completed and has been escalated.',
+                            outputChannel: 'fallback',
+                        };
+                    }
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.plan_blocked_recovered',
+                        phase: 'delegate',
+                        payload: {
+                            executionId: meta.executionId,
+                            executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                            goalId: loopRun.goalId,
+                            planId: loopRun.currentPlanId,
+                            blockedReason,
+                            recoveryAction: recoveryDecision.action,
+                            reasonCode: recoveryDecision.reasonCode,
+                            degradedAutonomy,
+                        },
+                    });
+                    return {
+                        message: 'Planning recovered by requesting a deterministic replan. Please continue with the updated goal execution path.',
+                        outputChannel: 'fallback',
+                    };
+                }
+
+                if (recoveryDecision.action === 'escalate') {
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'planning',
+                        event: 'planning.plan_blocked_escalated',
+                        phase: 'delegate',
+                        payload: {
+                            executionId: meta.executionId,
+                            executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                            goalId: loopRun.goalId,
+                            planId: loopRun.currentPlanId,
+                            blockedReason,
+                            recoveryAction: recoveryDecision.action,
+                            reasonCode: recoveryDecision.reasonCode,
+                            degradedAutonomy,
+                        },
+                    });
+                    return {
+                        message: recoveryDecision.userSafeMessage
+                            ?? 'Planning is blocked and has been escalated for operator action.',
+                        outputChannel: 'fallback',
+                    };
+                }
+
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'planning',
+                    event: 'planning.plan_blocked_terminated',
+                    phase: 'failed',
+                    payload: {
+                        executionId: meta.executionId,
+                        executionBoundaryId: loopRun.executionBoundaryId ?? meta.executionId,
+                        goalId: loopRun.goalId,
+                        planId: loopRun.currentPlanId,
+                        blockedReason,
+                        recoveryAction: recoveryDecision.action,
+                        reasonCode: recoveryDecision.reasonCode,
+                        degradedAutonomy,
+                    },
+                });
                 throw new Error(
-                    `goal_execution loop terminated with phase=${loopRun.phase} reason=${loopRun.failureReason ?? 'unknown'}`,
+                    `goal_execution plan_blocked terminated reasonCode=${recoveryDecision.reasonCode} blockedReason=${blockedReason}`,
                 );
             }
 
@@ -625,6 +975,24 @@ export class AgentKernel {
                 summary: `trivial_direct: kernel mode ${turnDecision.mode}`,
             },
         });
+        return this.agent.chat(
+            request.userMessage,
+            onToken,
+            onEvent,
+            request.images,
+            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
+        );
+    }
+
+    private async _runDirectChatFallback(
+        request: KernelRequest,
+        meta: KernelExecutionMeta,
+        turnDecision: TurnArbitrationDecision,
+        envelope: TurnAuthorityEnvelope,
+        onToken?: (token: string) => void,
+        onEvent?: (type: string, data: any) => void,
+    ): Promise<AgentTurnOutput> {
+        this._stateStore.advancePhase(meta.executionId, 'executing', 'goal_execution_degraded_fallback');
         return this.agent.chat(
             request.userMessage,
             onToken,
