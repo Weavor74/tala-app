@@ -461,6 +461,9 @@ contextBridge.exposeInMainWorld('tala', {
     researchAddSearchRunResultsToNotebook: (searchRunId: string, notebookId: string, selectedItemKeys?: string[]) => ipcRenderer.invoke('research:addSearchRunResultsToNotebook', searchRunId, notebookId, selectedItemKeys),
     /** Resolve notebook scope (URIs and source paths) for retrieval scoping. */
     researchResolveNotebookScope: (notebookId: string) => ipcRenderer.invoke('research:resolveNotebookScope', notebookId),
+    /** Resolve canonical open target for a notebook item. */
+    researchResolveNotebookOpenTarget: (notebookId: string, itemKey: string) =>
+        ipcRenderer.invoke('research:resolveNotebookOpenTarget', notebookId, itemKey),
 
     // ─── Content Ingestion ────────────────────────────────────────────────────
     /** Ingest all notebook items in a notebook into source_documents and document_chunks. */

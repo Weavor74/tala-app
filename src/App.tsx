@@ -1201,7 +1201,10 @@ function App() {
                 <CoreWorkspace />
               )}
               {activeView === 'notebooks' && (
-                <Notebooks onOpenFile={(path) => openFileTab(path)} />
+                <Notebooks
+                  onOpenFile={(path) => openFileTab(path)}
+                  onOpenBrowser={(url) => openBrowserTab(url)}
+                />
               )}
             </div>
           </div>

@@ -69,6 +69,26 @@ interface CreateSearchRunInput {
 }
 ```
 
+### `NotebookSourceRecord`
+```typescript
+interface NotebookSourceRecord {
+  title: string;
+  sourceType: NotebookSourceType;
+  uri: string | null;
+  sourcePath: string | null;
+  openTarget: string | null;
+  openTargetType: NotebookOpenTargetType;
+  providerId: string | null;
+  snippet: string | null;
+  summary: string | null;
+  contentText: string | null;
+  contentHash: string | null;
+  mimeType: string | null;
+  retrievalStatus: NotebookRetrievalStatus;
+  createdFromSearch: boolean;
+}
+```
+
 ### `SearchRunResultRecord`
 ```typescript
 interface SearchRunResultRecord {
@@ -85,6 +105,15 @@ interface SearchRunResultRecord {
   metadata_json: unknown;
   content_hash: string | null;
   captured_at: string;
+  sourceType?: NotebookSourceType;
+  providerId?: string | null;
+  summary?: string | null;
+  contentText?: string | null;
+  mimeType?: string | null;
+  retrievalStatus?: NotebookRetrievalStatus;
+  openTarget?: string | null;
+  openTargetType?: NotebookOpenTargetType;
+  createdFromSearch?: boolean;
 }
 ```
 
@@ -101,6 +130,21 @@ interface CreateSearchRunResultInput {
   score?: number;
   metadata_json?: unknown;
   content_hash?: string;
+  sourceType?: NotebookSourceType;
+  providerId?: string | null;
+  summary?: string | null;
+  contentText?: string | null;
+  mimeType?: string | null;
+  retrievalStatus?: NotebookRetrievalStatus;
+  openTarget?: string | null;
+  openTargetType?: NotebookOpenTargetType;
+  createdFromSearch?: boolean;
+  provider_id?: string;
+  sourcePath?: string;
+  sourceId?: string;
+  sourceTypeRaw?: string;
+  url?: string;
+  path?: string;
 }
 ```
 
@@ -120,6 +164,15 @@ interface NotebookItemRecord {
   added_from_search_run_id: string | null;
   added_at: string;
   metadata_json: unknown;
+  sourceType?: NotebookSourceType;
+  providerId?: string | null;
+  summary?: string | null;
+  contentText?: string | null;
+  mimeType?: string | null;
+  retrievalStatus?: NotebookRetrievalStatus;
+  openTarget?: string | null;
+  openTargetType?: NotebookOpenTargetType;
+  createdFromSearch?: boolean;
 }
 ```
 
@@ -136,6 +189,69 @@ interface AddNotebookItemInput {
   content_hash?: string;
   added_from_search_run_id?: string;
   metadata_json?: unknown;
+  sourceType?: NotebookSourceType;
+  providerId?: string | null;
+  summary?: string | null;
+  contentText?: string | null;
+  mimeType?: string | null;
+  retrievalStatus?: NotebookRetrievalStatus;
+  openTarget?: string | null;
+  openTargetType?: NotebookOpenTargetType;
+  createdFromSearch?: boolean;
+  provider_id?: string;
+  sourcePath?: string;
+  sourceId?: string;
+  sourceTypeRaw?: string;
+  url?: string;
+  path?: string;
 }
+```
+
+### `NormalizedNotebookItemForStorage`
+```typescript
+interface NormalizedNotebookItemForStorage {
+  item_key: string;
+  item_type: string;
+  source_id: string | null;
+  source_path: string | null;
+  title: string | null;
+  uri: string | null;
+  snippet: string | null;
+  content_hash: string | null;
+  added_from_search_run_id: string | null;
+  metadata_json: Record<string, unknown>;
+}
+```
+
+### `NotebookOpenResolution`
+```typescript
+interface NotebookOpenResolution {
+  openTarget: string | null;
+  openTargetType: NotebookOpenTargetType;
+  sourceUnavailableReason: string | null;
+}
+```
+
+### `NotebookSourceType`
+```typescript
+type NotebookSourceType =  'web' | 'local' | 'generated' | 'api' | 'internal';
+```
+
+### `NotebookRetrievalStatus`
+```typescript
+type NotebookRetrievalStatus = 
+  | 'none'
+  | 'saved_metadata_only'
+  | 'content_fetched'
+  | 'chunked';
+```
+
+### `NotebookOpenTargetType`
+```typescript
+type NotebookOpenTargetType = 
+  | 'browser'
+  | 'workspace_file'
+  | 'generated'
+  | 'none';
 ```
 

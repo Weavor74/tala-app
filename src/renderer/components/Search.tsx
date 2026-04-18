@@ -53,6 +53,8 @@ interface Result {
     externalId?: string | null;
     /** Arbitrary provider metadata from NormalizedSearchResult.metadata. */
     metadata?: Record<string, unknown>;
+    contentHash?: string | null;
+    mimeType?: string | null;
 }
 
 /** Props for the Search component. */
@@ -398,6 +400,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         title: string; uri?: string | null; sourcePath?: string | null;
                         snippet?: string | null; providerId: string; sourceType?: string | null;
                         externalId?: string | null; metadata?: Record<string, unknown>;
+                        contentHash?: string | null;
+                        mimeType?: string | null;
                     }>).map(r => ({
                         title: r.title,
                         uri: r.uri ?? undefined,
@@ -407,6 +411,8 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         sourceType: r.sourceType ?? undefined,
                         externalId: r.externalId ?? undefined,
                         metadata: r.metadata,
+                        contentHash: r.contentHash ?? undefined,
+                        mimeType: r.mimeType ?? undefined,
                     }));
                 }
             }
@@ -424,11 +430,24 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                         const runResults = fetchedResults.map((r, i) => ({
                             item_key: resultKey(r.uri, r.sourcePath, i),
                             item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
+                            source_id: r.providerId ?? undefined,
                             source_path: r.sourcePath ?? undefined,
                             title: r.title ?? r.sourcePath ?? undefined,
                             uri: r.uri ?? undefined,
                             snippet: r.snippet?.slice(0, 500) ?? undefined,
-                            provider_id: r.providerId ?? undefined,
+                            content_hash: r.contentHash ?? undefined,
+                            sourceType: r.sourceType ?? undefined,
+                            providerId: r.providerId ?? undefined,
+                            mimeType: r.mimeType ?? undefined,
+                            retrievalStatus: 'saved_metadata_only',
+                            openTarget: r.uri ?? r.sourcePath ?? null,
+                            openTargetType: r.uri ? 'browser' : (r.sourcePath ? 'workspace_file' : 'none'),
+                            createdFromSearch: true,
+                            metadata_json: {
+                                ...(r.metadata ?? {}),
+                                externalId: r.externalId ?? null,
+                                providerId: r.providerId ?? null,
+                            },
                         }));
                         await api.researchAddSearchRunResults(searchRunId, runResults);
                     }

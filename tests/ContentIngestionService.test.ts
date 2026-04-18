@@ -261,6 +261,43 @@ describe('ContentIngestionService.fetchContentForItem — file path', () => {
     expect(content).toBeNull();
     expect(warning).toContain('no source_path or uri');
   });
+
+  it('uses canonical uri from legacy metadata_json when top-level uri is missing', async () => {
+    const svc = new ContentIngestionService(makeMockResearchRepo(), makeMockContentRepo());
+    const fetchSpy = vi
+      .spyOn(svc as unknown as { _fetchHttp: (uri: string) => Promise<{ content: string; mimeType: string | null }> }, '_fetchHttp')
+      .mockResolvedValue({ content: 'legacy web content', mimeType: 'text/html' });
+    const item = makeItem({
+      item_key: 'legacy-uri',
+      uri: null,
+      source_path: null,
+      metadata_json: { uri: 'https://legacy.example.com/page' },
+    });
+
+    const { content, metadata, warning } = await svc.fetchContentForItem(item);
+
+    expect(warning).toBeUndefined();
+    expect(content).toContain('legacy web content');
+    expect(metadata?.uri).toBe('https://legacy.example.com/page');
+    expect(fetchSpy).toHaveBeenCalledWith('https://legacy.example.com/page');
+  });
+
+  it('uses contentText from metadata_json as deterministic no-fetch source', async () => {
+    const svc = new ContentIngestionService(makeMockResearchRepo(), makeMockContentRepo());
+    const item = makeItem({
+      item_key: 'generated-content',
+      metadata_json: {
+        sourceType: 'generated',
+        contentText: 'Generated internal notebook content.',
+      },
+    });
+
+    const { content, metadata, warning } = await svc.fetchContentForItem(item);
+
+    expect(warning).toBeUndefined();
+    expect(content).toContain('Generated internal notebook content');
+    expect(metadata?.source_type).toBe('generated');
+  });
 });
 
 // ─── 4. ingestItems — deduplication via content_hash ─────────────────────────

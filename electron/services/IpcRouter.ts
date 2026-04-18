@@ -42,6 +42,10 @@ import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
+import type {
+  AddNotebookItemInput,
+  CreateSearchRunResultInput,
+} from '../../shared/researchTypes';
 import { ContextAssemblyService } from './context/ContextAssemblyService';
 import { MemoryPolicyService } from './policy/MemoryPolicyService';
 import { GraphTraversalService } from './graph/GraphTraversalService';
@@ -1824,7 +1828,7 @@ export class IpcRouter {
       const repo = getResearchRepository();
       if (!repo) return { ok: false, error: 'Research repository not initialized' };
       try {
-        const added = await repo.addItemsToNotebook(notebookId, items as any, searchRunId);
+        const added = await repo.addItemsToNotebook(notebookId, items as AddNotebookItemInput[], searchRunId);
         return { ok: true, added };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
@@ -1872,7 +1876,7 @@ export class IpcRouter {
       const repo = getResearchRepository();
       if (!repo) return { ok: false, error: 'Research repository not initialized' };
       try {
-        const added = await repo.addSearchRunResults(searchRunId, results as any);
+        const added = await repo.addSearchRunResults(searchRunId, results as CreateSearchRunResultInput[]);
         return { ok: true, added };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
@@ -1922,6 +1926,18 @@ export class IpcRouter {
       try {
         const scope = await repo.resolveNotebookScope(notebookId);
         return { ok: true, scope };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /** Resolve the deterministic open target for a notebook item. */
+    ipcMain.handle('research:resolveNotebookOpenTarget', async (_e, notebookId: string, itemKey: string) => {
+      const repo = getResearchRepository();
+      if (!repo) return { ok: false, error: 'Research repository not initialized' };
+      try {
+        const resolution = await repo.resolveNotebookOpenTarget(notebookId, itemKey);
+        return { ok: true, resolution };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
       }

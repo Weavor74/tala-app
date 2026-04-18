@@ -25,7 +25,7 @@ import type {
   ChunkingOptions,
   UpsertSourceDocumentInput,
 } from '../../../shared/ingestion/ingestionTypes';
-import type { NotebookItemRecord } from '../../../shared/researchTypes';
+import { normalizeNotebookSourceRecord, type NotebookItemRecord } from '../../../shared/researchTypes';
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
@@ -131,47 +131,62 @@ export class ContentIngestionService {
     metadata?: Partial<UpsertSourceDocumentInput>;
     warning?: string;
   }> {
+    const normalizedSource = normalizeNotebookSourceRecord(item);
+    if (normalizedSource.contentText) {
+      return {
+        content: this._normalizeWhitespace(normalizedSource.contentText),
+        metadata: {
+          uri: normalizedSource.uri,
+          source_path: normalizedSource.sourcePath,
+          source_type: normalizedSource.sourceType,
+          mime_type: normalizedSource.mimeType,
+          citation_label: normalizedSource.title,
+          fetched_at: new Date().toISOString(),
+        },
+      };
+    }
+
     // Prefer local file if source_path is set.
-    if (item.source_path) {
+    if (normalizedSource.sourcePath) {
       try {
-        const raw = fs.readFileSync(item.source_path, 'utf-8');
+        const raw = fs.readFileSync(normalizedSource.sourcePath, 'utf-8');
         const content = this._normalizeWhitespace(raw);
         return {
           content,
           metadata: {
-            source_path: item.source_path,
-            source_type: item.item_type ?? 'file',
-            mime_type: this._guessMimeType(item.source_path),
+            source_path: normalizedSource.sourcePath,
+            source_type: normalizedSource.sourceType,
+            mime_type: normalizedSource.mimeType ?? this._guessMimeType(normalizedSource.sourcePath),
             fetched_at: new Date().toISOString(),
-            citation_label: item.title ?? item.source_path,
+            citation_label: normalizedSource.title,
           },
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: null, warning: `Could not read file ${item.source_path}: ${msg}` };
+        return { content: null, warning: `Could not read file ${normalizedSource.sourcePath}: ${msg}` };
       }
     }
 
     // Fall back to HTTP fetch for web URIs.
-    if (item.uri) {
+    if (normalizedSource.uri) {
       try {
-        const { content, mimeType } = await this._fetchHttp(item.uri);
+        const { content, mimeType } = await this._fetchHttp(normalizedSource.uri);
         const normalized = this._normalizeWhitespace(content);
-        const displayDomain = this._extractDomain(item.uri);
+        const displayDomain = this._extractDomain(normalizedSource.uri);
         return {
           content: normalized,
           metadata: {
-            uri: item.uri,
-            source_type: item.item_type ?? 'web',
-            mime_type: mimeType,
+            uri: normalizedSource.uri,
+            source_type: normalizedSource.sourceType,
+            mime_type: normalizedSource.mimeType ?? mimeType,
             display_domain: displayDomain,
-            citation_label: item.title ?? displayDomain ?? item.uri,
+            citation_label: normalizedSource.title ?? displayDomain ?? normalizedSource.uri,
             fetched_at: new Date().toISOString(),
           },
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: null, warning: `Could not fetch URI ${item.uri}: ${msg}` };
+        return { content: null, warning: `Could not fetch URI ${normalizedSource.uri}: ${msg}` };
       }
     }
 

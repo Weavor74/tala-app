@@ -42,13 +42,21 @@ interface NotebookItem {
     item_key: string;
     item_type: string;
     source_path: string | null;
+    sourceType?: 'web' | 'local' | 'generated' | 'api' | 'internal';
+    providerId?: string | null;
     title: string | null;
     uri: string | null;
     snippet: string | null;
+    summary?: string | null;
+    contentText?: string | null;
+    mimeType?: string | null;
+    retrievalStatus?: 'none' | 'saved_metadata_only' | 'content_fetched' | 'chunked';
+    openTarget?: string | null;
+    openTargetType?: 'browser' | 'workspace_file' | 'generated' | 'none';
     added_at: string;
 }
 
-export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ onOpenFile }) => {
+export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void; onOpenBrowser?: (url: string) => void }> = ({ onOpenFile, onOpenBrowser }) => {
     const [notebooks, setNotebooks] = useState<Notebook[]>([]);
     const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
     const [notebookItems, setNotebookItems] = useState<NotebookItem[]>([]);
@@ -223,6 +231,46 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
         });
     };
 
+    const handleOpenNotebookItem = async (item: NotebookItem) => {
+        const sourceType = item.sourceType ?? (item.source_path ? 'local' : (item.uri ? 'web' : 'generated'));
+        let resolution: {
+            openTarget: string | null;
+            openTargetType: 'browser' | 'workspace_file' | 'generated' | 'none';
+            sourceUnavailableReason: string | null;
+        } = {
+            openTarget: item.openTarget ?? item.uri ?? item.source_path ?? null,
+            openTargetType: item.openTargetType ?? (
+                sourceType === 'web'
+                    ? 'browser'
+                    : sourceType === 'local'
+                        ? 'workspace_file'
+                        : (item.contentText ? 'generated' : 'none')
+            ),
+            sourceUnavailableReason: null,
+        };
+
+        if (selectedNotebookId && api?.researchResolveNotebookOpenTarget) {
+            const res = await api.researchResolveNotebookOpenTarget(selectedNotebookId, item.item_key);
+            if (res?.ok && res.resolution) {
+                resolution = res.resolution;
+            }
+        }
+
+        if (resolution.openTargetType === 'browser' && resolution.openTarget) {
+            onOpenBrowser?.(resolution.openTarget);
+            return;
+        }
+        if (resolution.openTargetType === 'workspace_file' && resolution.openTarget) {
+            onOpenFile?.(resolution.openTarget);
+            return;
+        }
+        if (resolution.openTargetType === 'generated') {
+            alert('This source is generated/internal content and has no external reopen target. Use the notebook content directly.');
+            return;
+        }
+        alert(`Source unavailable for open: ${resolution.sourceUnavailableReason ?? 'missing canonical uri/sourcePath/content linkage'}`);
+    };
+
     return (
         <div style={{ display: 'flex', height: '100%', color: '#ccc', background: '#1e1e1e' }}>
             {/* Sidebar: Notebook List */}
@@ -353,9 +401,18 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                                                 alert("Select at least one item to summarize.");
                                                 return;
                                             }
+                                            if (api?.setActiveNotebookContext && selectedNotebookId) {
+                                                const scope = dbAvailable && api.researchResolveNotebookScope
+                                                    ? await api.researchResolveNotebookScope(selectedNotebookId)
+                                                    : null;
+                                                const sourcePaths = scope?.ok
+                                                    ? scope.scope.sourcePaths
+                                                    : notebookItems.filter(i => activeSources.has(i.item_key)).map(i => i.source_path).filter(Boolean);
+                                                api.setActiveNotebookContext(selectedNotebookId, sourcePaths);
+                                            }
                                             const titles = notebookItems
                                                 .filter(i => activeSources.has(i.item_key))
-                                                .map(i => i.title || i.uri || i.source_path || i.item_key)
+                                                .map(i => i.uri || i.source_path || i.title || i.item_key)
                                                 .join(', ');
                                             const query = `Please summarize ONLY the following notebook sources based strictly on their content: ${titles}. Do not add external information or infer facts not present in these sources. What are the key themes and insights found in the provided content?`;
                                             api.send('chat-message', { text: query });
@@ -413,8 +470,7 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void }> = ({ o
                                                         style={{ fontSize: 12, fontWeight: 'bold', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            if (item.source_path) onOpenFile?.(item.source_path);
-                                                            else if (item.uri) window.open(item.uri, '_blank');
+                                                            void handleOpenNotebookItem(item);
                                                         }}
                                                         title={label}
                                                     >

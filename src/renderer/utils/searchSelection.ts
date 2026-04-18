@@ -34,6 +34,15 @@ export interface SearchResultInput {
     externalId?: string | null;
     /** Arbitrary provider metadata. */
     metadata?: Record<string, unknown>;
+    sourceId?: string | null;
+    summary?: string | null;
+    contentText?: string | null;
+    contentHash?: string | null;
+    mimeType?: string | null;
+    retrievalStatus?: NotebookRetrievalStatus;
+    openTarget?: string | null;
+    openTargetType?: NotebookOpenTargetType;
+    createdFromSearch?: boolean;
 }
 
 /**
@@ -43,10 +52,21 @@ export interface SearchResultInput {
 export interface NotebookItemInput {
     item_key: string;
     item_type: string;
+    source_id?: string;
     source_path?: string;
     title?: string;
     uri?: string;
     snippet?: string;
+    content_hash?: string;
+    sourceType?: NotebookSourceType;
+    providerId?: string | null;
+    summary?: string | null;
+    contentText?: string | null;
+    mimeType?: string | null;
+    retrievalStatus?: NotebookRetrievalStatus;
+    openTarget?: string | null;
+    openTargetType?: NotebookOpenTargetType;
+    createdFromSearch?: boolean;
     metadata_json?: Record<string, unknown>;
 }
 
@@ -76,19 +96,39 @@ export function resultKey(uri?: string, sourcePath?: string, fallbackIndex = 0):
  */
 export function resultToNotebookItem(r: SearchResultInput, fallbackIndex: number): NotebookItemInput {
     const key = resultKey(r.uri, r.sourcePath, fallbackIndex);
-
-    const meta: Record<string, unknown> = { ...r.metadata };
-    if (r.providerId) meta.providerId = r.providerId;
-    if (r.externalId != null) meta.externalId = r.externalId;
-
-    return {
+    const normalized = normalizeNotebookItemForStorage({
         item_key: key,
         item_type: r.sourceType ?? (r.providerId === 'local' ? 'local_file' : 'web'),
         source_path: r.sourcePath,
+        source_id: r.sourceId ?? r.providerId ?? undefined,
         title: r.title ?? r.sourcePath,
         uri: r.uri,
         snippet: r.snippet?.slice(0, 500),
-        metadata_json: Object.keys(meta).length > 0 ? meta : undefined,
+        content_hash: r.contentHash ?? undefined,
+        sourceType: (r.sourceType as NotebookSourceType | undefined),
+        providerId: r.providerId ?? null,
+        summary: r.summary ?? null,
+        contentText: r.contentText ?? null,
+        mimeType: r.mimeType ?? null,
+        retrievalStatus: r.retrievalStatus,
+        openTarget: r.openTarget ?? null,
+        openTargetType: r.openTargetType,
+        createdFromSearch: r.createdFromSearch ?? true,
+        metadata_json: {
+            ...(r.metadata ?? {}),
+            externalId: r.externalId ?? null,
+        },
+    });
+    return {
+        item_key: normalized.item_key,
+        item_type: normalized.item_type,
+        title: normalized.title ?? undefined,
+        uri: normalized.uri ?? undefined,
+        snippet: normalized.snippet ?? undefined,
+        source_id: normalized.source_id ?? undefined,
+        source_path: normalized.source_path ?? undefined,
+        content_hash: normalized.content_hash ?? undefined,
+        metadata_json: normalized.metadata_json,
     };
 }
 
@@ -114,3 +154,9 @@ export function allResultKeys(results: SearchResultInput[]): Set<string> {
     results.forEach((r, i) => keys.add(resultKey(r.uri, r.sourcePath, i)));
     return keys;
 }
+import type {
+    NotebookOpenTargetType,
+    NotebookRetrievalStatus,
+    NotebookSourceType,
+} from '../../../shared/researchTypes';
+import { normalizeNotebookItemForStorage } from '../../../shared/researchTypes';

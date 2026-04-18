@@ -417,5 +417,66 @@ describe('ResearchRepository', () => {
       expect(scope.sourcePaths).toEqual([]);
       expect(scope.itemKeys).toEqual([]);
     });
+
+    it('includes legacy metadata uri/sourcePath values in resolved scope', async () => {
+      const { repo, mockQuery } = buildRepo();
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          makeNotebookItemRow({
+            item_key: 'legacy-1',
+            uri: null,
+            source_path: null,
+            metadata_json: { uri: 'https://legacy.example.com', sourcePath: '/legacy/path.md' },
+          }),
+        ],
+      });
+
+      const scope = await repo.resolveNotebookScope('nb-uuid-1');
+
+      expect(scope.uris).toEqual(['https://legacy.example.com']);
+      expect(scope.sourcePaths).toEqual(['/legacy/path.md']);
+      expect(scope.itemKeys).toEqual(['legacy-1']);
+    });
+  });
+
+  describe('resolveNotebookOpenTarget()', () => {
+    it('returns browser target for web-backed notebook item', async () => {
+      const { repo, mockQuery } = buildRepo();
+      mockQuery.mockResolvedValueOnce({
+        rows: [makeNotebookItemRow({ item_key: 'web-1', uri: 'https://example.com' })],
+      });
+
+      const resolution = await repo.resolveNotebookOpenTarget('nb-uuid-1', 'web-1');
+
+      expect(resolution.openTargetType).toBe('browser');
+      expect(resolution.openTarget).toBe('https://example.com');
+      expect(resolution.sourceUnavailableReason).toBeNull();
+    });
+
+    it('returns workspace target for local-backed notebook item', async () => {
+      const { repo, mockQuery } = buildRepo();
+      mockQuery.mockResolvedValueOnce({
+        rows: [makeNotebookItemRow({ item_key: 'local-1', source_path: '/workspace/a.md', uri: null })],
+      });
+
+      const resolution = await repo.resolveNotebookOpenTarget('nb-uuid-1', 'local-1');
+
+      expect(resolution.openTargetType).toBe('workspace_file');
+      expect(resolution.openTarget).toBe('/workspace/a.md');
+      expect(resolution.sourceUnavailableReason).toBeNull();
+    });
+
+    it('returns none with explicit reason for legacy metadata-only item', async () => {
+      const { repo, mockQuery } = buildRepo();
+      mockQuery.mockResolvedValueOnce({
+        rows: [makeNotebookItemRow({ item_key: 'legacy-none', uri: null, source_path: null, title: 'Title Only' })],
+      });
+
+      const resolution = await repo.resolveNotebookOpenTarget('nb-uuid-1', 'legacy-none');
+
+      expect(resolution.openTargetType).toBe('none');
+      expect(resolution.openTarget).toBeNull();
+      expect(resolution.sourceUnavailableReason).toContain('source_unavailable');
+    });
   });
 });

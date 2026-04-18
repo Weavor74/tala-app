@@ -69,6 +69,8 @@ describe('resultToNotebookItem', () => {
         expect(item.snippet).toBe('A short excerpt from the page.');
         expect(item.source_path).toBeUndefined();
         expect(item.metadata_json?.providerId).toBe('external:brave');
+        expect(item.metadata_json?.openTarget).toBe('https://example.com/page');
+        expect(item.metadata_json?.openTargetType).toBe('browser');
     });
 
     it('maps a local file result to a notebook item with correct fields', () => {
@@ -89,6 +91,8 @@ describe('resultToNotebookItem', () => {
         // content used as snippet fallback
         expect(item.snippet).toBe('Some content from the file.');
         expect(item.metadata_json?.providerId).toBe('local');
+        expect(item.metadata_json?.openTarget).toBe('/workspace/research/notes.md');
+        expect(item.metadata_json?.openTargetType).toBe('workspace_file');
     });
 
     it('infers item_type from providerId when sourceType is absent', () => {
@@ -133,11 +137,12 @@ describe('resultToNotebookItem', () => {
         expect(item.title).toBe('/workspace/document.md');
     });
 
-    it('omits metadata_json when no provenance data is available', () => {
+    it('still emits canonical metadata_json even when provider provenance is absent', () => {
         const result: SearchResultInput = { uri: 'https://ex.com' };
         const item = resultToNotebookItem(result, 0);
-        // No providerId, externalId, or metadata → metadata_json should be absent
-        expect(item.metadata_json).toBeUndefined();
+        expect(item.metadata_json?.openTarget).toBe('https://ex.com');
+        expect(item.metadata_json?.openTargetType).toBe('browser');
+        expect(item.metadata_json?.retrievalStatus).toBe('saved_metadata_only');
     });
 
     it('does NOT reference a scrape or ingest API — pure metadata mapping', () => {
@@ -151,6 +156,20 @@ describe('resultToNotebookItem', () => {
         // Return value must be a plain object, not a Promise
         expect(typeof returnValue).toBe('object');
         expect(returnValue).not.toBeInstanceOf(Promise);
+    });
+
+    it('maps generated/internal content without forcing browser open', () => {
+        const result: SearchResultInput = {
+            title: 'Generated Note',
+            sourceType: 'generated',
+            contentText: 'Generated summary body.',
+            providerId: 'internal:notes',
+        };
+        const item = resultToNotebookItem(result, 9);
+
+        expect(item.item_type).toBe('generated');
+        expect(item.metadata_json?.openTargetType).toBe('generated');
+        expect(item.metadata_json?.openTarget).toBeNull();
     });
 });
 

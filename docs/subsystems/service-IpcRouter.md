@@ -42,6 +42,10 @@ import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
+import type {
+  AddNotebookItemInput,
+  CreateSearchRunResultInput,
+} from '../../shared/researchTypes';
 import { ContextAssemblyService } from './context/ContextAssemblyService';
 import { MemoryPolicyService } from './policy/MemoryPolicyService';
 import { GraphTraversalService } from './graph/GraphTraversalService';

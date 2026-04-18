@@ -19,6 +19,14 @@ import type {
   CreateSearchRunResultInput,
   NotebookItemRecord,
   AddNotebookItemInput,
+  NotebookSourceType,
+  NotebookRetrievalStatus,
+  NotebookOpenTargetType,
+} from '../../../shared/researchTypes';
+import {
+  normalizeNotebookItemForStorage,
+  normalizeNotebookSourceRecord,
+  resolveNotebookOpenTarget,
 } from '../../../shared/researchTypes';
 
 export class ResearchRepository {
@@ -117,14 +125,17 @@ export class ResearchRepository {
     const inserted: NotebookItemRecord[] = [];
     for (const item of items) {
       const id = uuidv4();
-      const runId = item.added_from_search_run_id ?? addedFromSearchRunId ?? null;
+      const normalized = normalizeNotebookItemForStorage(item);
+      const runId = normalized.added_from_search_run_id ?? addedFromSearchRunId ?? null;
       const result = await this.pool.query<NotebookItemRecord>(
         `INSERT INTO notebook_items
            (id, notebook_id, item_key, item_type, source_id, source_path,
             title, uri, snippet, content_hash, added_from_search_run_id, metadata_json)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
          ON CONFLICT (notebook_id, item_key) DO UPDATE
-           SET title      = EXCLUDED.title,
+           SET item_type   = EXCLUDED.item_type,
+               source_id   = EXCLUDED.source_id,
+               title      = EXCLUDED.title,
                snippet    = EXCLUDED.snippet,
                uri        = EXCLUDED.uri,
                source_path= EXCLUDED.source_path,
@@ -134,16 +145,16 @@ export class ResearchRepository {
         [
           id,
           notebookId,
-          item.item_key,
-          item.item_type ?? 'web',
-          item.source_id ?? null,
-          item.source_path ?? null,
-          item.title ?? null,
-          item.uri ?? null,
-          item.snippet ?? null,
-          item.content_hash ?? null,
+          normalized.item_key,
+          normalized.item_type ?? 'web',
+          normalized.source_id ?? null,
+          normalized.source_path ?? null,
+          normalized.title ?? null,
+          normalized.uri ?? null,
+          normalized.snippet ?? null,
+          normalized.content_hash ?? null,
           runId,
-          JSON.stringify(item.metadata_json ?? {}),
+          JSON.stringify(normalized.metadata_json ?? {}),
         ]
       );
       if (result.rows[0]) inserted.push(this.mapNotebookItem(result.rows[0]));
@@ -234,6 +245,7 @@ export class ResearchRepository {
     const inserted: SearchRunResultRecord[] = [];
     for (const res of results) {
       const id = uuidv4();
+      const normalized = normalizeNotebookItemForStorage(res);
       const row = await this.pool.query<SearchRunResultRecord>(
         `INSERT INTO search_run_results
            (id, search_run_id, item_key, item_type, source_id, source_path,
@@ -243,16 +255,16 @@ export class ResearchRepository {
         [
           id,
           searchRunId,
-          res.item_key,
-          res.item_type ?? 'web',
-          res.source_id ?? null,
-          res.source_path ?? null,
-          res.title ?? null,
-          res.uri ?? null,
-          res.snippet ?? null,
+          normalized.item_key,
+          normalized.item_type ?? 'web',
+          normalized.source_id ?? null,
+          normalized.source_path ?? null,
+          normalized.title ?? null,
+          normalized.uri ?? null,
+          normalized.snippet ?? null,
           res.score ?? null,
-          JSON.stringify(res.metadata_json ?? {}),
-          res.content_hash ?? null,
+          JSON.stringify(normalized.metadata_json ?? {}),
+          normalized.content_hash ?? null,
         ]
       );
       if (row.rows[0]) inserted.push(this.mapSearchRunResult(row.rows[0]));
@@ -339,9 +351,42 @@ export class ResearchRepository {
   }> {
     const items = await this.listNotebookItems(notebookId);
     return {
-      uris: items.map(i => i.uri).filter((u): u is string => u != null),
-      sourcePaths: items.map(i => i.source_path).filter((p): p is string => p != null),
+      uris: items
+        .map(i => normalizeNotebookSourceRecord(i).uri)
+        .filter((u): u is string => u != null),
+      sourcePaths: items
+        .map(i => normalizeNotebookSourceRecord(i).sourcePath)
+        .filter((p): p is string => p != null),
       itemKeys: items.map(i => i.item_key),
+    };
+  }
+
+  async resolveNotebookOpenTarget(
+    notebookId: string,
+    itemKey: string,
+  ): Promise<{
+    openTarget: string | null;
+    openTargetType: NotebookOpenTargetType;
+    sourceUnavailableReason: string | null;
+    sourceType: NotebookSourceType;
+  }> {
+    const items = await this.listNotebookItems(notebookId);
+    const item = items.find((candidate) => candidate.item_key === itemKey);
+    if (!item) {
+      return {
+        openTarget: null,
+        openTargetType: 'none',
+        sourceUnavailableReason: `notebook_item_not_found:${itemKey}`,
+        sourceType: 'generated',
+      };
+    }
+    const open = resolveNotebookOpenTarget(item);
+    const normalized = normalizeNotebookSourceRecord(item);
+    return {
+      openTarget: open.openTarget,
+      openTargetType: open.openTargetType,
+      sourceUnavailableReason: open.sourceUnavailableReason,
+      sourceType: normalized.sourceType,
     };
   }
 
@@ -363,17 +408,37 @@ export class ResearchRepository {
   }
 
   private mapSearchRunResult(row: SearchRunResultRecord): SearchRunResultRecord {
+    const normalized = normalizeNotebookSourceRecord(row);
     return {
       ...row,
       score: row.score != null ? Number(row.score) : null,
       captured_at: toIsoString(row.captured_at),
+      sourceType: normalized.sourceType,
+      providerId: normalized.providerId,
+      summary: normalized.summary,
+      contentText: normalized.contentText,
+      mimeType: normalized.mimeType,
+      retrievalStatus: normalized.retrievalStatus as NotebookRetrievalStatus,
+      openTarget: normalized.openTarget,
+      openTargetType: normalized.openTargetType,
+      createdFromSearch: normalized.createdFromSearch,
     };
   }
 
   private mapNotebookItem(row: NotebookItemRecord): NotebookItemRecord {
+    const normalized = normalizeNotebookSourceRecord(row);
     return {
       ...row,
       added_at: toIsoString(row.added_at),
+      sourceType: normalized.sourceType,
+      providerId: normalized.providerId,
+      summary: normalized.summary,
+      contentText: normalized.contentText,
+      mimeType: normalized.mimeType,
+      retrievalStatus: normalized.retrievalStatus as NotebookRetrievalStatus,
+      openTarget: normalized.openTarget,
+      openTargetType: normalized.openTargetType,
+      createdFromSearch: normalized.createdFromSearch,
     };
   }
 }
