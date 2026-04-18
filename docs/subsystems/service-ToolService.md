@@ -29,6 +29,10 @@ export interface ToolDefinition {
     execute: (args: any) => Promise<ToolResult | string>;
 }
 
+export interface ToolExecutionContext {
+    memoryAuthorityContext?: MemoryAuthorityContext;
+}
+
 /** Tool Registry Service  This service manages the lifecycle of all AI-executable tools. It handles: - **Core Tools**: File I/O, Browser automation, Terminal interaction. - **Service Tools**: Memory graph, Astro emotion engine, RAG search. - **MCP Tools**: Dynamic tool discovery from external MCP servers.  Each tool follows the OpenAI `function` schema format.
 
 ### Methods
@@ -72,7 +76,7 @@ Updates the workspace root for file I/O tools.  Called when the user changes t
 #### `setMemoryService`
 Injects the MemoryService dependency and registers memory + desktop tools.  Registers five tools: - `mem0_search` — Searches long-term memory (semantic or keyword). - `mem0_add` — Stores a new fact/memory. - `mem0_get_recent` — Retrieves the N most recent memories. - `desktop_screenshot` — Captures a screenshot of the primary display. - `desktop_input` — Controls mouse/keyboard via PowerShell.  @param {any} memory - The MemoryService instance. @param {Function} [getCanonicalId] - Optional P7A authority callback.   Called before every durable mem0_add write to obtain a canonical_memory_id   from MemoryAuthorityService. When provided, derived writes will be anchored.   When absent, writes proceed but are flagged by the MemoryService P7A guard./
 
-**Arguments**: `memory: any, getCanonicalId?: (text: string, sourceKind: string) => Promise<string | null>,`
+**Arguments**: `memory: any, getCanonicalId?: ( text: string, sourceKind: string, memoryAuthorityContext?: MemoryAuthorityContext, ) => Promise<string | null>,`
 
 ---
 #### `registerCoreTools`
@@ -161,7 +165,7 @@ Returns a simple list of all tool names and descriptions. Used by the UI for to
 #### `executeTool`
 @param name - The tool name as identified by the Brain. @param args - The arguments parsed from the Brain's response. @param allowedNames - Optional runtime allowlist from AgentService./
 
-**Arguments**: `name: string, args: any, allowedNames?: ReadonlySet<string>`
+**Arguments**: `name: string, args: any, allowedNames?: ReadonlySet<string>, executionContext?: ToolExecutionContext,`
 **Returns**: `Promise<any>`
 
 ---

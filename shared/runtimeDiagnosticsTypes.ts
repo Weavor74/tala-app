@@ -41,6 +41,12 @@ import type {
     VerificationDepth,
 } from './planning/PlanningMemoryTypes';
 import type { KernelTurnDiagnosticsView } from './turnArbitrationTypes';
+import type {
+    MemoryAuthorityDecision,
+    MemoryAuthorityDiagnosticsView,
+    MemoryAuthorityReasonCode,
+    MemoryWriteCategory,
+} from './memoryAuthorityTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -609,6 +615,12 @@ export interface PlanningMemoryDiagnosticsSnapshot {
     lastUpdated: string;
 }
 
+export interface RuntimeMemoryAuthorityDiagnosticsView extends MemoryAuthorityDiagnosticsView {
+    lastDecision?: MemoryAuthorityDecision;
+    lastDeniedCategory?: MemoryWriteCategory;
+    lastDeniedReasonCodes: MemoryAuthorityReasonCode[];
+}
+
 // ─── Execution authority lane diagnostics ─────────────────────────────────────
 
 /**
@@ -703,6 +715,11 @@ export interface RuntimeDiagnosticsSnapshot {
      * Populated after kernel.turn_arbitrated events.
      */
     kernelTurn?: KernelTurnDiagnosticsView;
+    /**
+     * Memory authority gate diagnostics.
+     * Populated after memory.authority_check_* events.
+     */
+    memoryAuthority?: RuntimeMemoryAuthorityDiagnosticsView;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────

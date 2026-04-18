@@ -87,6 +87,11 @@ type RuntimeEventType =
     | 'tool.failed'
     | `tool.${string}`
     | 'memory.write_requested'
+    | 'memory.authority_check_requested'
+    | 'memory.authority_check_allowed'
+    | 'memory.authority_check_denied'
+    | 'memory.write_allowed'
+    | 'memory.write_blocked'
     | 'memory.write_completed'
     | 'memory.write_failed'
     | 'memory.health_evaluated'

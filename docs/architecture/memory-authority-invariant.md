@@ -24,6 +24,20 @@ Rejected or deferred candidates must not be surfaced as Canonical authority data
 - Authoritative recall must resolve to canonical IDs.
 - Derived layers are rebuildable from canonical Postgres state.
 
+## Turn-Scoped Write Eligibility (MemoryAuthorityGate)
+- `MemoryAuthorityGate` is the mandatory runtime seam for all turn-originated memory and episode writes.
+- `AgentKernel` decides turn mode and `memoryWriteMode`; memory writers consume that decision and cannot self-upgrade authority.
+- Enforcement matrix:
+  - `conversation_only`: conversation categories only (`conversation_summary`, `conversation_memory`).
+  - `episodic`: conversation + episodic categories.
+  - `goal_episode`: conversation + episodic + planning/execution/recovery/goal-state categories.
+- Durable categories (`planning_episode`, `execution_episode`, `recovery_episode`, `goal_state`) require:
+  - `authorityEnvelope.canCreateDurableState=true`
+  - `authorityLevel='full_authority'`
+  - goal execution turn mode and goal linkage where required.
+- Denials are deterministic and reason-coded (`invalid_category_for_write_mode`, `goal_linkage_required`, `durable_state_not_permitted`, etc.).
+- The gate governs write eligibility only; canonical truth authority remains PostgreSQL via `MemoryAuthorityService`.
+
 ## Operational Checks
 - Integrity validation detects orphan projections, stale projections, duplicate canonical conflicts, and tombstone violations.
 - Rebuild flows execute canonical-to-Derived Hydration for `mem0`, `graph`, and `vector` projection metadata in `memory_projections`.

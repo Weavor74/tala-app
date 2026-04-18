@@ -61,3 +61,18 @@ sequenceDiagram
     IPC-->>UI: update state
     UI-->>User: Display response
 ```
+
+## 6. Kernel -> Memory Authority Chain
+- Turn-mode authority is selected once in `AgentKernel` and propagated as:
+  - `TurnArbitrationDecision`
+  - `TurnAuthorityEnvelope`
+  - `turnMemoryAuthorityContext` in capabilities override.
+- Any turn-originated memory write must pass through `MemoryAuthorityGate` before canonical persistence.
+- `PlanningService`, `ChatExecutionSpine` post-turn memory writes, and tool-driven memory writes (`mem0_add`) all perform gate checks with propagated context.
+- Writers do not infer authority; they submit `MemoryWriteRequest` + `MemoryAuthorityContext` and obey allow/deny decisions.
+
+## 7. Tool Memory Path
+- `ToolExecutionCoordinator` carries `memoryAuthorityContext` through tool invocation context.
+- `ToolService.mem0_add` forwards that context to the canonical-ID callback in `AgentService`.
+- `AgentService` enforces `MemoryAuthorityGate` before invoking `MemoryAuthorityService.tryCreateCanonicalMemory`.
+- Denied writes are blocked with stable reason codes and telemetry (`memory.authority_check_denied`, `memory.write_blocked`).

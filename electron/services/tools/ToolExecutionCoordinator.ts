@@ -7,6 +7,7 @@ import { executeWithRuntimeGuardrails } from '../runtime/guardrails/GuardrailExe
 import type { GuardrailFailureKind } from '../runtime/guardrails/RuntimeGuardrailTypes';
 import { SystemModeManager } from '../SystemModeManager';
 import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
+import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
 
 /**
  * Context carried through a single tool invocation.
@@ -33,6 +34,8 @@ export interface ToolInvocationContext {
     toolTimeoutMs?: number;
     /** Immutable turn authority envelope issued by AgentKernel. */
     authorityEnvelope?: TurnAuthorityEnvelope;
+    /** Immutable memory authority context issued by AgentKernel for turn-bound writes. */
+    memoryAuthorityContext?: MemoryAuthorityContext;
 }
 
 const SAFE_READ_ONLY_TOOLS = new Set<string>([
@@ -233,7 +236,10 @@ export class ToolExecutionCoordinator {
                     retrySafe && failureKind !== 'policy_denied' && isTransientToolError(error),
                 shouldCountFailureForCircuit: (_error, failureKind) =>
                     failureKind !== 'policy_denied',
-                execute: async () => this.tools.executeTool(name, args, allowedNames),
+                execute: async () =>
+                    this.tools.executeTool(name, args, allowedNames, {
+                        memoryAuthorityContext: ctx?.memoryAuthorityContext,
+                    }),
             });
 
             if (!guarded.ok) {

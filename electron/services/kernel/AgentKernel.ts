@@ -21,6 +21,7 @@ import type {
     TurnArbitrationDecision,
     TurnAuthorityEnvelope,
 } from '../../../shared/turnArbitrationTypes';
+import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
 import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
@@ -241,15 +242,28 @@ export class AgentKernel {
 
     private _composeCapabilitiesOverride(
         capabilitiesOverride: any,
+        turnDecision: TurnArbitrationDecision,
         authorityEnvelope: TurnAuthorityEnvelope,
     ): any {
+        const turnMemoryAuthorityContext: MemoryAuthorityContext = {
+            turnId: turnDecision.turnId,
+            conversationId: undefined,
+            goalId: turnDecision.activeGoalId,
+            turnMode: turnDecision.mode,
+            memoryWriteMode: turnDecision.memoryWriteMode,
+            authorityEnvelope,
+        };
         if (capabilitiesOverride && typeof capabilitiesOverride === 'object') {
             return {
                 ...capabilitiesOverride,
                 turnAuthorityEnvelope: authorityEnvelope,
+                turnMemoryAuthorityContext,
             };
         }
-        return { turnAuthorityEnvelope: authorityEnvelope };
+        return {
+            turnAuthorityEnvelope: authorityEnvelope,
+            turnMemoryAuthorityContext,
+        };
     }
 
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
@@ -563,6 +577,7 @@ export class AgentKernel {
                     turnId: turnDecision.turnId,
                     turnMode: turnDecision.mode,
                     authorityLevel: turnDecision.authorityLevel,
+                    memoryWriteMode: turnDecision.memoryWriteMode,
                 },
             });
 
@@ -615,7 +630,7 @@ export class AgentKernel {
             onToken,
             onEvent,
             request.images,
-            this._composeCapabilitiesOverride(request.capabilitiesOverride, envelope),
+            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
         );
     }
 

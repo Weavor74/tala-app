@@ -23,8 +23,13 @@ import { artifactRouter } from '../ArtifactRouter';
 import { getCanonicalMemoryRepository } from '../db/initMemoryStore';
 import { MemoryAuthorityService } from '../memory/MemoryAuthorityService';
 import { DeferredMemoryReplayService } from '../memory/DeferredMemoryReplayService';
+import {
+    detectMemoryAuthorityViolationError,
+    memoryAuthorityGate,
+} from '../memory/MemoryAuthorityGate';
 import type { PostgresMemoryRepository } from '../db/PostgresMemoryRepository';
 import type { ToolInvocationContext } from '../tools/ToolExecutionCoordinator';
+import type { MemoryAuthorityContext, MemoryWriteRequest } from '../../../shared/memoryAuthorityTypes';
 function isStreamInferenceResult(r: BrainResponse | StreamInferenceResult): r is StreamInferenceResult {
     return 'streamStatus' in r;
 }
@@ -474,7 +479,8 @@ export class ChatExecutionSpine {
                         executionType: 'chat_turn',
                         executionOrigin: 'ipc',
                         executionMode: activeMode,
-                        authorityEnvelope: capabilitiesOverride?.turnAuthorityEnvelope,
+                        authorityEnvelope: input.capabilitiesOverride?.turnAuthorityEnvelope,
+                        memoryAuthorityContext: input.capabilitiesOverride?.turnMemoryAuthorityContext,
                     });
                     const rawResult = invResult.data;
                     const result = typeof rawResult === 'object' && rawResult !== null ? rawResult : { result: String(rawResult), requires_llm: false, success: !String(rawResult).toLowerCase().includes('error:') };
@@ -1250,6 +1256,7 @@ export class ChatExecutionSpine {
                         executionMode: activeMode,
                         enforcePolicy: true,
                         authorityEnvelope: capabilitiesOverride?.turnAuthorityEnvelope,
+                        memoryAuthorityContext: capabilitiesOverride?.turnMemoryAuthorityContext,
                     };
                     return (await this.agent.coordinator.executeTool(toolName, args, allowedToolNames, invocationCtx)).data;
                 })();
@@ -2426,6 +2433,36 @@ Failure to provide a tool call will result in system termination.`;
                 // P7A: Canonical write through MemoryAuthorityService MUST happen before
                 // any derived system (mem0, RAG, graph). canonical_memory_id is returned
                 // and passed downstream so derived systems can reference it.
+                const memoryAuthorityContext = (
+                    capabilitiesOverride?.turnMemoryAuthorityContext ??
+                    {}
+                ) as MemoryAuthorityContext;
+                const memoryWriteRequest: MemoryWriteRequest = {
+                    writeId: `memory-write-${turnId}`,
+                    category: 'conversation_memory',
+                    source: 'memory_service',
+                    turnId,
+                    payload: {
+                        mode: activeMode,
+                        intentClass: turnObject.intent.class,
+                    },
+                };
+                try {
+                    memoryAuthorityGate.assertAllowed(memoryWriteRequest, {
+                        ...memoryAuthorityContext,
+                        turnId: memoryAuthorityContext.turnId ?? turnId,
+                    });
+                } catch (err) {
+                    if (detectMemoryAuthorityViolationError(err)) {
+                        console.warn(
+                            `[AgentService][MemoryAuthority] blocked post-turn memory write turnId=${turnId} ` +
+                            `reasonCodes=${err.decision.reasonCodes.join(',')}`,
+                        );
+                        return;
+                    }
+                    throw err;
+                }
+
                 let canonicalMemoryId: string | null = null;
                 const repo = getCanonicalMemoryRepository();
                 if (repo) {
@@ -2466,6 +2503,21 @@ Failure to provide a tool call will result in system termination.`;
                     if (writeResult.success) {
                         canonicalMemoryId = writeResult.data ?? null;
                         console.log(`[AgentService] P7A canonical write complete: ${canonicalMemoryId}`);
+                        TelemetryBus.getInstance().emit({
+                            event: 'memory.write_completed',
+                            subsystem: 'memory',
+                            executionId: turnId,
+                            payload: {
+                                category: 'conversation_memory',
+                                source: memoryWriteRequest.source,
+                                turnId,
+                                goalId: memoryAuthorityContext.goalId,
+                                turnMode: memoryAuthorityContext.turnMode,
+                                memoryWriteMode: memoryAuthorityContext.memoryWriteMode,
+                                authorityLevel: memoryAuthorityContext.authorityEnvelope?.authorityLevel,
+                                canonicalMemoryId,
+                            },
+                        });
                         telemetry.operational(
                             'cognitive',
                             'post_turn_memory_write',

@@ -78,6 +78,14 @@ import type { PostgresMemoryRepository } from './db/PostgresMemoryRepository';
 import { toolGatekeeper } from './router/ToolGatekeeper';
 import { resolveStoragePath } from './PathResolver';
 import type { McpAuthorityService } from './mcp/McpAuthorityService';
+import {
+    detectMemoryAuthorityViolationError,
+    memoryAuthorityGate,
+} from './memory/MemoryAuthorityGate';
+import type {
+    MemoryAuthorityContext,
+    MemoryWriteRequest,
+} from '../../shared/memoryAuthorityTypes';
 
 type RoutingMode = 'auto' | 'local-only' | 'cloud-only';
 
@@ -425,7 +433,34 @@ Violation of this rule is considered a system failure.`;
 
         // P7A: build a canonical write callback so ToolService's mem0_add tool
         // routes through MemoryAuthorityService before writing to the derived store.
-        const _getCanonicalIdForTool = async (text: string, sourceKind: string): Promise<string | null> => {
+        const _getCanonicalIdForTool = async (
+            text: string,
+            sourceKind: string,
+            memoryAuthorityContext?: MemoryAuthorityContext,
+        ): Promise<string | null> => {
+            const request: MemoryWriteRequest = {
+                writeId: `tool-memory-write-${uuidv4()}`,
+                category: 'episodic_memory',
+                source: memoryAuthorityContext?.systemAuthority ? 'system' : 'tool_execution',
+                turnId: memoryAuthorityContext?.turnId,
+                conversationId: memoryAuthorityContext?.conversationId,
+                goalId: memoryAuthorityContext?.goalId,
+                payload: {
+                    sourceKind,
+                },
+            };
+            try {
+                memoryAuthorityGate.assertAllowed(request, memoryAuthorityContext ?? {});
+            } catch (err) {
+                if (detectMemoryAuthorityViolationError(err)) {
+                    console.warn(
+                        `[AgentService][MemoryAuthority] blocked mem0_add canonical write source=${sourceKind} ` +
+                        `reasonCodes=${err.decision.reasonCodes.join(',')}`,
+                    );
+                    return null;
+                }
+                throw err;
+            }
             const repo = getCanonicalMemoryRepository();
             if (!repo) return null;
             const pool = (repo as unknown as PostgresMemoryRepository).getSharedPool();
@@ -443,6 +478,20 @@ Violation of this rule is considered a system failure.`;
                 console.warn(`[AgentService] P7A canonical write failed for ${sourceKind}:`, result.error);
                 return null;
             }
+            TelemetryBus.getInstance().emit({
+                executionId: memoryAuthorityContext?.turnId ?? `tool-memory-write-${Date.now()}`,
+                subsystem: 'memory',
+                event: 'memory.write_completed',
+                payload: {
+                    category: request.category,
+                    source: request.source,
+                    turnId: request.turnId,
+                    goalId: request.goalId,
+                    turnMode: memoryAuthorityContext?.turnMode,
+                    memoryWriteMode: memoryAuthorityContext?.memoryWriteMode,
+                    authorityLevel: memoryAuthorityContext?.authorityEnvelope?.authorityLevel,
+                },
+            });
             return result.data ?? null;
         };
         this.tools.setMemoryService(this.memory, _getCanonicalIdForTool);
@@ -3069,16 +3118,24 @@ Exported standalone package from Tala.
      * @returns The stringified result of the tool execution.
      */
     public async executeTool(name: string, args: any): Promise<any> {
+        const turnId = `direct-${Date.now()}`;
+        const authorityEnvelope = {
+            turnId,
+            mode: 'goal_execution' as const,
+            authorityLevel: 'full_authority' as const,
+            workflowAuthority: true,
+            canCreateDurableState: true,
+            canReplan: true,
+        };
         const invResult = await this.coordinator.executeTool(name, args, undefined, {
             executionType: 'direct_invocation',
             executionOrigin: 'api',
-            authorityEnvelope: {
-                turnId: `direct-${Date.now()}`,
-                mode: 'goal_execution',
-                authorityLevel: 'full_authority',
-                workflowAuthority: true,
-                canCreateDurableState: true,
-                canReplan: true,
+            authorityEnvelope,
+            memoryAuthorityContext: {
+                turnId,
+                turnMode: 'goal_execution',
+                memoryWriteMode: 'goal_episode',
+                authorityEnvelope,
             },
             // Policy enforcement is performed inside ToolExecutionCoordinator.
         });

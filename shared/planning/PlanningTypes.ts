@@ -31,7 +31,7 @@ import type {
     FallbackPosture,
     StrategySelection,
 } from './PlanningMemoryTypes';
-import type { TurnAuthorityLevel, TurnMode } from '../turnArbitrationTypes';
+import type { MemoryWriteMode, TurnAuthorityLevel, TurnMode } from '../turnArbitrationTypes';
 
 // ─── Goal ─────────────────────────────────────────────────────────────────────
 
@@ -811,6 +811,7 @@ export interface PlanningInvocationMetadata {
     turnId?: string;
     turnMode?: TurnMode;
     authorityLevel?: TurnAuthorityLevel;
+    memoryWriteMode?: MemoryWriteMode;
 }
 
 /**

@@ -9,6 +9,7 @@ import type {
     HandoffDiagnosticsSnapshot,
     PlanningMemoryDiagnosticsSnapshot,
     KernelTurnDiagnosticsView,
+    RuntimeMemoryAuthorityDiagnosticsView,
 } from '../../shared/runtimeDiagnosticsTypes';
 import type {
     SystemCapability,
@@ -65,6 +66,14 @@ export class RuntimeDiagnosticsAggregator {
     private readonly _unsubscribeHandoff: (() => void);
     private _planningMemorySnapshot?: PlanningMemoryDiagnosticsSnapshot;
     private _kernelTurnSnapshot?: KernelTurnDiagnosticsView;
+    private _memoryAuthorityDiagnostics: RuntimeMemoryAuthorityDiagnosticsView = {
+        lastDeniedReasonCodes: [],
+        allowCount: 0,
+        denyCount: 0,
+        countsByCategory: {},
+        countsByWriteMode: {},
+        lastUpdated: new Date(0).toISOString(),
+    };
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -89,6 +98,7 @@ export class RuntimeDiagnosticsAggregator {
             this._handleHandoffEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handlePlanningMemoryEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleKernelTurnEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+            this._handleMemoryAuthorityEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
         });
     }
 
@@ -155,6 +165,7 @@ export class RuntimeDiagnosticsAggregator {
             handoffDiagnostics: this._buildHandoffDiagnostics(now),
             planningMemory: this._buildPlanningMemoryDiagnostics(now),
             kernelTurn: this._buildKernelTurnDiagnostics(now),
+            memoryAuthority: this._buildMemoryAuthorityDiagnostics(now),
         };
     }
 
@@ -344,6 +355,20 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildMemoryAuthorityDiagnostics(now: string): RuntimeMemoryAuthorityDiagnosticsView | undefined {
+        if (
+            this._memoryAuthorityDiagnostics.allowCount === 0 &&
+            this._memoryAuthorityDiagnostics.denyCount === 0 &&
+            !this._memoryAuthorityDiagnostics.lastDecision
+        ) {
+            return undefined;
+        }
+        return {
+            ...this._memoryAuthorityDiagnostics,
+            lastUpdated: this._memoryAuthorityDiagnostics.lastUpdated || now,
+        };
+    }
+
     private _handlePlanningMemoryEvent(event: string, payload?: Record<string, unknown>): void {
         if (!payload) return;
         const now = new Date().toISOString();
@@ -450,6 +475,50 @@ export class RuntimeDiagnosticsAggregator {
                 updatedAt: now,
             };
         }
+    }
+
+    private _handleMemoryAuthorityEvent(event: string, payload?: Record<string, unknown>): void {
+        if (
+            event !== 'memory.authority_check_allowed' &&
+            event !== 'memory.authority_check_denied'
+        ) {
+            return;
+        }
+        if (!payload) return;
+        const now = new Date().toISOString();
+        const category = String(payload.category ?? '') as keyof RuntimeMemoryAuthorityDiagnosticsView['countsByCategory'];
+        const memoryWriteMode = String(payload.memoryWriteMode ?? 'unknown') as keyof RuntimeMemoryAuthorityDiagnosticsView['countsByWriteMode'];
+        if (category) {
+            this._memoryAuthorityDiagnostics.countsByCategory[category] =
+                (this._memoryAuthorityDiagnostics.countsByCategory[category] ?? 0) + 1;
+        }
+        this._memoryAuthorityDiagnostics.countsByWriteMode[memoryWriteMode] =
+            (this._memoryAuthorityDiagnostics.countsByWriteMode[memoryWriteMode] ?? 0) + 1;
+
+        const isDenied = event === 'memory.authority_check_denied';
+        if (isDenied) {
+            this._memoryAuthorityDiagnostics.denyCount += 1;
+            this._memoryAuthorityDiagnostics.lastDeniedCategory = category;
+            this._memoryAuthorityDiagnostics.lastDeniedReasonCodes = Array.isArray(payload.reasonCodes)
+                ? payload.reasonCodes.map(String) as RuntimeMemoryAuthorityDiagnosticsView['lastDeniedReasonCodes']
+                : [];
+        } else {
+            this._memoryAuthorityDiagnostics.allowCount += 1;
+        }
+
+        this._memoryAuthorityDiagnostics.lastDecision = {
+            requestId: String(payload.writeId ?? payload.turnId ?? `memory-authority-${Date.now()}`),
+            decision: isDenied ? 'deny' : 'allow',
+            category,
+            reasonCodes: Array.isArray(payload.reasonCodes)
+                ? payload.reasonCodes.map(String) as RuntimeMemoryAuthorityDiagnosticsView['lastDeniedReasonCodes']
+                : [],
+            requiresGoalId: Boolean(payload.goalIdRequired),
+            requiresTurnContext: Boolean(payload.turnContextRequired),
+            requiresDurableStateAuthority: Boolean(payload.durableStateRequested),
+            normalizedWriteMode: payload.memoryWriteMode as RuntimeMemoryAuthorityDiagnosticsView['lastDecision']['normalizedWriteMode'],
+        };
+        this._memoryAuthorityDiagnostics.lastUpdated = now;
     }
 
     private _handleHandoffEvent(event: string, payload?: Record<string, unknown>): void {

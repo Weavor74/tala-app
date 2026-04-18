@@ -20,6 +20,7 @@ import type {
 } from '../../../shared/runtime/failureRecoveryTypes';
 import type { ToolInvocationContext } from '../tools/ToolExecutionCoordinator';
 import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
+import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
 import {
     FailureSuppressionService,
     buildFailureSignature,
@@ -249,6 +250,7 @@ export class PlanningHandoffCoordinator {
                     mergedInput,
                     executionBoundaryId,
                     authorityEnvelope,
+                    plan,
                 );
                 if (single.success) {
                     const recoveryOutcome: RecoveryOutcomeStatus =
@@ -472,6 +474,7 @@ export class PlanningHandoffCoordinator {
         input: Record<string, unknown>,
         executionBoundaryId: string,
         authorityEnvelope: TurnAuthorityEnvelope,
+        plan: ExecutionPlan,
     ): Promise<{
         success: boolean;
         data?: unknown;
@@ -479,11 +482,21 @@ export class PlanningHandoffCoordinator {
         error?: string;
         errorObject?: unknown;
     }> {
+        const memoryAuthorityContext: MemoryAuthorityContext | undefined = plan.planningInvocation
+            ? {
+                turnId: plan.planningInvocation.turnId,
+                goalId: plan.goalId,
+                turnMode: plan.planningInvocation.turnMode,
+                memoryWriteMode: plan.planningInvocation.memoryWriteMode,
+                authorityEnvelope,
+            }
+            : undefined;
         const ctx: ToolInvocationContext = {
             executionId: executionBoundaryId,
             executionType: 'planning_handoff',
             executionOrigin: 'planning',
             authorityEnvelope,
+            memoryAuthorityContext,
         };
         try {
             const result = await this._toolExecutor.executeTool(toolId, input, undefined, ctx);

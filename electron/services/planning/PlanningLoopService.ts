@@ -542,14 +542,14 @@ export class PlanningLoopService {
             priority: 'normal',
             metadata: run.contextSummary,
         };
-        const goal = this._planning.registerGoal(goalInput);
-        run.goalId = goal.id;
-        run.normalizedIntent = goal.title;
-        this._saveRun(run);
         const invocation: PlanningInvocationMetadata = run.planningInvocation ?? {
             invokedBy: 'planning_loop',
             invocationReason: 'legacy_unspecified',
         };
+        const goal = this._planning.registerGoal(goalInput, invocation);
+        run.goalId = goal.id;
+        run.normalizedIntent = goal.title;
+        this._saveRun(run);
         return this._planning.buildPlan(goal.id, invocation);
     }
 

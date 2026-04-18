@@ -23,6 +23,11 @@ export type TurnArbitrationSource =
     | 'rule_based'
     | 'policy';
 
+export type MemoryWriteMode =
+    | 'conversation_only'
+    | 'episodic'
+    | 'goal_episode';
+
 export interface AgentTurnRequest {
     turnId: string;
     conversationId: string;
@@ -61,7 +66,7 @@ export interface TurnArbitrationDecision {
     requiresPlan: boolean;
     requiresExecutionLoop: boolean;
     authorityLevel: TurnAuthorityLevel;
-    memoryWriteMode: 'conversation_only' | 'episodic' | 'goal_episode';
+    memoryWriteMode: MemoryWriteMode;
 }
 
 export interface TurnAuthorityEnvelope {
@@ -86,4 +91,3 @@ export interface KernelTurnDiagnosticsView {
     createdGoalId?: string;
     updatedAt: string;
 }
-

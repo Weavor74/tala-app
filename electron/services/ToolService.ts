@@ -5,6 +5,7 @@ import { AnnotationParser } from './AnnotationParser';
 import { auditLogger } from './AuditLogger';
 import { redact } from './log_redact';
 import type { McpAuthorityService } from './mcp/McpAuthorityService';
+import type { MemoryAuthorityContext } from '../../shared/memoryAuthorityTypes';
 
 /**
  * Standardized execution result for all tools.
@@ -36,6 +37,10 @@ export interface ToolDefinition {
     parameters: any;
     /** The async function that executes the tool's logic. Returns a standardized ToolResult. */
     execute: (args: any) => Promise<ToolResult | string>;
+}
+
+export interface ToolExecutionContext {
+    memoryAuthorityContext?: MemoryAuthorityContext;
 }
 
 /**
@@ -267,7 +272,11 @@ export class ToolService {
     */
     public setMemoryService(
         memory: any,
-        getCanonicalId?: (text: string, sourceKind: string) => Promise<string | null>,
+        getCanonicalId?: (
+            text: string,
+            sourceKind: string,
+            memoryAuthorityContext?: MemoryAuthorityContext,
+        ) => Promise<string | null>,
     ) {
         console.log('[ToolService] Memory Service Injected');
 
@@ -312,7 +321,11 @@ export class ToolService {
                     let canonicalMemoryId: string | null = null;
                     if (getCanonicalId) {
                         try {
-                            canonicalMemoryId = await getCanonicalId(args.text, 'tool:mem0_add');
+                            canonicalMemoryId = await getCanonicalId(
+                                args.text,
+                                'tool:mem0_add',
+                                args?.__memoryAuthorityContext as MemoryAuthorityContext | undefined,
+                            );
                         } catch (e) {
                             console.warn('[P7A][ToolService:mem0_add] Could not obtain canonical_memory_id:', e);
                         }
@@ -1554,7 +1567,12 @@ export class ToolService {
      * @param args - The arguments parsed from the Brain's response.
      * @param allowedNames - Optional runtime allowlist from AgentService.
      */
-    public async executeTool(name: string, args: any, allowedNames?: ReadonlySet<string>): Promise<any> {
+    public async executeTool(
+        name: string,
+        args: any,
+        allowedNames?: ReadonlySet<string>,
+        executionContext?: ToolExecutionContext,
+    ): Promise<any> {
         // Strip provider-specific prefixes if present (e.g. Gemini OpenAI shim prepends 'default_api:')
         if (name.startsWith('default_api:')) {
             name = name.substring('default_api:'.length);
@@ -1613,7 +1631,14 @@ export class ToolService {
         if (this.tools.has(name)) {
             const tool = this.tools.get(name)!;
             try {
-                const output = await tool.execute(args);
+                const toolArgs =
+                    name === 'mem0_add' && executionContext?.memoryAuthorityContext && args && typeof args === 'object'
+                        ? {
+                            ...args,
+                            __memoryAuthorityContext: executionContext.memoryAuthorityContext,
+                        }
+                        : args;
+                const output = await tool.execute(toolArgs);
                 logEnd(output);
                 return output as any;
             } catch (e: any) {

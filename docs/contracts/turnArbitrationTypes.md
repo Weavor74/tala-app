@@ -50,7 +50,7 @@ interface TurnArbitrationDecision {
     requiresPlan: boolean;
     requiresExecutionLoop: boolean;
     authorityLevel: TurnAuthorityLevel;
-    memoryWriteMode: 'conversation_only' | 'episodic' | 'goal_episode';
+    memoryWriteMode: MemoryWriteMode;
 }
 ```
 
@@ -111,5 +111,13 @@ type TurnArbitrationSource =
     | 'continuity'
     | 'rule_based'
     | 'policy';
+```
+
+### `MemoryWriteMode`
+```typescript
+type MemoryWriteMode = 
+    | 'conversation_only'
+    | 'episodic'
+    | 'goal_episode';
 ```
 

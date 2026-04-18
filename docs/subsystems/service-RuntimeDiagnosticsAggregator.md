@@ -78,12 +78,22 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 **Returns**: `KernelTurnDiagnosticsView | undefined`
 
 ---
+#### `_buildMemoryAuthorityDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `RuntimeMemoryAuthorityDiagnosticsView | undefined`
+
+---
 #### `_handlePlanningMemoryEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`
 
 ---
 #### `_handleKernelTurnEvent`
+**Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
+#### `_handleMemoryAuthorityEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`
 

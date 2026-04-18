@@ -60,6 +60,10 @@ import { PlanningRepository } from './PlanningRepository';
 import { PlanningEpisodeRepository } from './PlanningEpisodeRepository';
 import { PlanningContextBuilder, type PlanningContextRuntimeState } from './PlanningContextBuilder';
 import { StrategySelector } from './StrategySelector';
+import {
+    detectMemoryAuthorityViolationError,
+    memoryAuthorityGate,
+} from '../memory/MemoryAuthorityGate';
 import type {
     PlanGoal,
     PlanGoalSource,
@@ -71,6 +75,12 @@ import type {
     ReplanRequest,
     ReplanPolicy,
 } from '../../../shared/planning/PlanningTypes';
+import type {
+    MemoryAuthorityContext,
+    MemoryWriteCategory,
+    MemoryWriteRequest,
+    MemoryWriteSource,
+} from '../../../shared/memoryAuthorityTypes';
 
 // ---------------------------------------------------------------------------
 // Input types
@@ -247,6 +257,93 @@ export class PlanningService {
         };
     }
 
+    private _resolveMemoryWriteSource(invocation: PlanningInvocationMetadata): MemoryWriteSource {
+        if (invocation.invokedBy === 'agent_kernel') return 'agent_kernel';
+        if (invocation.invokedBy === 'planning_loop') return 'planning_loop';
+        if (invocation.invokedBy === 'system') return 'system';
+        return 'planning_service';
+    }
+
+    private _buildMemoryAuthorityContext(
+        invocation: PlanningInvocationMetadata,
+        goalId?: string,
+    ): MemoryAuthorityContext {
+        const turnMode = invocation.turnMode;
+        const authorityEnvelope = invocation.turnId && turnMode
+            ? {
+                turnId: invocation.turnId,
+                mode: turnMode,
+                authorityLevel: invocation.authorityLevel ?? 'none',
+                workflowAuthority: turnMode !== 'conversational',
+                canCreateDurableState: invocation.authorityLevel === 'full_authority',
+                canReplan: turnMode === 'goal_execution',
+            }
+            : undefined;
+        return {
+            turnId: invocation.turnId,
+            goalId,
+            turnMode,
+            memoryWriteMode: invocation.memoryWriteMode,
+            authorityEnvelope,
+            systemAuthority: invocation.invokedBy === 'system',
+        };
+    }
+
+    private _assertMemoryWriteAllowed(
+        category: MemoryWriteCategory,
+        invocation: PlanningInvocationMetadata,
+        opts: {
+            goalId?: string;
+            episodeType?: string;
+            payload?: Record<string, unknown>;
+        },
+    ): void {
+        const request: MemoryWriteRequest = {
+            writeId: `mem-write-${uuidv4()}`,
+            category,
+            source: this._resolveMemoryWriteSource(invocation),
+            turnId: invocation.turnId,
+            goalId: opts.goalId,
+            episodeType: opts.episodeType,
+            payload: opts.payload ?? {},
+        };
+        const context = this._buildMemoryAuthorityContext(invocation, opts.goalId);
+        try {
+            memoryAuthorityGate.assertAllowed(request, context);
+        } catch (err) {
+            if (detectMemoryAuthorityViolationError(err)) {
+                throw new PlanningError(
+                    `Memory authority denied for ${category}: ${err.decision.reasonCodes.join(',')}`,
+                    'MEMORY_AUTHORITY_DENIED',
+                );
+            }
+            throw err;
+        }
+    }
+
+    private _emitMemoryWriteCompleted(
+        category: MemoryWriteCategory,
+        invocation: PlanningInvocationMetadata,
+        opts: { goalId?: string; payload?: Record<string, unknown> },
+    ): void {
+        const context = this._buildMemoryAuthorityContext(invocation, opts.goalId);
+        this._bus.emit({
+            executionId: invocation.turnId ?? opts.goalId ?? `planning-memory-write-${Date.now()}`,
+            subsystem: 'memory',
+            event: 'memory.write_completed',
+            payload: {
+                category,
+                source: this._resolveMemoryWriteSource(invocation),
+                turnId: invocation.turnId,
+                goalId: opts.goalId,
+                turnMode: context.turnMode,
+                memoryWriteMode: context.memoryWriteMode,
+                authorityLevel: context.authorityEnvelope?.authorityLevel,
+                ...(opts.payload ?? {}),
+            },
+        });
+    }
+
     // ── Goal management ──────────────────────────────────────────────────────
 
     /**
@@ -254,7 +351,8 @@ export class PlanningService {
      *
      * Emits: planning.goal_registered
      */
-    registerGoal(input: RegisterGoalInput): PlanGoal {
+    registerGoal(input: RegisterGoalInput, invocationMetadata?: PlanningInvocationMetadata): PlanGoal {
+        const invocation = this._normalizePlanningInvocation(invocationMetadata);
         const now = new Date().toISOString();
         const goal: PlanGoal = {
             id: `goal-${uuidv4()}`,
@@ -273,7 +371,15 @@ export class PlanningService {
             replanCount: 0,
         };
 
+        this._assertMemoryWriteAllowed('goal_state', invocation, {
+            goalId: goal.id,
+            payload: { goalStatus: goal.status, category: goal.category, source: goal.source },
+        });
         this._repo.saveGoal(goal);
+        this._emitMemoryWriteCompleted('goal_state', invocation, {
+            goalId: goal.id,
+            payload: { goalStatus: goal.status },
+        });
 
         this._bus.emit({
             executionId: goal.id,
@@ -311,16 +417,17 @@ export class PlanningService {
      *
      * @throws PlanningError if the goal is not found.
      */
-    analyzeGoal(goalId: string): GoalAnalysis {
+    analyzeGoal(goalId: string, invocationMetadata?: PlanningInvocationMetadata): GoalAnalysis {
         const goal = this._repo.getGoal(goalId);
         if (!goal) {
             throw new PlanningError(`Goal not found: ${goalId}`, 'GOAL_NOT_FOUND');
         }
+        const invocation = this._normalizePlanningInvocation(invocationMetadata);
 
         const start = Date.now();
 
         // Transition to 'analyzing'
-        this._saveGoalStatus(goal, 'analyzing');
+        this._saveGoalStatus(goal, 'analyzing', undefined, invocation);
 
         const capabilities = this._resolveCapabilities(goalId, goal.correlationId);
 
@@ -349,7 +456,7 @@ export class PlanningService {
         });
 
         if (analysis.blockingIssues.length > 0) {
-            this._saveGoalStatus(goal, 'blocked', analysis.blockingIssues.map(i => `block:${i}`));
+            this._saveGoalStatus(goal, 'blocked', analysis.blockingIssues.map(i => `block:${i}`), invocation);
         }
 
         return analysis;
@@ -375,7 +482,7 @@ export class PlanningService {
         }
         const invocation = this._normalizePlanningInvocation(invocationMetadata);
 
-        const analysis = this.analyzeGoal(goalId);
+        const analysis = this.analyzeGoal(goalId, invocation);
         const start = Date.now();
         const capabilities = this._resolveCapabilities(goalId, goal.correlationId);
         const runtimeState = this._resolveRuntimeState(capabilities);
@@ -441,7 +548,7 @@ export class PlanningService {
         // Update goal status
         const newGoalStatus = isBlocked ? 'blocked' : 'planned';
         const freshGoal = this._repo.getGoal(goalId)!;
-        this._saveGoalStatus(freshGoal, newGoalStatus, plan.reasonCodes);
+        this._saveGoalStatus(freshGoal, newGoalStatus, plan.reasonCodes, invocation);
 
         this._bus.emit({
             executionId: goalId,
@@ -474,6 +581,11 @@ export class PlanningService {
             },
         });
 
+        this._assertMemoryWriteAllowed('planning_episode', invocation, {
+            goalId: goal.id,
+            episodeType: 'planning_episode',
+            payload: { planId: plan.id, outcome: plan.status === 'blocked' ? 'blocked' : 'abandoned' },
+        });
         const episode = this._episodeRepo.createEpisode({
             goalClass: goal.category,
             requestCategory: goal.category,
@@ -498,6 +610,10 @@ export class PlanningService {
             userAccepted: false,
             requiredCorrection: false,
             notes: [`plan:${plan.id}`],
+        });
+        this._emitMemoryWriteCompleted('planning_episode', invocation, {
+            goalId: goal.id,
+            payload: { planId: plan.id, episodeId: episode.id },
         });
         this._episodeIdsByPlanId.set(plan.id, episode.id);
         this._bus.emit({
@@ -580,7 +696,7 @@ export class PlanningService {
         // Transition goal to 'approved'
         const goal = this._repo.getGoal(plan.goalId);
         if (goal) {
-            this._saveGoalStatus(goal, 'approved');
+            this._saveGoalStatus(goal, 'approved', undefined, plan.planningInvocation);
         }
 
         this._bus.emit({
@@ -638,7 +754,7 @@ export class PlanningService {
         // Transition goal to 'blocked'
         const goal = this._repo.getGoal(plan.goalId);
         if (goal) {
-            this._saveGoalStatus(goal, 'blocked', [`operator_denied:${reason}`]);
+            this._saveGoalStatus(goal, 'blocked', [`operator_denied:${reason}`], plan.planningInvocation);
         }
 
         this._bus.emit({
@@ -720,7 +836,7 @@ export class PlanningService {
         // Transition goal to 'executing'
         const goal = this._repo.getGoal(plan.goalId);
         if (goal) {
-            this._saveGoalStatus(goal, 'executing');
+            this._saveGoalStatus(goal, 'executing', undefined, plan.planningInvocation);
         }
 
         this._bus.emit({
@@ -773,7 +889,7 @@ export class PlanningService {
 
         const goal = this._repo.getGoal(plan.goalId);
         if (goal) {
-            this._saveGoalStatus(goal, 'completed');
+            this._saveGoalStatus(goal, 'completed', undefined, plan.planningInvocation);
         }
 
         // Release per-goal replan tracking when the goal completes
@@ -795,12 +911,29 @@ export class PlanningService {
 
         const episodeId = this._episodeIdsByPlanId.get(planId);
         if (episodeId) {
+            this._assertMemoryWriteAllowed(
+                'execution_episode',
+                plan.planningInvocation ?? this._normalizePlanningInvocation(),
+                {
+                    goalId: plan.goalId,
+                    episodeType: 'execution_episode',
+                    payload: { planId, outcome: 'succeeded' },
+                },
+            );
             const updatedEpisode = this._episodeRepo.completeEpisode(episodeId, {
                 outcome: 'succeeded',
                 userAccepted: true,
                 requiredCorrection: false,
                 durationMs: Math.max(0, Date.now() - new Date(plan.createdAt).getTime()),
             });
+            this._emitMemoryWriteCompleted(
+                'execution_episode',
+                plan.planningInvocation ?? this._normalizePlanningInvocation(),
+                {
+                    goalId: plan.goalId,
+                    payload: { planId, episodeId },
+                },
+            );
             this._bus.emit({
                 executionId: plan.goalId,
                 subsystem: 'planning',
@@ -851,7 +984,7 @@ export class PlanningService {
 
         const goal = this._repo.getGoal(plan.goalId);
         if (goal) {
-            this._saveGoalStatus(goal, 'failed', [`execution_failed:${reason}`]);
+            this._saveGoalStatus(goal, 'failed', [`execution_failed:${reason}`], plan.planningInvocation);
         }
 
         // Release per-goal replan tracking when the goal fails (terminal state)
@@ -875,6 +1008,15 @@ export class PlanningService {
         const episodeId = this._episodeIdsByPlanId.get(planId);
         if (episodeId) {
             const failureClass = this._classifyFailureReason(reason);
+            this._assertMemoryWriteAllowed(
+                'execution_episode',
+                plan.planningInvocation ?? this._normalizePlanningInvocation(),
+                {
+                    goalId: plan.goalId,
+                    episodeType: 'execution_episode',
+                    payload: { planId, outcome: 'failed', failureClass },
+                },
+            );
             const updatedEpisode = this._episodeRepo.completeEpisode(episodeId, {
                 outcome: 'failed',
                 failureClass,
@@ -883,6 +1025,14 @@ export class PlanningService {
                 recoveryAction: 'none',
                 durationMs: Math.max(0, Date.now() - new Date(plan.createdAt).getTime()),
             });
+            this._emitMemoryWriteCompleted(
+                'execution_episode',
+                plan.planningInvocation ?? this._normalizePlanningInvocation(),
+                {
+                    goalId: plan.goalId,
+                    payload: { planId, episodeId, failureClass },
+                },
+            );
             this._bus.emit({
                 executionId: plan.goalId,
                 subsystem: 'planning',
@@ -1002,7 +1152,7 @@ export class PlanningService {
         });
 
         // Reset goal status to 'registered' for fresh analysis
-        this._saveGoalStatus(goal, 'registered', [`replan_trigger:${request.trigger}`]);
+        this._saveGoalStatus(goal, 'registered', [`replan_trigger:${request.trigger}`], invocation);
 
         // Analyse with current capabilities snapshot.
         const capabilities = this._resolveCapabilities(request.goalId, goal.correlationId);
@@ -1088,7 +1238,15 @@ export class PlanningService {
 
         // Update goal replanCount
         const freshGoal = this._repo.getGoal(request.goalId)!;
+        this._assertMemoryWriteAllowed('goal_state', invocation, {
+            goalId: request.goalId,
+            payload: { goalStatus: freshGoal.status, replanCount: replanCount + 1 },
+        });
         this._repo.saveGoal({ ...freshGoal, replanCount: replanCount + 1 });
+        this._emitMemoryWriteCompleted('goal_state', invocation, {
+            goalId: request.goalId,
+            payload: { replanCount: replanCount + 1 },
+        });
 
         this._bus.emit({
             executionId: request.goalId,
@@ -1127,14 +1285,23 @@ export class PlanningService {
 
         // Update goal to 'planned' or 'blocked'
         const freshGoal2 = this._repo.getGoal(request.goalId)!;
-        this._saveGoalStatus(freshGoal2, isBlocked ? 'blocked' : 'planned', newPlan.reasonCodes);
+        this._saveGoalStatus(freshGoal2, isBlocked ? 'blocked' : 'planned', newPlan.reasonCodes, invocation);
 
         const priorEpisodeId = this._episodeIdsByPlanId.get(priorPlan.id);
         if (priorEpisodeId) {
+            this._assertMemoryWriteAllowed('recovery_episode', invocation, {
+                goalId: request.goalId,
+                episodeType: 'recovery_episode',
+                payload: { priorPlanId: priorPlan.id, newPlanId: newPlan.id, action: 'replan' },
+            });
             this._episodeRepo.completeEpisode(priorEpisodeId, {
                 outcome: 'abandoned',
                 recoveryAction: 'replan',
                 requiredCorrection: true,
+            });
+            this._emitMemoryWriteCompleted('recovery_episode', invocation, {
+                goalId: request.goalId,
+                payload: { planId: priorPlan.id, episodeId: priorEpisodeId, action: 'replan' },
             });
             this._bus.emit({
                 executionId: request.goalId,
@@ -1151,6 +1318,11 @@ export class PlanningService {
             });
         }
 
+        this._assertMemoryWriteAllowed('planning_episode', invocation, {
+            goalId: request.goalId,
+            episodeType: 'planning_episode',
+            payload: { planId: newPlan.id, replannedFromPlanId: priorPlan.id, outcome: isBlocked ? 'blocked' : 'abandoned' },
+        });
         const episode = this._episodeRepo.createEpisode({
             goalClass: freshGoal2.category,
             requestCategory: freshGoal2.category,
@@ -1173,6 +1345,10 @@ export class PlanningService {
             outcome: isBlocked ? 'blocked' : 'abandoned',
             failureClass: isBlocked ? 'blocked' : undefined,
             notes: [`plan:${newPlan.id}`, `replanned_from:${priorPlan.id}`],
+        });
+        this._emitMemoryWriteCompleted('planning_episode', invocation, {
+            goalId: request.goalId,
+            payload: { planId: newPlan.id, episodeId: episode.id, replannedFromPlanId: priorPlan.id },
         });
         this._episodeIdsByPlanId.set(newPlan.id, episode.id);
         this._bus.emit({
@@ -1269,7 +1445,13 @@ export class PlanningService {
         goal: PlanGoal,
         status: PlanGoal['status'],
         reasonCodes?: string[],
+        invocationMetadata?: PlanningInvocationMetadata,
     ): void {
+        const invocation = this._normalizePlanningInvocation(invocationMetadata);
+        this._assertMemoryWriteAllowed('goal_state', invocation, {
+            goalId: goal.id,
+            payload: { goalStatus: status, reasonCodes: reasonCodes ?? [] },
+        });
         const updated: PlanGoal = {
             ...goal,
             status,
@@ -1277,5 +1459,9 @@ export class PlanningService {
             ...(reasonCodes !== undefined && { reasonCodes }),
         };
         this._repo.saveGoal(updated);
+        this._emitMemoryWriteCompleted('goal_state', invocation, {
+            goalId: goal.id,
+            payload: { goalStatus: status },
+        });
     }
 }

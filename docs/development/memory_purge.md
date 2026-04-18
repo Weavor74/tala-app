@@ -70,6 +70,12 @@ Filesystem-derived stores:
 - By default the command refuses non-`tala` database names.
 - `--allow-remote` is required to bypass local/DB-name safeguards.
 
+## Authority Note
+
+- `memory:purge` is a system/maintenance flow, not a user-turn flow.
+- Turn-originated writes are governed by `MemoryAuthorityGate` using kernel-propagated turn authority.
+- Maintenance operations like purge/rebuild must use explicit system authority context and must not impersonate turn-bound writes.
+
 ## Commands
 
 Dry-run (safe preview):
