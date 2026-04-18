@@ -317,6 +317,11 @@ export type OperatorActionId =
     | 'rerun_derived_rebuild'
     | 'flush_or_restart_stalled_queues'
     | 'retry_tool_connector_initialization'
+    | 'approve_recovery_retry'
+    | 'approve_recovery_replan'
+    | 'approve_recovery_degraded_continue'
+    | 'force_recovery_stop'
+    | 'deny_recovery_action'
     | 'approve_repair_proposal'
     | 'reject_repair_proposal'
     | 'defer_proposal'
@@ -621,6 +626,93 @@ export interface RuntimeMemoryAuthorityDiagnosticsView extends MemoryAuthorityDi
     lastDeniedReasonCodes: MemoryAuthorityReasonCode[];
 }
 
+export interface RecoveryDiagnosticsSnapshot {
+    activeDecision?: {
+        triggerId: string;
+        decisionId: string;
+        decisionType: 'retry' | 'replan' | 'escalate' | 'degrade_and_continue' | 'stop';
+        reasonCode: string;
+        executionId: string;
+        executionBoundaryId?: string;
+        scope?: 'step' | 'handoff' | 'execution_boundary' | 'execution' | 'plan';
+        handoffType?: 'tool' | 'workflow' | 'agent';
+        origin?: 'automatic' | 'operator_override' | 'operator_approved';
+        approvalState?: 'not_required' | 'pending_operator' | 'approved' | 'denied';
+        overrideAllowed?: boolean;
+        overrideApplied?: boolean;
+        lastOperatorAction?: 'approve_retry' | 'approve_replan' | 'approve_degraded_continue' | 'force_stop' | 'deny';
+        operatorReasonCode?: string;
+        degradedMode?: {
+            disabledCapabilities: string[];
+            continueMode: 'reduced_capability' | 'read_only' | 'local_only';
+        };
+    };
+    budget?: {
+        retryCount: number;
+        maxRetries: number;
+        replanCount: number;
+        maxReplans: number;
+        remainingRetries: number;
+        remainingReplans: number;
+        scope: 'step' | 'handoff' | 'execution_boundary' | 'execution' | 'plan';
+        loopDetected: boolean;
+    };
+    exhausted?: {
+        retryExhausted: boolean;
+        replanExhausted: boolean;
+        anyExhausted: boolean;
+    };
+    counters: {
+        retriesAttempted: number;
+        replansRequested: number;
+        escalationsRaised: number;
+        degradedContinuesApplied: number;
+        stopsIssued: number;
+        loopsDetected: number;
+        overridesApplied: number;
+        approvalsRequired: number;
+        approvalsDenied: number;
+    };
+    recentHistory: Array<{
+        historyId: string;
+        timestamp: string;
+        executionId: string;
+        executionBoundaryId?: string;
+        triggerType: string;
+        decisionType: 'retry' | 'replan' | 'escalate' | 'degrade_and_continue' | 'stop';
+        reasonCode: string;
+        scope?: 'step' | 'handoff' | 'execution_boundary' | 'execution' | 'plan';
+        failureFamily?: string;
+        origin: 'automatic' | 'operator_override' | 'operator_approved';
+        operatorOverrideApplied: boolean;
+        approvalState: 'not_required' | 'pending_operator' | 'approved' | 'denied';
+        outcome: 'executed' | 'failed' | 'denied' | 'superseded';
+        degradedMode?: {
+            disabledCapabilities: string[];
+            continueMode: 'reduced_capability' | 'read_only' | 'local_only';
+        };
+    }>;
+    analytics: {
+        totals: {
+            retries: number;
+            replans: number;
+            escalations: number;
+            degradedContinues: number;
+            stops: number;
+            overrides: number;
+            loopDetections: number;
+        };
+        topReasonCodes: Array<{ reasonCode: string; count: number }>;
+        byDecisionType: Array<{
+            decisionType: 'retry' | 'replan' | 'escalate' | 'degrade_and_continue' | 'stop';
+            count: number;
+        }>;
+        byFailureFamily: Array<{ failureFamily: string; count: number }>;
+    };
+    lastReasonCodes: string[];
+    lastUpdated: string;
+}
+
 // ─── Execution authority lane diagnostics ─────────────────────────────────────
 
 /**
@@ -720,6 +812,8 @@ export interface RuntimeDiagnosticsSnapshot {
      * Populated after memory.authority_check_* events.
      */
     memoryAuthority?: RuntimeMemoryAuthorityDiagnosticsView;
+    /** Recovery decision and action diagnostics projected from recovery telemetry. */
+    recovery?: RecoveryDiagnosticsSnapshot;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────

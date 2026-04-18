@@ -1,4 +1,4 @@
-﻿import { MemoryService, MemoryItem } from '../MemoryService';
+import { MemoryService, MemoryItem } from '../MemoryService';
 import { Mode, ModePolicyEngine, type TurnPolicyId } from './ModePolicyEngine';
 import { IntentClassifier, Intent } from './IntentClassifier';
 import { MemoryFilter } from './MemoryFilter';
@@ -66,7 +66,7 @@ interface LoreContinuationDecision {
  */
 export class TalaContextRouter {
     private memoryService: MemoryService;
-    /** Optional RAG service â€” injected so lore turns can query LTMF/canon lore first. */
+    /** Optional RAG service — injected so lore turns can query LTMF/canon lore first. */
     private ragService?: RagService;
 
     /**
@@ -176,7 +176,7 @@ export class TalaContextRouter {
     ];
 
     /**
-     * Patterns that identify a query as a first-person autobiographical memory request â€”
+     * Patterns that identify a query as a first-person autobiographical memory request —
      * specifically asking for Tala's own lived experiences, not general worldbuilding lore.
      *
      * These are a narrow subset of LORE_PATTERNS that signal the user wants Tala to
@@ -456,7 +456,7 @@ export class TalaContextRouter {
     }
 
     /**
-     * Returns true when the query is specifically asking for Tala's own lived experiences â€”
+     * Returns true when the query is specifically asking for Tala's own lived experiences —
      * first-person autobiographical queries about her personal timeline, childhood, past events,
      * or age-specific life stages.
      *
@@ -840,7 +840,7 @@ export class TalaContextRouter {
             `[TurnBehavior] applied policy=${turnPolicy.policyId} personality=${turnBehavior.personalityLevel} astro=${turnBehavior.astroLevel} reflection=${turnBehavior.reflectionLevel} tone=${turnBehavior.toneProfile} immersive=${turnBehavior.immersiveStyle}`
         );
         if (intent.class === 'lore' && rawIntent.precedenceLog?.includes('Greeting')) {
-            console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression â€” retrieval will run`);
+            console.log(`[TalaRouter] Greeting opener present, but lore request overrides suppression — retrieval will run`);
         }
 
         // Update lore timestamp so follow-up carryover works on the next turn
@@ -878,7 +878,7 @@ export class TalaContextRouter {
                 );
             }
 
-            // 3a. Lore/autobiographical intent â€” query RAG/LTMF canon lore first.
+            // 3a. Lore/autobiographical intent — query RAG/LTMF canon lore first.
             //
             //     RAG results are prepended to the candidate list so MemoryFilter sees them,
             //     and the lore-aware sourceRank in resolveContradictions() elevates them over
@@ -924,7 +924,7 @@ export class TalaContextRouter {
                 }
 
                 if (ragResults.length > 0) {
-                    console.log(`[TalaRouter] Lore intent â€” injecting ${ragResults.length} RAG/LTMF candidates`);
+                    console.log(`[TalaRouter] Lore intent — injecting ${ragResults.length} RAG/LTMF candidates`);
                     const now = Date.now();
                     const ragMemoryItems: MemoryItem[] = ragResults.map((r, idx) => {
                         const score = r.score ?? 0.5;
@@ -985,7 +985,7 @@ export class TalaContextRouter {
                     // RAG lore items go first; mem0 candidates follow as fallback
                     candidates = [...ragMemoryItems, ...candidates];
                 } else {
-                    console.log('[TalaRouter] Lore intent â€” RAG returned no results; mem0/local used as fallback');
+                    console.log('[TalaRouter] Lore intent — RAG returned no results; mem0/local used as fallback');
                 }
             } else if (intent.class === 'lore' && skipFreshRetrievalForContinuation) {
                 console.log('[TalaRouter] Lore thread continuation confident - reusing prior canon context before widening retrieval');
@@ -999,7 +999,7 @@ export class TalaContextRouter {
                     return acc;
                 }, {});
                 console.log(
-                    `[TalaRouter] Candidates before filter â€” ${Object.entries(sourceSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${candidates.length})`
+                    `[TalaRouter] Candidates before filter — ${Object.entries(sourceSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${candidates.length})`
                 );
             }
 
@@ -1020,8 +1020,8 @@ export class TalaContextRouter {
             //     exist (rag, diary, graph, core_bio, lore), enforce a canon-first approved
             //     set so recent chat/explicit snippets cannot dominate:
             //
-            //       primary slots  â†’ up to LORE_PRIMARY_CANDIDATE_LIMIT canon lore items
-            //       fallback slots â†’ up to LORE_FALLBACK_CAP explicit/chat items
+            //       primary slots  → up to LORE_PRIMARY_CANDIDATE_LIMIT canon lore items
+            //       fallback slots → up to LORE_FALLBACK_CAP explicit/chat items
             //
             //     Fallback behavior is preserved: if no canon candidates exist, the full
             //     resolved set (explicit/chat/mem0) passes through unchanged.
@@ -1031,7 +1031,7 @@ export class TalaContextRouter {
                 const fallbackBucket = resolved.filter(m => !loreSources.has(m.metadata?.source ?? ''));
 
                 console.log(
-                    `[TalaRouter] Lore composition â€” loreCandidates=${loreBucket.length} explicitCandidates=${fallbackBucket.length} fallbackCap=${TalaContextRouter.LORE_FALLBACK_CAP}`
+                    `[TalaRouter] Lore composition — loreCandidates=${loreBucket.length} explicitCandidates=${fallbackBucket.length} fallbackCap=${TalaContextRouter.LORE_FALLBACK_CAP}`
                 );
 
                 if (loreBucket.length > 0) {
@@ -1043,7 +1043,7 @@ export class TalaContextRouter {
                     }
                     resolved = [...primary, ...fallback];
                 }
-                // else: no canon lore â€” fallback bucket passes through unchanged (all resolved items kept)
+                // else: no canon lore — fallback bucket passes through unchanged (all resolved items kept)
             }
 
             // 5b. Autobiographical contamination guard:
@@ -1079,11 +1079,11 @@ export class TalaContextRouter {
                     return acc;
                 }, {});
                 console.log(
-                    `[TalaRouter] Approved memories â€” ${Object.entries(approvedSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${resolved.length})`
+                    `[TalaRouter] Approved memories — ${Object.entries(approvedSummary).map(([s, n]) => `${s}:${n}`).join(', ')} (total=${resolved.length})`
                 );
             }
         } else {
-            console.log(`[TalaRouter] Retrieval bypassed â€” ${intent.class} intent (no lore/substantive override).`);
+            console.log(`[TalaRouter] Retrieval bypassed — ${intent.class} intent (no lore/substantive override).`);
         }
 
         // 6. Documentation Retrieval Phase (NEW)
@@ -1103,7 +1103,7 @@ export class TalaContextRouter {
         //      c) none of the approved memories come from a high-trust canon source
         //
         //    When the gate fires, responseMode is forced to 'canon_required' regardless
-        //    of approved memory count â€” even partial fallback-only sets are insufficient.
+        //    of approved memory count — even partial fallback-only sets are insufficient.
         let sufficientCanonMemory = true;
         let canonGateApplied = false;
         let canonSourceTypes: string[] = [];
@@ -1155,21 +1155,21 @@ export class TalaContextRouter {
         // 8. Assembly & Handoff
         // Derive response grounding mode.
         //
-        // Notebook active:  always 'memory_grounded_strict' â€” the user has an open notebook
+        // Notebook active:  always 'memory_grounded_strict' — the user has an open notebook
         //   and all replies must be restricted to retrieved notebook content, regardless of
         //   intent or phrasing.
         //
-        // Canon gate fired:  'canon_required' â€” autobiographical request with no high-trust
+        // Canon gate fired:  'canon_required' — autobiographical request with no high-trust
         //   canon memory; Tala must not fabricate first-person events.
         //
         // Lore intent (sufficient canon): always 'memory_grounded_strict'.
         let responseMode: ResponseMode | undefined;
         if (notebookActive) {
             responseMode = 'memory_grounded_strict';
-            console.log(`[TalaRouter] Notebook context active â€” forcing responseMode=memory_grounded_strict`);
+            console.log(`[TalaRouter] Notebook context active — forcing responseMode=memory_grounded_strict`);
         } else if (canonGateApplied) {
             responseMode = 'canon_required';
-            console.log(`[TalaRouter] CanonGate active â€” forcing responseMode=canon_required for autobiographical turn`);
+            console.log(`[TalaRouter] CanonGate active — forcing responseMode=canon_required for autobiographical turn`);
         } else if (intent.class === 'lore' && resolved.length > 0) {
             responseMode = 'memory_grounded_strict';
             console.log(`[TalaRouter] Memory-grounded response mode: ${responseMode}`);
@@ -1238,8 +1238,8 @@ export class TalaContextRouter {
         const memoryWriteDecision = this.resolveMemoryWritePolicy(mode, turnPolicy, intent.class, isGreetingOnly);
 
         console.log(`[TalaRouter] Routing complete. Approved memories: ${resolved.length}/${candidateCount}`);
-        console.log(`[TalaRouter] Capabilities â€” allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
-        console.log(`[TalaRouter] Memory write policy: ${memoryWriteDecision.category} â€” ${memoryWriteDecision.reason}`);
+        console.log(`[TalaRouter] Capabilities — allowed=${JSON.stringify(allowedCapabilities)} blocked=${JSON.stringify(blockedCapabilities)}`);
+        console.log(`[TalaRouter] Memory write policy: ${memoryWriteDecision.category} — ${memoryWriteDecision.reason}`);
 
         const context: TurnContext = {
             turnId,
@@ -1362,11 +1362,11 @@ export class TalaContextRouter {
      * Resolves the memory write policy for this turn based on mode and intent.
      *
      * Rules:
-     * - RP mode â†’ do_not_write (RP isolation must not pollute memory)
-     * - Greeting intent â†’ do_not_write (no content worth persisting)
-     * - Hybrid mode â†’ short_term (moderate persistence)
-     * - Assistant mode with task/technical intent â†’ long_term
-     * - Assistant mode otherwise â†’ short_term
+     * - RP mode → do_not_write (RP isolation must not pollute memory)
+     * - Greeting intent → do_not_write (no content worth persisting)
+     * - Hybrid mode → short_term (moderate persistence)
+     * - Assistant mode with task/technical intent → long_term
+     * - Assistant mode otherwise → short_term
      */
     private resolveMemoryWritePolicy(mode: Mode, turnPolicy: TurnPolicyState, intentClass: string, isGreeting: boolean): MemoryWriteDecision {
         if (isGreeting || intentClass === 'greeting') {

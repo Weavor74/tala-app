@@ -51,6 +51,11 @@ import {
     normalizeStructuredFailure,
     selectEquivalentTarget,
 } from '../runtime/failures/FailureRecoveryPolicy';
+import { AutomaticRecoveryControlService } from '../runtime/recovery/AutomaticRecoveryController';
+import { RecoveryActionExecutor } from '../runtime/recovery/RecoveryActionExecutor';
+import { RecoveryBudgetService } from '../runtime/recovery/RecoveryBudgetService';
+import { RecoveryPolicyService } from '../runtime/recovery/RecoveryPolicyEngine';
+import { RecoveryTriggerService } from '../runtime/recovery/RecoveryTriggerBuilder';
 
 // ─── Executor interface ────────────────────────────────────────────────────────
 
@@ -155,6 +160,7 @@ export interface WorkflowInvocationResult {
     recoveryAttempts?: number;
     antiThrashSuppressed?: boolean;
     recoveryActions?: RecoveryActionRecord[];
+    degradedCompletion?: boolean;
 }
 
 /** Result of a full plan workflow dispatch. */
@@ -220,6 +226,8 @@ export class WorkflowHandoffCoordinator {
     private readonly _planning: PlanningService;
     private readonly _bus: TelemetryBus;
     private readonly _suppressionTracker: FailureSuppressionService;
+    private readonly _recoveryController: AutomaticRecoveryControlService;
+    private readonly _recoveryTriggerBuilder = new RecoveryTriggerService();
 
     constructor(
         private readonly _workflowExecutor: IWorkflowExecutor,
@@ -228,6 +236,27 @@ export class WorkflowHandoffCoordinator {
         this._planning = PlanningService.getInstance();
         this._bus = TelemetryBus.getInstance();
         this._suppressionTracker = suppressionTracker ?? new FailureSuppressionService();
+        this._recoveryController = new AutomaticRecoveryControlService(
+            new RecoveryPolicyService(),
+            new RecoveryBudgetService(2),
+            new RecoveryActionExecutor(
+                {
+                    retryExecution: async () => {},
+                    escalateExecution: async () => {},
+                    continueExecution: async () => {},
+                    stopExecution: async () => {},
+                },
+                {
+                    requestRecoveryReplan: async (input) => {
+                        await this._requestRecoveryReplan(input.planId, input.reasonCode);
+                    },
+                },
+                {
+                    applyDegradedMode: async () => {},
+                },
+            ),
+            this._bus,
+        );
     }
 
     /**
@@ -305,13 +334,35 @@ export class WorkflowHandoffCoordinator {
                 if (!preflightResult.passed) {
                     const failureMsg = `preflight failed for invocation ${i} (${inv.workflowId}): ${preflightResult.details ?? preflightResult.failureCode}`;
                     this._emitPreflightFailed(plan, executionBoundaryId, i, inv, preflightResult);
+                    const preflightDecision = preflightResult.replanAdvised
+                        ? await this._recoveryController.handleTrigger(
+                            this._recoveryTriggerBuilder.forRuntimeDegraded({
+                                executionId: plan.goalId,
+                                executionBoundaryId,
+                                planId,
+                                reasonCode: preflightResult.failureCode ?? 'preflight:capability_missing',
+                                degradedCapability: 'workflow_capability_missing',
+                                canReplan: true,
+                                canEscalate: true,
+                                canDegradeContinue: inv.degradeAllowed === true || inv.failurePolicy === 'skip',
+                                degradedModeHint: 'local_only',
+                                scope: 'execution_boundary',
+                            }),
+                        )
+                        : undefined;
                     invocationResults.push({
                         invocationIndex: i,
                         workflowId: inv.workflowId,
-                        success: false,
-                        error: failureMsg,
-                        failureCode: preflightResult.failureCode,
+                        success: preflightDecision?.type === 'degrade_and_continue',
+                        error: preflightDecision?.type === 'degrade_and_continue' ? undefined : failureMsg,
+                        failureCode: preflightDecision?.type === 'degrade_and_continue' ? undefined : preflightResult.failureCode,
+                        recoveryOutcome: preflightDecision?.type === 'degrade_and_continue' ? 'degraded_but_completed' : undefined,
+                        degradedCompletion: preflightDecision?.type === 'degrade_and_continue',
                     });
+
+                    if (preflightDecision?.type === 'degrade_and_continue') {
+                        continue;
+                    }
 
                     const dispatchResult: WorkflowDispatchResult = {
                         planId,
@@ -320,11 +371,11 @@ export class WorkflowHandoffCoordinator {
                         invocations: invocationResults,
                         error: failureMsg,
                         failureCode: preflightResult.failureCode,
-                        replanAdvised: preflightResult.replanAdvised,
-                        replanTrigger: preflightResult.replanAdvised ? 'capability_loss' : undefined,
+                        replanAdvised: preflightDecision?.type === 'replan',
+                        replanTrigger: preflightDecision?.type === 'replan' ? 'capability_loss' : undefined,
                     };
                     this._planning.markExecutionFailed(planId, failureMsg);
-                    this._emitDispatchFailed(plan, executionBoundaryId, failureMsg, preflightResult.failureCode, preflightResult.replanAdvised);
+                    this._emitDispatchFailed(plan, executionBoundaryId, failureMsg, preflightResult.failureCode, preflightDecision?.type === 'replan');
                     return dispatchResult;
                 }
 
@@ -712,17 +763,44 @@ export class WorkflowHandoffCoordinator {
                 };
             }
 
-            const escalationRequired = invocation.failurePolicy === 'escalate' || lastFailure.operatorActionRequired;
+            const decision = await this._recoveryController.handleTrigger(
+                this._recoveryTriggerBuilder.forWorkflowFailure({
+                    executionId: plan.goalId,
+                    executionBoundaryId,
+                    planId: plan.id,
+                    stepId: String(invocationIndex),
+                    reasonCode: lastFailure.reasonCode,
+                    failure: {
+                        ...lastFailure,
+                        workflowId,
+                        stepId: String(invocationIndex),
+                    },
+                    retryCount: attempts,
+                    maxRetries: policy.maxRetries,
+                    canReplan: policy.allowReplan,
+                    canEscalate: invocation.failurePolicy === 'escalate' || lastFailure.operatorActionRequired,
+                    canDegradeContinue: invocation.degradeAllowed === true || invocation.failurePolicy === 'skip',
+                    degradedCapability: workflowId,
+                    degradedModeHint: 'local_only',
+                    scope: 'execution_boundary',
+                }),
+            );
             const outcome: RecoveryOutcomeStatus =
-                escalationRequired
+                decision.type === 'escalate'
                     ? 'escalation_required'
-                    : policy.allowReplan
+                    : decision.type === 'replan'
                         ? 'replan_required'
+                        : decision.type === 'degrade_and_continue'
+                            ? 'degraded_but_completed'
                         : 'terminal_failure';
-            if (outcome === 'escalation_required') {
-                actions.push({ action: 'escalate', attempt: attempts, targetId: workflowId, reasonCode: lastFailure.reasonCode });
-            } else if (outcome === 'replan_required') {
-                actions.push({ action: 'replan', attempt: attempts, targetId: workflowId, reasonCode: lastFailure.reasonCode });
+            if (decision.type === 'escalate') {
+                actions.push({ action: 'escalate', attempt: attempts, targetId: workflowId, reasonCode: decision.reasonCode });
+            } else if (decision.type === 'replan') {
+                actions.push({ action: 'replan', attempt: attempts, targetId: workflowId, reasonCode: decision.reasonCode });
+            } else if (decision.type === 'degrade_and_continue') {
+                actions.push({ action: 'degrade', attempt: attempts, targetId: workflowId, reasonCode: decision.reasonCode });
+            } else if (decision.type === 'stop') {
+                actions.push({ action: 'none', attempt: attempts, targetId: workflowId, reasonCode: decision.reasonCode });
             }
             return {
                 invocationIndex,
@@ -735,6 +813,7 @@ export class WorkflowHandoffCoordinator {
                 recoveryAttempts: attempts,
                 antiThrashSuppressed,
                 recoveryActions: actions,
+                degradedCompletion: outcome === 'degraded_but_completed',
             };
         }
 
@@ -750,6 +829,21 @@ export class WorkflowHandoffCoordinator {
             antiThrashSuppressed,
             recoveryActions: actions,
         };
+    }
+
+    private async _requestRecoveryReplan(planId: string | undefined, reasonCode: string): Promise<void> {
+        if (!planId) return;
+        const priorPlan = this._planning.getPlan(planId);
+        if (!priorPlan) return;
+        this._planning.replan(
+            {
+                goalId: priorPlan.goalId,
+                priorPlanId: planId,
+                trigger: reasonCode.includes('policy_blocked') ? 'policy_block' : 'dependency_failure',
+                triggerDetails: `automatic_recovery:${reasonCode}`,
+            },
+            priorPlan.planningInvocation,
+        );
     }
 
     private _emitPreflightFailed(
@@ -804,6 +898,7 @@ export class WorkflowHandoffCoordinator {
         });
     }
 }
+
 
 
 

@@ -69,6 +69,8 @@ export interface RecoveryActionRecord {
 export type RecoveryOutcomeStatus =
     | 'recovered_by_retry'
     | 'recovered_by_reroute'
+    | 'escalated'
+    | 'not_recovered'
     | 'degraded_but_completed'
     | 'escalation_required'
     | 'replan_required'
@@ -116,4 +118,3 @@ export interface FailureSuppressionPolicy {
     windowMs: number;
     cooldownMs: number;
 }
-

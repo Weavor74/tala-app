@@ -413,6 +413,30 @@ interface PlanningMemoryDiagnosticsSnapshot {
 }
 ```
 
+### `RecoveryDiagnosticsSnapshot`
+```typescript
+interface RecoveryDiagnosticsSnapshot {
+    activeDecision?: {
+        triggerId: string;
+        decisionId: string;
+        decisionType: 'retry' | 'replan' | 'escalate' | 'degrade_and_continue' | 'stop';
+        reasonCode: string;
+        executionId: string;
+        executionBoundaryId?: string;
+        scope?: 'step' | 'handoff' | 'execution_boundary' | 'execution' | 'plan';
+        handoffType?: 'tool' | 'workflow' | 'agent';
+        origin?: 'automatic' | 'operator_override' | 'operator_approved';
+        approvalState?: 'not_required' | 'pending_operator' | 'approved' | 'denied';
+        overrideAllowed?: boolean;
+        overrideApplied?: boolean;
+        lastOperatorAction?: 'approve_retry' | 'approve_replan' | 'approve_degraded_continue' | 'force_stop' | 'deny';
+        operatorReasonCode?: string;
+        degradedMode?: {
+            disabledCapabilities: string[];
+            continueMode: 'reduced_capability' | 'read_only' | 'local_only';
+        }
+```
+
 ### `AuthorityLaneDiagnosticsSnapshot`
 ```typescript
 interface AuthorityLaneDiagnosticsSnapshot {
@@ -517,6 +541,11 @@ type OperatorActionId =
     | 'rerun_derived_rebuild'
     | 'flush_or_restart_stalled_queues'
     | 'retry_tool_connector_initialization'
+    | 'approve_recovery_retry'
+    | 'approve_recovery_replan'
+    | 'approve_recovery_degraded_continue'
+    | 'force_recovery_stop'
+    | 'deny_recovery_action'
     | 'approve_repair_proposal'
     | 'reject_repair_proposal'
     | 'defer_proposal'

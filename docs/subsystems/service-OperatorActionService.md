@@ -68,6 +68,15 @@ Returns backend-evaluated operator action availability for the dashboard. Invar
 **Returns**: `Promise<Record<string, unknown>>`
 
 ---
+#### `_getRecoveryActionAvailability`
+**Arguments**: `action: OperatorActionId, recovery: ReturnType<RuntimeDiagnosticsAggregator['getSnapshot']>['recovery'],`
+**Returns**: ``
+
+---
+#### `_submitRecoveryOperatorAction`
+**Arguments**: `action: RecoveryOperatorActionInput['action'], params?: Record<string, unknown>,`
+
+---
 #### `_isSelfImprovementAction`
 **Arguments**: `action: OperatorActionId`
 **Returns**: `boolean`

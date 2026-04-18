@@ -70,6 +70,25 @@ export type RuntimeEventType =
     | 'execution.escalation_requested'
     | 'execution.degraded_completed'
     | `execution.${string}`
+    | 'recovery.triggered'
+    | 'recovery.decision_made'
+    | 'recovery.retry_requested'
+    | 'recovery.replan_requested'
+    | 'recovery.escalation_requested'
+    | 'recovery.degraded_continue_applied'
+    | 'recovery.stop_requested'
+    | 'recovery.loop_detected'
+    | 'recovery.override_requested'
+    | 'recovery.override_applied'
+    | 'recovery.override_denied'
+    | 'recovery.approval_required'
+    | 'recovery.approval_granted'
+    | 'recovery.approval_denied'
+    | 'recovery.history_recorded'
+    | 'recovery.analytics_updated'
+    | 'recovery.action_executed'
+    | 'recovery.action_failed'
+    | `recovery.${string}`
     | 'tool.requested'
     | 'tool.completed'
     | 'tool.failed'
@@ -214,3 +233,5 @@ export interface RuntimeEvent {
 
 /** Handler invoked synchronously for each emitted event. */
 export type RuntimeEventHandler = (event: RuntimeEvent) => void;
+
+

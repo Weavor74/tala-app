@@ -1,5 +1,5 @@
-﻿/**
- * âš ï¸ TALA INVARIANT â€” INFERENCE STREAMING
+/**
+ * ⚠️ TALA INVARIANT — INFERENCE STREAMING
  *
  * - Stream MUST produce tokens
  * - Do NOT alter request body format without validation
@@ -59,7 +59,7 @@ export interface ScannedProvider {
 }
 
 /**
- * InferenceService â€” Canonical Inference Coordinator
+ * InferenceService — Canonical Inference Coordinator
  *
  * Acts as the single authoritative gate for all inference operations in TALA.
  *
@@ -77,7 +77,7 @@ export interface ScannedProvider {
 export class InferenceService {
     private readonly guardrailBreakerStore = new GuardrailCircuitBreakerStore();
 
-    /** Legacy embedded engine â€” kept for IPC handlers that manage it directly. */
+    /** Legacy embedded engine — kept for IPC handlers that manage it directly. */
     private localEngine: LocalEngineService = new LocalEngineService();
 
     /**
@@ -86,7 +86,7 @@ export class InferenceService {
      */
     private localInferenceManager: LocalInferenceOrchestrator;
 
-    /** Provider registry â€” source of truth for all known/detected providers. */
+    /** Provider registry — source of truth for all known/detected providers. */
     private registry: InferenceProviderRegistry;
 
     /** Deterministic provider selection policy. */
@@ -103,7 +103,7 @@ export class InferenceService {
         this.selectionService = new ProviderSelectionService(this.registry);
     }
 
-    // â”€â”€â”€ Public â€” registry / selection API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Public — registry / selection API ───────────────────────────────────
 
     /**
      * Returns the current provider inventory.
@@ -180,13 +180,13 @@ export class InferenceService {
      *
      * Policy (applied in order):
      * 1. If `req.openTimeoutMs` is explicitly set, honour it unconditionally.
-     * 2. embedded_llamacpp (scope='embedded') â€” CPU inference is slow to produce the
+     * 2. embedded_llamacpp (scope='embedded') — CPU inference is slow to produce the
      *    first token, especially on a cold model load.  Give it 90 seconds.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
-     * 3. Other local providers (scope='local', e.g. Ollama) â€” 90 seconds baseline.
+     * 3. Other local providers (scope='local', e.g. Ollama) — 90 seconds baseline.
      *    Ollama may load the model from disk on a cold start, which can exceed 30 s.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
-     * 4. Cloud providers (scope='cloud') â€” 15 seconds (network round-trip only).
+     * 4. Cloud providers (scope='cloud') — 15 seconds (network round-trip only).
      *
      * The timeout only guards the pre-first-token window; once streaming has opened
      * it is cleared regardless of how long the full response takes.
@@ -200,8 +200,8 @@ export class InferenceService {
 
         const promptChars = InferenceService.countPromptChars(messages);
 
-        // Embedded llama.cpp: generous timeout â€” cold model loads on CPU can exceed 30 s.
-        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars â‰ˆ >1 000 tokens).
+        // Embedded llama.cpp: generous timeout — cold model loads on CPU can exceed 30 s.
+        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars ≈ >1 000 tokens).
         if (provider.scope === 'embedded' || provider.providerType === 'embedded_llamacpp') {
             return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
                 ? STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS
@@ -264,7 +264,7 @@ export class InferenceService {
             'inference_started',
             'info',
             'InferenceService',
-            `Stream inference starting â€” provider: ${currentProvider.providerId}`,
+            `Stream inference starting — provider: ${currentProvider.providerId}`,
             'unknown',
             {
                 turnId: req.turnId,
@@ -303,7 +303,7 @@ export class InferenceService {
                     'provider_fallback_applied',
                     'warn',
                     'InferenceService',
-                    `Stream fallback â€” switching to provider: ${currentProvider.providerId}`,
+                    `Stream fallback — switching to provider: ${currentProvider.providerId}`,
                     'partial',
                     {
                         turnId: req.turnId,
@@ -335,7 +335,7 @@ export class InferenceService {
 
             attemptedProviders.push(currentProvider.providerId);
 
-            // Tracks when this specific provider attempt started â€” used to compute first-token latency.
+            // Tracks when this specific provider attempt started — used to compute first-token latency.
             let attemptStartedAt = 0;
 
             try {
@@ -381,7 +381,7 @@ export class InferenceService {
                                 const firstTokenLatencyMs = Date.now() - attemptStartedAt;
                                 console.log(
                                     `[InferenceService] First token received` +
-                                    ` — provider: ${currentProvider.providerId}` +
+                                    ` � provider: ${currentProvider.providerId}` +
                                     ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
                                     ` turnId: ${req.turnId}`
                                 );
@@ -390,7 +390,7 @@ export class InferenceService {
                                     'stream_opened',
                                     'info',
                                     'InferenceService',
-                                    `Stream opened — provider: ${currentProvider.providerId}`,
+                                    `Stream opened � provider: ${currentProvider.providerId}`,
                                     'success',
                                     {
                                         turnId: req.turnId,
@@ -426,7 +426,7 @@ export class InferenceService {
 
                         console.log(
                             `[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length}` +
-                            ` — provider: ${currentProvider.providerId}` +
+                            ` � provider: ${currentProvider.providerId}` +
                             ` scope: ${currentProvider.scope}` +
                             ` type: ${currentProvider.providerType}` +
                             ` openTimeout: ${openTimeoutMs}ms` +
@@ -480,7 +480,7 @@ export class InferenceService {
                             'stream_completed',
                             'info',
                             'InferenceService',
-                            `Stream completed — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                            `Stream completed � provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
                             'success',
                             {
                                 turnId: req.turnId,
@@ -505,7 +505,7 @@ export class InferenceService {
                             'inference_completed',
                             'info',
                             'InferenceService',
-                            `Inference completed (stream) — provider: ${currentProvider.providerId}`,
+                            `Inference completed (stream) � provider: ${currentProvider.providerId}`,
                             'success',
                             {
                                 turnId: req.turnId,
@@ -600,7 +600,7 @@ export class InferenceService {
                         'stream_aborted',
                         'warn',
                         'InferenceService',
-                        `Stream aborted mid-stream â€” provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                        `Stream aborted mid-stream — provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
                         'partial',
                         {
                             turnId: req.turnId,
@@ -624,7 +624,7 @@ export class InferenceService {
                         timestamp: new Date().toISOString(),
                         subsystem: 'local_inference',
                         category: signalCategory,
-                        description: `Mid-stream failure after ${tokensEmitted} tokens â€” provider: ${currentProvider.providerId}: ${lastError.message}`,
+                        description: `Mid-stream failure after ${tokensEmitted} tokens — provider: ${currentProvider.providerId}: ${lastError.message}`,
                         context: {
                             turnId: req.turnId,
                             providerId: currentProvider.providerId,
@@ -635,7 +635,7 @@ export class InferenceService {
                         },
                     });
 
-                    // Do not retry after partial output â€” return partial result
+                    // Do not retry after partial output — return partial result
                     const partialResult: StreamInferenceResult = {
                         success: false,
                         content: '',
@@ -657,7 +657,7 @@ export class InferenceService {
                     return partialResult;
                 }
 
-                // Stream never opened â€” fallback is safe if allowed and more candidates exist
+                // Stream never opened — fallback is safe if allowed and more candidates exist
                 const hasMoreCandidates = attempt < candidateProviders.length - 1;
                 if (!hasMoreCandidates) {
                     break;
@@ -682,7 +682,7 @@ export class InferenceService {
             eventType,
             'error',
             'InferenceService',
-            `Stream inference failed â€” providers attempted: ${attemptedProviders.join(', ')}`,
+            `Stream inference failed — providers attempted: ${attemptedProviders.join(', ')}`,
             'failure',
             {
                 turnId: req.turnId,
@@ -704,7 +704,7 @@ export class InferenceService {
             'stream_aborted',
             'error',
             'InferenceService',
-            `Stream aborted (no open) â€” providers: ${attemptedProviders.join(', ')}`,
+            `Stream aborted (no open) — providers: ${attemptedProviders.join(', ')}`,
             'failure',
             {
                 turnId: req.turnId,
@@ -761,7 +761,7 @@ export class InferenceService {
         return exhaustedResult;
     }
 
-    // â”€â”€â”€ Public â€” embedded engine management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Public — embedded engine management ─────────────────────────────────
 
     /**
      * Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine.
@@ -1109,7 +1109,7 @@ export class InferenceService {
             return true;
         }
 
-        // 1b. /health did not respond positively â€” check TCP to see if the port is actually occupied
+        // 1b. /health did not respond positively — check TCP to see if the port is actually occupied
         // by another process before attempting to spawn a new server that would fail to bind.
         const portOccupied = await new Promise<boolean>((resolve) => {
             const socket = new net.Socket();
@@ -1142,15 +1142,15 @@ export class InferenceService {
 
             if (inferenceReachable) {
                 telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-                    `Port ${port} occupied by existing inference service (responded to /v1/models) â€” adopting as embedded provider`,
+                    `Port ${port} occupied by existing inference service (responded to /v1/models) — adopting as embedded provider`,
                     'success', { payload: { port } });
                 return true;
             }
 
-            // Port is occupied by a non-inference service â€” spawning another server would fail
+            // Port is occupied by a non-inference service — spawning another server would fail
             // immediately with a bind error. Surface a deterministic failure instead.
             telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                `Port ${port} is already in use by a non-inference service â€” cannot start embedded llama.cpp`,
+                `Port ${port} is already in use by a non-inference service — cannot start embedded llama.cpp`,
                 'failure', { payload: { port } });
             console.error(`[EmbeddedLlamaCpp] Port ${port} is occupied by a non-inference service. Resolve the port conflict before starting TALA's embedded inference.`);
             return false;
@@ -1204,7 +1204,7 @@ export class InferenceService {
 
             child.on('exit', (code, signal) => {
                 processExited = true;
-                console.warn(`[EmbeddedLlamaCpp] Process exited early â€” code=${code} signal=${signal}`);
+                console.warn(`[EmbeddedLlamaCpp] Process exited early — code=${code} signal=${signal}`);
             });
 
             if (child.stdout) {
@@ -1274,7 +1274,7 @@ export class InferenceService {
         }
     }
 
-    // â”€â”€â”€ Legacy â€” backward-compatible scan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Legacy — backward-compatible scan ───────────────────────────────────
 
     /**
      * Scans the host machine for active AI inference providers.
@@ -1337,7 +1337,7 @@ export class InferenceService {
         return found;
     }
 
-    // â”€â”€â”€ Engine installer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Engine installer ─────────────────────────────────────────────────────
 
     /**
      * Triggers an automated installation flow for an inference engine.
@@ -1373,7 +1373,7 @@ export class InferenceService {
         }
     }
 
-    // â”€â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Private helpers ──────────────────────────────────────────────────────
 
     private _checkPort(port: number): Promise<boolean> {
         return new Promise((resolve) => {

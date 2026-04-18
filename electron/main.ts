@@ -57,6 +57,7 @@ import { RuntimeDiagnosticsAggregator } from './services/RuntimeDiagnosticsAggre
 import { RuntimeControlService } from './services/RuntimeControlService';
 import { McpAuthorityService } from './services/mcp/McpAuthorityService';
 import { OperatorActionService } from './services/OperatorActionService';
+import { RecoveryOperatorControlService } from './services/runtime/recovery/RecoveryOperatorControlService';
 import { SystemModeManager } from './services/SystemModeManager';
 import { inferenceDiagnostics } from './services/InferenceDiagnosticsService';
 import { WorldModelAssembler } from './services/world/WorldModelAssembler';
@@ -657,6 +658,7 @@ const operatorActionService = new OperatorActionService({
   autonomyOrchestrator: autonomousRunOrchestrator,
   reflectionService,
   logViewerService,
+  recoveryOperatorControlService: new RecoveryOperatorControlService(),
 });
 
 // ─── World Model Assembler (Phase 4A) ─────────────────────────────────────────

@@ -141,6 +141,17 @@ function mapAgentFailureCode(failure: StructuredFailure): AgentHandoffFailureCod
     return 'execution:agent_failed';
 }
 
+function resolveRecoveryOutcomeStatus(args: {
+    retryApplied: boolean;
+    rerouteApplied: boolean;
+    escalated?: boolean;
+}): RecoveryOutcomeStatus {
+    if (args.retryApplied) return 'recovered_by_retry';
+    if (args.rerouteApplied) return 'recovered_by_reroute';
+    if (args.escalated) return 'escalated';
+    return 'not_recovered';
+}
+
 export class AgentHandoffCoordinator {
     private readonly _planning: PlanningService;
     private readonly _bus: TelemetryBus;
@@ -504,13 +515,15 @@ export class AgentHandoffCoordinator {
                         ctx,
                     );
                     if (result.success) {
-                        const recoveryOutcome: RecoveryOutcomeStatus =
-                            candidateIndex > 0
-                                ? 'recovered_by_reroute'
-                                : attempts > 1
-                                    ? 'recovered_by_retry'
-                                    : undefined;
-                        if (recoveryOutcome) {
+                        const recoveryOutcome = resolveRecoveryOutcomeStatus({
+                            retryApplied: candidateIndex === 0 && attempts > 1,
+                            rerouteApplied: candidateIndex > 0,
+                            escalated: false,
+                        });
+                        const recoveryApplied =
+                            recoveryOutcome === 'recovered_by_retry' ||
+                            recoveryOutcome === 'recovered_by_reroute';
+                        if (recoveryApplied) {
                             this._bus.emit({
                                 executionId: plan.goalId,
                                 subsystem: 'planning',

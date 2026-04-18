@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ContextAssembler - Context Construction Utility
  * 
  * This utility assembles the runtime context (prompt blocks) for TALA's conversation turns.
@@ -22,16 +22,16 @@ import type { TurnPolicyId } from './ModePolicyEngine';
 /**
  * Response grounding mode for lore/autobiographical turns.
  *
- *  memory_grounded_soft   â€” default for LTMF/autobiographical memory. Tala recalls
+ *  memory_grounded_soft   — default for LTMF/autobiographical memory. Tala recalls
  *                           naturally: partial, emotional, impressionistic. She may be
  *                           uncertain at the edges, but stays anchored to what is actually
  *                           present in the retrieved memory. No unsupported fabrication.
  *
- *  memory_grounded_strict â€” optional, activated by explicit user wording ("exactly",
+ *  memory_grounded_strict — optional, activated by explicit user wording ("exactly",
  *                           "don't make anything up", etc.). Tala stays tightly factual,
  *                           minimal extrapolation, and plainly says what she does not recall.
  *
- *  canon_required         â€” activated by the canon gate when an autobiographical lore request
+ *  canon_required         — activated by the canon gate when an autobiographical lore request
  *                           lacks sufficient high-trust canon memory (diary/graph/rag/core_bio).
  *                           Tala must not fabricate autobiographical events; she must state
  *                           that no grounded memory is available and may invite the user to
@@ -273,15 +273,15 @@ export class ContextAssembler {
      * **Assembly Phases:**
      * 1. **Documentation Injection**: Adds project documentation chunks if relevant.
      * 2. **Memory Injection**: Compiles retrieved `MemoryItem`s into a context block.
-     *    - When `notebookGrounded` is true: emits [NOTEBOOK GROUNDING CONTRACT â€” MANDATORY]
-     *      followed by [CANON NOTEBOOK CONTEXT â€” STRICT] with explicit source URIs and the
+     *    - When `notebookGrounded` is true: emits [NOTEBOOK GROUNDING CONTRACT — MANDATORY]
+     *      followed by [CANON NOTEBOOK CONTEXT — STRICT] with explicit source URIs and the
      *      notebook strict grounding contract. Global memory context is suppressed.
      *    - For lore/autobiographical turns (`responseMode` set, no notebook): memories are
-     *      formatted as labeled canon entries ([CANON LORE MEMORIES â€” HIGH PRIORITY]) and a
+     *      formatted as labeled canon entries ([CANON LORE MEMORIES — HIGH PRIORITY]) and a
      *      dedicated grounding instruction block is appended.
      *    - For all other turns, the standard [MEMORY CONTEXT] format is used.
      * 3. **Safety Enforcement**: Injects a [FALLBACK CONTRACT] if substantive queries have
-     *    0 memories (suppressed in notebook mode â€” absence of evidence is the answer).
+     *    0 memories (suppressed in notebook mode — absence of evidence is the answer).
      * 4. **Sanitization**: Filters internal service names and leaky metadata from all blocks.
      *
      * @param memories - The filtered list of context-relevant memories.
@@ -320,7 +320,7 @@ export class ContextAssembler {
                 // Notebook strict mode: emit grounding contract first, then notebook content
                 // with explicit source URIs so the model knows exactly what material is available.
                 blocks.push({
-                    header: '[NOTEBOOK GROUNDING CONTRACT â€” MANDATORY]',
+                    header: '[NOTEBOOK GROUNDING CONTRACT — MANDATORY]',
                     source: 'system',
                     priority: 'high',
                     content: ContextAssembler.NOTEBOOK_GROUNDING_CONTRACT,
@@ -337,7 +337,7 @@ export class ContextAssembler {
                     .join('\n\n');
 
                 blocks.push({
-                    header: '[CANON NOTEBOOK CONTEXT â€” STRICT]',
+                    header: '[CANON NOTEBOOK CONTEXT — STRICT]',
                     source: 'router',
                     priority: 'high',
                     content: labeledContent,
@@ -354,12 +354,12 @@ export class ContextAssembler {
                 const labeledContent = memories
                     .map((m, idx) => {
                         const sourceLabel = ContextAssembler.loreSourceLabel(m.metadata?.source);
-                        return `Snippet ${idx + 1}:\nSource: ${sourceLabel} (fallback only â€” insufficient for autobiographical fact claims)\nContent: ${m.text}`;
+                        return `Snippet ${idx + 1}:\nSource: ${sourceLabel} (fallback only — insufficient for autobiographical fact claims)\nContent: ${m.text}`;
                     })
                     .join('\n\n');
 
                 blocks.push({
-                    header: '[FALLBACK CONTEXT â€” INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]',
+                    header: '[FALLBACK CONTEXT — INSUFFICIENT FOR AUTOBIOGRAPHICAL CLAIMS]',
                     source: 'router',
                     priority: 'normal',
                     content: labeledContent,
@@ -412,7 +412,7 @@ export class ContextAssembler {
                     .join('\n\n');
 
                 blocks.push({
-                    header: '[CANON LORE MEMORIES â€” HIGH PRIORITY]',
+                    header: '[CANON LORE MEMORIES — HIGH PRIORITY]',
                     source: 'router',
                     priority: 'high',
                     content: labeledContent,
@@ -422,12 +422,12 @@ export class ContextAssembler {
                     }
                 });
 
-                // Grounding instruction block â€” placed immediately after the memories
+                // Grounding instruction block — placed immediately after the memories
                 // so the model sees the rule right next to the content it applies to.
                 blocks.push({
                     header: responseMode === 'memory_grounded_strict'
-                        ? '[MEMORY GROUNDED RECALL â€” STRICT]'
-                        : '[MEMORY GROUNDED RECALL â€” SOFT]',
+                        ? '[MEMORY GROUNDED RECALL — STRICT]'
+                        : '[MEMORY GROUNDED RECALL — SOFT]',
                     source: 'system',
                     priority: 'high',
                     content: responseMode === 'memory_grounded_strict'
@@ -448,12 +448,12 @@ export class ContextAssembler {
             }
         }
 
-        // 2b. Canon gate instruction â€” always injected when canon_required is active,
+        // 2b. Canon gate instruction — always injected when canon_required is active,
         //     regardless of whether fallback memories were present in step 2.
-        //     Placed after any fallback context block so the model reads: context â†’ restriction.
+        //     Placed after any fallback context block so the model reads: context → restriction.
         if (responseMode === 'canon_required') {
             blocks.push({
-                header: '[CANON GATE â€” NO VERIFIED AUTOBIOGRAPHICAL MEMORY]',
+                header: '[CANON GATE — NO VERIFIED AUTOBIOGRAPHICAL MEMORY]',
                 source: 'system',
                 priority: 'high',
                 content: ContextAssembler.CANON_REQUIRED_BLOCK,
@@ -462,13 +462,13 @@ export class ContextAssembler {
 
         // 3. Fallback Block (SAFE NO-MEMORY CONTRACT)
         // If no memories were found but intent is substantive, inject fallback instructions.
-        // In notebook mode the absence of retrieved content is the expected answer â€” the
+        // In notebook mode the absence of retrieved content is the expected answer — the
         // grounding contract already instructs the model to say so explicitly, so we do NOT
         // inject a separate fallback that could confuse the source-restriction rules.
         // In canon_required mode the canon gate block already handles the no-memory case.
         if (memories.length === 0 && !retrievalSuppressed && intent !== 'unknown' && !notebookGrounded && responseMode !== 'canon_required') {
             blocks.push({
-                header: '[FALLBACK CONTRACT â€” NO MEMORY FOUND]',
+                header: '[FALLBACK CONTRACT — NO MEMORY FOUND]',
                 source: 'system',
                 priority: 'high',
                 content: `You currently have NO approved memories for this ${intent} query. 
@@ -505,7 +505,7 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
     }
 
     /**
-     * Notebook strict grounding contract â€” injected as a mandatory system block
+     * Notebook strict grounding contract — injected as a mandatory system block
      * before the notebook evidence when notebookGrounded is true.
      *
      * Sourced from the shared constant to keep the text in a single place.
@@ -513,7 +513,7 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
     private static readonly NOTEBOOK_GROUNDING_CONTRACT = NOTEBOOK_GROUNDING_CONTRACT_TEXT;
 
     /**
-     * Soft grounding instruction â€” default for LTMF/autobiographical lore.
+     * Soft grounding instruction — default for LTMF/autobiographical lore.
      * Tala recalls like a human: partial, emotional, with natural uncertainty.
      * Anchored to retrieved content; unsupported concrete fabrication is disallowed.
      */
@@ -523,13 +523,13 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
         `- Base your answer on the retrieved memory content above.\n` +
         `- Recall it like a real person would: partial, emotional, impressionistic, or slightly fuzzy at the edges.\n` +
         `- Do not invent major events, people, causes, or locations not present in the retrieved memories.\n` +
-        `- If some details are unclear, say they are hazy or hard to recall clearly â€” do not fill gaps with invented specifics.\n` +
+        `- If some details are unclear, say they are hazy or hard to recall clearly — do not fill gaps with invented specifics.\n` +
         `- You may describe how something felt, the impression or atmosphere, and natural connective phrasing between recalled facts.\n` +
         `- Do not replace a specific retrieved memory with generic filler or abstract metaphor.\n` +
         `- If multiple memories describe the same period, weave them together carefully without inventing contradictions.`;
 
     /**
-     * Strict grounding instruction â€” activated by explicit user precision requests
+     * Strict grounding instruction — activated by explicit user precision requests
      * ("exactly", "don't make anything up", "strictly from memory", etc.).
      * Tala stays tightly factual; minimal extrapolation; plainly states absent details.
      */
@@ -555,7 +555,7 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
         `- Do not introduce events, people, causes, or locations not present in the memory block.`;
 
     /**
-     * Canon gate instruction â€” injected when an autobiographical lore request lacks
+     * Canon gate instruction — injected when an autobiographical lore request lacks
      * sufficient high-trust canon memory (diary / graph / rag / core_bio / lore).
      *
      * This block is placed near the memory/context section so the model sees it
@@ -574,7 +574,7 @@ DO NOT invent, philosophize, or hallucinate a memory. Stay in character but stay
         `- State clearly that you do not have a grounded memory for this.\n` +
         `- You may say: "I don't have a grounded memory from that time" or "I don't want to invent a false memory."\n` +
         `- You may invite the user to help define that part of your canon deliberately.\n` +
-        `- If fallback context snippets were provided above, they are chat/session fragments only â€” do NOT use them to construct first-person autobiographical fact claims.\n` +
+        `- If fallback context snippets were provided above, they are chat/session fragments only — do NOT use them to construct first-person autobiographical fact claims.\n` +
         `- Staying truthful about absent memory is more important than providing a complete-sounding answer.`;
 
     private static sanitize(blocks: ContextBlock[]): ContextBlock[] {

@@ -8,9 +8,10 @@ import type {
     HandoffExecutionRecord,
     HandoffDiagnosticsSnapshot,
     PlanningMemoryDiagnosticsSnapshot,
-    KernelTurnDiagnosticsView,
     RuntimeMemoryAuthorityDiagnosticsView,
+    RecoveryDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
+import type { KernelTurnDiagnosticsView } from '../../shared/turnArbitrationTypes';
 import type {
     SystemCapability,
     SystemDegradationFlag,
@@ -26,6 +27,7 @@ import type { CompactionDiagnosticsSummary } from '../../shared/modelCapabilityT
 import { SystemHealthService, type SystemHealthAdapterDeps } from './SystemHealthService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { AuthorityLaneDiagnosticsRecord } from '../../shared/planning/executionAuthorityTypes';
+import { RecoveryHistoryRepositoryService } from './runtime/recovery/RecoveryHistoryRepository';
 
 export interface McpDiagnosticsSource {
     getDiagnosticsInventory(): McpInventoryDiagnostics;
@@ -74,6 +76,37 @@ export class RuntimeDiagnosticsAggregator {
         countsByWriteMode: {},
         lastUpdated: new Date(0).toISOString(),
     };
+    private _recoveryDiagnostics: RecoveryDiagnosticsSnapshot = {
+        counters: {
+            retriesAttempted: 0,
+            replansRequested: 0,
+            escalationsRaised: 0,
+            degradedContinuesApplied: 0,
+            stopsIssued: 0,
+            loopsDetected: 0,
+            overridesApplied: 0,
+            approvalsRequired: 0,
+            approvalsDenied: 0,
+        },
+        recentHistory: [],
+        analytics: {
+            totals: {
+                retries: 0,
+                replans: 0,
+                escalations: 0,
+                degradedContinues: 0,
+                stops: 0,
+                overrides: 0,
+                loopDetections: 0,
+            },
+            topReasonCodes: [],
+            byDecisionType: [],
+            byFailureFamily: [],
+        },
+        lastReasonCodes: [],
+        lastUpdated: new Date(0).toISOString(),
+    };
+    private readonly _recoveryHistoryRepository = RecoveryHistoryRepositoryService.getInstance();
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -99,6 +132,7 @@ export class RuntimeDiagnosticsAggregator {
             this._handlePlanningMemoryEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleKernelTurnEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleMemoryAuthorityEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+            this._handleRecoveryEvent(evt.event, evt.executionId, evt.payload as Record<string, unknown> | undefined);
         });
     }
 
@@ -166,6 +200,7 @@ export class RuntimeDiagnosticsAggregator {
             planningMemory: this._buildPlanningMemoryDiagnostics(now),
             kernelTurn: this._buildKernelTurnDiagnostics(now),
             memoryAuthority: this._buildMemoryAuthorityDiagnostics(now),
+            recovery: this._buildRecoveryDiagnostics(now),
         };
     }
 
@@ -369,6 +404,54 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildRecoveryDiagnostics(now: string): RecoveryDiagnosticsSnapshot | undefined {
+        this._recoveryDiagnostics.recentHistory = this._recoveryHistoryRepository.listRecentSync(30).map((entry) => ({
+            historyId: entry.historyId,
+            timestamp: entry.timestamp,
+            executionId: entry.executionId,
+            executionBoundaryId: entry.executionBoundaryId,
+            triggerType: entry.triggerType,
+            decisionType: entry.decisionType,
+            reasonCode: entry.reasonCode,
+            scope: entry.scope,
+            failureFamily: entry.failureFamily,
+            origin: entry.origin,
+            operatorOverrideApplied: entry.operatorOverrideApplied,
+            approvalState: entry.approvalState,
+            outcome: entry.outcome,
+            degradedMode: entry.degradedMode,
+        }));
+        const analytics = this._recoveryHistoryRepository.getAnalyticsSnapshotSync(200);
+        this._recoveryDiagnostics.analytics = {
+            totals: analytics.totals,
+            topReasonCodes: analytics.topReasonCodes,
+            byDecisionType: analytics.byDecisionType,
+            byFailureFamily: analytics.byFailureFamily.map((item) => ({
+                failureFamily: item.failureFamily,
+                count: item.count,
+            })),
+        };
+
+        if (
+            this._recoveryDiagnostics.counters.retriesAttempted === 0 &&
+            this._recoveryDiagnostics.counters.replansRequested === 0 &&
+            this._recoveryDiagnostics.counters.escalationsRaised === 0 &&
+            this._recoveryDiagnostics.counters.degradedContinuesApplied === 0 &&
+            this._recoveryDiagnostics.counters.stopsIssued === 0 &&
+            this._recoveryDiagnostics.counters.loopsDetected === 0 &&
+            this._recoveryDiagnostics.counters.overridesApplied === 0 &&
+            this._recoveryDiagnostics.counters.approvalsRequired === 0 &&
+            this._recoveryDiagnostics.counters.approvalsDenied === 0 &&
+            !this._recoveryDiagnostics.activeDecision
+        ) {
+            return undefined;
+        }
+        return {
+            ...this._recoveryDiagnostics,
+            lastUpdated: this._recoveryDiagnostics.lastUpdated || now,
+        };
+    }
+
     private _handlePlanningMemoryEvent(event: string, payload?: Record<string, unknown>): void {
         if (!payload) return;
         const now = new Date().toISOString();
@@ -516,9 +599,84 @@ export class RuntimeDiagnosticsAggregator {
             requiresGoalId: Boolean(payload.goalIdRequired),
             requiresTurnContext: Boolean(payload.turnContextRequired),
             requiresDurableStateAuthority: Boolean(payload.durableStateRequested),
-            normalizedWriteMode: payload.memoryWriteMode as RuntimeMemoryAuthorityDiagnosticsView['lastDecision']['normalizedWriteMode'],
+            normalizedWriteMode: payload.memoryWriteMode as NonNullable<RuntimeMemoryAuthorityDiagnosticsView['lastDecision']>['normalizedWriteMode'],
         };
         this._memoryAuthorityDiagnostics.lastUpdated = now;
+    }
+
+    private _handleRecoveryEvent(
+        event: string,
+        executionId: string,
+        payload?: Record<string, unknown>,
+    ): void {
+        if (!payload) return;
+        const now = new Date().toISOString();
+        const reasonCode = typeof payload.reasonCode === 'string' ? payload.reasonCode : undefined;
+        if (reasonCode) {
+            this._recoveryDiagnostics.lastReasonCodes = [
+                reasonCode,
+                ...this._recoveryDiagnostics.lastReasonCodes.filter((code) => code !== reasonCode),
+            ].slice(0, 8);
+        }
+
+        if (event === 'recovery.decision_made') {
+            const activeDecisionType = payload.decisionType as
+                'retry' | 'replan' | 'escalate' | 'degrade_and_continue' | 'stop';
+            this._recoveryDiagnostics.activeDecision = {
+                triggerId: String(payload.triggerId ?? ''),
+                decisionId: String(payload.decisionId ?? ''),
+                decisionType: activeDecisionType,
+                reasonCode: reasonCode ?? '',
+                executionId,
+                executionBoundaryId: payload.executionBoundaryId as string | undefined,
+                scope: payload.scope as 'step' | 'handoff' | 'execution_boundary' | 'execution' | 'plan' | undefined,
+                handoffType: payload.handoffType as 'tool' | 'workflow' | 'agent' | undefined,
+                origin: payload.origin as 'automatic' | 'operator_override' | 'operator_approved' | undefined,
+                approvalState: payload.operatorState && typeof payload.operatorState === 'object'
+                    ? (payload.operatorState as { approvalState?: 'not_required' | 'pending_operator' | 'approved' | 'denied' }).approvalState
+                    : undefined,
+                overrideAllowed: payload.operatorState && typeof payload.operatorState === 'object'
+                    ? (payload.operatorState as { overrideAllowed?: boolean }).overrideAllowed
+                    : undefined,
+                overrideApplied: payload.operatorState && typeof payload.operatorState === 'object'
+                    ? (payload.operatorState as { overrideApplied?: boolean }).overrideApplied
+                    : undefined,
+                lastOperatorAction: payload.operatorState && typeof payload.operatorState === 'object'
+                    ? (payload.operatorState as { lastOperatorAction?: 'approve_retry' | 'approve_replan' | 'approve_degraded_continue' | 'force_stop' | 'deny' }).lastOperatorAction
+                    : undefined,
+                operatorReasonCode: payload.operatorState && typeof payload.operatorState === 'object'
+                    ? (payload.operatorState as { operatorReasonCode?: string }).operatorReasonCode
+                    : undefined,
+                degradedMode: payload.degradedMode as {
+                    disabledCapabilities: string[];
+                    continueMode: 'reduced_capability' | 'read_only' | 'local_only';
+                } | undefined,
+            };
+            this._recoveryDiagnostics.budget = payload.budget as RecoveryDiagnosticsSnapshot['budget'];
+            this._recoveryDiagnostics.exhausted = payload.exhausted as RecoveryDiagnosticsSnapshot['exhausted'];
+        } else if (event === 'recovery.retry_requested') {
+            this._recoveryDiagnostics.counters.retriesAttempted += 1;
+        } else if (event === 'recovery.replan_requested') {
+            this._recoveryDiagnostics.counters.replansRequested += 1;
+        } else if (event === 'recovery.escalation_requested') {
+            this._recoveryDiagnostics.counters.escalationsRaised += 1;
+        } else if (event === 'recovery.degraded_continue_applied') {
+            this._recoveryDiagnostics.counters.degradedContinuesApplied += 1;
+        } else if (event === 'recovery.stop_requested') {
+            this._recoveryDiagnostics.counters.stopsIssued += 1;
+        } else if (event === 'recovery.loop_detected') {
+            this._recoveryDiagnostics.counters.loopsDetected += 1;
+        } else if (event === 'recovery.override_applied') {
+            this._recoveryDiagnostics.counters.overridesApplied += 1;
+        } else if (event === 'recovery.approval_required') {
+            this._recoveryDiagnostics.counters.approvalsRequired += 1;
+        } else if (event === 'recovery.approval_denied' || event === 'recovery.override_denied') {
+            this._recoveryDiagnostics.counters.approvalsDenied += 1;
+        } else {
+            return;
+        }
+
+        this._recoveryDiagnostics.lastUpdated = now;
     }
 
     private _handleHandoffEvent(event: string, payload?: Record<string, unknown>): void {

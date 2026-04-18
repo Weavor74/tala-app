@@ -1,5 +1,5 @@
-﻿/**
- * RuntimeDiagnosticsModel Tests â€” Priority 2A Objective A
+/**
+ * RuntimeDiagnosticsModel Tests — Priority 2A Objective A
  *
  * Validates the canonical runtime diagnostics types and the
  * RuntimeDiagnosticsAggregator snapshot shape.
@@ -33,7 +33,7 @@ vi.mock('../../services/policy/PolicyGate', () => ({
     },
 }));
 
-// â”€â”€â”€ Mock McpLifecycleManager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Mock McpLifecycleManager ─────────────────────────────────────────────────
 
 function makeEmptyMcpInventory(): McpInventoryDiagnostics {
     return {
@@ -54,9 +54,9 @@ function makeMockMcpLifecycle(inventory: McpInventoryDiagnostics = makeEmptyMcpI
     };
 }
 
-// â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('RuntimeDiagnosticsAggregator â€” snapshot shape', () => {
+describe('RuntimeDiagnosticsAggregator — snapshot shape', () => {
     let inferenceDiag: InferenceDiagnosticsService;
 
     beforeEach(() => {
@@ -116,7 +116,7 @@ describe('RuntimeDiagnosticsAggregator â€” snapshot shape', () => {
     });
 });
 
-describe('RuntimeDiagnosticsAggregator â€” degraded subsystem detection', () => {
+describe('RuntimeDiagnosticsAggregator — degraded subsystem detection', () => {
     it('marks inference as degraded when last stream failed', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
 
@@ -170,7 +170,7 @@ describe('RuntimeDiagnosticsAggregator â€” degraded subsystem detection', (
     });
 });
 
-describe('RuntimeDiagnosticsAggregator â€” failure summary', () => {
+describe('RuntimeDiagnosticsAggregator — failure summary', () => {
     it('failure summary is empty when no failures have occurred', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
         const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
@@ -232,7 +232,7 @@ describe('RuntimeDiagnosticsAggregator â€” failure summary', () => {
     });
 });
 
-describe('RuntimeDiagnosticsAggregator â€” status serialization', () => {
+describe('RuntimeDiagnosticsAggregator — status serialization', () => {
     it('snapshot is JSON-serializable without circular references', () => {
         const inferenceDiag = new InferenceDiagnosticsService();
         const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);
@@ -257,7 +257,7 @@ describe('RuntimeDiagnosticsAggregator â€” status serialization', () => {
     });
 });
 
-describe('RuntimeDiagnosticsAggregator — degraded mode framework', () => {
+describe('RuntimeDiagnosticsAggregator � degraded mode framework', () => {
     const markPrimaryProviderReady = (inferenceDiag: InferenceDiagnosticsService) => {
         inferenceDiag.updateFromInventory({
             selectedProviderId: 'primary',
@@ -349,5 +349,63 @@ describe('RuntimeDiagnosticsAggregator — degraded mode framework', () => {
         expect(degraded.systemHealth.recent_mode_transitions[0]?.to_mode).toBe('DEGRADED_INFERENCE');
     });
 });
+
+
+
+describe('RuntimeDiagnosticsAggregator � recovery diagnostics projection', () => {
+    it('projects recovery decision and counters from telemetry events', () => {
+        const inferenceDiag = new InferenceDiagnosticsService();
+        const aggregator = new RuntimeDiagnosticsAggregator(inferenceDiag, makeMockMcpLifecycle() as any);        const bus = {
+            emit: (evt) => {
+                (aggregator as any)._handleRecoveryEvent(evt.event, evt.executionId, evt.payload);
+            },
+        };
+
+        bus.emit({
+            executionId: 'exec-rec-1',
+            subsystem: 'planning',
+            event: 'recovery.decision_made',
+            payload: {
+                triggerId: 'trg-rec-1',
+                decisionId: 'dec-rec-1',
+                decisionType: 'degrade_and_continue',
+                reasonCode: 'recovery.degrade.local_only',
+                executionBoundaryId: 'boundary-rec-1',
+                scope: 'execution_boundary',
+                handoffType: 'workflow',
+                degradedMode: {
+                    disabledCapabilities: ['web_retrieval'],
+                    continueMode: 'local_only',
+                },
+            },
+        });
+        bus.emit({
+            executionId: 'exec-rec-1',
+            subsystem: 'planning',
+            event: 'recovery.degraded_continue_applied',
+            payload: {
+                reasonCode: 'recovery.degrade.local_only',
+            },
+        });
+        bus.emit({
+            executionId: 'exec-rec-1',
+            subsystem: 'planning',
+            event: 'recovery.loop_detected',
+            payload: {
+                reasonCode: 'recovery.loop.alternating_cycle',
+            },
+        });
+
+        const snap = aggregator.getSnapshot();
+        expect(snap.recovery).toBeDefined();
+        expect(snap.recovery?.activeDecision?.decisionType).toBe('degrade_and_continue');
+        expect(snap.recovery?.counters.degradedContinuesApplied).toBe(1);
+        expect(snap.recovery?.counters.loopsDetected).toBe(1);
+        expect(snap.recovery?.lastReasonCodes).toContain('recovery.degrade.local_only');
+    });
+});
+
+
+
 
 

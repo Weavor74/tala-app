@@ -28,6 +28,11 @@ import {
     normalizeStructuredFailure,
     selectEquivalentTarget,
 } from '../runtime/failures/FailureRecoveryPolicy';
+import { AutomaticRecoveryControlService } from '../runtime/recovery/AutomaticRecoveryController';
+import { RecoveryActionExecutor } from '../runtime/recovery/RecoveryActionExecutor';
+import { RecoveryBudgetService } from '../runtime/recovery/RecoveryBudgetService';
+import { RecoveryPolicyService } from '../runtime/recovery/RecoveryPolicyEngine';
+import { RecoveryTriggerService } from '../runtime/recovery/RecoveryTriggerBuilder';
 
 /**
  * Minimal interface for the tool execution authority.
@@ -76,6 +81,8 @@ export class PlanningHandoffCoordinator {
     private readonly _planning: PlanningService;
     private readonly _bus: TelemetryBus;
     private readonly _suppressionTracker: FailureSuppressionService;
+    private readonly _recoveryController: AutomaticRecoveryControlService;
+    private readonly _recoveryTriggerBuilder = new RecoveryTriggerService();
 
     constructor(
         private readonly _toolExecutor: IToolExecutor,
@@ -84,6 +91,27 @@ export class PlanningHandoffCoordinator {
         this._planning = PlanningService.getInstance();
         this._bus = TelemetryBus.getInstance();
         this._suppressionTracker = suppressionTracker ?? new FailureSuppressionService();
+        this._recoveryController = new AutomaticRecoveryControlService(
+            new RecoveryPolicyService(),
+            new RecoveryBudgetService(2),
+            new RecoveryActionExecutor(
+                {
+                    retryExecution: async () => {},
+                    escalateExecution: async () => {},
+                    continueExecution: async () => {},
+                    stopExecution: async () => {},
+                },
+                {
+                    requestRecoveryReplan: async (input) => {
+                        await this._requestRecoveryReplan(input.planId, input.reasonCode);
+                    },
+                },
+                {
+                    applyDegradedMode: async () => {},
+                },
+            ),
+            this._bus,
+        );
     }
 
     async dispatch(planId: string, authorityEnvelope: TurnAuthorityEnvelope): Promise<PlanDispatchResult> {
@@ -413,27 +441,65 @@ export class PlanningHandoffCoordinator {
                 };
             }
 
-            const escalationRequired = step.failurePolicy === 'escalate' || lastFailure.operatorActionRequired;
+            const decision = await this._recoveryController.handleTrigger(
+                this._recoveryTriggerBuilder.forToolFailure({
+                    executionId: plan.goalId,
+                    executionBoundaryId,
+                    planId: plan.id,
+                    stepId: String(stepIndex),
+                    reasonCode: lastFailure.reasonCode,
+                    failure: {
+                        ...lastFailure,
+                        toolId: candidateToolId,
+                        stepId: String(stepIndex),
+                    },
+                    retryCount: attempts,
+                    maxRetries: policy.maxRetries,
+                    canReplan: policy.allowReplan,
+                    canEscalate: step.failurePolicy === 'escalate' || lastFailure.operatorActionRequired,
+                    canDegradeContinue: step.degradeAllowed === true || step.failurePolicy === 'skip',
+                    degradedCapability: candidateToolId,
+                    degradedModeHint: 'local_only',
+                    scope: 'execution_boundary',
+                }),
+            );
+
             const outcome: RecoveryOutcomeStatus =
-                escalationRequired
+                decision.type === 'escalate'
                     ? 'escalation_required'
-                    : policy.allowReplan
+                    : decision.type === 'replan'
                         ? 'replan_required'
+                        : decision.type === 'degrade_and_continue'
+                            ? 'degraded_but_completed'
                         : 'terminal_failure';
 
-            if (outcome === 'escalation_required') {
+            if (decision.type === 'escalate') {
                 actions.push({
                     action: 'escalate',
                     attempt: attempts,
                     targetId: candidateToolId,
-                    reasonCode: lastFailure.reasonCode,
+                    reasonCode: decision.reasonCode,
                 });
-            } else if (outcome === 'replan_required') {
+            } else if (decision.type === 'replan') {
                 actions.push({
                     action: 'replan',
                     attempt: attempts,
                     targetId: candidateToolId,
-                    reasonCode: lastFailure.reasonCode,
+                    reasonCode: decision.reasonCode,
+                });
+            } else if (decision.type === 'degrade_and_continue') {
+                actions.push({
+                    action: 'degrade',
+                    attempt: attempts,
+                    targetId: candidateToolId,
+                    reasonCode: decision.reasonCode,
+                });
+            } else if (decision.type === 'stop') {
+                actions.push({
+                    action: 'none',
+                    attempt: attempts,
+                    targetId: candidateToolId,
+                    reasonCode: decision.reasonCode,
                 });
             }
 
@@ -447,7 +513,7 @@ export class PlanningHandoffCoordinator {
                 failureClass: lastFailure.class,
                 recoveryOutcome: outcome,
                 recoveryAttempts: attempts,
-                degradedCompletion: false,
+                degradedCompletion: outcome === 'degraded_but_completed',
                 antiThrashSuppressed,
                 recoveryActions: actions,
             };
@@ -467,6 +533,21 @@ export class PlanningHandoffCoordinator {
             antiThrashSuppressed,
             recoveryActions: actions,
         };
+    }
+
+    private async _requestRecoveryReplan(planId: string | undefined, reasonCode: string): Promise<void> {
+        if (!planId) return;
+        const priorPlan = this._planning.getPlan(planId);
+        if (!priorPlan) return;
+        this._planning.replan(
+            {
+                goalId: priorPlan.goalId,
+                priorPlanId: planId,
+                trigger: reasonCode.includes('policy_blocked') ? 'policy_block' : 'dependency_failure',
+                triggerDetails: `automatic_recovery:${reasonCode}`,
+            },
+            priorPlan.planningInvocation,
+        );
     }
 
     private async _executeToolOnce(
@@ -694,4 +775,5 @@ export class PlanningHandoffCoordinator {
         });
     }
 }
+
 

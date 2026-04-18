@@ -83,6 +83,11 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 **Returns**: `RuntimeMemoryAuthorityDiagnosticsView | undefined`
 
 ---
+#### `_buildRecoveryDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `RecoveryDiagnosticsSnapshot | undefined`
+
+---
 #### `_handlePlanningMemoryEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`
@@ -95,6 +100,11 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 ---
 #### `_handleMemoryAuthorityEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
+#### `_handleRecoveryEvent`
+**Arguments**: `event: string, executionId: string, payload?: Record<string, unknown>,`
 **Returns**: `void`
 
 ---

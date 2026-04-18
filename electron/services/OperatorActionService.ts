@@ -10,6 +10,8 @@ import { checkCanonicalDbHealth } from './db/initMemoryStore';
 import { loadSettings } from './SettingsManager';
 import { auditLogger } from './AuditLogger';
 import { PlanningLoopAuthorityRouter } from './planning/PlanningLoopAuthorityRouter';
+import type { RecoveryOperatorControlService } from './runtime/recovery/RecoveryOperatorControlService';
+import type { RecoveryOperatorActionInput } from './runtime/recovery/RecoveryTypes';
 import type { AuthorityLaneDiagnosticsRecord } from '../../shared/planning/executionAuthorityTypes';
 import type { McpServerConfig } from '../../shared/settings';
 import type {
@@ -29,6 +31,7 @@ interface OperatorActionDeps {
     autonomyOrchestrator?: AutonomousRunOrchestrator;
     reflectionService?: ReflectionService;
     logViewerService?: LogViewerService;
+    recoveryOperatorControlService?: RecoveryOperatorControlService;
 }
 
 type RollbackAvailability = OperatorActionResultContract['rollback_availability'];
@@ -62,6 +65,11 @@ const ACTION_CATALOG: ActionCatalogEntry[] = [
     { action: 'rerun_derived_rebuild', label: 'Re-run Derived Rebuild', category: 'recovery_control', riskLevel: 'medium' },
     { action: 'flush_or_restart_stalled_queues', label: 'Flush Stalled Queues', category: 'recovery_control', riskLevel: 'medium' },
     { action: 'retry_tool_connector_initialization', label: 'Retry Tool Connector Init', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'approve_recovery_retry', label: 'Approve Recovery Retry', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'approve_recovery_replan', label: 'Approve Recovery Replan', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'approve_recovery_degraded_continue', label: 'Approve Degraded Continue', category: 'recovery_control', riskLevel: 'medium' },
+    { action: 'force_recovery_stop', label: 'Force Recovery Stop', category: 'recovery_control', riskLevel: 'high' },
+    { action: 'deny_recovery_action', label: 'Deny Recovery Action', category: 'recovery_control', riskLevel: 'medium' },
     { action: 'approve_repair_proposal', label: 'Approve Repair Proposal', category: 'governance_control', riskLevel: 'high' },
     { action: 'reject_repair_proposal', label: 'Reject Repair Proposal', category: 'governance_control', riskLevel: 'medium' },
     { action: 'defer_proposal', label: 'Defer Proposal', category: 'governance_control', riskLevel: 'low' },
@@ -307,6 +315,46 @@ export class OperatorActionService {
                     rollback = 'manual';
                     break;
                 }
+                case 'approve_recovery_retry': {
+                    const decision = await this._submitRecoveryOperatorAction('approve_retry', request.params);
+                    details = { recoveryDecision: decision };
+                    affectedSubsystems = ['recovery_controller'];
+                    rollback = 'none';
+                    reason = 'recovery_operator_action_applied';
+                    break;
+                }
+                case 'approve_recovery_replan': {
+                    const decision = await this._submitRecoveryOperatorAction('approve_replan', request.params);
+                    details = { recoveryDecision: decision };
+                    affectedSubsystems = ['recovery_controller'];
+                    rollback = 'none';
+                    reason = 'recovery_operator_action_applied';
+                    break;
+                }
+                case 'approve_recovery_degraded_continue': {
+                    const decision = await this._submitRecoveryOperatorAction('approve_degraded_continue', request.params);
+                    details = { recoveryDecision: decision };
+                    affectedSubsystems = ['recovery_controller'];
+                    rollback = 'none';
+                    reason = 'recovery_operator_action_applied';
+                    break;
+                }
+                case 'force_recovery_stop': {
+                    const decision = await this._submitRecoveryOperatorAction('force_stop', request.params);
+                    details = { recoveryDecision: decision };
+                    affectedSubsystems = ['recovery_controller'];
+                    rollback = 'none';
+                    reason = 'recovery_operator_action_applied';
+                    break;
+                }
+                case 'deny_recovery_action': {
+                    const decision = await this._submitRecoveryOperatorAction('deny', request.params);
+                    details = { recoveryDecision: decision };
+                    affectedSubsystems = ['recovery_controller'];
+                    rollback = 'none';
+                    reason = 'recovery_operator_action_applied';
+                    break;
+                }
                 case 'approve_repair_proposal': {
                     const proposalId = String(request.params?.proposal_id ?? '');
                     if (!proposalId) {
@@ -508,6 +556,9 @@ export class OperatorActionService {
      */
     public getAvailableActions(): OperatorActionAvailability[] {
         const health = this.deps.diagnosticsAggregator.getSystemHealthSnapshot();
+        const recoverySnapshot = this.deps.diagnosticsAggregator.getSnapshot().recovery;
+        const activeRecoveryDecision = recoverySnapshot?.activeDecision;
+        const pendingRecoveryApproval = activeRecoveryDecision?.approvalState === 'pending_operator';
         const nonHealthy = health.subsystem_entries.filter((s) => s.status !== 'healthy').map((s) => s.name);
         const hasInferenceIssue = nonHealthy.includes('inference_service');
         const hasDbOrMemoryIssue = nonHealthy.includes('db_health_service') || nonHealthy.includes('memory_authority_service');
@@ -540,8 +591,34 @@ export class OperatorActionService {
             recommendedByContext.add('pin_active_issue');
             recommendedByContext.add('open_evidence_log_trail');
         }
+        if (pendingRecoveryApproval && activeRecoveryDecision) {
+            recommendedByContext.add('force_recovery_stop');
+            recommendedByContext.add('deny_recovery_action');
+            if (activeRecoveryDecision.decisionType === 'retry') {
+                recommendedByContext.add('approve_recovery_retry');
+            } else if (activeRecoveryDecision.decisionType === 'replan') {
+                recommendedByContext.add('approve_recovery_replan');
+            } else if (activeRecoveryDecision.decisionType === 'degrade_and_continue') {
+                recommendedByContext.add('approve_recovery_degraded_continue');
+            }
+        }
 
         return ACTION_CATALOG.map((entry): OperatorActionAvailability => {
+            const recoveryAvailability = this._getRecoveryActionAvailability(entry.action, recoverySnapshot);
+            if (recoveryAvailability) {
+                return {
+                    action: entry.action,
+                    label: entry.label,
+                    category: entry.category,
+                    risk_level: entry.riskLevel,
+                    recommended: recommendedByContext.has(entry.action),
+                    allowed: recoveryAvailability.allowed,
+                    reason: recoveryAvailability.reason,
+                    requires_explicit_approval: false,
+                    affected_subsystems: ['recovery_controller'],
+                };
+            }
+
             const allowedByMode = this._checkModeAllowance(entry.action, health);
             if (!allowedByMode.allowed) {
                 return {
@@ -818,6 +895,67 @@ export class OperatorActionService {
                 message: e.message,
             })),
         };
+    }
+
+    private _getRecoveryActionAvailability(
+        action: OperatorActionId,
+        recovery: ReturnType<RuntimeDiagnosticsAggregator['getSnapshot']>['recovery'],
+    ): { allowed: boolean; reason: string } | null {
+        if (
+            action !== 'approve_recovery_retry' &&
+            action !== 'approve_recovery_replan' &&
+            action !== 'approve_recovery_degraded_continue' &&
+            action !== 'force_recovery_stop' &&
+            action !== 'deny_recovery_action'
+        ) {
+            return null;
+        }
+        if (!this.deps.recoveryOperatorControlService) {
+            return { allowed: false, reason: 'recovery_operator_control_unavailable' };
+        }
+        if (!recovery?.activeDecision || recovery.activeDecision.approvalState !== 'pending_operator') {
+            return { allowed: false, reason: 'recovery.no_pending_operator_approval' };
+        }
+        const decisionType = recovery.activeDecision.decisionType;
+        if (action === 'approve_recovery_retry' && decisionType !== 'retry') {
+            return { allowed: false, reason: 'recovery.pending_decision_mismatch' };
+        }
+        if (action === 'approve_recovery_replan' && decisionType !== 'replan') {
+            return { allowed: false, reason: 'recovery.pending_decision_mismatch' };
+        }
+        if (action === 'approve_recovery_degraded_continue' && decisionType !== 'degrade_and_continue') {
+            return { allowed: false, reason: 'recovery.pending_decision_mismatch' };
+        }
+        return { allowed: true, reason: 'available' };
+    }
+
+    private async _submitRecoveryOperatorAction(
+        action: RecoveryOperatorActionInput['action'],
+        params?: Record<string, unknown>,
+    ) {
+        const service = this.deps.recoveryOperatorControlService;
+        if (!service) {
+            throw new Error('recovery_operator_control_unavailable');
+        }
+        const executionId = String(params?.execution_id ?? params?.executionId ?? '');
+        if (!executionId) {
+            throw new Error('missing_execution_id');
+        }
+        const executionBoundaryIdRaw = params?.execution_boundary_id ?? params?.executionBoundaryId;
+        const decisionIdRaw = params?.decision_id ?? params?.decisionId;
+        const operatorReasonCode = String(params?.operator_reason_code ?? params?.operatorReasonCode ?? 'operator.requested');
+
+        return service.submitOperatorRecoveryAction({
+            executionId,
+            executionBoundaryId: typeof executionBoundaryIdRaw === 'string' && executionBoundaryIdRaw.length > 0
+                ? executionBoundaryIdRaw
+                : undefined,
+            decisionId: typeof decisionIdRaw === 'string' && decisionIdRaw.length > 0
+                ? decisionIdRaw
+                : undefined,
+            action,
+            operatorReasonCode,
+        });
     }
 
     private _isSelfImprovementAction(action: OperatorActionId): boolean {
