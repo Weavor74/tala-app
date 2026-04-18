@@ -212,6 +212,17 @@ export type TelemetryEventType =
     | 'external_search_failed'
     | 'external_search_timeout'
     | 'external_search_fallback'
+    // Notebook ingestion
+    | 'notebook.ingestion_queued'
+    | 'notebook.ingestion_started'
+    | 'notebook.ingestion_fetch_completed'
+    | 'notebook.ingestion_extract_completed'
+    | 'notebook.ingestion_document_upserted'
+    | 'notebook.ingestion_chunk_completed'
+    | 'notebook.ingestion_embedding_completed'
+    | 'notebook.ingestion_ready'
+    | 'notebook.ingestion_failed'
+    | 'notebook.ingestion_retry_scheduled'
     // Phase 4 — Autonomous Self-Improvement
     | 'autonomy_goal_detected'
     | 'autonomy_goal_deduped'

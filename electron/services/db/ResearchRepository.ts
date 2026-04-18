@@ -22,6 +22,9 @@ import type {
   NotebookSourceType,
   NotebookRetrievalStatus,
   NotebookOpenTargetType,
+  NotebookIngestionJob,
+  NotebookIngestionJobState,
+  NotebookIngestionJobStage,
 } from '../../../shared/researchTypes';
 import {
   normalizeNotebookItemForStorage,
@@ -31,6 +34,8 @@ import {
 
 export class ResearchRepository {
   constructor(private pool: Pool) {}
+
+  private static readonly DEFAULT_MAX_INGESTION_ATTEMPTS = 3;
 
   // ─── Notebooks ─────────────────────────────────────────────────────────────
 
@@ -127,6 +132,14 @@ export class ResearchRepository {
       const id = uuidv4();
       const normalized = normalizeNotebookItemForStorage(item);
       const runId = normalized.added_from_search_run_id ?? addedFromSearchRunId ?? null;
+      const source = normalizeNotebookSourceRecord(item);
+      const shouldQueueUpgrade = this.isNotebookItemUpgradeable(source);
+      const initialRetrievalStatus: NotebookRetrievalStatus = this.resolveInitialRetrievalStatus(source);
+      const metadataJson = {
+        ...(normalized.metadata_json ?? {}),
+        retrievalStatus: initialRetrievalStatus,
+        retrievalError: null,
+      };
       const result = await this.pool.query<NotebookItemRecord>(
         `INSERT INTO notebook_items
            (id, notebook_id, item_key, item_type, source_id, source_path,
@@ -154,12 +167,206 @@ export class ResearchRepository {
           normalized.snippet ?? null,
           normalized.content_hash ?? null,
           runId,
-          JSON.stringify(normalized.metadata_json ?? {}),
+          JSON.stringify(metadataJson),
         ]
       );
-      if (result.rows[0]) inserted.push(this.mapNotebookItem(result.rows[0]));
+      if (result.rows[0]) {
+        const mapped = this.mapNotebookItem(result.rows[0]);
+        inserted.push(mapped);
+        if (shouldQueueUpgrade) {
+          await this.createNotebookIngestionJob({
+            notebookId,
+            itemKey: mapped.item_key,
+            sourceType: source.sourceType,
+            uri: source.uri,
+            sourcePath: source.sourcePath,
+            stage: 'fetch',
+            maxAttempts: ResearchRepository.DEFAULT_MAX_INGESTION_ATTEMPTS,
+          });
+          await this.updateNotebookRetrievalStatus(notebookId, mapped.item_key, {
+            retrievalStatus: 'queued',
+            retrievalError: null,
+          });
+        }
+      }
     }
     return inserted;
+  }
+
+  async getNotebookItemForUpgrade(notebookId: string, itemKey: string): Promise<NotebookItemRecord | null> {
+    const result = await this.pool.query<NotebookItemRecord>(
+      `SELECT * FROM notebook_items WHERE notebook_id = $1 AND item_key = $2 LIMIT 1`,
+      [notebookId, itemKey],
+    );
+    return result.rows[0] ? this.mapNotebookItem(result.rows[0]) : null;
+  }
+
+  async updateNotebookRetrievalStatus(
+    notebookId: string,
+    itemKey: string,
+    patch: {
+      retrievalStatus?: NotebookRetrievalStatus;
+      retrievalError?: string | null;
+      contentHash?: string | null;
+      contentText?: string | null;
+      mimeType?: string | null;
+      sourceDocumentId?: string | null;
+      chunkCount?: number | null;
+    },
+  ): Promise<NotebookItemRecord | null> {
+    const metadataPatch: Record<string, unknown> = {};
+    if (patch.retrievalStatus !== undefined) metadataPatch.retrievalStatus = patch.retrievalStatus;
+    if (patch.retrievalError !== undefined) metadataPatch.retrievalError = patch.retrievalError;
+    if (patch.contentText !== undefined) metadataPatch.contentText = patch.contentText;
+    if (patch.mimeType !== undefined) metadataPatch.mimeType = patch.mimeType;
+    if (patch.sourceDocumentId !== undefined) metadataPatch.sourceDocumentId = patch.sourceDocumentId;
+    if (patch.chunkCount !== undefined) metadataPatch.chunkCount = patch.chunkCount;
+    if (patch.contentHash !== undefined) metadataPatch.contentHash = patch.contentHash;
+
+    const result = await this.pool.query<NotebookItemRecord>(
+      `UPDATE notebook_items
+          SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $3::jsonb,
+              content_hash = COALESCE($4, content_hash)
+        WHERE notebook_id = $1 AND item_key = $2
+      RETURNING *`,
+      [
+        notebookId,
+        itemKey,
+        JSON.stringify(metadataPatch),
+        patch.contentHash ?? null,
+      ],
+    );
+    return result.rows[0] ? this.mapNotebookItem(result.rows[0]) : null;
+  }
+
+  async linkNotebookItemToSourceDocument(
+    notebookId: string,
+    itemKey: string,
+    sourceDocumentId: string,
+    chunkCount: number,
+    contentHash: string,
+  ): Promise<NotebookItemRecord | null> {
+    return this.updateNotebookRetrievalStatus(notebookId, itemKey, {
+      sourceDocumentId,
+      chunkCount,
+      contentHash,
+    });
+  }
+
+  async createNotebookIngestionJob(input: {
+    notebookId: string;
+    itemKey: string;
+    sourceType: NotebookSourceType;
+    uri: string | null;
+    sourcePath: string | null;
+    state?: NotebookIngestionJobState;
+    stage?: NotebookIngestionJobStage;
+    maxAttempts?: number;
+  }): Promise<NotebookIngestionJob | null> {
+    const state = input.state ?? 'queued';
+    const stage = input.stage ?? 'fetch';
+    const maxAttempts = input.maxAttempts ?? ResearchRepository.DEFAULT_MAX_INGESTION_ATTEMPTS;
+    const result = await this.pool.query(
+      `INSERT INTO notebook_ingestion_jobs
+         (job_id, notebook_id, item_key, source_type, uri, source_path, state, stage, attempt_count, max_attempts)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9)
+       ON CONFLICT (notebook_id, item_key) WHERE state IN ('queued', 'running', 'retry_scheduled')
+       DO UPDATE SET
+         source_type = EXCLUDED.source_type,
+         uri = EXCLUDED.uri,
+         source_path = EXCLUDED.source_path,
+         state = 'queued',
+         stage = 'fetch',
+         last_error = NULL,
+         next_retry_at = NULL,
+         updated_at = now()
+       RETURNING *`,
+      [
+        uuidv4(),
+        input.notebookId,
+        input.itemKey,
+        input.sourceType,
+        input.uri,
+        input.sourcePath,
+        state,
+        stage,
+        maxAttempts,
+      ],
+    );
+    return result.rows[0] ? this.mapNotebookIngestionJob(result.rows[0]) : null;
+  }
+
+  async claimNextNotebookIngestionJob(): Promise<NotebookIngestionJob | null> {
+    const result = await this.pool.query(
+      `WITH candidate AS (
+         SELECT job_id
+           FROM notebook_ingestion_jobs
+          WHERE state = 'queued'
+             OR (state = 'retry_scheduled' AND (next_retry_at IS NULL OR next_retry_at <= now()))
+          ORDER BY created_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+       )
+       UPDATE notebook_ingestion_jobs j
+          SET state = 'running',
+              attempt_count = j.attempt_count + 1,
+              updated_at = now()
+         FROM candidate c
+        WHERE j.job_id = c.job_id
+       RETURNING j.*`,
+    );
+    return result.rows[0] ? this.mapNotebookIngestionJob(result.rows[0]) : null;
+  }
+
+  async updateNotebookIngestionJob(
+    jobId: string,
+    patch: {
+      state?: NotebookIngestionJobState;
+      stage?: NotebookIngestionJobStage;
+      lastError?: string | null;
+      nextRetryAt?: string | null;
+    },
+  ): Promise<NotebookIngestionJob | null> {
+    const sets: string[] = ['updated_at = now()'];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (patch.state !== undefined) {
+      sets.push(`state = $${idx++}`);
+      values.push(patch.state);
+    }
+    if (patch.stage !== undefined) {
+      sets.push(`stage = $${idx++}`);
+      values.push(patch.stage);
+    }
+    if (patch.lastError !== undefined) {
+      sets.push(`last_error = $${idx++}`);
+      values.push(patch.lastError);
+    }
+    if (patch.nextRetryAt !== undefined) {
+      sets.push(`next_retry_at = $${idx++}`);
+      values.push(patch.nextRetryAt);
+    }
+    values.push(jobId);
+    const result = await this.pool.query(
+      `UPDATE notebook_ingestion_jobs
+          SET ${sets.join(', ')}
+        WHERE job_id = $${idx}
+      RETURNING *`,
+      values,
+    );
+    return result.rows[0] ? this.mapNotebookIngestionJob(result.rows[0]) : null;
+  }
+
+  async listPendingNotebookIngestionJobs(limit = 50): Promise<NotebookIngestionJob[]> {
+    const result = await this.pool.query(
+      `SELECT *
+         FROM notebook_ingestion_jobs
+        WHERE state IN ('queued', 'running', 'retry_scheduled')
+        ORDER BY created_at ASC
+        LIMIT $1`,
+      [limit],
+    );
+    return result.rows.map((row: any) => this.mapNotebookIngestionJob(row));
   }
 
   async removeNotebookItem(notebookId: string, itemKey: string): Promise<boolean> {
@@ -436,9 +643,54 @@ export class ResearchRepository {
       contentText: normalized.contentText,
       mimeType: normalized.mimeType,
       retrievalStatus: normalized.retrievalStatus as NotebookRetrievalStatus,
+      retrievalError: normalized.retrievalError,
+      sourceDocumentId: normalized.sourceDocumentId,
+      chunkCount: normalized.chunkCount,
       openTarget: normalized.openTarget,
       openTargetType: normalized.openTargetType,
       createdFromSearch: normalized.createdFromSearch,
     };
+  }
+
+  private mapNotebookIngestionJob(row: Record<string, unknown>): NotebookIngestionJob {
+    return {
+      jobId: String(row.job_id),
+      notebookId: String(row.notebook_id),
+      itemKey: String(row.item_key),
+      sourceType: String(row.source_type) as NotebookSourceType,
+      uri: (row.uri as string | null) ?? null,
+      sourcePath: (row.source_path as string | null) ?? null,
+      state: String(row.state) as NotebookIngestionJobState,
+      stage: String(row.stage) as NotebookIngestionJobStage,
+      attemptCount: Number(row.attempt_count ?? 0),
+      maxAttempts: Number(row.max_attempts ?? 0),
+      lastError: (row.last_error as string | null) ?? null,
+      nextRetryAt: row.next_retry_at ? toIsoString(row.next_retry_at as string) : null,
+      createdAt: toIsoString(row.created_at as string),
+      updatedAt: toIsoString(row.updated_at as string),
+    };
+  }
+
+  private isNotebookItemUpgradeable(source: ReturnType<typeof normalizeNotebookSourceRecord>): boolean {
+    if (source.contentText && source.contentText.trim().length > 0) return true;
+    if (source.sourceType === 'local' && source.sourcePath) return true;
+    if (source.sourceType === 'web' && source.uri) return true;
+    if ((source.sourceType === 'generated' || source.sourceType === 'internal' || source.sourceType === 'api') && source.contentText) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveInitialRetrievalStatus(source: ReturnType<typeof normalizeNotebookSourceRecord>): NotebookRetrievalStatus {
+    if (source.sourceDocumentId && source.chunkCount != null) {
+      return 'ready';
+    }
+    if (source.contentText && source.contentText.trim().length > 0) {
+      return 'content_fetched';
+    }
+    if (source.uri || source.sourcePath) {
+      return 'queued';
+    }
+    return 'saved_metadata_only';
   }
 }

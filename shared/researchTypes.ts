@@ -67,8 +67,14 @@ export type NotebookSourceType = 'web' | 'local' | 'generated' | 'api' | 'intern
 export type NotebookRetrievalStatus =
   | 'none'
   | 'saved_metadata_only'
+  | 'queued'
+  | 'fetching'
   | 'content_fetched'
-  | 'chunked';
+  | 'chunking'
+  | 'chunked'
+  | 'embedding'
+  | 'ready'
+  | 'failed';
 
 export type NotebookOpenTargetType =
   | 'browser'
@@ -90,7 +96,43 @@ export interface NotebookSourceRecord {
   contentHash: string | null;
   mimeType: string | null;
   retrievalStatus: NotebookRetrievalStatus;
+  retrievalError: string | null;
+  sourceDocumentId: string | null;
+  chunkCount: number | null;
   createdFromSearch: boolean;
+}
+
+export type NotebookIngestionJobState =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'retry_scheduled'
+  | 'cancelled';
+
+export type NotebookIngestionJobStage =
+  | 'fetch'
+  | 'extract'
+  | 'document_upsert'
+  | 'chunk'
+  | 'embed'
+  | 'finalize';
+
+export interface NotebookIngestionJob {
+  jobId: string;
+  notebookId: string;
+  itemKey: string;
+  sourceType: NotebookSourceType;
+  uri: string | null;
+  sourcePath: string | null;
+  state: NotebookIngestionJobState;
+  stage: NotebookIngestionJobStage;
+  attemptCount: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // --- Search Run Results ------------------------------------------------------
@@ -115,6 +157,9 @@ export interface SearchRunResultRecord {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -137,6 +182,9 @@ export interface CreateSearchRunResultInput {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -170,6 +218,9 @@ export interface NotebookItemRecord {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -192,6 +243,9 @@ export interface AddNotebookItemInput {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -275,18 +329,40 @@ function deriveOpenTarget(args: { sourceType: NotebookSourceType; uri: string | 
 function deriveRetrievalStatus(args: {
   rawStatus: string | null;
   contentText: string | null;
+  uri: string | null;
+  sourcePath: string | null;
   contentHash: string | null;
   metadata: Record<string, unknown>;
 }): NotebookRetrievalStatus {
   const status = args.rawStatus;
-  if (status === 'none' || status === 'saved_metadata_only' || status === 'content_fetched' || status === 'chunked') {
+  if (
+    status === 'none' ||
+    status === 'saved_metadata_only' ||
+    status === 'queued' ||
+    status === 'fetching' ||
+    status === 'content_fetched' ||
+    status === 'chunking' ||
+    status === 'chunked' ||
+    status === 'embedding' ||
+    status === 'ready' ||
+    status === 'failed'
+  ) {
     return status;
   }
-  if (args.metadata.chunkCount != null || args.metadata.chunksCreated === true) {
+  if (args.metadata.sourceDocumentId != null && args.metadata.chunkCount != null) {
+    if (args.metadata.embeddingStatus === 'unavailable' || args.metadata.embeddingStatus === 'failed') {
+      return 'chunked';
+    }
+    return 'ready';
+  }
+  if (args.metadata.chunkCount != null || args.metadata.chunksCreated === true || args.metadata.retrievalReady === true) {
     return 'chunked';
   }
   if (args.contentText || args.contentHash) {
     return 'content_fetched';
+  }
+  if (args.uri || args.sourcePath) {
+    return 'queued';
   }
   return 'saved_metadata_only';
 }
@@ -338,6 +414,8 @@ export function normalizeNotebookSourceRecord(input: NormalizableItemInput): Not
       metadata.retrieval_status,
     ]),
     contentText,
+    uri,
+    sourcePath,
     contentHash: findFirstNonEmptyString([raw.content_hash, raw.contentHash, metadata.content_hash, metadata.contentHash]),
     metadata,
   });
@@ -366,6 +444,17 @@ export function normalizeNotebookSourceRecord(input: NormalizableItemInput): Not
     contentHash: findFirstNonEmptyString([raw.content_hash, raw.contentHash, metadata.content_hash, metadata.contentHash]),
     mimeType: findFirstNonEmptyString([raw.mimeType, raw.mime_type, metadata.mimeType, metadata.mime_type]),
     retrievalStatus,
+    retrievalError: findFirstNonEmptyString([raw.retrievalError, raw.retrieval_error, metadata.retrievalError, metadata.retrieval_error]),
+    sourceDocumentId: findFirstNonEmptyString([raw.sourceDocumentId, raw.source_document_id, metadata.sourceDocumentId, metadata.source_document_id]),
+    chunkCount: (() => {
+      const rawChunkCount = raw.chunkCount ?? raw.chunk_count ?? metadata.chunkCount ?? metadata.chunk_count;
+      if (typeof rawChunkCount === 'number' && Number.isFinite(rawChunkCount)) return rawChunkCount;
+      if (typeof rawChunkCount === 'string' && rawChunkCount.trim().length > 0) {
+        const parsed = Number.parseInt(rawChunkCount, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      return null;
+    })(),
     createdFromSearch: Boolean(raw.added_from_search_run_id ?? raw.search_run_id ?? raw.createdFromSearch ?? metadata.createdFromSearch),
   };
 }
@@ -404,6 +493,9 @@ export function normalizeNotebookItemForStorage(input: NormalizableItemInput): N
     contentText: normalized.contentText,
     mimeType: normalized.mimeType,
     retrievalStatus: normalized.retrievalStatus,
+    retrievalError: normalized.retrievalError,
+    sourceDocumentId: normalized.sourceDocumentId,
+    chunkCount: normalized.chunkCount,
     openTarget: normalized.openTarget,
     openTargetType: normalized.openTargetType,
     createdFromSearch: normalized.createdFromSearch,

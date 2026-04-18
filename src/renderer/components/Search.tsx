@@ -439,7 +439,7 @@ export const Search: React.FC<SearchProps> = ({ onOpenFile, initialNotebookId, o
                             sourceType: r.sourceType ?? undefined,
                             providerId: r.providerId ?? undefined,
                             mimeType: r.mimeType ?? undefined,
-                            retrievalStatus: 'saved_metadata_only',
+                            retrievalStatus: (r.uri ?? r.sourcePath) ? 'queued' : 'saved_metadata_only',
                             openTarget: r.uri ?? r.sourcePath ?? null,
                             openTargetType: r.uri ? 'browser' : (r.sourcePath ? 'workspace_file' : 'none'),
                             createdFromSearch: true,

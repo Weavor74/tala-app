@@ -40,6 +40,7 @@ import { getRetrievalOrchestrator, refreshExternalProvider, getAvailableCuratedP
 import { testProvider } from './retrieval/providers/ExternalApiSearchProvider';
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
+import { NotebookIngestionService } from './ingestion/NotebookIngestionService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 import type {

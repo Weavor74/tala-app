@@ -239,7 +239,27 @@ describe('ResearchRepository', () => {
     it('executes INSERT with ON CONFLICT DO UPDATE for each item', async () => {
       const { repo, mockQuery } = buildRepo();
       const itemRow = makeNotebookItemRow();
-      mockQuery.mockResolvedValue({ rows: [itemRow] }); // called once per item
+      mockQuery
+        .mockResolvedValueOnce({ rows: [itemRow] })
+        .mockResolvedValueOnce({
+          rows: [{
+            job_id: 'job-1',
+            notebook_id: 'nb-uuid-1',
+            item_key: 'key:doc1',
+            source_type: 'web',
+            uri: 'https://example.com/doc1',
+            source_path: null,
+            state: 'queued',
+            stage: 'fetch',
+            attempt_count: 0,
+            max_attempts: 3,
+            last_error: null,
+            next_retry_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        })
+        .mockResolvedValueOnce({ rows: [itemRow] });
 
       const items: AddNotebookItemInput[] = [
         {
@@ -252,7 +272,7 @@ describe('ResearchRepository', () => {
       ];
       const result = await repo.addItemsToNotebook('nb-uuid-1', items);
 
-      expect(mockQuery).toHaveBeenCalledOnce();
+      expect(mockQuery).toHaveBeenCalledTimes(3);
       const [sql, params] = mockQuery.mock.calls[0];
       expect(sql).toContain('INSERT INTO notebook_items');
       expect(sql).toContain('ON CONFLICT (notebook_id, item_key) DO UPDATE');
@@ -278,6 +298,58 @@ describe('ResearchRepository', () => {
       const result = await repo.addItemsToNotebook('nb-uuid-1', []);
       expect(result).toEqual([]);
       expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('queues ingestion for local file-backed items', async () => {
+      const { repo, mockQuery } = buildRepo();
+      const row = makeNotebookItemRow({
+        item_key: '/workspace/a.md',
+        source_path: '/workspace/a.md',
+        uri: null,
+        metadata_json: { retrievalStatus: 'queued' },
+      });
+      mockQuery
+        .mockResolvedValueOnce({ rows: [row] })
+        .mockResolvedValueOnce({
+          rows: [{
+            job_id: 'job-local',
+            notebook_id: 'nb-uuid-1',
+            item_key: '/workspace/a.md',
+            source_type: 'local',
+            uri: null,
+            source_path: '/workspace/a.md',
+            state: 'queued',
+            stage: 'fetch',
+            attempt_count: 0,
+            max_attempts: 3,
+            last_error: null,
+            next_retry_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        })
+        .mockResolvedValueOnce({ rows: [row] });
+
+      const result = await repo.addItemsToNotebook('nb-uuid-1', [{ item_key: '/workspace/a.md', source_path: '/workspace/a.md' }]);
+
+      expect(result[0]?.retrievalStatus).toBe('queued');
+      expect(mockQuery).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps legacy metadata-only items as saved_metadata_only without queued job', async () => {
+      const { repo, mockQuery } = buildRepo();
+      const row = makeNotebookItemRow({
+        item_key: 'legacy-meta-only',
+        uri: null,
+        source_path: null,
+        metadata_json: { retrievalStatus: 'saved_metadata_only' },
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [row] });
+
+      const result = await repo.addItemsToNotebook('nb-uuid-1', [{ item_key: 'legacy-meta-only', title: 'Legacy only' }]);
+
+      expect(result[0]?.retrievalStatus).toBe('saved_metadata_only');
+      expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
     it('processes multiple items with one query call per item', async () => {

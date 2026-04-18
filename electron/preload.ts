@@ -464,6 +464,9 @@ contextBridge.exposeInMainWorld('tala', {
     /** Resolve canonical open target for a notebook item. */
     researchResolveNotebookOpenTarget: (notebookId: string, itemKey: string) =>
         ipcRenderer.invoke('research:resolveNotebookOpenTarget', notebookId, itemKey),
+    /** Strict grounding helper: synchronously upgrade selected notebook items when possible. */
+    researchUpgradeNotebookItemsNow: (notebookId: string, itemKeys: string[]) =>
+        ipcRenderer.invoke('research:upgradeNotebookItemsNow', notebookId, itemKeys),
 
     // ─── Content Ingestion ────────────────────────────────────────────────────
     /** Ingest all notebook items in a notebook into source_documents and document_chunks. */

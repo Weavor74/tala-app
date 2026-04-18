@@ -142,7 +142,7 @@ describe('resultToNotebookItem', () => {
         const item = resultToNotebookItem(result, 0);
         expect(item.metadata_json?.openTarget).toBe('https://ex.com');
         expect(item.metadata_json?.openTargetType).toBe('browser');
-        expect(item.metadata_json?.retrievalStatus).toBe('saved_metadata_only');
+        expect(item.metadata_json?.retrievalStatus).toBe('queued');
     });
 
     it('does NOT reference a scrape or ingest API — pure metadata mapping', () => {

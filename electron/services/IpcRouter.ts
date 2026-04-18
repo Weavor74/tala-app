@@ -40,6 +40,7 @@ import { getRetrievalOrchestrator, refreshExternalProvider, getAvailableCuratedP
 import { testProvider } from './retrieval/providers/ExternalApiSearchProvider';
 import { getEmbeddingsRepository } from './db/initMemoryStore';
 import { ChunkEmbeddingService } from './embedding/ChunkEmbeddingService';
+import { NotebookIngestionService } from './ingestion/NotebookIngestionService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RetrievalRequest } from '../../shared/retrieval/retrievalTypes';
 import type {
@@ -224,6 +225,17 @@ export class IpcRouter {
     // Alias for the dynamic getter
     const mainWindowResolver = {
       get webContents() { return getMainWindow()?.webContents; }
+    };
+    let notebookIngestionService: NotebookIngestionService | null = null;
+    const ensureNotebookIngestionService = (): NotebookIngestionService | null => {
+      if (notebookIngestionService) return notebookIngestionService;
+      const research = getResearchRepository();
+      const content = getContentRepository();
+      const embeddingsRepo = getEmbeddingsRepository();
+      if (!research || !content) return null;
+      notebookIngestionService = new NotebookIngestionService(research, content, embeddingsRepo);
+      notebookIngestionService.start();
+      return notebookIngestionService;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1829,7 +1841,27 @@ export class IpcRouter {
       if (!repo) return { ok: false, error: 'Research repository not initialized' };
       try {
         const added = await repo.addItemsToNotebook(notebookId, items as AddNotebookItemInput[], searchRunId);
+        const notebookIngestion = ensureNotebookIngestionService();
+        if (notebookIngestion) {
+          // Trigger a non-blocking pump so newly queued jobs can start immediately.
+          void notebookIngestion.pumpOnce();
+        }
         return { ok: true, added };
+      } catch (err: any) {
+        return { ok: false, error: err?.message ?? String(err) };
+      }
+    });
+
+    /**
+     * Strict notebook grounding helper: upgrade selected notebook items now.
+     * Used by notebook-only summarize/quote flows that require source-grounded content.
+     */
+    ipcMain.handle('research:upgradeNotebookItemsNow', async (_e, notebookId: string, itemKeys: string[]) => {
+      const notebookIngestion = ensureNotebookIngestionService();
+      if (!notebookIngestion) return { ok: false, error: 'Notebook ingestion service not initialized' };
+      try {
+        const result = await notebookIngestion.upgradeNotebookItemsNow(notebookId, itemKeys);
+        return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
       }
@@ -1955,7 +1987,7 @@ export class IpcRouter {
       if (!research || !content) return { ok: false, error: 'Repositories not initialized' };
       try {
         const svc = new ContentIngestionService(research, content);
-        const result = await svc.ingestNotebook(notebookId, options as any, refetch ?? false);
+        const result = await svc.ingestNotebook(notebookId, options as Record<string, unknown>, refetch ?? false);
         return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };
@@ -1972,7 +2004,7 @@ export class IpcRouter {
       if (!research || !content) return { ok: false, error: 'Repositories not initialized' };
       try {
         const svc = new ContentIngestionService(research, content);
-        const result = await svc.ingestItems(itemKeys, notebookId, options as any, refetch ?? false);
+        const result = await svc.ingestItems(itemKeys, notebookId, options as Record<string, unknown>, refetch ?? false);
         return { ok: true, result };
       } catch (err: any) {
         return { ok: false, error: err?.message ?? String(err) };

@@ -85,7 +85,30 @@ interface NotebookSourceRecord {
   contentHash: string | null;
   mimeType: string | null;
   retrievalStatus: NotebookRetrievalStatus;
+  retrievalError: string | null;
+  sourceDocumentId: string | null;
+  chunkCount: number | null;
   createdFromSearch: boolean;
+}
+```
+
+### `NotebookIngestionJob`
+```typescript
+interface NotebookIngestionJob {
+  jobId: string;
+  notebookId: string;
+  itemKey: string;
+  sourceType: NotebookSourceType;
+  uri: string | null;
+  sourcePath: string | null;
+  state: NotebookIngestionJobState;
+  stage: NotebookIngestionJobStage;
+  attemptCount: number;
+  maxAttempts: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 ```
 
@@ -111,6 +134,9 @@ interface SearchRunResultRecord {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -136,6 +162,9 @@ interface CreateSearchRunResultInput {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -170,6 +199,9 @@ interface NotebookItemRecord {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -195,6 +227,9 @@ interface AddNotebookItemInput {
   contentText?: string | null;
   mimeType?: string | null;
   retrievalStatus?: NotebookRetrievalStatus;
+  retrievalError?: string | null;
+  sourceDocumentId?: string | null;
+  chunkCount?: number | null;
   openTarget?: string | null;
   openTargetType?: NotebookOpenTargetType;
   createdFromSearch?: boolean;
@@ -242,8 +277,14 @@ type NotebookSourceType =  'web' | 'local' | 'generated' | 'api' | 'internal';
 type NotebookRetrievalStatus = 
   | 'none'
   | 'saved_metadata_only'
+  | 'queued'
+  | 'fetching'
   | 'content_fetched'
-  | 'chunked';
+  | 'chunking'
+  | 'chunked'
+  | 'embedding'
+  | 'ready'
+  | 'failed';
 ```
 
 ### `NotebookOpenTargetType`
@@ -253,5 +294,27 @@ type NotebookOpenTargetType =
   | 'workspace_file'
   | 'generated'
   | 'none';
+```
+
+### `NotebookIngestionJobState`
+```typescript
+type NotebookIngestionJobState = 
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'retry_scheduled'
+  | 'cancelled';
+```
+
+### `NotebookIngestionJobStage`
+```typescript
+type NotebookIngestionJobStage = 
+  | 'fetch'
+  | 'extract'
+  | 'document_upsert'
+  | 'chunk'
+  | 'embed'
+  | 'finalize';
 ```
 

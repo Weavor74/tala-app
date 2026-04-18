@@ -8,7 +8,7 @@
  * Architectural contract:
  *   - Search results are *candidate discovery items*, not memory.
  *   - Notebook membership is the *curation gate*.
- *   - Ingestion (source_documents / document_chunks) is a *separate, explicit step*.
+ *   - Ingestion/chunking runs in a backend background upgrade pipeline after save.
  *   - `resultToNotebookItem` must never trigger content scraping or ingestion.
  */
 

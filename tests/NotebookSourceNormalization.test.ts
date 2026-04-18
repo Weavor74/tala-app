@@ -48,7 +48,7 @@ describe('notebook source normalization', () => {
     expect(normalized.providerId).toBe('legacy-provider');
   });
 
-  it('storage normalization keeps deterministic fallback retrieval status', () => {
+  it('storage normalization marks source-referenced items as queued', () => {
     const normalized = normalizeNotebookItemForStorage({
       item_key: 'k1',
       title: 'Title',
@@ -58,7 +58,7 @@ describe('notebook source normalization', () => {
 
     expect(normalized.item_key).toBe('k1');
     expect(normalized.source_id).toBeNull();
-    expect(normalized.metadata_json.retrievalStatus).toBe('saved_metadata_only');
+    expect(normalized.metadata_json.retrievalStatus).toBe('queued');
   });
 
   it('generated/internal without uri/path is not browser-openable', () => {

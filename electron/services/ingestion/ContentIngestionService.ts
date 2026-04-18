@@ -130,6 +130,7 @@ export class ContentIngestionService {
     content: string | null;
     metadata?: Partial<UpsertSourceDocumentInput>;
     warning?: string;
+    retryable?: boolean;
   }> {
     const normalizedSource = normalizeNotebookSourceRecord(item);
     if (normalizedSource.contentText) {
@@ -163,7 +164,13 @@ export class ContentIngestionService {
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: null, warning: `Could not read file ${normalizedSource.sourcePath}: ${msg}` };
+        const code = this._readErrorCode(err);
+        const retryable = code != null ? this._isRetryableFileReadCode(code) : false;
+        return {
+          content: null,
+          warning: `Could not read file ${normalizedSource.sourcePath}: ${msg}`,
+          retryable,
+        };
       }
     }
 
@@ -186,11 +193,19 @@ export class ContentIngestionService {
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: null, warning: `Could not fetch URI ${normalizedSource.uri}: ${msg}` };
+        return {
+          content: null,
+          warning: `Could not fetch URI ${normalizedSource.uri}: ${msg}`,
+          retryable: this._isRetryableHttpError(err),
+        };
       }
     }
 
-    return { content: null, warning: `item_key ${item.item_key} has no source_path or uri` };
+    return {
+      content: null,
+      warning: `item_key ${item.item_key} has no source_path or uri`,
+      retryable: false,
+    };
   }
 
   /**
@@ -317,7 +332,10 @@ export class ContentIngestionService {
           return;
         }
         if (!res.statusCode || res.statusCode >= 400) {
-          return reject(new Error(`HTTP ${res.statusCode ?? 'unknown'} for ${uri}`));
+          const statusCode = res.statusCode ?? 0;
+          const error = new Error(`HTTP ${statusCode || 'unknown'} for ${uri}`) as Error & { retryable?: boolean };
+          error.retryable = statusCode === 429 || (statusCode >= 500 && statusCode <= 599);
+          return reject(error);
         }
 
         const mimeType = (res.headers['content-type'] ?? null) as string | null;
@@ -334,7 +352,9 @@ export class ContentIngestionService {
 
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error(`HTTP request timed out for ${uri}`));
+        const timeoutError = new Error(`HTTP request timed out for ${uri}`) as Error & { retryable?: boolean };
+        timeoutError.retryable = true;
+        reject(timeoutError);
       });
       req.on('error', reject);
     });
@@ -393,6 +413,29 @@ export class ContentIngestionService {
     } catch {
       return null;
     }
+  }
+
+  private _isRetryableHttpError(err: unknown): boolean {
+    if (err instanceof Error) {
+      const typed = err as Error & { retryable?: boolean };
+      if (typeof typed.retryable === 'boolean') return typed.retryable;
+      if (/HTTP request timed out/i.test(typed.message)) return true;
+      if (/HTTP 429/i.test(typed.message)) return true;
+      if (/HTTP 5\d\d/i.test(typed.message)) return true;
+      return false;
+    }
+    return false;
+  }
+
+  private _readErrorCode(err: unknown): string | null {
+    if (!err || typeof err !== 'object') return null;
+    const maybe = err as { code?: string };
+    return typeof maybe.code === 'string' ? maybe.code : null;
+  }
+
+  private _isRetryableFileReadCode(code: string): boolean {
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EINVAL') return false;
+    return code === 'EBUSY' || code === 'EMFILE' || code === 'EAGAIN' || code === 'ETIMEDOUT' || code === 'EACCES';
   }
 
   // ─── Private: Hashing ─────────────────────────────────────────────────────

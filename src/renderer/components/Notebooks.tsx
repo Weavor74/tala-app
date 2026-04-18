@@ -12,14 +12,13 @@
  * **Agent Interaction:**
  * - **Context Sync**: `UPDATE AGENT CONTEXT` sends selected sources to TALA's RAG system.
  * - **Synthesis**: "GENERATE SUMMARY" triggers a chain-of-thought analysis over the selected notebook data.
- * - **Ingest Selected** (placeholder): Future `ingestItems(itemKeys)` call to create source_documents
- *   and document_chunks from selected notebook_items. Ingestion is always an explicit step — never
- *   triggered automatically when items are saved.
+ * - **Ingest Selected** (placeholder): Future `ingestItems(itemKeys)` call to force refresh for selected
+ *   notebook items. Standard ingestion/chunking now happens asynchronously after save.
  * 
  * **Curated Research Architecture:**
  * - search results = candidate discovery items (found in Search & Add)
  * - notebook_items = curated saved references (the curation gate)
- * - ingestion = explicit later step (source_documents / document_chunks)
+ * - ingestion/chunking = background notebook upgrade path after save
  * 
  * Notebooks are persisted in PostgreSQL via the research:* IPC handlers.
  */
@@ -50,10 +49,46 @@ interface NotebookItem {
     summary?: string | null;
     contentText?: string | null;
     mimeType?: string | null;
-    retrievalStatus?: 'none' | 'saved_metadata_only' | 'content_fetched' | 'chunked';
+    retrievalStatus?:
+      | 'none'
+      | 'saved_metadata_only'
+      | 'queued'
+      | 'fetching'
+      | 'content_fetched'
+      | 'chunking'
+      | 'chunked'
+      | 'embedding'
+      | 'ready'
+      | 'failed';
+    retrievalError?: string | null;
+    sourceDocumentId?: string | null;
+    chunkCount?: number | null;
     openTarget?: string | null;
     openTargetType?: 'browser' | 'workspace_file' | 'generated' | 'none';
     added_at: string;
+}
+
+function getRetrievalBadge(status: NotebookItem['retrievalStatus']): { label: string; color: string } {
+    switch (status) {
+        case 'saved_metadata_only':
+            return { label: 'Metadata only', color: '#8a6d3b' };
+        case 'queued':
+            return { label: 'Queued', color: '#566573' };
+        case 'fetching':
+            return { label: 'Fetching', color: '#1f618d' };
+        case 'chunking':
+        case 'content_fetched':
+        case 'embedding':
+            return { label: 'Chunking', color: '#7d6608' };
+        case 'chunked':
+            return { label: 'Chunked', color: '#117a65' };
+        case 'ready':
+            return { label: 'Ready', color: '#1e8449' };
+        case 'failed':
+            return { label: 'Failed', color: '#922b21' };
+        default:
+            return { label: 'Metadata only', color: '#8a6d3b' };
+    }
 }
 
 export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void; onOpenBrowser?: (url: string) => void }> = ({ onOpenFile, onOpenBrowser }) => {
@@ -401,17 +436,40 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void; onOpenBr
                                                 alert("Select at least one item to summarize.");
                                                 return;
                                             }
+                                            const selectedKeys = Array.from(activeSources);
+                                            let keysForStrictSummary = selectedKeys;
+                                            if (api?.researchUpgradeNotebookItemsNow && selectedNotebookId) {
+                                                const strictRes = await api.researchUpgradeNotebookItemsNow(selectedNotebookId, selectedKeys);
+                                                if (!strictRes?.ok) {
+                                                    alert(`Notebook grounding upgrade failed: ${strictRes?.error ?? 'Unknown error'}`);
+                                                    return;
+                                                }
+                                                keysForStrictSummary = strictRes.result.groundedItemKeys;
+                                                if (keysForStrictSummary.length === 0) {
+                                                    const failures = strictRes.result.unavailable
+                                                        .map((item: { itemKey: string; reason: string | null }) => `${item.itemKey}: ${item.reason ?? 'unavailable'}`)
+                                                        .join('\n');
+                                                    alert(`No selected notebook sources could be grounded.\n\n${failures}`);
+                                                    return;
+                                                }
+                                                if (strictRes.result.unavailable.length > 0) {
+                                                    const failures = strictRes.result.unavailable
+                                                        .map((item: { itemKey: string; reason: string | null }) => `${item.itemKey}: ${item.reason ?? 'unavailable'}`)
+                                                        .join('\n');
+                                                    alert(`Some selected items could not be grounded and will be excluded:\n\n${failures}`);
+                                                }
+                                            }
                                             if (api?.setActiveNotebookContext && selectedNotebookId) {
                                                 const scope = dbAvailable && api.researchResolveNotebookScope
                                                     ? await api.researchResolveNotebookScope(selectedNotebookId)
                                                     : null;
                                                 const sourcePaths = scope?.ok
                                                     ? scope.scope.sourcePaths
-                                                    : notebookItems.filter(i => activeSources.has(i.item_key)).map(i => i.source_path).filter(Boolean);
+                                                    : notebookItems.filter(i => keysForStrictSummary.includes(i.item_key)).map(i => i.source_path).filter(Boolean);
                                                 api.setActiveNotebookContext(selectedNotebookId, sourcePaths);
                                             }
                                             const titles = notebookItems
-                                                .filter(i => activeSources.has(i.item_key))
+                                                .filter(i => keysForStrictSummary.includes(i.item_key))
                                                 .map(i => i.uri || i.source_path || i.title || i.item_key)
                                                 .join(', ');
                                             const query = `Please summarize ONLY the following notebook sources based strictly on their content: ${titles}. Do not add external information or infer facts not present in these sources. What are the key themes and insights found in the provided content?`;
@@ -477,6 +535,21 @@ export const Notebooks: React.FC<{ onOpenFile?: (path: string) => void; onOpenBr
                                                         {label}
                                                     </div>
                                                     <div style={{ fontSize: 9, opacity: 0.5, marginTop: 4 }}>{item.item_type}</div>
+                                                    <div
+                                                        style={{
+                                                            marginTop: 6,
+                                                            display: 'inline-block',
+                                                            padding: '2px 6px',
+                                                            borderRadius: 10,
+                                                            background: getRetrievalBadge(item.retrievalStatus).color,
+                                                            color: '#fff',
+                                                            fontSize: 9,
+                                                            fontWeight: 600,
+                                                        }}
+                                                        title={item.retrievalError ?? undefined}
+                                                    >
+                                                        {getRetrievalBadge(item.retrievalStatus).label}
+                                                    </div>
                                                     {item.snippet && (
                                                         <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                                                             {item.snippet}
