@@ -29,11 +29,19 @@
  *    after the loop completes.
  */
 
-import type { ExecutionPlan } from '../../../shared/planning/PlanningTypes';
+import type { ExecutionPlan, PlanExecutionResult } from '../../../shared/planning/PlanningTypes';
 import type { AgentTurnOutput } from '../../types/artifacts';
 import type { ILoopExecutor } from './PlanningLoopService';
 import { PlanningLoopError } from './PlanningLoopService';
 import { PlanningService } from './PlanningService';
+import {
+    PlanExecutionCoordinator,
+    type PlanAgentExecutionAuthority,
+    type PlanExecutionContext,
+    type PlanToolExecutionAuthority,
+    type PlanWorkflowExecutionAuthority,
+} from './PlanExecutionCoordinator';
+import type { TurnAuthorityEnvelope } from '../../../shared/turnArbitrationTypes';
 
 // ─── ChatExecuteCallback ──────────────────────────────────────────────────────
 
@@ -47,6 +55,13 @@ export type ChatExecuteCallback = (
     onEvent?: (type: string, data: unknown) => void,
     images?: string[],
 ) => Promise<AgentTurnOutput>;
+
+export interface ChatLoopExecutorOptions {
+    toolAuthority?: PlanToolExecutionAuthority;
+    workflowAuthority?: PlanWorkflowExecutionAuthority;
+    agentAuthority?: PlanAgentExecutionAuthority;
+    authorityEnvelope?: TurnAuthorityEnvelope;
+}
 
 // ─── ChatLoopExecutor ─────────────────────────────────────────────────────────
 
@@ -69,8 +84,15 @@ export class ChatLoopExecutor implements ILoopExecutor {
     private _images?: string[];
     /** Last execution result — set after each successful executePlan() call. */
     private _lastResult: AgentTurnOutput | null = null;
+    /** Last structured plan execution result. */
+    private _lastPlanExecutionResult: PlanExecutionResult | null = null;
     /** Last execution error — set when executePlan() throws. */
     private _lastError: Error | null = null;
+    private readonly _planExecution: PlanExecutionCoordinator;
+    private readonly _hasToolAuthority: boolean;
+    private readonly _hasWorkflowAuthority: boolean;
+    private readonly _hasAgentAuthority: boolean;
+    private _authorityEnvelope?: TurnAuthorityEnvelope;
 
     /**
      * @param executeChat - The chat execution callback (wraps AgentService.chat).
@@ -80,9 +102,19 @@ export class ChatLoopExecutor implements ILoopExecutor {
     constructor(
         executeChat: ChatExecuteCallback,
         planning?: PlanningService,
+        options?: ChatLoopExecutorOptions,
     ) {
         this._executeChat = executeChat;
         this._planning = planning ?? PlanningService.getInstance();
+        this._planExecution = new PlanExecutionCoordinator(
+            options?.toolAuthority,
+            options?.workflowAuthority,
+            options?.agentAuthority,
+        );
+        this._hasToolAuthority = Boolean(options?.toolAuthority);
+        this._hasWorkflowAuthority = Boolean(options?.workflowAuthority);
+        this._hasAgentAuthority = Boolean(options?.agentAuthority);
+        this._authorityEnvelope = options?.authorityEnvelope;
     }
 
     /**
@@ -95,11 +127,14 @@ export class ChatLoopExecutor implements ILoopExecutor {
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: unknown) => void,
         images?: string[],
+        authorityEnvelope?: TurnAuthorityEnvelope,
     ): void {
         this._onToken = onToken;
         this._onEvent = onEvent;
         this._images = images;
+        this._authorityEnvelope = authorityEnvelope ?? this._authorityEnvelope;
         this._lastResult = null;
+        this._lastPlanExecutionResult = null;
         this._lastError = null;
     }
 
@@ -113,6 +148,10 @@ export class ChatLoopExecutor implements ILoopExecutor {
      */
     getLastExecutionResult(): AgentTurnOutput | null {
         return this._lastResult;
+    }
+
+    getLastPlanExecutionResult(): PlanExecutionResult | null {
+        return this._lastPlanExecutionResult;
     }
 
     /**
@@ -134,7 +173,7 @@ export class ChatLoopExecutor implements ILoopExecutor {
      *
      * @throws PlanningLoopError if the goal cannot be found or if execution fails.
      */
-    async executePlan(plan: ExecutionPlan): Promise<AgentTurnOutput> {
+    async executePlan(plan: ExecutionPlan): Promise<unknown> {
         const goal = this._planning.getGoal(plan.goalId);
         if (!goal) {
             const err = new PlanningLoopError(
@@ -145,20 +184,30 @@ export class ChatLoopExecutor implements ILoopExecutor {
             throw err;
         }
 
-        // Use the goal title as the effective user message.
-        // The title is set to the original user message by AgentKernel when
-        // registering the goal for a chat turn.
-        const message = goal.title;
-
         try {
+            if (this._isPlanExecutable(plan)) {
+                const planResult = await this._planExecution.executePlan(plan, {
+                    executionId: plan.executionBoundaryId ?? plan.goalId,
+                    authorityEnvelope: this._authorityEnvelope,
+                    onEvent: this._onEvent,
+                } satisfies PlanExecutionContext);
+                this._lastPlanExecutionResult = planResult;
+                this._lastResult = this._toTurnOutput(planResult);
+                this._lastError = null;
+                return planResult;
+            }
+
+            // Fallback is allowed only when the plan is non-executable or rejected
+            // before execution.
             const result = await this._executeChat(
-                message,
+                goal.title,
                 this._onToken,
                 this._onEvent,
                 this._images,
             );
 
             this._lastResult = result;
+            this._lastPlanExecutionResult = null;
             this._lastError = null;
             return result;
         } catch (err) {
@@ -166,7 +215,35 @@ export class ChatLoopExecutor implements ILoopExecutor {
             // for correct failure telemetry and test assertions.
             this._lastError = err instanceof Error ? err : new Error(String(err));
             this._lastResult = null;
+            this._lastPlanExecutionResult = null;
             throw err;
         }
+    }
+
+    private _isPlanExecutable(plan: ExecutionPlan): boolean {
+        if (plan.status === 'blocked' || plan.handoff.type === 'none') return false;
+        if (!Array.isArray(plan.stages) || plan.stages.length === 0) return false;
+        const actionableHandoffs = plan.stages
+            .map((stage) => stage.handoff?.type)
+            .filter((type): type is 'tool' | 'workflow' | 'agent' =>
+                type === 'tool' || type === 'workflow' || type === 'agent');
+        if (actionableHandoffs.length === 0) return false;
+        return actionableHandoffs.every((type) => {
+            if (type === 'tool') return this._hasToolAuthority;
+            if (type === 'workflow') return this._hasWorkflowAuthority;
+            return this._hasAgentAuthority;
+        });
+    }
+
+    private _toTurnOutput(result: PlanExecutionResult): AgentTurnOutput {
+        const base = `Plan ${result.planId} execution ${result.status}. ` +
+            `completed=${result.completedStageCount}, failed=${result.failedStageCount}, degraded=${result.degradedStageCount}.`;
+        const reason = result.reasonCodes.length > 0
+            ? ` reasonCodes=${result.reasonCodes.slice(0, 4).join(',')}`
+            : '';
+        return {
+            message: `${base}${reason}`,
+            outputChannel: result.status === 'failed' ? 'fallback' : 'chat',
+        };
     }
 }

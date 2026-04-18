@@ -413,6 +413,38 @@ interface PlanningMemoryDiagnosticsSnapshot {
 }
 ```
 
+### `PlanStageExecutionDiagnosticsRecord`
+```typescript
+interface PlanStageExecutionDiagnosticsRecord {
+    stageId: string;
+    handoffType: 'tool' | 'workflow' | 'agent' | 'none';
+    status: 'completed' | 'failed' | 'degraded' | 'skipped' | 'blocked';
+    reasonCodes: string[];
+    attempts: number;
+    expectedOutputsSatisfied?: boolean;
+    failureReason?: string;
+    startedAt: string;
+    completedAt?: string;
+}
+```
+
+### `PlanExecutionDiagnosticsSnapshot`
+```typescript
+interface PlanExecutionDiagnosticsSnapshot {
+    planId?: string;
+    executionBoundaryId?: string;
+    status?: 'completed' | 'failed' | 'degraded' | 'partial' | 'running';
+    currentStageId?: string;
+    lastStageId?: string;
+    stageCounts: {
+        completed: number;
+        failed: number;
+        degraded: number;
+        skipped: number;
+        blocked: number;
+    }
+```
+
 ### `RecoveryDiagnosticsSnapshot`
 ```typescript
 interface RecoveryDiagnosticsSnapshot {

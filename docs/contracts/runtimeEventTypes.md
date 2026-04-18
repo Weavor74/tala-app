@@ -187,6 +187,12 @@ type RuntimeEventType =
     | 'planning.loop_completed'
     | 'planning.loop_aborted'
     | 'planning.loop_failed'
+    | 'planning.plan_execution_started'
+    | 'planning.plan_stage_started'
+    | 'planning.plan_stage_completed'
+    | 'planning.plan_stage_failed'
+    | 'planning.plan_execution_completed'
+    | 'planning.plan_execution_failed'
     /** Authority routing: non-trivial work was routed through PlanningLoopService. */
     | 'planning.loop_routing_selected'
     /** Authority routing: non-trivial work bypassed the loop (loop not initialised). */

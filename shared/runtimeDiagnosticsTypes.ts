@@ -620,6 +620,37 @@ export interface PlanningMemoryDiagnosticsSnapshot {
     lastUpdated: string;
 }
 
+export interface PlanStageExecutionDiagnosticsRecord {
+    stageId: string;
+    handoffType: 'tool' | 'workflow' | 'agent' | 'none';
+    status: 'completed' | 'failed' | 'degraded' | 'skipped' | 'blocked';
+    reasonCodes: string[];
+    attempts: number;
+    expectedOutputsSatisfied?: boolean;
+    failureReason?: string;
+    startedAt: string;
+    completedAt?: string;
+}
+
+export interface PlanExecutionDiagnosticsSnapshot {
+    planId?: string;
+    executionBoundaryId?: string;
+    status?: 'completed' | 'failed' | 'degraded' | 'partial' | 'running';
+    currentStageId?: string;
+    lastStageId?: string;
+    stageCounts: {
+        completed: number;
+        failed: number;
+        degraded: number;
+        skipped: number;
+        blocked: number;
+    };
+    lastFailureReason?: string;
+    expectedOutputsSatisfied: boolean;
+    recentStages: PlanStageExecutionDiagnosticsRecord[];
+    lastUpdated: string;
+}
+
 export interface RuntimeMemoryAuthorityDiagnosticsView extends MemoryAuthorityDiagnosticsView {
     lastDecision?: MemoryAuthorityDecision;
     lastDeniedCategory?: MemoryWriteCategory;
@@ -797,6 +828,10 @@ export interface RuntimeDiagnosticsSnapshot {
      * Absent until at least one workflow or agent handoff has been dispatched.
      */
     handoffDiagnostics?: HandoffDiagnosticsSnapshot;
+    /**
+     * Plan execution diagnostics emitted by PlanExecutionCoordinator.
+     */
+    planExecution?: PlanExecutionDiagnosticsSnapshot;
     /**
      * Planning-memory strategy diagnostics.
      * Populated after planning.memory_context_built/strategy_selected events.

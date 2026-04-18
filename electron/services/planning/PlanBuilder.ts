@@ -36,6 +36,7 @@ import type {
     PlannedToolInvocation,
     PlannedWorkflowInvocation,
     PlannedAgentInvocation,
+    PlanStageHandoff,
     PlanApprovalState,
     ExecutionPlanStatus,
     GoalExecutionStyle,
@@ -58,6 +59,7 @@ function makeStage(
     requiredCapabilities: string[] = [],
     outputs: Record<string, string> = {},
 ): PlanStage {
+    const expectedOutputs = Object.keys(outputs);
     return {
         id: uuidv4(),
         title,
@@ -68,7 +70,66 @@ function makeStage(
         failurePolicy,
         requiredCapabilities,
         outputs,
+        expectedOutputs,
+        completionPolicy: expectedOutputs.length > 0 ? 'strict' : 'best_effort',
     };
+}
+
+function attachStageHandoffs(stages: PlanStage[], handoff: ExecutionHandoff): PlanStage[] {
+    const withNone = stages.map((stage) => ({
+        ...stage,
+        handoff: ({ type: 'none' } as PlanStageHandoff),
+    }));
+
+    if (handoff.type === 'tool') {
+        const idx = withNone.findIndex((stage) => stage.type === 'tool');
+        const target = idx >= 0 ? idx : 0;
+        withNone[target] = {
+            ...withNone[target],
+            handoff: {
+                type: 'tool',
+                steps: handoff.steps,
+                sharedInputs: handoff.sharedInputs,
+            },
+        };
+        return withNone;
+    }
+
+    if (handoff.type === 'workflow') {
+        const inv = handoff.invocations[0];
+        if (!inv) return withNone;
+        const idx = withNone.findIndex((stage) => stage.type === 'workflow');
+        const target = idx >= 0 ? idx : 0;
+        withNone[target] = {
+            ...withNone[target],
+            handoff: {
+                type: 'workflow',
+                workflowId: inv.workflowId,
+                input: { ...handoff.sharedInputs, ...inv.input },
+                failurePolicy: inv.failurePolicy,
+            },
+            expectedOutputs: inv.expectedOutputs ?? withNone[target].expectedOutputs,
+        };
+        return withNone;
+    }
+
+    if (handoff.type === 'agent') {
+        const idx = withNone.findIndex((stage) => stage.type === 'llm' || stage.type === 'analyze');
+        const target = idx >= 0 ? idx : 0;
+        withNone[target] = {
+            ...withNone[target],
+            handoff: {
+                type: 'agent',
+                agentId: handoff.invocation.agentId,
+                input: { ...handoff.sharedInputs, ...handoff.invocation.input },
+                failurePolicy: handoff.invocation.failurePolicy,
+            },
+            expectedOutputs: handoff.invocation.expectedOutputs ?? withNone[target].expectedOutputs,
+        };
+        return withNone;
+    }
+
+    return withNone;
 }
 
 // ---------------------------------------------------------------------------
@@ -569,13 +630,13 @@ export class PlanBuilder {
 
         const isBlocked = analysis.blockingIssues.length > 0;
 
-        const stages: PlanStage[] = isBlocked
+        const baseStages: PlanStage[] = isBlocked
             ? buildBlockedStages(analysis.blockingIssues)
             : PlanBuilder._buildStages(goal, analysis, strategySelection);
 
-        const dependencies = PlanBuilder._buildDependencies(stages);
-
         const handoff = buildHandoff(analysis, strategySelection);
+        const stages = attachStageHandoffs(baseStages, handoff);
+        const dependencies = PlanBuilder._buildDependencies(stages);
 
         const approvalState: PlanApprovalState = isBlocked
             ? 'not_required'
@@ -624,6 +685,8 @@ export class PlanBuilder {
             approvalState,
             status,
             handoff,
+            expectedOutcome: summary,
+            failurePolicy: strategySelection?.fallbackPosture === 'degrade' ? 'degrade' : 'stop',
             ...(analysis.approvalContext && { approvalContext: analysis.approvalContext }),
             reasonCodes,
             strategySelection,

@@ -7,6 +7,8 @@ import type {
     AuthorityLaneDiagnosticsSnapshot,
     HandoffExecutionRecord,
     HandoffDiagnosticsSnapshot,
+    PlanExecutionDiagnosticsSnapshot,
+    PlanStageExecutionDiagnosticsRecord,
     PlanningMemoryDiagnosticsSnapshot,
     RuntimeMemoryAuthorityDiagnosticsView,
     RecoveryDiagnosticsSnapshot,
@@ -65,6 +67,18 @@ export class RuntimeDiagnosticsAggregator {
     private _workflowFailureCount = 0;
     private _agentFailureCount = 0;
     private _handoffLastUpdated?: string;
+    private _planExecutionDiagnostics: PlanExecutionDiagnosticsSnapshot = {
+        stageCounts: {
+            completed: 0,
+            failed: 0,
+            degraded: 0,
+            skipped: 0,
+            blocked: 0,
+        },
+        expectedOutputsSatisfied: true,
+        recentStages: [],
+        lastUpdated: new Date(0).toISOString(),
+    };
     private readonly _unsubscribeHandoff: (() => void);
     private _planningMemorySnapshot?: PlanningMemoryDiagnosticsSnapshot;
     private _kernelTurnSnapshot?: KernelTurnDiagnosticsView;
@@ -129,6 +143,7 @@ export class RuntimeDiagnosticsAggregator {
         });
         this._unsubscribeHandoff = TelemetryBus.getInstance().subscribe((evt) => {
             this._handleHandoffEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
+            this._handlePlanExecutionEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handlePlanningMemoryEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleKernelTurnEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleMemoryAuthorityEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
@@ -197,6 +212,7 @@ export class RuntimeDiagnosticsAggregator {
             cognitive: this._buildCognitiveDiagnostics(now),
             executionAuthority: this._buildAuthorityLaneDiagnostics(now),
             handoffDiagnostics: this._buildHandoffDiagnostics(now),
+            planExecution: this._buildPlanExecutionDiagnostics(now),
             planningMemory: this._buildPlanningMemoryDiagnostics(now),
             kernelTurn: this._buildKernelTurnDiagnostics(now),
             memoryAuthority: this._buildMemoryAuthorityDiagnostics(now),
@@ -404,6 +420,29 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildPlanExecutionDiagnostics(now: string): PlanExecutionDiagnosticsSnapshot | undefined {
+        const snapshot = this._planExecutionDiagnostics;
+        const hasSignal = Boolean(
+            snapshot.planId ||
+            snapshot.executionBoundaryId ||
+            snapshot.status ||
+            snapshot.currentStageId ||
+            snapshot.lastStageId ||
+            snapshot.recentStages.length > 0 ||
+            snapshot.stageCounts.completed > 0 ||
+            snapshot.stageCounts.failed > 0 ||
+            snapshot.stageCounts.degraded > 0 ||
+            snapshot.stageCounts.skipped > 0 ||
+            snapshot.stageCounts.blocked > 0,
+        );
+        if (!hasSignal) return undefined;
+        return {
+            ...snapshot,
+            recentStages: [...snapshot.recentStages],
+            lastUpdated: snapshot.lastUpdated || now,
+        };
+    }
+
     private _buildRecoveryDiagnostics(now: string): RecoveryDiagnosticsSnapshot | undefined {
         this._recoveryDiagnostics.recentHistory = this._recoveryHistoryRepository.listRecentSync(30).map((entry) => ({
             historyId: entry.historyId,
@@ -450,6 +489,92 @@ export class RuntimeDiagnosticsAggregator {
             ...this._recoveryDiagnostics,
             lastUpdated: this._recoveryDiagnostics.lastUpdated || now,
         };
+    }
+
+    private _handlePlanExecutionEvent(event: string, payload?: Record<string, unknown>): void {
+        if (!payload) return;
+        const now = new Date().toISOString();
+
+        if (event === 'planning.plan_execution_started') {
+            this._planExecutionDiagnostics = {
+                ...this._planExecutionDiagnostics,
+                planId: payload.planId as string | undefined,
+                executionBoundaryId: payload.executionBoundaryId as string | undefined,
+                status: 'running',
+                currentStageId: undefined,
+                lastStageId: undefined,
+                stageCounts: {
+                    completed: 0,
+                    failed: 0,
+                    degraded: 0,
+                    skipped: 0,
+                    blocked: 0,
+                },
+                lastFailureReason: undefined,
+                expectedOutputsSatisfied: true,
+                recentStages: [],
+                lastUpdated: now,
+            };
+            return;
+        }
+
+        if (event === 'planning.plan_stage_started') {
+            this._planExecutionDiagnostics.currentStageId = payload.stageId as string | undefined;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.plan_stage_completed' || event === 'planning.plan_stage_failed') {
+            const status = String(payload.status ?? 'failed') as PlanStageExecutionDiagnosticsRecord['status'];
+            const stageRecord: PlanStageExecutionDiagnosticsRecord = {
+                stageId: String(payload.stageId ?? ''),
+                handoffType: (payload.handoffType as PlanStageExecutionDiagnosticsRecord['handoffType']) ?? 'none',
+                status,
+                reasonCodes: Array.isArray(payload.reasonCodes) ? payload.reasonCodes.map(String) : [],
+                attempts: Number(payload.attempts ?? 0),
+                expectedOutputsSatisfied: payload.expectedOutputsSatisfied as boolean | undefined,
+                failureReason: payload.failureReason as string | undefined,
+                startedAt: now,
+                completedAt: now,
+            };
+
+            this._planExecutionDiagnostics.currentStageId = undefined;
+            this._planExecutionDiagnostics.lastStageId = stageRecord.stageId;
+            this._planExecutionDiagnostics.recentStages = [
+                stageRecord,
+                ...this._planExecutionDiagnostics.recentStages,
+            ].slice(0, 20);
+
+            this._planExecutionDiagnostics.stageCounts[status] =
+                (this._planExecutionDiagnostics.stageCounts[status] ?? 0) + 1;
+
+            if (stageRecord.expectedOutputsSatisfied === false) {
+                this._planExecutionDiagnostics.expectedOutputsSatisfied = false;
+            }
+            if (status === 'failed' || status === 'blocked') {
+                this._planExecutionDiagnostics.lastFailureReason =
+                    stageRecord.failureReason ?? stageRecord.reasonCodes[0];
+            }
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.plan_execution_completed' || event === 'planning.plan_execution_failed') {
+            this._planExecutionDiagnostics.status = payload.status as PlanExecutionDiagnosticsSnapshot['status'] ?? (
+                event === 'planning.plan_execution_failed' ? 'failed' : 'completed'
+            );
+            this._planExecutionDiagnostics.planId = payload.planId as string | undefined;
+            this._planExecutionDiagnostics.executionBoundaryId =
+                payload.executionBoundaryId as string | undefined;
+            if (Array.isArray(payload.reasonCodes) && payload.reasonCodes.length > 0) {
+                const reasonCodes = payload.reasonCodes.map(String);
+                const firstFailure = reasonCodes.find((code) => code.startsWith('failure') || code.includes('failed'));
+                if (firstFailure) {
+                    this._planExecutionDiagnostics.lastFailureReason = firstFailure;
+                }
+            }
+            this._planExecutionDiagnostics.lastUpdated = now;
+        }
     }
 
     private _handlePlanningMemoryEvent(event: string, payload?: Record<string, unknown>): void {

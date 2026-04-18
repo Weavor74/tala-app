@@ -276,6 +276,16 @@ export type StageExecutionMode = 'deterministic' | 'assisted' | 'manual';
 export type StageFailurePolicy = 'stop' | 'retry' | 'skip' | 'escalate';
 
 /**
+ * Plan-level failure policy.
+ */
+export type PlanFailurePolicy = 'stop' | 'retry' | 'degrade' | 'escalate';
+
+/**
+ * Completion strictness for a stage.
+ */
+export type StageCompletionPolicy = 'strict' | 'best_effort';
+
+/**
  * Optional retry configuration for a stage.
  */
 export interface StageRetryPolicy {
@@ -284,6 +294,31 @@ export interface StageRetryPolicy {
     /** Base delay in milliseconds between attempts. */
     delayMs: number;
 }
+
+/**
+ * Typed execution handoff contract for an individual stage.
+ */
+export type PlanStageHandoff =
+    | {
+          type: 'tool';
+          steps: PlannedToolInvocation[];
+          sharedInputs?: Record<string, unknown>;
+      }
+    | {
+          type: 'workflow';
+          workflowId: string;
+          input: Record<string, unknown>;
+          failurePolicy: StageFailurePolicy;
+      }
+    | {
+          type: 'agent';
+          agentId?: string;
+          input: Record<string, unknown>;
+          failurePolicy: StageFailurePolicy;
+      }
+    | {
+          type: 'none';
+      };
 
 /**
  * A single structured stage within an execution plan.
@@ -312,6 +347,24 @@ export interface PlanStage {
      * Keys are output identifiers; values describe the expected artifact type.
      */
     outputs: Record<string, string>;
+    /**
+     * Explicit expected output keys for deterministic output validation.
+     */
+    expectedOutputs?: string[];
+    /**
+     * Completion strictness for this stage.
+     */
+    completionPolicy?: StageCompletionPolicy;
+    /**
+     * Explicit stage dependencies. Optional; plan.dependencies remains
+     * authoritative when present.
+     */
+    dependsOn?: string[];
+    /**
+     * Stage-scoped handoff contract for deterministic execution.
+     * Legacy plans may omit this field.
+     */
+    handoff?: PlanStageHandoff;
 }
 
 // ─── Approval Context ─────────────────────────────────────────────────────────
@@ -692,6 +745,14 @@ export interface ExecutionPlan {
      */
     handoff: ExecutionHandoff;
     /**
+     * Plan-level expected outcome summary used by execution diagnostics.
+     */
+    expectedOutcome?: string;
+    /**
+     * Plan-level failure policy for stage-runner behavior.
+     */
+    failurePolicy?: PlanFailurePolicy;
+    /**
      * Unique identifier for the current execution boundary.
      * Generated when markExecutionStarted() is called; absent before execution.
      * Distinct from the goal correlationId (which spans the full lifecycle) and
@@ -741,6 +802,47 @@ export interface ExecutionPlan {
      * Absent until superseded.
      */
     supersededByPlanId?: string;
+}
+
+/**
+ * Stage-level terminal status emitted by plan execution.
+ */
+export type PlanStageExecutionStatus =
+    | 'completed'
+    | 'failed'
+    | 'degraded'
+    | 'skipped'
+    | 'blocked';
+
+/**
+ * Structured execution result for one stage.
+ */
+export interface PlanStageExecutionResult {
+    stageId: string;
+    handoffType: 'tool' | 'workflow' | 'agent' | 'none';
+    status: PlanStageExecutionStatus;
+    startedAt: string;
+    completedAt: string;
+    outputs?: Record<string, unknown>;
+    expectedOutputsSatisfied?: boolean;
+    failureReason?: string;
+    reasonCodes: string[];
+    attempts: number;
+}
+
+/**
+ * Structured terminal result for an execution-plan run.
+ */
+export interface PlanExecutionResult {
+    planId: string;
+    executionBoundaryId?: string;
+    status: 'completed' | 'failed' | 'degraded' | 'partial';
+    stageResults: PlanStageExecutionResult[];
+    completedStageCount: number;
+    failedStageCount: number;
+    degradedStageCount: number;
+    finalOutputs?: Record<string, unknown>;
+    reasonCodes: string[];
 }
 
 // ─── Replan Request ───────────────────────────────────────────────────────────

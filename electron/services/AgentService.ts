@@ -3142,6 +3142,30 @@ Exported standalone package from Tala.
         return invResult.data;
     }
 
+    /**
+     * Executes a registered workflow by id through the workflow authority.
+     */
+    public async executeWorkflow(
+        workflowId: string,
+        input: Record<string, unknown> = {},
+    ): Promise<{ success: boolean; data?: unknown; error?: string; durationMs?: number }> {
+        const startedAt = Date.now();
+        try {
+            const data = await this.workflows.executeWorkflow(workflowId, input);
+            return {
+                success: true,
+                data,
+                durationMs: Date.now() - startedAt,
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+                durationMs: Date.now() - startedAt,
+            };
+        }
+    }
+
     public async performSearch(query: string): Promise<any[]> {
         const searchProvider = async (url: string) => {
             return new Promise<any[]>((resolve) => {

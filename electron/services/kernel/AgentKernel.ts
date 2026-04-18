@@ -302,6 +302,57 @@ export class AgentKernel {
             (message, onToken, onEvent, images) =>
                 this.agent.chat(message, onToken, onEvent, images),
             planning,
+            {
+                toolAuthority: {
+                    executeTool: async (name, args, _allowedNames, _ctx) => {
+                        const startedAt = Date.now();
+                        try {
+                            const data = await this.agent.executeTool(name, args);
+                            return {
+                                success: true,
+                                toolName: name,
+                                data,
+                                durationMs: Date.now() - startedAt,
+                            };
+                        } catch (error) {
+                            return {
+                                success: false,
+                                toolName: name,
+                                error: error instanceof Error ? error.message : String(error),
+                                durationMs: Date.now() - startedAt,
+                            };
+                        }
+                    },
+                },
+                workflowAuthority: {
+                    executeWorkflow: async (workflowId, input) =>
+                        this.agent.executeWorkflow(workflowId, input),
+                },
+                agentAuthority: {
+                    executeAgent: async (_agentId, input) => {
+                        const startedAt = Date.now();
+                        try {
+                            const message = typeof input.message === 'string'
+                                ? input.message
+                                : typeof input.prompt === 'string'
+                                    ? input.prompt
+                                    : 'Execute planned agent stage';
+                            const data = await this.agent.chat(message);
+                            return {
+                                success: true,
+                                data,
+                                durationMs: Date.now() - startedAt,
+                            };
+                        } catch (error) {
+                            return {
+                                success: false,
+                                error: error instanceof Error ? error.message : String(error),
+                                durationMs: Date.now() - startedAt,
+                            };
+                        }
+                    },
+                },
+            },
         );
         const observer = new ChatLoopObserver();
         // Initialize PlanningLoopService with the chat-based executor and observer.
@@ -657,7 +708,7 @@ export class AgentKernel {
             }
 
             this._stateStore.advancePhase(meta.executionId, 'executing', 'goal_execution_loop');
-            this._chatLoopExecutor.setStreamCallbacks(onToken, onEvent, request.images);
+            this._chatLoopExecutor.setStreamCallbacks(onToken, onEvent, request.images, envelope);
             const loop = PlanningLoopService.getInstance();
             const loopRun = await loop.startLoop({
                 goal: request.userMessage,
