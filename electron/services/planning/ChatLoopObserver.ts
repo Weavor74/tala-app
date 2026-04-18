@@ -61,7 +61,7 @@ export class ChatLoopObserver implements ILoopObserver {
                     outcome: 'failed',
                     goalSatisfied: false,
                     reasonCodes: turnCompletionAssessment.reasonCodes,
-                    artifacts: { turnCompletionAssessment },
+                    artifacts: { turnCompletionAssessment, outcomeEvaluation },
                 };
             }
             if (
@@ -72,14 +72,14 @@ export class ChatLoopObserver implements ILoopObserver {
                     outcome: turnCompletionAssessment.executionQuality === 'blocked' ? 'blocked' : 'partial',
                     goalSatisfied: false,
                     reasonCodes: turnCompletionAssessment.reasonCodes,
-                    artifacts: { turnCompletionAssessment },
+                    artifacts: { turnCompletionAssessment, outcomeEvaluation },
                 };
             }
             return {
                 outcome: 'succeeded',
                 goalSatisfied: true,
                 reasonCodes: turnCompletionAssessment.reasonCodes,
-                artifacts: { turnCompletionAssessment },
+                artifacts: { turnCompletionAssessment, outcomeEvaluation },
             };
         }
 

@@ -433,7 +433,9 @@ export class RuntimeDiagnosticsAggregator {
             snapshot.stageCounts.failed > 0 ||
             snapshot.stageCounts.degraded > 0 ||
             snapshot.stageCounts.skipped > 0 ||
-            snapshot.stageCounts.blocked > 0,
+            snapshot.stageCounts.blocked > 0 ||
+            typeof snapshot.configuredMaxIterations === 'number' ||
+            typeof snapshot.iterationsUsed === 'number',
         );
         if (!hasSignal) return undefined;
         return {
@@ -495,6 +497,71 @@ export class RuntimeDiagnosticsAggregator {
         if (!payload) return;
         const now = new Date().toISOString();
 
+        if (event === 'planning.loop_iteration_budget_resolved') {
+            this._planExecutionDiagnostics.configuredMaxIterations =
+                typeof payload.maxIterations === 'number'
+                    ? payload.maxIterations
+                    : this._planExecutionDiagnostics.configuredMaxIterations;
+            this._planExecutionDiagnostics.policyReasonCodes = Array.isArray(payload.reasonCodes)
+                ? payload.reasonCodes.map(String)
+                : this._planExecutionDiagnostics.policyReasonCodes;
+            this._planExecutionDiagnostics.taskLoopDoctrineClass =
+                payload.taskLoopDoctrineClass as string | undefined;
+            this._planExecutionDiagnostics.iterationsUsed = 0;
+            this._planExecutionDiagnostics.wastedIterationCount = 0;
+            this._planExecutionDiagnostics.replanCount = 0;
+            this._planExecutionDiagnostics.budgetExhaustionCount = 0;
+            this._planExecutionDiagnostics.approvalBlockedCount = 0;
+            this._planExecutionDiagnostics.improvementObserved = false;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_started') {
+            const iteration = typeof payload.iteration === 'number' ? payload.iteration : undefined;
+            if (iteration !== undefined) {
+                this._planExecutionDiagnostics.iterationsUsed = iteration;
+            }
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_replan_requested') {
+            this._planExecutionDiagnostics.replanCount = (this._planExecutionDiagnostics.replanCount ?? 0) + 1;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_budget_exhausted') {
+            this._planExecutionDiagnostics.budgetExhaustionCount =
+                (this._planExecutionDiagnostics.budgetExhaustionCount ?? 0) + 1;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_blocked_by_policy') {
+            const blockedByApproval = payload.blockedByApproval === true;
+            if (blockedByApproval) {
+                this._planExecutionDiagnostics.approvalBlockedCount =
+                    (this._planExecutionDiagnostics.approvalBlockedCount ?? 0) + 1;
+            }
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_improved_outcome') {
+            this._planExecutionDiagnostics.improvementObserved = true;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
+        if (event === 'planning.loop_iteration_no_material_improvement') {
+            this._planExecutionDiagnostics.wastedIterationCount =
+                (this._planExecutionDiagnostics.wastedIterationCount ?? 0) + 1;
+            this._planExecutionDiagnostics.lastUpdated = now;
+            return;
+        }
+
         if (event === 'planning.plan_execution_started') {
             this._planExecutionDiagnostics = {
                 ...this._planExecutionDiagnostics,
@@ -523,6 +590,15 @@ export class RuntimeDiagnosticsAggregator {
                 taskAttempted: true,
                 userVisibleCompletion: false,
                 outcomeVerified: false,
+                configuredMaxIterations: this._planExecutionDiagnostics.configuredMaxIterations,
+                iterationsUsed: this._planExecutionDiagnostics.iterationsUsed,
+                improvementObserved: this._planExecutionDiagnostics.improvementObserved,
+                wastedIterationCount: this._planExecutionDiagnostics.wastedIterationCount,
+                replanCount: this._planExecutionDiagnostics.replanCount,
+                budgetExhaustionCount: this._planExecutionDiagnostics.budgetExhaustionCount,
+                approvalBlockedCount: this._planExecutionDiagnostics.approvalBlockedCount,
+                policyReasonCodes: this._planExecutionDiagnostics.policyReasonCodes,
+                taskLoopDoctrineClass: this._planExecutionDiagnostics.taskLoopDoctrineClass,
                 recentStages: [],
                 lastUpdated: now,
             };

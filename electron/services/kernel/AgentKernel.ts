@@ -84,6 +84,11 @@ function classifyPlanBlockedTaskClass(userMessage: string): PlanBlockedTaskClass
     return 'authority_required';
 }
 
+function isOperatorSensitiveExecution(userMessage: string): boolean {
+    const text = userMessage.toLowerCase();
+    return /(delete|drop|remove|terminate|restart|shutdown|kill|purge|publish|deploy|write|persist|store|commit|push|approve|authorize|elevate|production|canonical|memory update)/.test(text);
+}
+
 function resolvePlanBlockedRecovery(args: {
     blockedReason: string;
     activeMode: string;
@@ -712,12 +717,20 @@ export class AgentKernel {
             const loop = PlanningLoopService.getInstance();
             const loopRun = await loop.startLoop({
                 goal: request.userMessage,
-                maxIterations: 1,
                 contextSummary: {
                     executionId: meta.executionId,
                     origin: meta.origin,
                     mode: meta.mode,
                     turnMode: turnDecision.mode,
+                },
+                iterationPolicyInput: {
+                    turnMode: turnDecision.mode,
+                    operatorMode: request.operatorMode ?? 'auto',
+                    authorityLevel: turnDecision.authorityLevel,
+                    recoveryMode: false,
+                    autonomousMode: meta.origin === 'autonomy',
+                    sideEffectSensitive: isOperatorSensitiveExecution(request.userMessage),
+                    approvalGranted: false,
                 },
                 planningInvocation: {
                     invokedBy: 'agent_kernel',

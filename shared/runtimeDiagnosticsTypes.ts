@@ -659,6 +659,15 @@ export interface PlanExecutionDiagnosticsSnapshot {
     taskAttempted?: boolean;
     userVisibleCompletion?: boolean;
     outcomeVerified?: boolean;
+    configuredMaxIterations?: number;
+    iterationsUsed?: number;
+    improvementObserved?: boolean;
+    wastedIterationCount?: number;
+    replanCount?: number;
+    budgetExhaustionCount?: number;
+    approvalBlockedCount?: number;
+    policyReasonCodes?: string[];
+    taskLoopDoctrineClass?: string;
     recentStages: PlanStageExecutionDiagnosticsRecord[];
     lastUpdated: string;
 }

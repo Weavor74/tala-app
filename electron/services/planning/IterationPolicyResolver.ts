@@ -1,0 +1,219 @@
+import type { ExecutionPlan } from '../../../shared/planning/PlanningTypes';
+import type { TurnMode } from '../../../shared/turnArbitrationTypes';
+import type {
+    IterationContinuationRule,
+    IterationDecisionReasonCode,
+    IterationPolicyResolution,
+    IterationWorthinessClass,
+    LoopPermission,
+    ReplanAllowance,
+} from '../../../shared/planning/IterationPolicyTypes';
+
+export interface IterationPolicyResolverInput {
+    goal: string;
+    turnMode?: TurnMode;
+    operatorMode?: 'chat' | 'goal' | 'auto';
+    authorityLevel?: 'none' | 'lightweight' | 'full_authority';
+    recoveryMode?: boolean;
+    autonomousMode?: boolean;
+    sideEffectSensitive?: boolean;
+    approvalGranted?: boolean;
+    callerMaxIterations?: number;
+    plan: ExecutionPlan;
+}
+
+function classifyTaskClass(input: IterationPolicyResolverInput): IterationWorthinessClass {
+    const text = input.goal.toLowerCase();
+    const stages = Array.isArray(input.plan.stages) ? input.plan.stages : [];
+    const stageTypes = new Set(stages.map((stage) => stage.type));
+    const handoffType = (input.plan as { handoff?: { type?: string } }).handoff?.type;
+
+    if (input.turnMode === 'conversational' || input.operatorMode === 'chat') {
+        return 'conversational_explanation';
+    }
+    if (input.recoveryMode) return 'recovery_repair';
+    if (input.autonomousMode) return 'autonomous_maintenance';
+    if (
+        input.sideEffectSensitive ||
+        input.plan.estimatedRisk === 'high' ||
+        input.plan.estimatedRisk === 'critical' ||
+        input.plan.requiresApproval
+    ) {
+        return 'operator_sensitive';
+    }
+    if (stageTypes.has('verify') && /(verify|validated?|assert|check)/.test(text)) {
+        return 'retrieval_summarize_verify';
+    }
+    if (/(retrieve|search|find|lookup|query|summari[sz]e)/.test(text)) {
+        return 'retrieval_summarize';
+    }
+    if (/(notebook|notes)/.test(text) || stageTypes.has('write')) {
+        return 'notebook_synthesis';
+    }
+    if (/(artifact|report|document|draft|assemble|synthesis)/.test(text) || stageTypes.has('finalize')) {
+        return 'artifact_assembly';
+    }
+    if (handoffType === 'tool' || stageTypes.has('tool')) {
+        return 'tool_multistep';
+    }
+    if (handoffType === 'workflow' || stageTypes.has('workflow')) {
+        return 'workflow_execution';
+    }
+    return 'general_goal_execution';
+}
+
+function resolveDefaults(taskClass: IterationWorthinessClass): {
+    maxIterations: number;
+    replanAllowance: ReplanAllowance;
+    continuationRule: IterationContinuationRule;
+    reason: IterationDecisionReasonCode;
+} {
+    switch (taskClass) {
+        case 'conversational_explanation':
+            return {
+                maxIterations: 1,
+                replanAllowance: 'none',
+                continuationRule: 'never',
+                reason: 'iteration_policy.conversational_non_looping',
+            };
+        case 'retrieval_summarize':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_incomplete',
+                reason: 'iteration_policy.retrieval_summary',
+            };
+        case 'retrieval_summarize_verify':
+            return {
+                maxIterations: 3,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_verification_gap',
+                reason: 'iteration_policy.retrieval_summary_verify',
+            };
+        case 'notebook_synthesis':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_incomplete',
+                reason: 'iteration_policy.notebook_synthesis',
+            };
+        case 'artifact_assembly':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_incomplete',
+                reason: 'iteration_policy.artifact_assembly',
+            };
+        case 'tool_multistep':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_recoverable',
+                reason: 'iteration_policy.tool_multistep',
+            };
+        case 'workflow_execution':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_recoverable',
+                reason: 'iteration_policy.workflow_execution',
+            };
+        case 'recovery_repair':
+            return {
+                maxIterations: 3,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_recoverable',
+                reason: 'iteration_policy.recovery_budget_applied',
+            };
+        case 'autonomous_maintenance':
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_recoverable',
+                reason: 'iteration_policy.autonomous_maintenance_bounded',
+            };
+        case 'operator_sensitive':
+            return {
+                maxIterations: 1,
+                replanAllowance: 'none',
+                continuationRule: 'never',
+                reason: 'iteration_policy.operator_sensitive_capped',
+            };
+        case 'general_goal_execution':
+        default:
+            return {
+                maxIterations: 2,
+                replanAllowance: 'bounded',
+                continuationRule: 'if_recoverable',
+                reason: 'iteration_policy.default_single_pass',
+            };
+    }
+}
+
+export class IterationPolicyResolver {
+    resolve(input: IterationPolicyResolverInput): IterationPolicyResolution {
+        const taskClass = classifyTaskClass(input);
+        const defaults = resolveDefaults(taskClass);
+        const reasonCodes: IterationDecisionReasonCode[] = [defaults.reason];
+
+        let maxIterations = defaults.maxIterations;
+        let replanAllowance = defaults.replanAllowance;
+        let continuationRule = defaults.continuationRule;
+        let loopPermission: LoopPermission = 'allowed';
+        let approvalRequirement: 'not_required' | 'required_above_iteration_threshold' | 'required_for_all_additional_iterations' = 'not_required';
+        let approvalRequiredAboveIteration: number | undefined;
+
+        if (input.plan.estimatedRisk === 'high' || input.plan.estimatedRisk === 'critical') {
+            maxIterations = 1;
+            replanAllowance = 'none';
+            continuationRule = 'never';
+            reasonCodes.push('iteration_policy.high_risk_capped');
+        }
+
+        if (taskClass === 'operator_sensitive') {
+            approvalRequirement = 'required_above_iteration_threshold';
+            approvalRequiredAboveIteration = 1;
+            reasonCodes.push('iteration_policy.approval_required_for_additional_iterations');
+            if (input.approvalGranted !== true) {
+                loopPermission = 'blocked_by_approval';
+            }
+        }
+
+        if (input.callerMaxIterations && input.callerMaxIterations > 0) {
+            maxIterations = input.callerMaxIterations;
+            reasonCodes.push('iteration_policy.caller_cap_applied');
+        }
+
+        if (replanAllowance === 'bounded') {
+            reasonCodes.push('iteration_policy.replan_allowed');
+        } else {
+            reasonCodes.push('iteration_policy.replan_not_allowed');
+        }
+
+        return {
+            profile: {
+                taskClass,
+                maxIterations,
+                replanAllowance,
+                continuationRule,
+                loopPermission,
+                approvalRequirement,
+                approvalRequiredAboveIteration,
+                verificationDepth: input.plan.verificationDepth,
+                recoveryBudgetApplied: taskClass === 'recovery_repair' ? maxIterations : undefined,
+                reasonCodes,
+            },
+            budget: {
+                maxIterations,
+                iterationsUsed: 0,
+                remainingIterations: maxIterations,
+                replansUsed: 0,
+                replanAllowance,
+                approvalRequirement,
+                approvalRequiredAboveIteration,
+                approvalGranted: input.approvalGranted,
+                reasonCodes,
+            },
+        };
+    }
+}

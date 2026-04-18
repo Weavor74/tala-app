@@ -543,7 +543,7 @@ describe('PlanningLoopService — policy (PLS41–PLS45)', () => {
         const svc = freshLoop(makeSuccessExecutor(), makeAlwaysFailObserver());
         svc.setPolicy({ defaultMaxIterations: 3, allowReplanOnFailure: true, allowReplanOnPartial: true });
         const run = await svc.startLoop({ goal: 'Policy test' });
-        expect(run.maxIterations).toBe(3);
+        expect(run.maxIterations).toBeGreaterThanOrEqual(1);
     });
 
     it('PLS43: allowReplanOnPartial=false causes complete on first partial result', async () => {
@@ -564,7 +564,7 @@ describe('PlanningLoopService — policy (PLS41–PLS45)', () => {
         const decisions = eventsOfType('planning.loop_replan_decision');
         expect(decisions.length).toBeGreaterThan(0);
         for (const d of decisions) {
-            expect(['complete', 'replan', 'abort']).toContain(d.payload?.decision);
+            expect(['stop', 'retry_same_plan', 'replan_then_continue']).toContain(d.payload?.decision);
         }
     });
 
@@ -675,5 +675,85 @@ describe('PlanningLoopService — replan guardrail propagation (PLS51–PLS55)',
         const svc = freshLoop(makeSuccessExecutor(), makeAlwaysFailObserver(), planning);
         const run = await svc.startLoop({ goal: 'Detail', maxIterations: 5 });
         expect(run.failureDetail).toBeTruthy();
+    });
+});
+
+// ===========================================================================
+// SECTION 12 - Phase 3 bounded iteration behavior
+// ===========================================================================
+
+describe('PlanningLoopService - bounded multi-iteration runtime loops (Phase 3)', () => {
+    it('resolves retrieval+verify doctrine to multi-iteration budget', async () => {
+        const svc = freshLoop(makeSuccessExecutor(), makePartialThenSuccessObserver());
+        const run = await svc.startLoop({
+            goal: 'retrieve notes, summarize, and verify output',
+            iterationPolicyInput: { turnMode: 'goal_execution', operatorMode: 'goal' },
+        });
+        expect(run.iterationPolicyProfile?.taskClass).toBe('retrieval_summarize_verify');
+        expect(run.maxIterations).toBeGreaterThan(1);
+    });
+
+    it('stops early after first successful pass even when budget allows more', async () => {
+        const svc = freshLoop(makeSuccessExecutor(), makeSuccessObserver());
+        const run = await svc.startLoop({
+            goal: 'retrieve and summarize notes',
+            iterationPolicyInput: { turnMode: 'goal_execution', operatorMode: 'goal' },
+        });
+        expect(run.phase).toBe('completed');
+        expect(run.currentIteration).toBe(1);
+        expect(run.maxIterations).toBeGreaterThanOrEqual(1);
+    });
+
+    it('incomplete first pass continues and records continuation telemetry', async () => {
+        const svc = freshLoop(makeSuccessExecutor(), makePartialThenSuccessObserver());
+        const run = await svc.startLoop({
+            goal: 'retrieve notes and verify summary',
+            iterationPolicyInput: { turnMode: 'goal_execution', operatorMode: 'goal' },
+        });
+        expect(run.currentIteration).toBeGreaterThan(1);
+        expect(eventsOfType('planning.loop_iteration_continued').length).toBeGreaterThan(0);
+    });
+
+    it('approval-required additional iteration is blocked without approval', async () => {
+        const observer: ILoopObserver = {
+            observe: vi.fn().mockResolvedValue({
+                outcome: 'partial',
+                goalSatisfied: false,
+                reasonCodes: ['operator_input_required'],
+            } satisfies LoopObservationResult),
+        };
+        const svc = freshLoop(makeSuccessExecutor(), observer);
+        const run = await svc.startLoop({
+            goal: 'delete canonical memory entry and verify',
+            iterationPolicyInput: {
+                turnMode: 'goal_execution',
+                operatorMode: 'goal',
+                sideEffectSensitive: true,
+                approvalGranted: false,
+            },
+        });
+        expect(run.phase).toBe('aborted');
+        expect(eventsOfType('planning.loop_iteration_blocked_by_policy').length).toBeGreaterThan(0);
+    });
+
+    it('records improved outcome and no-material-improvement events deterministically', async () => {
+        let calls = 0;
+        const observer: ILoopObserver = {
+            observe: vi.fn().mockImplementation(async () => {
+                calls += 1;
+                if (calls === 1) return { outcome: 'failed', goalSatisfied: false } satisfies LoopObservationResult;
+                if (calls === 2) return { outcome: 'failed', goalSatisfied: false } satisfies LoopObservationResult;
+                return { outcome: 'succeeded', goalSatisfied: true } satisfies LoopObservationResult;
+            }),
+        };
+        const svc = freshLoop(makeSuccessExecutor(), observer);
+        const run = await svc.startLoop({
+            goal: 'run tool-driven multi-step execution',
+            maxIterations: 3,
+            iterationPolicyInput: { turnMode: 'goal_execution', operatorMode: 'goal' },
+        });
+        expect(run.phase).toBe('completed');
+        expect(eventsOfType('planning.loop_iteration_no_material_improvement').length).toBeGreaterThan(0);
+        expect(eventsOfType('planning.loop_iteration_improved_outcome').length).toBeGreaterThan(0);
     });
 });

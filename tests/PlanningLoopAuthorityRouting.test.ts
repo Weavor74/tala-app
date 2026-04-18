@@ -279,7 +279,9 @@ describe('PLAR-21..30: Non-trivial work routes through PlanningLoopService', () 
         expect(startLoopSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 goal: 'analyze and summarize the project notes',
-                maxIterations: 1,
+                iterationPolicyInput: expect.objectContaining({
+                    turnMode: 'goal_execution',
+                }),
             })
         );
     });

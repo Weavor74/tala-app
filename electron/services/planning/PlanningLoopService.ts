@@ -75,11 +75,17 @@ import type {
     PlanningLoopPolicy,
     StartLoopInput,
     LoopObservationResult,
-    ReplanDecision,
     ReplanHistoryEntry,
     LoopCompletionReason,
     LoopFailureReason,
 } from '../../../shared/planning/planningLoopTypes';
+import type {
+    IterationContinuationDecision,
+    IterationDecisionReasonCode,
+    IterationImprovementEvaluation,
+    IterationPolicyResolution,
+} from '../../../shared/planning/IterationPolicyTypes';
+import { IterationPolicyResolver } from './IterationPolicyResolver';
 
 // ─── Executor interface ───────────────────────────────────────────────────────
 
@@ -150,6 +156,7 @@ export class PlanningLoopService {
 
     private readonly _bus: TelemetryBus;
     private readonly _planning: PlanningService;
+    private readonly _iterationPolicyResolver = new IterationPolicyResolver();
 
     /** In-memory loop run store.  Maps loopId → PlanningLoopRun. */
     private readonly _runs = new Map<string, PlanningLoopRun>();
@@ -239,15 +246,12 @@ export class PlanningLoopService {
     /** Returns the loop run with the given id, or undefined. */
     getRun(loopId: string): PlanningLoopRun | undefined {
         const run = this._runs.get(loopId);
-        return run ? { ...run, replanHistory: [...run.replanHistory] } : undefined;
+        return run ? this._snapshot(run) : undefined;
     }
 
     /** Returns all loop runs currently held in memory (copy). */
     listRuns(): PlanningLoopRun[] {
-        return Array.from(this._runs.values()).map(r => ({
-            ...r,
-            replanHistory: [...r.replanHistory],
-        }));
+        return Array.from(this._runs.values()).map(r => this._snapshot(r));
     }
 
     // ── Loop lifecycle ────────────────────────────────────────────────────────
@@ -276,11 +280,11 @@ export class PlanningLoopService {
         const now = new Date().toISOString();
         const loopId = `loop-${uuidv4()}`;
         const correlationId = `lcorr-${uuidv4()}`;
-        const maxIterations = input.maxIterations ?? this._policy.defaultMaxIterations;
+        const initialMaxIterations = input.maxIterations ?? this._policy.defaultMaxIterations;
 
-        if (maxIterations < 1) {
+        if (initialMaxIterations < 1) {
             throw new PlanningLoopError(
-                `maxIterations must be at least 1 (got ${maxIterations})`,
+                `maxIterations must be at least 1 (got ${initialMaxIterations})`,
                 'INVALID_MAX_ITERATIONS',
             );
         }
@@ -293,10 +297,13 @@ export class PlanningLoopService {
             createdAt: now,
             updatedAt: now,
             currentIteration: 0,
-            maxIterations,
+            maxIterations: initialMaxIterations,
+            explicitMaxIterations: input.maxIterations,
             contextSummary: input.contextSummary,
             planningInvocation: input.planningInvocation,
+            iterationPolicyInput: input.iterationPolicyInput,
             replanHistory: [],
+            iterationDecisions: [],
         };
 
         this._runs.set(loopId, run);
@@ -310,7 +317,7 @@ export class PlanningLoopService {
                 loopId,
                 correlationId,
                 goal: run.goal,
-                maxIterations,
+                maxIterations: initialMaxIterations,
             },
         });
 
@@ -353,6 +360,31 @@ export class PlanningLoopService {
             if (plan.status === 'blocked') {
                 return this._finalizeFailure(run, 'plan_blocked', plan.reasonCodes.join(', '));
             }
+
+            const policyResolution = this._resolveIterationPolicy(run, plan);
+            run.iterationPolicyProfile = policyResolution.profile;
+            run.iterationBudget = policyResolution.budget;
+            run.taskLoopDoctrineClass = policyResolution.profile.taskClass;
+            run.maxIterations = policyResolution.budget.maxIterations;
+            this._saveRun(run);
+            this._bus.emit({
+                executionId: run.loopId,
+                correlationId: run.correlationId,
+                subsystem: 'planning',
+                event: 'planning.loop_iteration_budget_resolved',
+                payload: {
+                    loopId: run.loopId,
+                    correlationId: run.correlationId,
+                    maxIterations: run.maxIterations,
+                    taskLoopDoctrineClass: policyResolution.profile.taskClass,
+                    replanAllowance: policyResolution.profile.replanAllowance,
+                    continuationRule: policyResolution.profile.continuationRule,
+                    loopPermission: policyResolution.profile.loopPermission,
+                    approvalRequirement: policyResolution.profile.approvalRequirement,
+                    approvalRequiredAboveIteration: policyResolution.profile.approvalRequiredAboveIteration,
+                    reasonCodes: policyResolution.profile.reasonCodes,
+                },
+            });
 
             // ── Iteration loop ────────────────────────────────────────────────
             while (run.currentIteration < run.maxIterations) {
@@ -421,6 +453,7 @@ export class PlanningLoopService {
                     };
                 }
 
+                const priorObservation = run.lastObservation;
                 run.lastObservation = observation;
                 this._saveRun(run);
 
@@ -443,13 +476,26 @@ export class PlanningLoopService {
                 this._syncPlanOutcome(plan.id, observation);
 
                 // ── Decision ──────────────────────────────────────────────────
-                const decision = this._makeReplanDecision(run, observation);
+                const decision = this._makeContinuationDecision(run, observation);
+                const improvement = this._evaluateIterationImprovement(priorObservation, observation);
+                run.iterationDecisions?.push({
+                    iteration: run.currentIteration,
+                    outcome: observation.outcome,
+                    decision,
+                    improved: improvement.improved,
+                    reasonCodes: [...decision.reasonCodes, ...improvement.reasonCodes],
+                    decidedAt: new Date().toISOString(),
+                });
 
                 const historyEntry: ReplanHistoryEntry = {
                     iteration: run.currentIteration,
-                    decision,
+                    decision: decision.action === 'replan_then_continue'
+                        ? 'replan'
+                        : decision.action === 'stop'
+                            ? (observation.goalSatisfied || observation.outcome === 'succeeded' ? 'complete' : 'abort')
+                            : 'complete',
                     observationOutcome: observation.outcome,
-                    reasonCodes: observation.reasonCodes,
+                    reasonCodes: [...(observation.reasonCodes ?? []), ...decision.reasonCodes],
                     decidedAt: new Date().toISOString(),
                 };
                 run.replanHistory.push(historyEntry);
@@ -464,27 +510,63 @@ export class PlanningLoopService {
                         loopId: run.loopId,
                         correlationId: run.correlationId,
                         iteration: run.currentIteration,
-                        decision,
+                        decision: decision.action,
                         observationOutcome: observation.outcome,
                         goalSatisfied: observation.goalSatisfied,
+                        reasonCodes: decision.reasonCodes,
                     },
                 });
 
-                if (decision === 'complete') {
+                this._emitIterationWorthinessEvents(run, observation, decision, improvement);
+
+                if (
+                    decision.action === 'stop' && (
+                        observation.goalSatisfied
+                        || observation.outcome === 'succeeded'
+                        || (observation.outcome === 'partial' && !this._policy.allowReplanOnPartial)
+                    )
+                ) {
                     const completionReason: LoopCompletionReason = observation.goalSatisfied
                         ? 'goal_satisfied'
                         : 'execution_succeeded';
                     return this._finalizeCompleted(run, completionReason);
                 }
 
-                if (decision === 'abort') {
+                if (decision.action === 'stop') {
+                    if (decision.blockedByApproval || decision.blockedByPolicy) {
+                        return this._finalizeAborted(run, 'abort_requested');
+                    }
+                    if (decision.budgetExhausted) {
+                        return this._finalizeFailure(
+                            run,
+                            'max_iterations_exceeded',
+                            `Reached maxIterations (${run.maxIterations})`,
+                        );
+                    }
                     return this._finalizeAborted(run, 'abort_requested');
                 }
 
-                // decision === 'replan' — transition and rebuild plan
+                if (decision.action === 'retry_same_plan') {
+                    continue;
+                }
+
+                // decision.action === 'replan_then_continue' - transition and rebuild plan
                 this._transitionPhase(run, 'replanning');
 
                 const trigger = this._observationToReplanTrigger(observation);
+                this._bus.emit({
+                    executionId: run.loopId,
+                    correlationId: run.correlationId,
+                    subsystem: 'planning',
+                    event: 'planning.loop_iteration_replan_requested',
+                    payload: {
+                        loopId: run.loopId,
+                        correlationId: run.correlationId,
+                        iteration: run.currentIteration,
+                        trigger,
+                        reasonCodes: decision.reasonCodes,
+                    },
+                });
                 try {
                     plan = this._planning.replan({
                         goalId: run.goalId!,
@@ -495,11 +577,42 @@ export class PlanningLoopService {
                         ...(run.planningInvocation ?? {
                             invokedBy: 'planning_loop',
                             invocationReason: 'legacy_unspecified',
+                            turnId: run.loopId,
+                            turnMode: 'goal_execution',
+                            authorityLevel: 'full_authority',
+                            memoryWriteMode: 'goal_episode',
                         }),
                         invocationReason: 'replan_after_execution_failure',
                     });
+                    if (run.iterationBudget) {
+                        run.iterationBudget.replansUsed += 1;
+                    }
+                    this._bus.emit({
+                        executionId: run.loopId,
+                        correlationId: run.correlationId,
+                        subsystem: 'planning',
+                        event: 'planning.loop_iteration_replan_accepted',
+                        payload: {
+                            loopId: run.loopId,
+                            correlationId: run.correlationId,
+                            iteration: run.currentIteration,
+                            planId: plan.id,
+                        },
+                    });
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : String(err);
+                    this._bus.emit({
+                        executionId: run.loopId,
+                        correlationId: run.correlationId,
+                        subsystem: 'planning',
+                        event: 'planning.loop_iteration_replan_denied',
+                        payload: {
+                            loopId: run.loopId,
+                            correlationId: run.correlationId,
+                            iteration: run.currentIteration,
+                            error: errMsg,
+                        },
+                    });
                     // Map known PlanningError codes to loop failure reasons
                     const code = (err as { code?: string }).code ?? '';
                     const reason: LoopFailureReason =
@@ -516,6 +629,18 @@ export class PlanningLoopService {
                 // Continue iteration with new plan
             }
 
+            this._bus.emit({
+                executionId: run.loopId,
+                correlationId: run.correlationId,
+                subsystem: 'planning',
+                event: 'planning.loop_iteration_budget_exhausted',
+                payload: {
+                    loopId: run.loopId,
+                    correlationId: run.correlationId,
+                    iterationsUsed: run.currentIteration,
+                    maxIterations: run.maxIterations,
+                },
+            });
             // maxIterations exhausted
             return this._finalizeFailure(
                 run,
@@ -545,6 +670,10 @@ export class PlanningLoopService {
         const invocation: PlanningInvocationMetadata = run.planningInvocation ?? {
             invokedBy: 'planning_loop',
             invocationReason: 'legacy_unspecified',
+            turnId: run.loopId,
+            turnMode: 'goal_execution',
+            authorityLevel: 'full_authority',
+            memoryWriteMode: 'goal_episode',
         };
         const goal = this._planning.registerGoal(goalInput, invocation);
         run.goalId = goal.id;
@@ -553,25 +682,285 @@ export class PlanningLoopService {
         return this._planning.buildPlan(goal.id, invocation);
     }
 
-    private _makeReplanDecision(
+    private _resolveIterationPolicy(run: PlanningLoopRun, plan: ExecutionPlan): IterationPolicyResolution {
+        return this._iterationPolicyResolver.resolve({
+            goal: run.goal,
+            plan,
+            turnMode: run.iterationPolicyInput?.turnMode,
+            operatorMode: run.iterationPolicyInput?.operatorMode,
+            authorityLevel: run.iterationPolicyInput?.authorityLevel,
+            recoveryMode: run.iterationPolicyInput?.recoveryMode,
+            autonomousMode: run.iterationPolicyInput?.autonomousMode,
+            sideEffectSensitive: run.iterationPolicyInput?.sideEffectSensitive,
+            approvalGranted: run.iterationPolicyInput?.approvalGranted,
+            callerMaxIterations: run.explicitMaxIterations,
+        });
+    }
+
+    private _makeContinuationDecision(
         run: PlanningLoopRun,
         observation: LoopObservationResult,
-    ): ReplanDecision {
-        if (observation.goalSatisfied) return 'complete';
-        if (observation.outcome === 'succeeded') return 'complete';
+    ): IterationContinuationDecision {
+        const budget = run.iterationBudget;
+        const profile = run.iterationPolicyProfile;
+        const reasonCodes: IterationDecisionReasonCode[] = [];
+        const remainingIterations = Math.max(0, run.maxIterations - run.currentIteration);
+        const budgetExhausted = remainingIterations <= 0;
 
-        if (observation.outcome === 'failed') {
-            if (!this._policy.allowReplanOnFailure) return 'abort';
-            return 'replan';
+        if (budget) {
+            budget.iterationsUsed = run.currentIteration;
+            budget.remainingIterations = remainingIterations;
+        }
+
+        if (observation.goalSatisfied || observation.outcome === 'succeeded') {
+            reasonCodes.push('iteration_stop.completed');
+            return {
+                continueLoop: false,
+                action: 'stop',
+                reasonCodes,
+                improvementExpected: false,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: false,
+            };
+        }
+
+        if (observation.outcome === 'partial' && !this._policy.allowReplanOnPartial) {
+            reasonCodes.push('iteration_stop.completed');
+            return {
+                continueLoop: false,
+                action: 'stop',
+                reasonCodes,
+                improvementExpected: false,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: false,
+            };
+        }
+
+        if (observation.outcome === 'blocked') {
+            reasonCodes.push('iteration_stop.blocked');
+            return {
+                continueLoop: false,
+                action: 'stop',
+                reasonCodes,
+                improvementExpected: false,
+                blockedByApproval: false,
+                blockedByPolicy: true,
+                budgetExhausted,
+            };
+        }
+
+        if (profile?.loopPermission === 'blocked_by_policy') {
+            reasonCodes.push('iteration_stop.policy_blocked');
+            return {
+                continueLoop: false,
+                action: 'stop',
+                reasonCodes,
+                improvementExpected: false,
+                blockedByApproval: false,
+                blockedByPolicy: true,
+                budgetExhausted,
+            };
+        }
+
+        if (profile?.approvalRequiredAboveIteration && run.currentIteration >= profile.approvalRequiredAboveIteration) {
+            const approved = run.iterationPolicyInput?.approvalGranted === true || budget?.approvalGranted === true;
+            if (!approved) {
+                reasonCodes.push('iteration_stop.approval_required');
+                return {
+                    continueLoop: false,
+                    action: 'stop',
+                    reasonCodes,
+                    improvementExpected: false,
+                    blockedByApproval: true,
+                    blockedByPolicy: false,
+                    budgetExhausted,
+                };
+            }
+        }
+
+        if (budgetExhausted) {
+            reasonCodes.push('iteration_stop.budget_exhausted');
+            return {
+                continueLoop: false,
+                action: 'stop',
+                reasonCodes,
+                improvementExpected: false,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: true,
+            };
+        }
+
+        const allowFailureReplan = this._policy.allowReplanOnFailure;
+        const allowPartialReplan = this._policy.allowReplanOnPartial;
+        const policyAllowsReplan = profile?.replanAllowance === 'bounded';
+        const canReplan =
+            policyAllowsReplan &&
+            ((observation.outcome === 'failed' && allowFailureReplan) || (observation.outcome === 'partial' && allowPartialReplan));
+
+        if (canReplan) {
+            reasonCodes.push(
+                observation.outcome === 'partial'
+                    ? 'iteration_continue.verification_gap'
+                    : 'iteration_continue.replan_advised',
+            );
+            return {
+                continueLoop: true,
+                action: 'replan_then_continue',
+                reasonCodes,
+                improvementExpected: true,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: false,
+            };
         }
 
         if (observation.outcome === 'partial') {
-            if (!this._policy.allowReplanOnPartial) return 'complete';
-            return 'replan';
+            reasonCodes.push('iteration_continue.incomplete_with_budget');
+            return {
+                continueLoop: true,
+                action: 'retry_same_plan',
+                reasonCodes,
+                improvementExpected: true,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: false,
+            };
         }
 
-        // 'blocked'
-        return 'abort';
+        if (observation.outcome === 'failed' && (this._policy.allowReplanOnFailure || profile?.continuationRule === 'if_recoverable')) {
+            reasonCodes.push('iteration_continue.recoverable_failure');
+            return {
+                continueLoop: true,
+                action: 'retry_same_plan',
+                reasonCodes,
+                improvementExpected: true,
+                blockedByApproval: false,
+                blockedByPolicy: false,
+                budgetExhausted: false,
+            };
+        }
+
+        reasonCodes.push('iteration_stop.failed_nonrecoverable');
+        return {
+            continueLoop: false,
+            action: 'stop',
+            reasonCodes,
+            improvementExpected: false,
+            blockedByApproval: false,
+            blockedByPolicy: false,
+            budgetExhausted: false,
+        };
+    }
+
+    private _evaluateIterationImprovement(
+        priorObservation: LoopObservationResult | undefined,
+        observation: LoopObservationResult,
+    ): IterationImprovementEvaluation {
+        if (!priorObservation) {
+            return {
+                improved: false,
+                meaningful: false,
+                reasonCodes: [],
+            };
+        }
+        const previous = priorObservation;
+        const rank = (outcome: LoopObservationResult['outcome']): number => {
+            if (outcome === 'failed') return 0;
+            if (outcome === 'blocked') return 1;
+            if (outcome === 'partial') return 2;
+            return 3;
+        };
+        const improved = rank(observation.outcome) > rank(previous.outcome)
+            || (!previous.goalSatisfied && observation.goalSatisfied);
+        return {
+            improved,
+            meaningful: true,
+            reasonCodes: [improved ? 'iteration_improvement_observed' : 'iteration_no_material_improvement'],
+        };
+    }
+
+    private _emitIterationWorthinessEvents(
+        run: PlanningLoopRun,
+        observation: LoopObservationResult,
+        decision: IterationContinuationDecision,
+        improvement: IterationImprovementEvaluation,
+    ): void {
+        this._bus.emit({
+            executionId: run.loopId,
+            correlationId: run.correlationId,
+            subsystem: 'planning',
+            event: 'planning.loop_iteration_completed',
+            payload: {
+                loopId: run.loopId,
+                correlationId: run.correlationId,
+                iteration: run.currentIteration,
+                outcome: observation.outcome,
+                goalSatisfied: observation.goalSatisfied,
+                reasonCodes: observation.reasonCodes ?? [],
+            },
+        });
+        if (improvement.meaningful) {
+            if (improvement.improved) {
+                this._bus.emit({
+                    executionId: run.loopId,
+                    correlationId: run.correlationId,
+                    subsystem: 'planning',
+                    event: 'planning.loop_iteration_improved_outcome',
+                    payload: {
+                        loopId: run.loopId,
+                        correlationId: run.correlationId,
+                        iteration: run.currentIteration,
+                        reasonCodes: improvement.reasonCodes,
+                    },
+                });
+            } else {
+                this._bus.emit({
+                    executionId: run.loopId,
+                    correlationId: run.correlationId,
+                    subsystem: 'planning',
+                    event: 'planning.loop_iteration_no_material_improvement',
+                    payload: {
+                        loopId: run.loopId,
+                        correlationId: run.correlationId,
+                        iteration: run.currentIteration,
+                        reasonCodes: improvement.reasonCodes,
+                    },
+                });
+            }
+        }
+        if (decision.action !== 'stop') {
+            this._bus.emit({
+                executionId: run.loopId,
+                correlationId: run.correlationId,
+                subsystem: 'planning',
+                event: 'planning.loop_iteration_continued',
+                payload: {
+                    loopId: run.loopId,
+                    correlationId: run.correlationId,
+                    iteration: run.currentIteration,
+                    action: decision.action,
+                    reasonCodes: decision.reasonCodes,
+                },
+            });
+        } else if (decision.blockedByApproval || decision.blockedByPolicy) {
+            this._bus.emit({
+                executionId: run.loopId,
+                correlationId: run.correlationId,
+                subsystem: 'planning',
+                event: 'planning.loop_iteration_blocked_by_policy',
+                payload: {
+                    loopId: run.loopId,
+                    correlationId: run.correlationId,
+                    iteration: run.currentIteration,
+                    blockedByApproval: decision.blockedByApproval,
+                    blockedByPolicy: decision.blockedByPolicy,
+                    reasonCodes: decision.reasonCodes,
+                },
+            });
+        }
     }
 
     private _observationToReplanTrigger(observation: LoopObservationResult): ReplanTrigger {
@@ -695,6 +1084,11 @@ export class PlanningLoopService {
     }
 
     private _snapshot(run: PlanningLoopRun): PlanningLoopRun {
-        return { ...run, replanHistory: [...run.replanHistory] };
+        return {
+            ...run,
+            replanHistory: [...run.replanHistory],
+            iterationDecisions: run.iterationDecisions ? [...run.iterationDecisions] : [],
+            iterationBudget: run.iterationBudget ? { ...run.iterationBudget } : undefined,
+        };
     }
 }
