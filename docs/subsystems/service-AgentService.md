@@ -1,11 +1,22 @@
 # Service: AgentService.ts
 
-**Source**: [electron\services\AgentService.ts](../../electron/services/AgentService.ts)
+**Source**: [electron/services/AgentService.ts](../../electron/services/AgentService.ts)
 
 ## Class: `AgentService`
 
 ## Overview
-AgentService The central orchestrator that governs the "Mind" of Tala. This service coordinates all AI capabilities: inference (brain), memory, RAG, emotion (astro), tool execution, backup, and browser/terminal interaction.  **Core Responsibilities:** - **Session Management**: Manages chat history, branching, and persistence. - **Turn Execution**: Orchestrates the multi-turn loop (Thought -> Action -> Observation). - **Context Assembly**: Gathers data from RAG, Memory, and System state for prompts. - **Tooling**: Registers and executes local and MCP-based tools. - **Self-Evolutuon**: Interfaces with ReflectionService for self-improvement goals.
+AgentService
+
+ The central orchestrator that governs the "Mind" of Tala. This service
+ coordinates all AI capabilities: inference (brain), memory, RAG, emotion
+ (astro), tool execution, backup, and browser/terminal interaction.
+ 
+ **Core Responsibilities:**
+ - **Session Management**: Manages chat history, branching, and persistence.
+ - **Turn Execution**: Orchestrates the multi-turn loop (Thought -> Action -> Observation).
+ - **Context Assembly**: Gathers data from RAG, Memory, and System state for prompts.
+ - **Tooling**: Registers and executes local and MCP-based tools.
+ - **Self-Evolutuon**: Interfaces with ReflectionService for self-improvement goals.
 
 ### Methods
 
@@ -31,7 +42,9 @@ AgentService The central orchestrator that governs the "Mind" of Tala. This se
 
 ---
 #### `setDiagnosticsAggregator`
-Wires the runtime diagnostics aggregator so cognitive contexts can be recorded after each turn (Phase 3A: Live Cognitive Path Integration)./
+Wires the runtime diagnostics aggregator so cognitive contexts can be recorded
+ after each turn (Phase 3A: Live Cognitive Path Integration).
+/
 
 **Arguments**: `agg: RuntimeDiagnosticsAggregator`
 **Returns**: `void`
@@ -188,19 +201,45 @@ Wires the runtime diagnostics aggregator so cognitive contexts can be recorded 
 
 ---
 #### `igniteSoul`
-Initializes the "Soul" (Python-based sidecar microservices).  This method: 1. Resolves the correct Python environment (canonical/sandboxed). 2. Sanitizes environment variables and injects User Identity. 3. Orchestrates parallel ignition of MCP servers (Tala Core, Mem0, Astro, World). 4. Establishes the Memory Graph connection via stdio. 5. Handles LTMF (Long-Term Memory Format) migrations. 6. Starts background loops like auto-ingestion and health checks.  @param pythonPath - Path to the local Python binary used for bootstrapping./
+Initializes the "Soul" (Python-based sidecar microservices).
+ 
+ This method:
+ 1. Resolves the correct Python environment (canonical/sandboxed).
+ 2. Sanitizes environment variables and injects User Identity.
+ 3. Orchestrates parallel ignition of MCP servers (Tala Core, Mem0, Astro, World).
+ 4. Establishes the Memory Graph connection via stdio.
+ 5. Handles LTMF (Long-Term Memory Format) migrations.
+ 6. Starts background loops like auto-ingestion and health checks.
+ 
+ @param pythonPath - Path to the local Python binary used for bootstrapping.
+/
 
 **Arguments**: `pythonPath: string`
 
 ---
 #### `shutdown`
-Gracefully shuts down all active MCP sidecars and local inference engines./
+Gracefully shuts down all active MCP sidecars and local inference engines.
+/
 
 **Arguments**: ``
 
 ---
 #### `_wireRepairExecutor`
-Wires the MemoryRepairExecutionService singleton with live handlers that perform real subsystem operations.  Called once at the end of igniteSoul() after all dependent services are ready. Handler mapping:  reconnect_canonical — shutdown + re-init canonical PostgreSQL store  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)  reconnect_mem0      — shutdown + re-ignite mem0 MCP server  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService  reconnect_rag       — shutdown + re-ignite tala-core RAG server drain_deferred_work is wired via DeferredMemoryReplayService.drain() which replays bounded batches of persisted work items when canonical is healthy./
+Wires the MemoryRepairExecutionService singleton with live handlers that
+ perform real subsystem operations.  Called once at the end of igniteSoul()
+ after all dependent services are ready.
+
+ Handler mapping:
+  reconnect_canonical — shutdown + re-init canonical PostgreSQL store
+  reinit_canonical    — same as reconnect_canonical (full teardown + reinit)
+  reconnect_mem0      — shutdown + re-ignite mem0 MCP server
+  re_resolve_providers — re-run MemoryProviderResolver and update MemoryService config
+  reconnect_graph     — disconnect + reconnect tala-memory-graph via McpService
+  reconnect_rag       — shutdown + re-ignite tala-core RAG server
+
+ drain_deferred_work is wired via DeferredMemoryReplayService.drain() which
+ replays bounded batches of persisted work items when canonical is healthy.
+/
 
 **Arguments**: ``
 **Returns**: `void`
@@ -215,7 +254,8 @@ Wires the MemoryRepairExecutionService singleton with live handlers that perfor
 
 ---
 #### `stripPIIFromDebug`
-Helper to redact PII from error objects or debug logs./
+Helper to redact PII from error objects or debug logs.
+/
 
 **Arguments**: `obj: any`
 **Returns**: `any`
@@ -231,7 +271,24 @@ Helper to redact PII from error objects or debug logs./
 
 ---
 #### `extractJsonObjectEnvelope`
-extractJsonObjectEnvelope Robustly extracts the first JSON object containing a top-level "tool_calls" key from a string that may have prose before/after it. Algorithm:  1. Scan the string character-by-character with a brace-depth counter.  2. At depth-zero, each '{' starts a candidate object. Track its start index.  3. The matching '}' (depth returns to 0) is the end of that candidate.  4. Attempt JSON.parse on each candidate. If it has tool_calls -> return it.  5. If no candidate parses with tool_calls, return null. This is tolerant of:  - Surrounding prose before/after the JSON object  - Nested JSON objects/arrays inside the tool_calls  - Multiple JSON objects in the text (picks the one with tool_calls)  - Strings containing '{' or '}' (we skip inside string literals)/
+extractJsonObjectEnvelope
+
+ Robustly extracts the first JSON object containing a top-level "tool_calls" key
+ from a string that may have prose before/after it.
+
+ Algorithm:
+  1. Scan the string character-by-character with a brace-depth counter.
+  2. At depth-zero, each '{' starts a candidate object. Track its start index.
+  3. The matching '}' (depth returns to 0) is the end of that candidate.
+  4. Attempt JSON.parse on each candidate. If it has tool_calls -> return it.
+  5. If no candidate parses with tool_calls, return null.
+
+ This is tolerant of:
+  - Surrounding prose before/after the JSON object
+  - Nested JSON objects/arrays inside the tool_calls
+  - Multiple JSON objects in the text (picks the one with tool_calls)
+  - Strings containing '{' or '}' (we skip inside string literals)
+/
 
 **Arguments**: `text: string`
 **Returns**: `any | null`
@@ -253,7 +310,8 @@ extractJsonObjectEnvelope Robustly extracts the first JSON object containing a
 
 ---
 #### `chat`
-Primary chat entry point. Orchestrates the turn loop and artifact routing./
+Primary chat entry point. Orchestrates the turn loop and artifact routing.
+/
 
 **Arguments**: `userMessage: string, onToken?: (token: string) => void, onEvent?: (type: string, data: any) => void, images?: string[], capabilitiesOverride?: any`
 **Returns**: `Promise<AgentTurnOutput>`
@@ -280,7 +338,15 @@ Primary chat entry point. Orchestrates the turn loop and artifact routing./
 
 ---
 #### `normalizeToLegacyToolCalls`
-Converts a CanonicalToolCall array into the legacy ToolCall format expected by ChatMessage.tool_calls.  This is the sole compatibility boundary between the canonical inference layer (CanonicalToolCall, id optional) and the legacy brain protocol (ToolCall, id required). - Guarantees every entry has a non-empty id. - Sets type to 'function'. - Stringifies arguments when they are a parsed object./
+Converts a CanonicalToolCall array into the legacy ToolCall format expected by
+ ChatMessage.tool_calls.  This is the sole compatibility boundary between the
+ canonical inference layer (CanonicalToolCall, id optional) and the legacy brain
+ protocol (ToolCall, id required).
+
+ - Guarantees every entry has a non-empty id.
+ - Sets type to 'function'.
+ - Stringifies arguments when they are a parsed object.
+/
 
 **Arguments**: `calls: CanonicalToolCall[]`
 **Returns**: `ToolCall[]`
@@ -329,7 +395,17 @@ Converts a CanonicalToolCall array into the legacy ToolCall format expected by 
 
 ---
 #### `executeTool`
-Executes a registered tool by name with provided arguments.  **Safety & Security:** - Enforces workspace sandboxing for all file system tools. - Proxies MCP tool calls to the `McpService` sidecar. - Redacts sensitive data in audit logs.  @param name - The tool name. @param args - Key-value pair arguments for the tool. @returns The stringified result of the tool execution./
+Executes a registered tool by name with provided arguments.
+ 
+ **Safety & Security:**
+ - Enforces workspace sandboxing for all file system tools.
+ - Proxies MCP tool calls to the `McpService` sidecar.
+ - Redacts sensitive data in audit logs.
+ 
+ @param name - The tool name.
+ @param args - Key-value pair arguments for the tool.
+ @returns The stringified result of the tool execution.
+/
 
 **Arguments**: `name: string, args: any`
 **Returns**: `Promise<any>`
@@ -361,14 +437,25 @@ Executes a registered tool by name with provided arguments.  **Safety & Securi
 
 ---
 #### `getMemoryOperatorReviewModel`
-Assemble and return the current MemoryOperatorReviewModel for the operator review surface in the Reflection Dashboard. Read-only and safe to call repeatedly.  Returns a bounded, advisory-only snapshot; no settings or configurations are changed./
+Assemble and return the current MemoryOperatorReviewModel for the
+ operator review surface in the Reflection Dashboard.
+
+ Read-only and safe to call repeatedly.  Returns a bounded, advisory-only
+ snapshot; no settings or configurations are changed.
+/
 
 **Arguments**: ``
 **Returns**: `Promise<MemoryOperatorReviewModel>`
 
 ---
 #### `runMemoryMaintenanceNow`
-Trigger an immediate memory maintenance analytics run (manual refresh). Equivalent to a human-requested scheduler tick — does not change any settings or configurations.  Safe to call from the operator review panel. Returns the run result, or null if the scheduler is not available./
+Trigger an immediate memory maintenance analytics run (manual refresh).
+
+ Equivalent to a human-requested scheduler tick — does not change any
+ settings or configurations.  Safe to call from the operator review panel.
+
+ Returns the run result, or null if the scheduler is not available.
+/
 
 **Arguments**: ``
 **Returns**: `Promise<import('../../shared/memory/MemoryMaintenanceState').MemoryRepairScheduledRunResult | null>`
@@ -401,7 +488,9 @@ Trigger an immediate memory maintenance analytics run (manual refresh). Equiva
 
 ---
 #### `getAstroService`
-Returns the AstroService instance for use by backend composition roots (e.g. IpcRouter context:assemble handler). Returns null if not initialized./
+Returns the AstroService instance for use by backend composition roots
+ (e.g. IpcRouter context:assemble handler). Returns null if not initialized.
+/
 
 **Arguments**: ``
 **Returns**: `AstroService | null`
@@ -430,13 +519,15 @@ Returns the AstroService instance for use by backend composition roots (e.g. Ip
 
 ---
 #### `updateMemory`
-Updates a memory item by ID./
+Updates a memory item by ID.
+/
 
 **Arguments**: `id: string, text: string`
 
 ---
 #### `getModelStatus`
-Returns the current model status and fidelity information./
+Returns the current model status and fidelity information.
+/
 
 **Arguments**: ``
 

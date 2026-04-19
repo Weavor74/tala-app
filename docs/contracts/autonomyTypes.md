@@ -1,6 +1,6 @@
 # Contract: autonomyTypes.ts
 
-**Source**: [shared\autonomyTypes.ts](../../shared/autonomyTypes.ts)
+**Source**: [shared/autonomyTypes.ts](../../shared/autonomyTypes.ts)
 
 ## Interfaces
 

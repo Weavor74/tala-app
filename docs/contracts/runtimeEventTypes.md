@@ -1,6 +1,6 @@
 # Contract: runtimeEventTypes.ts
 
-**Source**: [shared\runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
+**Source**: [shared/runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
 
 ## Interfaces
 
@@ -95,6 +95,11 @@ type RuntimeEventType =
     | 'agent.rp_meta_ontology_leak_detected'
     | 'agent.rp_meta_ontology_rewritten'
     | 'agent.rp_meta_ontology_publish_blocked'
+    | 'agent.rp_publish_guard_evaluated'
+    | 'agent.rp_publish_guard_leak_detected'
+    | 'agent.rp_publish_guard_rewritten'
+    | 'agent.rp_publish_guard_blocked'
+    | 'agent.rp_publish_guard_passthrough'
     | 'agent.turn_response_created'
     | 'agent.turn_response_published'
     | 'agent.turn_response_missing'

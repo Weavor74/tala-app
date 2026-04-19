@@ -1,13 +1,15 @@
 # Service: RuntimeDiagnosticsAggregator.ts
 
-**Source**: [electron\services\RuntimeDiagnosticsAggregator.ts](../../electron/services/RuntimeDiagnosticsAggregator.ts)
+**Source**: [electron/services/RuntimeDiagnosticsAggregator.ts](../../electron/services/RuntimeDiagnosticsAggregator.ts)
 
 ## Class: `RuntimeDiagnosticsAggregator`
 
 ### Methods
 
 #### `dispose`
-Stops the internal TelemetryBus subscription. Call during teardown if the aggregator instance is being discarded./
+Stops the internal TelemetryBus subscription.
+ Call during teardown if the aggregator instance is being discarded.
+/
 
 **Arguments**: ``
 **Returns**: `void`

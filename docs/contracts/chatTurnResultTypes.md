@@ -1,6 +1,6 @@
 # Contract: chatTurnResultTypes.ts
 
-**Source**: [shared\chatTurnResultTypes.ts](../../shared/chatTurnResultTypes.ts)
+**Source**: [shared/chatTurnResultTypes.ts](../../shared/chatTurnResultTypes.ts)
 
 ## Interfaces
 

@@ -1,6 +1,6 @@
 # Contract: adaptiveTypes.ts
 
-**Source**: [shared\adaptiveTypes.ts](../../shared/adaptiveTypes.ts)
+**Source**: [shared/adaptiveTypes.ts](../../shared/adaptiveTypes.ts)
 
 ## Interfaces
 

@@ -1,6 +1,6 @@
 # Contract: reflectionTypes.ts
 
-**Source**: [shared\reflectionTypes.ts](../../shared/reflectionTypes.ts)
+**Source**: [shared/reflectionTypes.ts](../../shared/reflectionTypes.ts)
 
 ## Interfaces
 

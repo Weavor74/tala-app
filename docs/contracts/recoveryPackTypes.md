@@ -1,6 +1,6 @@
 # Contract: recoveryPackTypes.ts
 
-**Source**: [shared\recoveryPackTypes.ts](../../shared/recoveryPackTypes.ts)
+**Source**: [shared/recoveryPackTypes.ts](../../shared/recoveryPackTypes.ts)
 
 ## Interfaces
 

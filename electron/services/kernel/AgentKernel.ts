@@ -37,6 +37,9 @@ import {
     resolveRpMetaOntologyLeak,
 } from '../agent/PersonaIdentityResponseAdapter';
 import {
+    applyRpFinalOntologyGuard,
+} from '../agent/RpPublishBoundaryGuard';
+import {
     resolveImmersiveRelationalRequest,
     resolveOperationalSystemRequest,
     resolvePersonaIdentityDisclosure,
@@ -151,6 +154,21 @@ const AGENT_RP_PERSONA_TRUTH_EVENTS = {
     | 'leakDetected'
     | 'rewritten'
     | 'publishBlocked',
+    RuntimeEventType
+>;
+
+const RP_PUBLISH_GUARD_EVENTS = {
+    evaluated: 'agent.rp_publish_guard_evaluated',
+    leakDetected: 'agent.rp_publish_guard_leak_detected',
+    rewritten: 'agent.rp_publish_guard_rewritten',
+    blocked: 'agent.rp_publish_guard_blocked',
+    passthrough: 'agent.rp_publish_guard_passthrough',
+} as const satisfies Record<
+    | 'evaluated'
+    | 'leakDetected'
+    | 'rewritten'
+    | 'blocked'
+    | 'passthrough',
     RuntimeEventType
 >;
 
@@ -636,19 +654,110 @@ export class AgentKernel {
         const turnPolicy = 'persona_truth_lock';
         const routeSource = turnResult.source;
         const normalizedMessage = normalizeAssistantOutput(turnResult.message);
-        const preLeakDetection = resolveRpMetaOntologyLeak(normalizedMessage.content);
-        const adapted = buildAssistantPersonaPolicyAdaptation({
-            rawContent: normalizedMessage.content,
-            activeMode: meta.mode,
-            turnIntent: turnDecision?.mode,
-            turnPolicy,
+
+        // ── Universal RP publish-boundary guard ──────────────────────────────
+        // applyRpFinalOntologyGuard is the single deterministic gate that runs
+        // on every final RP response regardless of the path that produced it.
+        const guardResult = applyRpFinalOntologyGuard({
+            finalText: normalizedMessage.content,
+            mode: meta.mode,
             userMessage: request.userMessage,
+            intent: turnDecision?.mode,
+            routeSource,
             isOperationalRequest: turnDecision?.isOperationalSystemRequest,
             isSystemKnowledgeRequest: turnDecision?.selfKnowledgeDetected,
             isFollowupToPersonaConversation: followupToPersonaConversation,
         });
 
         const bus = TelemetryBus.getInstance();
+
+        // ── New publish-guard diagnostic events ───────────────────────────────
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'agent',
+            event: RP_PUBLISH_GUARD_EVENTS.evaluated,
+            phase: 'finalizing',
+            payload: {
+                turnId: turnDecision?.turnId,
+                mode: meta.mode,
+                intent: turnDecision?.mode,
+                routeSource,
+                guardFired: guardResult.guardFired,
+                actionTaken: guardResult.actionTaken,
+                leakDetected: guardResult.leakDetected,
+                matchedMetaCategories: guardResult.matchedMetaCategories,
+                reasonCodes: guardResult.reasonCodes,
+            },
+        });
+
+        if (guardResult.leakDetected) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: RP_PUBLISH_GUARD_EVENTS.leakDetected,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    intent: turnDecision?.mode,
+                    routeSource,
+                    matchedMetaCategories: guardResult.matchedMetaCategories,
+                    originalLeakRedacted: true,
+                    originalLeakExcerptHash: this._hashForTelemetry(normalizedMessage.content),
+                    reasonCodes: guardResult.reasonCodes,
+                },
+            });
+        }
+
+        if (guardResult.actionTaken === 'rewritten') {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: RP_PUBLISH_GUARD_EVENTS.rewritten,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    intent: turnDecision?.mode,
+                    routeSource,
+                    matchedMetaCategories: guardResult.matchedMetaCategories,
+                    adaptationMode: guardResult.adaptationMode,
+                    reasonCodes: guardResult.reasonCodes,
+                },
+            });
+        } else if (guardResult.actionTaken === 'blocked') {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: RP_PUBLISH_GUARD_EVENTS.blocked,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    intent: turnDecision?.mode,
+                    routeSource,
+                    matchedMetaCategories: guardResult.matchedMetaCategories,
+                    adaptationMode: guardResult.adaptationMode,
+                    reasonCodes: guardResult.reasonCodes,
+                },
+            });
+        } else if (guardResult.guardFired) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: RP_PUBLISH_GUARD_EVENTS.passthrough,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    intent: turnDecision?.mode,
+                    routeSource,
+                    reasonCodes: guardResult.reasonCodes,
+                },
+            });
+        }
+
+        // ── Backward-compatible existing events ───────────────────────────────
         bus.emit({
             executionId: meta.executionId,
             subsystem: 'agent',
@@ -663,12 +772,12 @@ export class AgentKernel {
                 enforcementMode: 'absolute_persona_lock',
                 routeSource,
                 isFollowupToPersonaConversation: followupToPersonaConversation,
-                adaptationMode: adapted.adaptationMode,
-                reasonCodes: adapted.reasonCodes,
+                adaptationMode: guardResult.adaptationMode,
+                reasonCodes: guardResult.reasonCodes,
             },
         });
 
-        if (preLeakDetection.isMetaOntologyLeak) {
+        if (guardResult.leakDetected) {
             bus.emit({
                 executionId: meta.executionId,
                 subsystem: 'agent',
@@ -680,21 +789,15 @@ export class AgentKernel {
                     turnIntent: turnDecision?.mode,
                     turnPolicy,
                     routeSource,
-                    matchedMetaCategories: preLeakDetection.matchedCategories,
+                    matchedMetaCategories: guardResult.matchedMetaCategories,
                     originalLeakRedacted: true,
                     originalLeakExcerptHash: this._hashForTelemetry(normalizedMessage.content),
-                    reasonCodes: preLeakDetection.reasonCodes,
+                    reasonCodes: guardResult.reasonCodes,
                 },
             });
         }
 
-        let enforcedMessage = normalizeAssistantOutput({
-            content: adapted.content,
-            artifactId: normalizedMessage.artifactId,
-            outputChannel: adapted.outputChannel ?? normalizedMessage.outputChannel,
-        });
-        let publishBlockedEmitted = false;
-        if (enforcedMessage.content !== normalizedMessage.content) {
+        if (guardResult.actionTaken !== 'passthrough') {
             bus.emit({
                 executionId: meta.executionId,
                 subsystem: 'agent',
@@ -706,12 +809,12 @@ export class AgentKernel {
                     turnIntent: turnDecision?.mode,
                     turnPolicy,
                     routeSource,
-                    matchedMetaCategories: adapted.matchedMetaCategories ?? [],
-                    adaptationMode: adapted.adaptationMode,
-                    reasonCodes: adapted.reasonCodes,
+                    matchedMetaCategories: guardResult.matchedMetaCategories,
+                    adaptationMode: guardResult.adaptationMode,
+                    reasonCodes: guardResult.reasonCodes,
                 },
             });
-            if (preLeakDetection.isMetaOntologyLeak) {
+            if (guardResult.leakDetected) {
                 bus.emit({
                     executionId: meta.executionId,
                     subsystem: 'agent',
@@ -723,58 +826,27 @@ export class AgentKernel {
                         turnIntent: turnDecision?.mode,
                         turnPolicy,
                         routeSource,
-                        matchedMetaCategories: preLeakDetection.matchedCategories,
-                        adaptationMode: adapted.adaptationMode,
+                        matchedMetaCategories: guardResult.matchedMetaCategories,
+                        adaptationMode: guardResult.adaptationMode,
                         reasonCodes: [
-                            ...preLeakDetection.reasonCodes,
-                            ...adapted.reasonCodes,
+                            ...guardResult.reasonCodes,
                             'persona_truth.final_publish_guard_blocked_raw_meta_ontology',
                         ],
                     },
                 });
-                publishBlockedEmitted = true;
             }
         }
 
-        const postLeakDetection = resolveRpMetaOntologyLeak(enforcedMessage.content);
-        if (postLeakDetection.isMetaOntologyLeak) {
-            const blocked = buildAssistantPersonaPolicyAdaptation({
-                rawContent: 'I am not human. I am an agent.',
-                activeMode: meta.mode,
-                turnIntent: turnDecision?.mode,
-                turnPolicy,
-                userMessage: request.userMessage,
-                isOperationalRequest: turnDecision?.isOperationalSystemRequest,
-                isSystemKnowledgeRequest: turnDecision?.selfKnowledgeDetected,
-                isFollowupToPersonaConversation: followupToPersonaConversation,
-            });
-            enforcedMessage = normalizeAssistantOutput({
-                content: blocked.content,
-                artifactId: normalizedMessage.artifactId,
-                outputChannel: blocked.outputChannel ?? normalizedMessage.outputChannel,
-            });
-            if (!publishBlockedEmitted) {
-                bus.emit({
-                    executionId: meta.executionId,
-                    subsystem: 'agent',
-                    event: AGENT_RP_PERSONA_TRUTH_EVENTS.publishBlocked,
-                    phase: 'finalizing',
-                    payload: {
-                        turnId: turnDecision?.turnId,
-                        mode: meta.mode,
-                        turnIntent: turnDecision?.mode,
-                        turnPolicy,
-                        routeSource,
-                        matchedMetaCategories: postLeakDetection.matchedCategories,
-                        adaptationMode: 'persona_truth_enforced',
-                        reasonCodes: [
-                            ...postLeakDetection.reasonCodes,
-                            'persona_truth.final_publish_guard_blocked_raw_meta_ontology',
-                        ],
-                    },
-                });
-            }
+        // ── Apply guard result ────────────────────────────────────────────────
+        if (guardResult.actionTaken === 'passthrough') {
+            return turnResult;
         }
+
+        const enforcedMessage = normalizeAssistantOutput({
+            content: guardResult.finalText,
+            artifactId: normalizedMessage.artifactId,
+            outputChannel: guardResult.outputChannel ?? normalizedMessage.outputChannel,
+        });
 
         return {
             ...turnResult,
