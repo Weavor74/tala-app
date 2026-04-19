@@ -46,6 +46,11 @@ This document identifies functional areas and system components that currently l
 - Self-inspection authority routing is now documented in kernel/service interaction docs and test traceability, with deterministic detector contract in:
   - `shared/agent/SelfInspectionIntent.ts`
   - `electron/services/agent/SelfInspectionExecutionService.ts`
+- Self-knowledge authority routing is now documented through generated contracts and kernel/service updates, including:
+  - `shared/agent/SelfKnowledgeIntent.ts`
+  - `electron/services/agent/SelfKnowledgeExecutionService.ts`
+  - `docs/contracts/turnArbitrationTypes.md`
+  - `docs/contracts/runtimeEventTypes.md`
 - Turn arbitration diagnostics were extended for self-inspection visibility in:
   - `shared/turnArbitrationTypes.ts`
   - generated contract docs for `shared/turnArbitrationTypes.ts`.

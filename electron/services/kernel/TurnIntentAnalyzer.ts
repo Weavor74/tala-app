@@ -1,6 +1,7 @@
 import type { TurnIntentProfile } from '../../../shared/turnArbitrationTypes';
 import type { KernelTurnContext } from './TurnContextBuilder';
 import { detectSelfInspectionRequest } from '../../../shared/agent/SelfInspectionIntent';
+import { resolveSelfKnowledgeRequest } from '../../../shared/agent/SelfKnowledgeIntent';
 
 const EXPLANATION_TERMS = [
     'explain',
@@ -59,6 +60,10 @@ export class TurnIntentAnalysisService {
             text: context.request.userText,
             mode: context.runtime.mode,
         });
+        const selfKnowledgeDecision = resolveSelfKnowledgeRequest({
+            text: context.request.userText,
+            mode: context.runtime.mode,
+        });
         const containsDirectQuestion =
             text.includes('?') || /^(what|why|how|is|are|can|should)\b/.test(text);
         const hasExecutionVerb = includesAny(text, EXECUTION_VERBS);
@@ -80,7 +85,8 @@ export class TurnIntentAnalysisService {
             explanationLanguage &&
             !hasExecutionVerb &&
             !containsBuildOrFixRequest &&
-            !selfInspectionDecision.isSelfInspectionRequest;
+            !selfInspectionDecision.isSelfInspectionRequest &&
+            !selfKnowledgeDecision.isSelfKnowledgeRequest;
 
         let conversationalWeight = 0.2;
         let hybridWeight = 0.1;
@@ -125,6 +131,13 @@ export class TurnIntentAnalysisService {
             reasonCodes.push('intent:self_inspection_override');
             reasonCodes.push(...selfInspectionDecision.reasonCodes);
         }
+        if (selfKnowledgeDecision.isSelfKnowledgeRequest) {
+            hybridWeight += 0.45;
+            goalExecutionWeight += 0.2;
+            conversationalWeight = Math.max(0, conversationalWeight - 0.3);
+            reasonCodes.push('intent:self_knowledge_override');
+            reasonCodes.push(...selfKnowledgeDecision.reasonCodes);
+        }
 
         conversationalWeight = Math.min(1, conversationalWeight);
         hybridWeight = Math.min(1, hybridWeight);
@@ -145,6 +158,10 @@ export class TurnIntentAnalysisService {
             selfInspectionOperation: selfInspectionDecision.requestedOperation,
             selfInspectionRequestedPaths: selfInspectionDecision.requestedPaths,
             selfInspectionReasonCodes: selfInspectionDecision.reasonCodes,
+            selfKnowledgeDetected: selfKnowledgeDecision.isSelfKnowledgeRequest,
+            selfKnowledgeRequestedAspects: selfKnowledgeDecision.requestedAspects,
+            selfKnowledgeScope: selfKnowledgeDecision.requestedScope,
+            selfKnowledgeReasonCodes: selfKnowledgeDecision.reasonCodes,
             reasonCodes,
         };
     }

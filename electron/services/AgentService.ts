@@ -56,6 +56,7 @@ import { cognitiveContextCompactor } from './cognitive/CognitiveContextCompactor
 import { telemetry } from './TelemetryService';
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { RuntimeDiagnosticsAggregator } from './RuntimeDiagnosticsAggregator';
+import type { SelfModelQueryService } from './selfModel/SelfModelQueryService';
 import { resolveDatabaseConfig, buildPgDsn } from './db/resolveDatabaseConfig';
 import { getCanonicalMemoryRepository, initCanonicalMemory, shutdownCanonicalMemory, getLastDbHealth } from './db/initMemoryStore';
 import { MemoryAuthorityService } from './memory/MemoryAuthorityService';
@@ -291,6 +292,8 @@ Violation of this rule is considered a system failure.`;
     private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
     /** Optional diagnostics aggregator — records cognitive context after each turn. */
     private diagnosticsAggregator: RuntimeDiagnosticsAggregator | null = null;
+    /** Optional self-model query authority used by self-knowledge routing. */
+    private selfModelQueryService: SelfModelQueryService | null = null;
 
     private static shouldApplyCanonRequiredAutobioOverride(turnObject: any, activeMode: string): boolean {
         return activeMode !== 'rp'
@@ -878,6 +881,22 @@ Violation of this rule is considered a system failure.`;
      */
     public setDiagnosticsAggregator(agg: RuntimeDiagnosticsAggregator): void {
         this.diagnosticsAggregator = agg;
+    }
+
+    public setSelfModelQueryService(service: SelfModelQueryService): void {
+        this.selfModelQueryService = service;
+    }
+
+    public getSelfModelQueryService(): SelfModelQueryService | null {
+        return this.selfModelQueryService;
+    }
+
+    public getRuntimeDiagnosticsSnapshot(): unknown {
+        return this.diagnosticsAggregator?.getSnapshot() ?? null;
+    }
+
+    public getWorkspaceRootPath(): string | undefined {
+        return this.systemInfo?.workspaceRoot;
     }
 
     public setGitService(git: unknown) {

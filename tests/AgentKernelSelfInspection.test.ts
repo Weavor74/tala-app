@@ -77,7 +77,7 @@ describe('AgentKernel self-inspection authority routing', () => {
         });
 
         const result = await kernel.execute({
-            userMessage: 'What do you know about your systems?',
+            userMessage: 'Inspect your local files and systems docs.',
             operatorMode: 'chat',
             executionMode: 'rp',
         });
@@ -119,4 +119,3 @@ describe('AgentKernel self-inspection authority routing', () => {
         expect(followUp.message.toLowerCase()).not.toContain('just a language model');
     });
 });
-

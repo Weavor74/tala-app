@@ -23,6 +23,13 @@ export class TurnArbitrationService {
             source = 'operator_override';
             confidence = 1;
             reasonCodes.push('arbitration:operator_override_goal');
+            if (profile.selfKnowledgeDetected) {
+                mode = 'hybrid';
+                source = 'rule_based';
+                confidence = 0.98;
+                reasonCodes.push('arbitration:self_knowledge_forced_substantive');
+                reasonCodes.push('arbitration:self_knowledge_bypassed_goal_override');
+            }
         } else if (operatorMode === 'chat') {
             mode = 'conversational';
             source = 'operator_override';
@@ -38,6 +45,18 @@ export class TurnArbitrationService {
                 reasonCodes.push('arbitration:self_inspection_forced_substantive');
                 reasonCodes.push('arbitration:self_inspection_bypassed_chat_override');
             }
+            if (profile.selfKnowledgeDetected) {
+                mode = 'hybrid';
+                source = 'rule_based';
+                confidence = 0.98;
+                reasonCodes.push('arbitration:self_knowledge_forced_substantive');
+                reasonCodes.push('arbitration:self_knowledge_bypassed_chat_override');
+            }
+        } else if (profile.selfKnowledgeDetected) {
+            mode = 'hybrid';
+            source = 'rule_based';
+            confidence = 0.98;
+            reasonCodes.push('arbitration:self_knowledge_forced_substantive');
         } else if (profile.selfInspectionDetected) {
             mode = 'hybrid';
             source = 'rule_based';
@@ -114,6 +133,10 @@ export class TurnArbitrationService {
             selfInspectionRequest: profile.selfInspectionDetected,
             selfInspectionOperation: profile.selfInspectionOperation,
             selfInspectionRequestedPaths: profile.selfInspectionRequestedPaths,
+            selfKnowledgeDetected: profile.selfKnowledgeDetected,
+            selfKnowledgeRequestedAspects: profile.selfKnowledgeRequestedAspects,
+            selfKnowledgeRouted: profile.selfKnowledgeDetected === true,
+            selfKnowledgeBypassedFallback: profile.selfKnowledgeDetected === true,
         };
 
         const envelope: TurnAuthorityEnvelope = {

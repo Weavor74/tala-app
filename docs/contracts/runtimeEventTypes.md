@@ -73,6 +73,12 @@ type RuntimeEventType =
     | 'agent.self_inspection_tool_failed'
     | 'agent.self_inspection_write_blocked'
     | 'agent.self_inspection_bypassed_greeting_policy'
+    | 'agent.self_knowledge_detected'
+    | 'agent.self_knowledge_routed'
+    | 'agent.self_knowledge_snapshot_built'
+    | 'agent.self_knowledge_source_unavailable'
+    | 'agent.self_knowledge_response_grounded'
+    | 'agent.self_knowledge_fallback_blocked'
     | `agent.${string}`
     | 'execution.created'
     | 'execution.accepted'

@@ -35,6 +35,23 @@ interface TurnIntentProfile {
     selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
     selfInspectionRequestedPaths?: string[];
     selfInspectionReasonCodes?: string[];
+    selfKnowledgeDetected?: boolean;
+    selfKnowledgeRequestedAspects?: Array<
+        | 'identity'
+        | 'capabilities'
+        | 'tools'
+        | 'architecture'
+        | 'systems'
+        | 'memory'
+        | 'filesystem'
+        | 'permissions'
+        | 'runtime_mode'
+        | 'limits'
+        | 'invariants'
+        | 'unknown'
+    >;
+    selfKnowledgeScope?: 'broad' | 'specific';
+    selfKnowledgeReasonCodes?: string[];
     reasonCodes: string[];
 }
 ```
@@ -58,6 +75,24 @@ interface TurnArbitrationDecision {
     selfInspectionRequest?: boolean;
     selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
     selfInspectionRequestedPaths?: string[];
+    selfKnowledgeDetected?: boolean;
+    selfKnowledgeRequestedAspects?: Array<
+        | 'identity'
+        | 'capabilities'
+        | 'tools'
+        | 'architecture'
+        | 'systems'
+        | 'memory'
+        | 'filesystem'
+        | 'permissions'
+        | 'runtime_mode'
+        | 'limits'
+        | 'invariants'
+        | 'unknown'
+    >;
+    selfKnowledgeRouted?: boolean;
+    selfKnowledgeSourceTruths?: string[];
+    selfKnowledgeBypassedFallback?: boolean;
 }
 ```
 
@@ -89,6 +124,11 @@ interface KernelTurnDiagnosticsView {
     selfInspectionRequest?: boolean;
     selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
     selfInspectionRequestedPaths?: string[];
+    selfKnowledgeDetected?: boolean;
+    selfKnowledgeRequestedAspects?: string[];
+    selfKnowledgeRouted?: boolean;
+    selfKnowledgeSourceTruths?: string[];
+    selfKnowledgeBypassedFallback?: boolean;
     updatedAt: string;
 }
 ```

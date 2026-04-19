@@ -28,6 +28,7 @@ import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
 import { SelfInspectionExecutionService } from '../agent/SelfInspectionExecutionService';
+import { SelfKnowledgeExecutionService } from '../agent/SelfKnowledgeExecutionService';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -300,6 +301,7 @@ export class AgentKernel {
     private readonly _turnIntentAnalyzer = new TurnIntentAnalysisService();
     private readonly _turnArbitrator = new TurnArbitrationService();
     private readonly _selfInspectionExecution = new SelfInspectionExecutionService();
+    private readonly _selfKnowledgeExecution = new SelfKnowledgeExecutionService();
 
     constructor(agent: AgentService) {
         this.agent = agent;
@@ -628,6 +630,11 @@ export class AgentKernel {
                 selfInspectionRequest: turnDecision.selfInspectionRequest === true,
                 selfInspectionOperation: turnDecision.selfInspectionOperation,
                 selfInspectionRequestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                selfKnowledgeDetected: turnDecision.selfKnowledgeDetected === true,
+                selfKnowledgeRequestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                selfKnowledgeRouted: turnDecision.selfKnowledgeRouted === true,
+                selfKnowledgeSourceTruths: turnDecision.selfKnowledgeSourceTruths ?? [],
+                selfKnowledgeBypassedFallback: turnDecision.selfKnowledgeBypassedFallback === true,
             },
         });
         if (turnDecision.selfInspectionRequest) {
@@ -657,6 +664,33 @@ export class AgentKernel {
                     turnId: turnDecision.turnId,
                     mode: meta.mode,
                     reasonCodes: ['self_inspection_precedence_over_greeting'],
+                },
+            });
+        }
+        if (turnDecision.selfKnowledgeDetected) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_knowledge_detected',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    requestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                    toolsAllowed: true,
+                    writesAllowed: request.capabilitiesOverride?.allowWritesThisTurn === true,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_knowledge_fallback_blocked',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    reasonCodes: ['self_knowledge_precedence_over_conversational_fallback'],
                 },
             });
         }
@@ -744,6 +778,139 @@ export class AgentKernel {
         const envelope = meta.authorityEnvelope;
         if (!turnDecision || !envelope) {
             throw new Error('AgentKernel.runDelegatedFlow: missing immutable turn arbitration decision');
+        }
+        if (turnDecision.selfKnowledgeDetected) {
+            const systemHealth = SystemModeManager.getSystemHealthSnapshot();
+            const writesAllowedByMode = systemHealth?.mode_contract.writes_allowed ?? true;
+            const writesAllowedByTurn = request.capabilitiesOverride?.allowWritesThisTurn === true;
+            const allowWritesThisTurn = writesAllowedByTurn && writesAllowedByMode;
+            const capabilityMatrix = systemHealth?.capability_matrix ?? [];
+            const toolsCapability = capabilityMatrix.find((entry) => entry.capability === 'tool_execute_read');
+            const toolsAllowed = !toolsCapability
+                || toolsCapability.status === 'available'
+                || toolsCapability.status === 'degraded';
+
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_knowledge_routed',
+                phase: 'delegate',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    requestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                    toolsAllowed,
+                    writesAllowed: allowWritesThisTurn,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+
+            const runtimeDiagnosticsSnapshot = (this.agent as unknown as {
+                getRuntimeDiagnosticsSnapshot?: () => unknown;
+            }).getRuntimeDiagnosticsSnapshot?.();
+            const selfModelService = (this.agent as unknown as {
+                getSelfModelQueryService?: () => {
+                    queryCapabilities: () => { capabilities: Array<{ id: string }> };
+                    queryInvariants: () => { invariants: Array<{ id: string; statement?: string }> };
+                    getArchitectureSummary: () => {
+                        totalInvariants?: number;
+                        activeInvariants?: number;
+                        totalCapabilities?: number;
+                        availableCapabilities?: number;
+                        totalComponents?: number;
+                    };
+                } | null;
+            }).getSelfModelQueryService?.() ?? null;
+            const selfKnowledgeResult = await this._selfKnowledgeExecution.executeSelfKnowledgeTurn({
+                text: request.userMessage,
+                mode: meta.mode,
+                allowWritesThisTurn,
+                toolsAllowedThisTurn: toolsAllowed,
+                reasonCodes: turnDecision.reasonCodes,
+                toolRegistry: {
+                    getAllTools: () =>
+                        (this.agent as unknown as {
+                            getAllTools?: () => Array<{ name?: string; source?: string; description?: string }>;
+                        }).getAllTools?.() ?? [],
+                },
+                selfModelService: selfModelService
+                    ? {
+                        queryCapabilities: () => selfModelService.queryCapabilities(),
+                        queryInvariants: () => selfModelService.queryInvariants(),
+                        getArchitectureSummary: () => selfModelService.getArchitectureSummary(),
+                    }
+                    : undefined,
+                runtimeDiagnostics: runtimeDiagnosticsSnapshot
+                    ? { getSnapshot: () => runtimeDiagnosticsSnapshot }
+                    : undefined,
+                filesystemPolicy: {
+                    getAllowedRoot: () =>
+                        (this.agent as unknown as { getWorkspaceRootPath?: () => string | undefined }).getWorkspaceRootPath?.()
+                        ?? (typeof request.workspaceContext?.workspaceRoot === 'string'
+                            ? request.workspaceContext.workspaceRoot
+                            : undefined),
+                    getWritePolicy: () =>
+                        allowWritesThisTurn ? 'writes_allowed_this_turn' : 'writes_blocked_this_turn',
+                },
+            });
+
+            if (selfKnowledgeResult.sourceTruths.length === 0) {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: 'agent.self_knowledge_source_unavailable',
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        requestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                        sourceTruths: [],
+                        toolsAllowed,
+                        writesAllowed: allowWritesThisTurn,
+                        reasonCodes: [...turnDecision.reasonCodes, 'self_knowledge.authority_sources_unavailable'],
+                    },
+                });
+            }
+
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_knowledge_snapshot_built',
+                phase: 'delegate',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    requestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                    sourceTruths: selfKnowledgeResult.sourceTruths,
+                    toolsAllowed,
+                    writesAllowed: allowWritesThisTurn,
+                    runtimeDegraded: (selfKnowledgeResult.snapshot.runtime.degradedReasons?.length ?? 0) > 0,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_knowledge_response_grounded',
+                phase: 'delegate',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    requestedAspects: turnDecision.selfKnowledgeRequestedAspects ?? [],
+                    sourceTruths: selfKnowledgeResult.sourceTruths,
+                    toolsAllowed,
+                    writesAllowed: allowWritesThisTurn,
+                    runtimeDegraded: (selfKnowledgeResult.snapshot.runtime.degradedReasons?.length ?? 0) > 0,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            turnDecision.selfKnowledgeSourceTruths = selfKnowledgeResult.sourceTruths;
+            turnDecision.selfKnowledgeRouted = true;
+            turnDecision.selfKnowledgeBypassedFallback = true;
+            return {
+                message: selfKnowledgeResult.summary,
+                outputChannel: selfKnowledgeResult.blockedReason ? 'fallback' : 'chat',
+            };
         }
         if (turnDecision.selfInspectionRequest) {
             const systemHealth = SystemModeManager.getSystemHealthSnapshot();

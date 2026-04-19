@@ -1005,11 +1005,49 @@ export class RuntimeDiagnosticsAggregator {
                 selfInspectionRequestedPaths: Array.isArray(payload.selfInspectionRequestedPaths)
                     ? payload.selfInspectionRequestedPaths.map(String)
                     : undefined,
+                selfKnowledgeDetected: payload.selfKnowledgeDetected === true,
+                selfKnowledgeRequestedAspects: Array.isArray(payload.selfKnowledgeRequestedAspects)
+                    ? payload.selfKnowledgeRequestedAspects.map(String)
+                    : undefined,
+                selfKnowledgeRouted: payload.selfKnowledgeRouted === true,
+                selfKnowledgeSourceTruths: Array.isArray(payload.selfKnowledgeSourceTruths)
+                    ? payload.selfKnowledgeSourceTruths.map(String)
+                    : undefined,
+                selfKnowledgeBypassedFallback: payload.selfKnowledgeBypassedFallback === true,
                 updatedAt: now,
             };
             return;
         }
         if (!this._kernelTurnSnapshot) return;
+        if (event === 'agent.self_knowledge_routed') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                selfKnowledgeRouted: true,
+                selfKnowledgeRequestedAspects: Array.isArray(payload.requestedAspects)
+                    ? payload.requestedAspects.map(String)
+                    : this._kernelTurnSnapshot.selfKnowledgeRequestedAspects,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'agent.self_knowledge_snapshot_built') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                selfKnowledgeSourceTruths: Array.isArray(payload.sourceTruths)
+                    ? payload.sourceTruths.map(String)
+                    : this._kernelTurnSnapshot.selfKnowledgeSourceTruths,
+                updatedAt: now,
+            };
+            return;
+        }
+        if (event === 'agent.self_knowledge_fallback_blocked') {
+            this._kernelTurnSnapshot = {
+                ...this._kernelTurnSnapshot,
+                selfKnowledgeBypassedFallback: true,
+                updatedAt: now,
+            };
+            return;
+        }
         if (event === 'kernel.turn_mode_conversational') {
             this._kernelTurnSnapshot = {
                 ...this._kernelTurnSnapshot,

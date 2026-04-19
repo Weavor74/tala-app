@@ -37,6 +37,26 @@ Wires the runtime diagnostics aggregator so cognitive contexts can be recorded 
 **Returns**: `void`
 
 ---
+#### `setSelfModelQueryService`
+**Arguments**: `service: SelfModelQueryService`
+**Returns**: `void`
+
+---
+#### `getSelfModelQueryService`
+**Arguments**: ``
+**Returns**: `SelfModelQueryService | null`
+
+---
+#### `getRuntimeDiagnosticsSnapshot`
+**Arguments**: ``
+**Returns**: `unknown`
+
+---
+#### `getWorkspaceRootPath`
+**Arguments**: ``
+**Returns**: `string | undefined`
+
+---
 #### `setGitService`
 **Arguments**: `git: unknown`
 

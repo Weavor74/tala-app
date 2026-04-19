@@ -169,6 +169,7 @@ const selfModelBuilder = new SelfModelBuilder();
 const selfModelQueryService = new SelfModelQueryService(invariantRegistry, capabilityRegistry, ownershipMapper, selfModelScanner, selfModelBuilder);
 const selfModelRefreshService = new SelfModelRefreshService(invariantRegistry, capabilityRegistry, selfModelQueryService, USER_DATA_DIR);
 const selfModelAppService = new SelfModelAppService(selfModelRefreshService, selfModelQueryService);
+agent.setSelfModelQueryService(selfModelQueryService);
 
 // SafeChangePlanner requires selfModelQueryService — must come after it
 const safePlanner = new SafeChangePlanner(selfModelQueryService, USER_DATA_DIR);
