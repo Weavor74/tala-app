@@ -18,6 +18,10 @@ import type {
     PromotionDecisionOrigin,
     RecommendationExpiryReason,
 } from '../../../shared/planning/IterationPolicyGovernanceTypes';
+import type {
+    IterationGovernanceHistoryEntry,
+    IterationGovernanceMaintenanceReport,
+} from '../../../shared/planning/IterationPolicyGovernanceOperationsTypes';
 import type { IterationWorthinessClass } from '../../../shared/planning/IterationPolicyTypes';
 import { IterationPolicyPromotionGovernorService } from './IterationPolicyPromotionGovernor';
 
@@ -45,6 +49,29 @@ function cloneDecision(record: IterationPromotionDecision): IterationPromotionDe
     };
 }
 
+function cloneHistoryEntry(entry: IterationGovernanceHistoryEntry): IterationGovernanceHistoryEntry {
+    return {
+        ...entry,
+        reasonCodes: [...entry.reasonCodes],
+        blockedReasonCodes: [...entry.blockedReasonCodes],
+    };
+}
+
+function cloneMaintenanceReport(report: IterationGovernanceMaintenanceReport): IterationGovernanceMaintenanceReport {
+    return {
+        ...report,
+        sweepResults: report.sweepResults.map((item) => ({
+            ...item,
+            actionIds: [...item.actionIds],
+            reasonCodes: [...item.reasonCodes],
+        })),
+        summary: { ...report.summary },
+        recommendationQueueCounts: { ...report.recommendationQueueCounts },
+        overrideQueueCounts: { ...report.overrideQueueCounts },
+        unresolvedIncompatibleOverrideIds: [...report.unresolvedIncompatibleOverrideIds],
+    };
+}
+
 function cloneState(state: IterationPolicyTuningState): IterationPolicyTuningState {
     return {
         doctrineVersion: state.doctrineVersion,
@@ -62,6 +89,10 @@ function cloneState(state: IterationPolicyTuningState): IterationPolicyTuningSta
         retiredOverrides: state.retiredOverrides.map(cloneOverride),
         supersededOverrides: state.supersededOverrides.map(cloneOverride),
         promotionDecisions: state.promotionDecisions.map(cloneDecision),
+        governanceHistory: state.governanceHistory.map(cloneHistoryEntry),
+        lastMaintenanceReport: state.lastMaintenanceReport
+            ? cloneMaintenanceReport(state.lastMaintenanceReport)
+            : undefined,
         overrideSupersessionRecords: state.overrideSupersessionRecords.map((item) => ({ ...item, reasonCodes: [...item.reasonCodes] })),
         lastAnalyticsSnapshot: state.lastAnalyticsSnapshot
             ? {
@@ -100,6 +131,7 @@ export class IterationPolicyTuningRepository {
             retiredOverrides: [],
             supersededOverrides: [],
             promotionDecisions: [],
+            governanceHistory: [],
             overrideSupersessionRecords: [],
         };
     }
@@ -121,6 +153,54 @@ export class IterationPolicyTuningRepository {
 
     getDoctrineVersion(): PolicyDoctrineVersion {
         return this._state.doctrineVersion;
+    }
+
+    setLastMaintenanceReport(report: IterationGovernanceMaintenanceReport): void {
+        this._state.lastMaintenanceReport = cloneMaintenanceReport(report);
+    }
+
+    getLastMaintenanceReport(): IterationGovernanceMaintenanceReport | undefined {
+        return this._state.lastMaintenanceReport
+            ? cloneMaintenanceReport(this._state.lastMaintenanceReport)
+            : undefined;
+    }
+
+    appendGovernanceHistory(entry: IterationGovernanceHistoryEntry): void {
+        this._state.governanceHistory.push(cloneHistoryEntry(entry));
+        if (this._state.governanceHistory.length > 500) {
+            this._state.governanceHistory = this._state.governanceHistory.slice(-500);
+        }
+    }
+
+    listGovernanceHistory(limit: number = 50): IterationGovernanceHistoryEntry[] {
+        return this._state.governanceHistory
+            .slice(Math.max(0, this._state.governanceHistory.length - limit))
+            .map(cloneHistoryEntry);
+    }
+
+    getRecommendationRecord(
+        recommendationId: string,
+    ): IterationGovernedRecommendationRecord | undefined {
+        const allRecords = [
+            ...this._state.pendingRecommendations,
+            ...this._state.expiredRecommendations,
+            ...this._state.supersededRecommendations,
+        ];
+        const record = allRecords.find(
+            (item) => item.recommendation.recommendationId === recommendationId,
+        );
+        return record ? cloneRecommendation(record) : undefined;
+    }
+
+    getOverrideRecord(overrideId: string): IterationGovernedOverrideRecord | undefined {
+        const allRecords = [
+            ...this._state.activeOverrides,
+            ...this._state.staleOverrides,
+            ...this._state.retiredOverrides,
+            ...this._state.supersededOverrides,
+        ];
+        const record = allRecords.find((item) => item.overrideId === overrideId);
+        return record ? cloneOverride(record) : undefined;
     }
 
     setLastAnalyticsSnapshot(snapshot: IterationEffectivenessSnapshot): void {
@@ -356,6 +436,26 @@ export class IterationPolicyTuningRepository {
         return expired;
     }
 
+    expireRecommendation(
+        recommendationId: string,
+        expiryReason: RecommendationExpiryReason,
+        nowIso: string = new Date().toISOString(),
+    ): IterationGovernedRecommendationRecord | undefined {
+        const record = this._state.pendingRecommendations.find(
+            (item) => item.recommendation.recommendationId === recommendationId,
+        );
+        if (!record) return undefined;
+        record.lifecycleState = 'expired';
+        record.expiredAt = nowIso;
+        record.expiryReason = expiryReason;
+        record.reasonCodes = [...record.reasonCodes, 'governance.recommendation_expired'];
+        this._state.expiredRecommendations.push(cloneRecommendation(record));
+        this._state.pendingRecommendations = this._state.pendingRecommendations.filter(
+            (item) => item.recommendation.recommendationId !== recommendationId,
+        );
+        return cloneRecommendation(record);
+    }
+
     revalidateActiveOverrides(nowIso: string = new Date().toISOString()): number {
         let staleCount = 0;
         for (const override of this._state.activeOverrides) {
@@ -379,6 +479,36 @@ export class IterationPolicyTuningRepository {
         return staleCount;
     }
 
+    revalidateOverride(
+        overrideId: string,
+        nowIso: string = new Date().toISOString(),
+    ): IterationGovernedOverrideRecord | undefined {
+        const override = this._state.activeOverrides.find((item) => item.overrideId === overrideId);
+        if (!override) return undefined;
+        const ageMs = Math.max(0, new Date(nowIso).getTime() - new Date(override.evidenceGeneratedAt).getTime());
+        if (override.doctrineVersion !== this._state.doctrineVersion) {
+            override.lifecycleState = 'blocked_by_doctrine';
+            override.stalenessStatus = 'incompatible';
+            override.requiresRevalidation = 'required_before_use';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_blocked_by_doctrine'];
+        } else if (ageMs > 1000 * 60 * 60 * 24 * 21) {
+            override.lifecycleState = 'stale_requires_revalidation';
+            override.stalenessStatus = 'stale_requires_revalidation';
+            override.staleSince = override.staleSince ?? nowIso;
+            override.requiresRevalidation = 'required_before_use';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_marked_stale'];
+        } else if (override.lifecycleState === 'disabled_by_operator') {
+            // Preserve explicit operator disablement.
+        } else {
+            override.lifecycleState = 'active';
+            override.stalenessStatus = 'fresh';
+            override.requiresRevalidation = 'not_required';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_revalidated'];
+        }
+        this._rebuildActiveOverrideIndexes();
+        return cloneOverride(override);
+    }
+
     runAutoPromotionPass(nowIso: string = new Date().toISOString()): string[] {
         const promotedIds: string[] = [];
         for (const pending of [...this._state.pendingRecommendations]) {
@@ -400,6 +530,58 @@ export class IterationPolicyTuningRepository {
             }
         }
         return promotedIds;
+    }
+
+    disableOverride(
+        overrideId: string,
+        nowIso: string = new Date().toISOString(),
+    ): IterationGovernedOverrideRecord | undefined {
+        const override = this._state.activeOverrides.find((item) => item.overrideId === overrideId)
+            ?? this._state.staleOverrides.find((item) => item.overrideId === overrideId);
+        if (!override) return undefined;
+        if (
+            override.lifecycleState === 'retired'
+            || override.lifecycleState === 'superseded'
+        ) {
+            return undefined;
+        }
+        override.lifecycleState = 'disabled_by_operator';
+        override.disabledAt = nowIso;
+        override.reasonCodes = [...override.reasonCodes, 'governance.override_disabled_by_operator'];
+        delete this._state.appliedOverrides[override.taskClass];
+        this._rebuildActiveOverrideIndexes();
+        return cloneOverride(override);
+    }
+
+    reenableOverride(
+        overrideId: string,
+        nowIso: string = new Date().toISOString(),
+    ): IterationGovernedOverrideRecord | undefined {
+        const override = this._state.activeOverrides.find((item) => item.overrideId === overrideId);
+        if (!override) return undefined;
+        if (override.lifecycleState !== 'disabled_by_operator') return undefined;
+        if (override.doctrineVersion !== this._state.doctrineVersion) {
+            override.lifecycleState = 'blocked_by_doctrine';
+            override.stalenessStatus = 'incompatible';
+            override.requiresRevalidation = 'required_before_use';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_blocked_by_doctrine'];
+            this._rebuildActiveOverrideIndexes();
+            return undefined;
+        }
+        const ageMs = Math.max(0, new Date(nowIso).getTime() - new Date(override.evidenceGeneratedAt).getTime());
+        if (ageMs > 1000 * 60 * 60 * 24 * 21) {
+            override.lifecycleState = 'active_stale';
+            override.stalenessStatus = 'stale_requires_revalidation';
+            override.staleSince = override.staleSince ?? nowIso;
+            override.requiresRevalidation = 'required';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_marked_stale'];
+        } else {
+            override.lifecycleState = 'active';
+            override.stalenessStatus = 'fresh';
+            override.reasonCodes = [...override.reasonCodes, 'governance.override_active'];
+        }
+        this._rebuildActiveOverrideIndexes();
+        return cloneOverride(override);
     }
 
     retireOverride(

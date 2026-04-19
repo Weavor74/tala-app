@@ -3,10 +3,14 @@ import type {
     IterationGovernedOverrideRecord,
     IterationGovernedRecommendationRecord,
     IterationPolicyGovernanceReasonCode,
-    IterationPromotionDecision,
     IterationPolicyOverrideLifecycleState,
+    IterationPromotionDecision,
     PolicyDoctrineVersion,
 } from './IterationPolicyGovernanceTypes';
+import type {
+    IterationGovernanceHistoryEntry,
+    IterationGovernanceMaintenanceReport,
+} from './IterationPolicyGovernanceOperationsTypes';
 
 export type TuningConfidenceLevel = 'low' | 'medium' | 'high';
 
@@ -165,6 +169,8 @@ export interface IterationPolicyTuningState {
     retiredOverrides: IterationGovernedOverrideRecord[];
     supersededOverrides: IterationGovernedOverrideRecord[];
     promotionDecisions: IterationPromotionDecision[];
+    governanceHistory: IterationGovernanceHistoryEntry[];
+    lastMaintenanceReport?: IterationGovernanceMaintenanceReport;
     overrideSupersessionRecords: Array<{
         priorOverrideId: string;
         supersededByOverrideId: string;
@@ -192,6 +198,30 @@ export interface IterationPolicyTuningDiagnosticsSnapshot {
     autoPromotionEligibleCount: number;
     autoPromotionIneligibleCount: number;
     doctrineIncompatibilityWarningCount: number;
+    eligibleRecommendationCount: number;
+    blockedRecommendationCount: number;
+    governanceHistoryCount: number;
+    recentGovernanceActions: Array<{
+        actionId: string;
+        actionType: string;
+        actionStatus: string;
+        origin: string;
+        targetArtifactId?: string;
+        timestamp: string;
+    }>;
+    queueCounts: {
+        pendingReview: number;
+        eligiblePromotion: number;
+        blockedRecommendations: number;
+        staleOverrides: number;
+        incompatibleOverrides: number;
+    };
+    lastGovernanceSweep?: {
+        reportId: string;
+        generatedAt: string;
+        sweepCount: number;
+        unresolvedIncompatibleCount: number;
+    };
     topPendingRecommendations: Array<{
         recommendationId: string;
         taskClass: IterationWorthinessClass;

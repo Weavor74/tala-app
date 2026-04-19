@@ -34,6 +34,7 @@ import { RecoveryHistoryRepositoryService } from './runtime/recovery/RecoveryHis
 import { IterationEffectivenessProjectorService } from './planning/IterationEffectivenessProjector';
 import { IterationTuningAdvisorService } from './planning/IterationTuningAdvisor';
 import { IterationPolicyTuningRepository } from './planning/IterationPolicyTuningRepository';
+import { IterationPolicyGovernanceQueryService } from './planning/IterationPolicyGovernanceQueryService';
 
 export interface McpDiagnosticsSource {
     getDiagnosticsInventory(): McpInventoryDiagnostics;
@@ -128,6 +129,7 @@ export class RuntimeDiagnosticsAggregator {
     private readonly _iterationEffectivenessProjector = new IterationEffectivenessProjectorService();
     private readonly _iterationTuningAdvisor = new IterationTuningAdvisorService();
     private readonly _iterationTuningRepository = IterationPolicyTuningRepository.getInstance();
+    private readonly _iterationGovernanceQuery = new IterationPolicyGovernanceQueryService(this._iterationTuningRepository);
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -506,6 +508,12 @@ export class RuntimeDiagnosticsAggregator {
         const state = this._iterationTuningRepository.getState();
         const analytics = state.lastAnalyticsSnapshot;
         if (!analytics) return undefined;
+        const nowIso = now;
+        const eligibleQueue = this._iterationGovernanceQuery.getEligibleRecommendationQueue(nowIso);
+        const blockedQueue = this._iterationGovernanceQuery.getBlockedRecommendationQueue(nowIso);
+        const staleQueue = this._iterationGovernanceQuery.getStaleOverrideQueue();
+        const incompatibleQueue = this._iterationGovernanceQuery.getIncompatibleOverrideQueue();
+        const recentHistory = this._iterationTuningRepository.listGovernanceHistory(10);
 
         const recommendationCount =
             state.pendingRecommendations.length +
@@ -594,9 +602,35 @@ export class RuntimeDiagnosticsAggregator {
             retiredOverrideCount: state.retiredOverrides.length,
             supersededOverrideCount: state.supersededOverrides.length,
             staleRequiresRevalidationCount,
+            eligibleRecommendationCount: eligibleQueue.length,
+            blockedRecommendationCount: blockedQueue.length,
             autoPromotionEligibleCount: state.pendingRecommendations.filter((rec) => rec.reasonCodes.includes('governance.eligible_for_promotion')).length,
             autoPromotionIneligibleCount: state.pendingRecommendations.filter((rec) => rec.reasonCodes.includes('governance.blocked_task_family_restriction')).length,
             doctrineIncompatibilityWarningCount,
+            governanceHistoryCount: state.governanceHistory.length,
+            recentGovernanceActions: recentHistory.map((entry) => ({
+                actionId: entry.actionId,
+                actionType: entry.actionType,
+                actionStatus: entry.actionStatus,
+                origin: entry.origin,
+                targetArtifactId: entry.targetArtifactId,
+                timestamp: entry.timestamp,
+            })),
+            queueCounts: {
+                pendingReview: state.pendingRecommendations.length,
+                eligiblePromotion: eligibleQueue.length,
+                blockedRecommendations: blockedQueue.length,
+                staleOverrides: staleQueue.length,
+                incompatibleOverrides: incompatibleQueue.length,
+            },
+            lastGovernanceSweep: state.lastMaintenanceReport
+                ? {
+                    reportId: state.lastMaintenanceReport.reportId,
+                    generatedAt: state.lastMaintenanceReport.generatedAt,
+                    sweepCount: state.lastMaintenanceReport.sweepResults.length,
+                    unresolvedIncompatibleCount: state.lastMaintenanceReport.unresolvedIncompatibleOverrideIds.length,
+                }
+                : undefined,
             topPendingRecommendations,
             activePolicySourceByTaskFamily,
             topHelpfulTaskFamilies,
@@ -628,8 +662,6 @@ export class RuntimeDiagnosticsAggregator {
                 nowIso,
                 evidenceSnapshotId: `evidence-${payload?.loopId ?? 'unknown'}-${Date.now()}`,
             });
-            this._iterationTuningRepository.expireStaleRecommendations(nowIso);
-            this._iterationTuningRepository.revalidateActiveOverrides(nowIso);
         }
     }
 

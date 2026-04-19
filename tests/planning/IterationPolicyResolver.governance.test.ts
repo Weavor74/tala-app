@@ -100,6 +100,27 @@ describe('IterationPolicyResolver governance integration', () => {
         expect(result.profile.policySource).toBe('baseline');
     });
 
+    it('disabled override does not affect runtime resolution', () => {
+        const repo = IterationPolicyTuningRepository.getInstance();
+        repo.applyManualOverride({
+            taskClass: 'retrieval_summarize',
+            maxIterations: 1,
+            replanAllowance: 'none',
+            reasonCodes: ['tuning.policy_source_override'],
+            promotedAt: '2026-04-01T00:00:00.000Z',
+        });
+        const active = repo.getState().activeOverrides[0];
+        repo.disableOverride(active.overrideId, '2026-04-10T00:00:00.000Z');
+        const resolver = new IterationPolicyResolver(repo);
+        const result = resolver.resolve({
+            goal: 'retrieve and summarize notes',
+            turnMode: 'goal_execution',
+            plan: makePlan(),
+        });
+        expect(result.profile.maxIterations).toBe(2);
+        expect(result.profile.policySource).toBe('baseline');
+    });
+
     it('safety caps still override promoted policy', () => {
         const repo = IterationPolicyTuningRepository.getInstance();
         repo.applyManualOverride({
