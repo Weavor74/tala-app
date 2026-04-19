@@ -24,7 +24,7 @@ const GREETING_ONLY_PATTERN = /^(hi|hello|hey|yo|good (morning|afternoon|evening
 const SELF_REFERENCE_PATTERN = /\b(you|your|tala|yourself)\b/i;
 const QUESTION_PATTERN = /\?|\b(what|which|who|can|do|are|is)\b/i;
 const KNOWLEDGE_QUERY_PATTERN =
-    /\b(what can you do|what do you know about yourself|what are your systems|what tools do you have|what are your capabilities|what is your architecture|what mode are you in|what files can you access|what are your limits|what are you allowed to do right now|can you)\b/i;
+    /\b(what can you do|what do you know about yourself|what are your systems|what tools do you have|what are your capabilities|what is your architecture|what mode are you in|what files can you access|what are your limits|what are you allowed to do right now|can you|are you human|not human|are you an ai|are you a program|are you an agent)\b/i;
 const SELF_KNOWLEDGE_CONTEXT_PATTERN =
     /\b(your systems|your capabilities|your tools|your architecture|your memory|your files|your permissions|your limits|about yourself|right now)\b/i;
 const ACTION_REQUEST_PATTERN =
@@ -33,7 +33,7 @@ const FOLLOWUP_INSPECTION_PATTERN =
     /\b(did you|have you)\s+(read|open|inspect|check|search|list|update|edit|modify)\b/i;
 
 const ASPECT_RULES: Array<{ aspect: SelfKnowledgeAspect; pattern: RegExp }> = [
-    { aspect: 'identity', pattern: /\b(who are you|what are you|identity)\b/i },
+    { aspect: 'identity', pattern: /\b(who are you|what are you|identity|human|ai|agent|program|model)\b/i },
     { aspect: 'capabilities', pattern: /\b(capabilit(?:y|ies)|what can you do)\b/i },
     { aspect: 'tools', pattern: /\b(tool|tools|registry)\b/i },
     { aspect: 'architecture', pattern: /\b(architecture|design|how.*built|component)\b/i },

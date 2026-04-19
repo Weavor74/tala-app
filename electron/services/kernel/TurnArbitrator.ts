@@ -115,6 +115,22 @@ export class TurnArbitrationService {
                 : mode === 'hybrid'
                     ? 'episodic'
                     : 'conversation_only';
+        const personaIdentityProtection = context.runtime.mode === 'rp'
+            || (
+                context.runtime.mode === 'hybrid'
+                && (
+                    profile.isImmersiveRelationalRequest === true
+                    || (
+                        profile.selfKnowledgeDetected === true
+                        && profile.isOperationalSystemRequest !== true
+                    )
+                )
+            );
+        if (personaIdentityProtection) {
+            reasonCodes.push('arbitration:persona_identity_protection_enabled');
+        } else {
+            reasonCodes.push('arbitration:persona_identity_protection_not_required');
+        }
 
         const decision: TurnArbitrationDecision = {
             turnId: context.request.turnId,
@@ -137,6 +153,9 @@ export class TurnArbitrationService {
             selfKnowledgeRequestedAspects: profile.selfKnowledgeRequestedAspects,
             selfKnowledgeRouted: profile.selfKnowledgeDetected === true,
             selfKnowledgeBypassedFallback: profile.selfKnowledgeDetected === true,
+            personaIdentityProtection,
+            isOperationalSystemRequest: profile.isOperationalSystemRequest,
+            isImmersiveRelationalRequest: profile.isImmersiveRelationalRequest,
         };
 
         const envelope: TurnAuthorityEnvelope = {

@@ -210,6 +210,22 @@ const IMPACT_RULES: ImpactRule[] = [
     requiresManualReview: false
   },
   {
+    id: 'turn-arbitration-contracts',
+    description: 'Turn arbitration and self-knowledge identity contracts changed.',
+    pathRegexes: [
+      /^shared\/turnArbitrationTypes\.ts$/,
+      /^shared\/agent\/SelfKnowledgeIntent\.ts$/,
+      /^shared\/agent\/PersonaIdentityPolicy\.ts$/
+    ],
+    ownedDocs: [
+      'docs/contracts/turnArbitrationTypes.md',
+      'docs/contracts/runtimeEventTypes.md',
+      'docs/review/doclock-impact.md'
+    ],
+    generatedSectionIds: ['impact-map'],
+    requiresManualReview: false
+  },
+  {
     id: 'schema-config',
     description: 'Settings/config schema changed.',
     pathRegexes: [

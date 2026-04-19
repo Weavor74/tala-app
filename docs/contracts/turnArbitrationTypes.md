@@ -52,6 +52,8 @@ interface TurnIntentProfile {
     >;
     selfKnowledgeScope?: 'broad' | 'specific';
     selfKnowledgeReasonCodes?: string[];
+    isOperationalSystemRequest?: boolean;
+    isImmersiveRelationalRequest?: boolean;
     reasonCodes: string[];
 }
 ```
@@ -93,6 +95,9 @@ interface TurnArbitrationDecision {
     selfKnowledgeRouted?: boolean;
     selfKnowledgeSourceTruths?: string[];
     selfKnowledgeBypassedFallback?: boolean;
+    personaIdentityProtection?: boolean;
+    isOperationalSystemRequest?: boolean;
+    isImmersiveRelationalRequest?: boolean;
 }
 ```
 
@@ -129,6 +134,7 @@ interface KernelTurnDiagnosticsView {
     selfKnowledgeRouted?: boolean;
     selfKnowledgeSourceTruths?: string[];
     selfKnowledgeBypassedFallback?: boolean;
+    personaIdentityProtection?: boolean;
     updatedAt: string;
 }
 ```

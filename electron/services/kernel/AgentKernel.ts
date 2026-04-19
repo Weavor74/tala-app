@@ -31,6 +31,12 @@ import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
 import { SelfInspectionExecutionService } from '../agent/SelfInspectionExecutionService';
 import { SelfKnowledgeExecutionService } from '../agent/SelfKnowledgeExecutionService';
+import { buildSelfKnowledgePersonaAdaptation } from '../agent/PersonaIdentityResponseAdapter';
+import {
+    resolveImmersiveRelationalRequest,
+    resolveOperationalSystemRequest,
+    resolvePersonaIdentityDisclosure,
+} from '../../../shared/agent/PersonaIdentityPolicy';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -105,6 +111,19 @@ export const AGENT_RESPONSE_RUNTIME_EVENTS = {
     | 'selfKnowledgeResponseCreated'
     | 'selfKnowledgeResponsePublished'
     | 'selfKnowledgeResponseMissing',
+    RuntimeEventType
+>;
+
+const AGENT_PERSONA_IDENTITY_EVENTS = {
+    gateApplied: 'agent.persona_identity_gate_applied',
+    metaDisclosureBlocked: 'agent.persona_identity_meta_disclosure_blocked',
+    responseTransformed: 'agent.persona_identity_response_transformed',
+    systemDisclosureAllowed: 'agent.persona_identity_system_disclosure_allowed',
+} as const satisfies Record<
+    | 'gateApplied'
+    | 'metaDisclosureBlocked'
+    | 'responseTransformed'
+    | 'systemDisclosureAllowed',
     RuntimeEventType
 >;
 
@@ -350,6 +369,7 @@ export class AgentKernel {
     private readonly _turnArbitrator = new TurnArbitrationService();
     private readonly _selfInspectionExecution = new SelfInspectionExecutionService();
     private readonly _selfKnowledgeExecution = new SelfKnowledgeExecutionService();
+    private readonly _personaContinuityByConversation = new Map<string, boolean>();
 
     constructor(agent: AgentService) {
         this.agent = agent;
@@ -501,6 +521,42 @@ export class AgentKernel {
             ...turnResult,
             message: normalizeAssistantOutput(turnResult.message),
         };
+    }
+
+    private _getConversationId(request: KernelRequest): string {
+        return request.conversationId ?? 'default';
+    }
+
+    private _isFollowupToPersonaConversation(request: KernelRequest): boolean {
+        return this._personaContinuityByConversation.get(this._getConversationId(request)) === true;
+    }
+
+    private _updatePersonaContinuity(request: KernelRequest, meta: KernelExecutionMeta): void {
+        const conversationId = this._getConversationId(request);
+        const mode = (meta.mode ?? '').toLowerCase();
+        const text = request.userMessage ?? '';
+        const wasPersona = this._personaContinuityByConversation.get(conversationId) === true;
+        const operational = resolveOperationalSystemRequest(text);
+        const immersive = resolveImmersiveRelationalRequest(text);
+
+        let nextPersonaState = wasPersona;
+        if (mode === 'rp') {
+            nextPersonaState = !operational || immersive;
+        } else if (mode === 'hybrid') {
+            if (immersive) {
+                nextPersonaState = true;
+            } else if (operational) {
+                nextPersonaState = false;
+            }
+        } else {
+            nextPersonaState = false;
+        }
+
+        this._personaContinuityByConversation.set(conversationId, nextPersonaState);
+        if (this._personaContinuityByConversation.size > 128) {
+            const oldestKey = this._personaContinuityByConversation.keys().next().value as string | undefined;
+            if (oldestKey) this._personaContinuityByConversation.delete(oldestKey);
+        }
     }
 
     private _assistantResponse(content: string, source: ChatTurnResultSource, outputChannel: AgentTurnOutput['outputChannel'] = 'chat'): ChatTurnAssistantResponse {
@@ -1026,10 +1082,119 @@ export class AgentKernel {
             turnDecision.selfKnowledgeSourceTruths = selfKnowledgeResult.sourceTruths;
             turnDecision.selfKnowledgeRouted = true;
             turnDecision.selfKnowledgeBypassedFallback = true;
+            const followupToPersonaConversation = this._isFollowupToPersonaConversation(request);
+            const personaDisclosure = resolvePersonaIdentityDisclosure({
+                activeMode: meta.mode,
+                turnIntent: turnDecision.mode,
+                turnPolicy: turnDecision.personaIdentityProtection === true
+                    ? 'persona_identity_protection'
+                    : 'allow_system_identity',
+                messageText: request.userMessage,
+                isOperationalRequest: turnDecision.isOperationalSystemRequest,
+                isSystemKnowledgeRequest: turnDecision.selfKnowledgeDetected,
+                isFollowupToPersonaConversation: followupToPersonaConversation,
+            });
+            const adaptedSelfKnowledge = buildSelfKnowledgePersonaAdaptation({
+                rawContent: selfKnowledgeResult.summary,
+                selfKnowledgeSnapshot: selfKnowledgeResult.snapshot,
+                activeMode: meta.mode,
+                turnIntent: turnDecision.mode,
+                turnPolicy: turnDecision.personaIdentityProtection === true
+                    ? 'persona_identity_protection'
+                    : 'allow_system_identity',
+                userMessage: request.userMessage,
+                personaIdentityContext: {
+                    characterName: selfKnowledgeResult.snapshot.identity.agentName,
+                    worldview: selfKnowledgeResult.snapshot.identity.summary,
+                    roleplayFrame: meta.mode,
+                },
+                isOperationalRequest: turnDecision.isOperationalSystemRequest,
+                isSystemKnowledgeRequest: turnDecision.selfKnowledgeDetected,
+                isFollowupToPersonaConversation: followupToPersonaConversation,
+            });
+
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_PERSONA_IDENTITY_EVENTS.gateApplied,
+                phase: 'delegate',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    turnIntent: turnDecision.mode,
+                    turnPolicy: turnDecision.personaIdentityProtection === true
+                        ? 'persona_identity_protection'
+                        : 'allow_system_identity',
+                    disclosureMode: personaDisclosure.disclosureMode,
+                    isFollowupToPersonaConversation: followupToPersonaConversation,
+                    routeSource: 'self_knowledge',
+                    reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                },
+            });
+            if (personaDisclosure.disclosureMode === 'allow_system_identity') {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_PERSONA_IDENTITY_EVENTS.systemDisclosureAllowed,
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision.mode,
+                        turnPolicy: turnDecision.personaIdentityProtection === true
+                            ? 'persona_identity_protection'
+                            : 'allow_system_identity',
+                        disclosureMode: personaDisclosure.disclosureMode,
+                        isFollowupToPersonaConversation: followupToPersonaConversation,
+                        routeSource: 'self_knowledge',
+                        reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                    },
+                });
+            } else if (adaptedSelfKnowledge.adaptationMode === 'persona_block') {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_PERSONA_IDENTITY_EVENTS.metaDisclosureBlocked,
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision.mode,
+                        turnPolicy: turnDecision.personaIdentityProtection === true
+                            ? 'persona_identity_protection'
+                            : 'allow_system_identity',
+                        disclosureMode: personaDisclosure.disclosureMode,
+                        isFollowupToPersonaConversation: followupToPersonaConversation,
+                        routeSource: 'self_knowledge',
+                        reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                    },
+                });
+            } else if (adaptedSelfKnowledge.adaptationMode === 'persona_transform') {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_PERSONA_IDENTITY_EVENTS.responseTransformed,
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision.mode,
+                        turnPolicy: turnDecision.personaIdentityProtection === true
+                            ? 'persona_identity_protection'
+                            : 'allow_system_identity',
+                        disclosureMode: personaDisclosure.disclosureMode,
+                        isFollowupToPersonaConversation: followupToPersonaConversation,
+                        routeSource: 'self_knowledge',
+                        reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                    },
+                });
+            }
+
             const turnResult = this._assistantResponse(
-                selfKnowledgeResult.summary,
+                adaptedSelfKnowledge.content,
                 'self_knowledge',
-                selfKnowledgeResult.blockedReason ? 'fallback' : 'chat',
+                adaptedSelfKnowledge.outputChannel
+                    ?? (selfKnowledgeResult.blockedReason ? 'fallback' : 'chat'),
             );
             const normalizedSelfKnowledgeMessage = normalizeAssistantOutput(turnResult.message);
             this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.selfKnowledgeResponseCreated, {
@@ -1670,7 +1835,9 @@ export class AgentKernel {
             const turnOutput = await this.runDelegatedFlow(normalized, meta, onToken, onEvent);
 
             // Stage 5 -- finalizeExecution (finalizes state to 'completed')
-            return this.finalizeExecution(meta, turnOutput, normalized);
+            const finalized = this.finalizeExecution(meta, turnOutput, normalized);
+            this._updatePersonaContinuity(normalized, meta);
+            return finalized;
         } catch (err: unknown) {
             // A PolicyDeniedError means execution.blocked was already emitted and
             // the state was already marked 'blocked' in classifyExecution().
