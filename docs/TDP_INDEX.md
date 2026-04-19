@@ -104,6 +104,7 @@
 - [Contract: a2uiTypes.ts](contracts/a2uiTypes.md)
 - [Contract: adaptiveTypes.ts](contracts/adaptiveTypes.md)
 - [Contract: autonomyTypes.ts](contracts/autonomyTypes.md)
+- [Contract: chatTurnResultTypes.ts](contracts/chatTurnResultTypes.md)
 - [Contract: cognitiveTurnTypes.ts](contracts/cognitiveTurnTypes.md)
 - [Contract: crossSystemTypes.ts](contracts/crossSystemTypes.md)
 - [Contract: dbBootstrapConfig.ts](contracts/dbBootstrapConfig.md)

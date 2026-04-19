@@ -66,7 +66,13 @@ export type RuntimeEventType =
     | 'agent.self_knowledge_snapshot_built'
     | 'agent.self_knowledge_source_unavailable'
     | 'agent.self_knowledge_response_grounded'
+    | 'agent.self_knowledge_response_created'
+    | 'agent.self_knowledge_response_published'
+    | 'agent.self_knowledge_response_missing'
     | 'agent.self_knowledge_fallback_blocked'
+    | 'agent.turn_response_created'
+    | 'agent.turn_response_published'
+    | 'agent.turn_response_missing'
     | `agent.${string}`
     | 'execution.created'
     | 'execution.accepted'

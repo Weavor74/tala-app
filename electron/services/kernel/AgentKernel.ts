@@ -24,6 +24,7 @@ import type {
     TurnAuthorityEnvelope,
 } from '../../../shared/turnArbitrationTypes';
 import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
+import type { ChatTurnResult, ChatTurnResultSource } from '../../../shared/chatTurnResultTypes';
 import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
@@ -234,6 +235,7 @@ export interface KernelRequest {
  */
 export interface KernelResult extends AgentTurnOutput {
     meta: KernelExecutionMeta;
+    turnResult: ChatTurnResult;
     /**
      * Terminal ExecutionState for this turn, built at finalizeExecution.
      * Provides a normalized view of the execution using the shared runtime
@@ -425,6 +427,65 @@ export class AgentKernel {
             turnAuthorityEnvelope: authorityEnvelope,
             turnMemoryAuthorityContext,
         };
+    }
+
+    private _emitTurnResponseEvent(meta: KernelExecutionMeta, event: string, payload: Record<string, unknown>): void {
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'agent',
+            event,
+            phase: 'delegate',
+            payload: {
+                turnId: meta.turnArbitration?.turnId,
+                mode: meta.mode,
+                authorityPath: meta.turnArbitration?.mode ?? 'unknown',
+                route: meta.routingDecision?.classification ?? 'unknown',
+                finalizationState: 'pending',
+                durationMs: Date.now() - meta.startedAt,
+                ...payload,
+            },
+        });
+    }
+
+    private _assistantResponse(content: string, source: ChatTurnResultSource, outputChannel: AgentTurnOutput['outputChannel'] = 'chat'): ChatTurnResult {
+        return {
+            kind: 'assistant_response',
+            source,
+            message: {
+                content,
+                outputChannel,
+            },
+        };
+    }
+
+    private _turnFailure(errorCode: string, message: string, source: ChatTurnResultSource): ChatTurnResult {
+        return {
+            kind: 'turn_failure',
+            errorCode,
+            message,
+            source,
+        };
+    }
+
+    private _toChatTurnResult(output: AgentTurnOutput, source: ChatTurnResultSource): ChatTurnResult {
+        const hasMessage = typeof output.message === 'string' && output.message.trim().length > 0;
+        const hasArtifact = Boolean(output.artifact);
+        if (hasMessage || hasArtifact) {
+            return {
+                kind: 'assistant_response',
+                source,
+                message: {
+                    content: output.message ?? '',
+                    artifactId: output.artifact?.id,
+                    outputChannel: output.outputChannel ?? 'chat',
+                },
+            };
+        }
+        return this._turnFailure(
+            'chat_turn_missing_response_artifact',
+            'Accepted turn did not produce an assistant response artifact.',
+            source,
+        );
     }
 
     // ─── Stage 1: normalizeRequest ──────────────────────────────────────────
@@ -773,7 +834,7 @@ export class AgentKernel {
         meta: KernelExecutionMeta,
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void
-    ): Promise<AgentTurnOutput> {
+    ): Promise<ChatTurnResult> {
         const turnDecision = meta.turnArbitration;
         const envelope = meta.authorityEnvelope;
         if (!turnDecision || !envelope) {
@@ -907,10 +968,24 @@ export class AgentKernel {
             turnDecision.selfKnowledgeSourceTruths = selfKnowledgeResult.sourceTruths;
             turnDecision.selfKnowledgeRouted = true;
             turnDecision.selfKnowledgeBypassedFallback = true;
-            return {
-                message: selfKnowledgeResult.summary,
-                outputChannel: selfKnowledgeResult.blockedReason ? 'fallback' : 'chat',
-            };
+            const turnResult = this._assistantResponse(
+                selfKnowledgeResult.summary,
+                'self_knowledge',
+                selfKnowledgeResult.blockedReason ? 'fallback' : 'chat',
+            );
+            this._emitTurnResponseEvent(meta, 'agent.self_knowledge_response_created', {
+                source: 'self_knowledge',
+                responseArtifactPresent: true,
+                failureArtifactPresent: false,
+                channel: turnResult.message.outputChannel ?? 'chat',
+            });
+            this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                source: 'self_knowledge',
+                responseArtifactPresent: true,
+                failureArtifactPresent: false,
+                channel: turnResult.message.outputChannel ?? 'chat',
+            });
+            return turnResult;
         }
         if (turnDecision.selfInspectionRequest) {
             const systemHealth = SystemModeManager.getSystemHealthSnapshot();
@@ -992,10 +1067,18 @@ export class AgentKernel {
                     reasonCodes: turnDecision.reasonCodes,
                 },
             });
-            return {
-                message: selfInspectionResult.summary,
-                outputChannel: selfInspectionResult.blockedReason ? 'fallback' : 'chat',
-            };
+            const turnResult = this._assistantResponse(
+                selfInspectionResult.summary,
+                'self_inspection',
+                selfInspectionResult.blockedReason ? 'fallback' : 'chat',
+            );
+            this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                source: 'self_inspection',
+                responseArtifactPresent: true,
+                failureArtifactPresent: false,
+                channel: turnResult.message.outputChannel ?? 'chat',
+            });
+            return turnResult;
         }
 
         if (turnDecision.mode === 'goal_execution') {
@@ -1220,10 +1303,18 @@ export class AgentKernel {
                                 failureDetail,
                             },
                         });
-                        return {
-                            message: 'Planning recovery requested a replan, but replan could not be completed and has been escalated.',
-                            outputChannel: 'fallback',
-                        };
+                        const failure = this._assistantResponse(
+                            'Planning recovery requested a replan, but replan could not be completed and has been escalated.',
+                            'other',
+                            'fallback',
+                        );
+                        this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                            source: 'other',
+                            responseArtifactPresent: true,
+                            failureArtifactPresent: false,
+                            channel: 'fallback',
+                        });
+                        return failure;
                     }
                     TelemetryBus.getInstance().emit({
                         executionId: meta.executionId,
@@ -1241,10 +1332,18 @@ export class AgentKernel {
                             degradedAutonomy,
                         },
                     });
-                    return {
-                        message: 'Planning recovered by requesting a deterministic replan. Please continue with the updated goal execution path.',
-                        outputChannel: 'fallback',
-                    };
+                    const response = this._assistantResponse(
+                        'Planning recovered by requesting a deterministic replan. Please continue with the updated goal execution path.',
+                        'other',
+                        'fallback',
+                    );
+                    this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                        source: 'other',
+                        responseArtifactPresent: true,
+                        failureArtifactPresent: false,
+                        channel: 'fallback',
+                    });
+                    return response;
                 }
 
                 if (recoveryDecision.action === 'escalate') {
@@ -1264,11 +1363,19 @@ export class AgentKernel {
                             degradedAutonomy,
                         },
                     });
-                    return {
-                        message: recoveryDecision.userSafeMessage
+                    const response = this._assistantResponse(
+                        recoveryDecision.userSafeMessage
                             ?? 'Planning is blocked and has been escalated for operator action.',
-                        outputChannel: 'fallback',
-                    };
+                        'other',
+                        'fallback',
+                    );
+                    this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                        source: 'other',
+                        responseArtifactPresent: true,
+                        failureArtifactPresent: false,
+                        channel: 'fallback',
+                    });
+                    return response;
                 }
 
                 TelemetryBus.getInstance().emit({
@@ -1311,7 +1418,23 @@ export class AgentKernel {
                     summary: 'planning_loop: selected by kernel turn arbitration',
                 },
             });
-            return executorResult;
+            const turnResult = this._toChatTurnResult(executorResult, 'other');
+            this._emitTurnResponseEvent(
+                meta,
+                turnResult.kind === 'assistant_response'
+                    ? 'agent.turn_response_created'
+                    : 'agent.turn_response_missing',
+                {
+                    source: turnResult.source,
+                    responseArtifactPresent: turnResult.kind === 'assistant_response',
+                    failureArtifactPresent: turnResult.kind === 'turn_failure',
+                    channel: turnResult.kind === 'assistant_response'
+                        ? (turnResult.message.outputChannel ?? 'chat')
+                        : 'fallback',
+                    errorCode: turnResult.kind === 'turn_failure' ? turnResult.errorCode : undefined,
+                },
+            );
+            return turnResult;
         }
 
         this._stateStore.advancePhase(meta.executionId, 'executing', turnDecision.mode);
@@ -1330,13 +1453,30 @@ export class AgentKernel {
                 summary: `trivial_direct: kernel mode ${turnDecision.mode}`,
             },
         });
-        return this.agent.chat(
+        const output = await this.agent.chat(
             request.userMessage,
             onToken,
             onEvent,
             request.images,
             this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
         );
+        const turnResult = this._toChatTurnResult(output, 'router');
+        this._emitTurnResponseEvent(
+            meta,
+            turnResult.kind === 'assistant_response'
+                ? 'agent.turn_response_created'
+                : 'agent.turn_response_missing',
+            {
+                source: turnResult.source,
+                responseArtifactPresent: turnResult.kind === 'assistant_response',
+                failureArtifactPresent: turnResult.kind === 'turn_failure',
+                channel: turnResult.kind === 'assistant_response'
+                    ? (turnResult.message.outputChannel ?? 'chat')
+                    : 'fallback',
+                errorCode: turnResult.kind === 'turn_failure' ? turnResult.errorCode : undefined,
+            },
+        );
+        return turnResult;
     }
 
     private async _runDirectChatFallback(
@@ -1346,20 +1486,70 @@ export class AgentKernel {
         envelope: TurnAuthorityEnvelope,
         onToken?: (token: string) => void,
         onEvent?: (type: string, data: any) => void,
-    ): Promise<AgentTurnOutput> {
+    ): Promise<ChatTurnResult> {
         this._stateStore.advancePhase(meta.executionId, 'executing', 'goal_execution_degraded_fallback');
-        return this.agent.chat(
+        const output = await this.agent.chat(
             request.userMessage,
             onToken,
             onEvent,
             request.images,
             this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
         );
+        return this._toChatTurnResult(output, 'router');
     }
 
-    private finalizeExecution(meta: KernelExecutionMeta, turnOutput: AgentTurnOutput, request: KernelRequest): KernelResult {
+    private finalizeExecution(meta: KernelExecutionMeta, turnResult: ChatTurnResult, request: KernelRequest): KernelResult {
         meta.durationMs = Date.now() - meta.startedAt;
-        console.log(`[AgentKernel] ── FINALIZE         ── id=${meta.executionId} duration=${meta.durationMs}ms channel=${turnOutput.outputChannel ?? 'chat'}`);
+        const responseArtifactPresent = turnResult.kind === 'assistant_response'
+            && (turnResult.message.content.trim().length > 0 || typeof turnResult.message.artifactId === 'string');
+        const failureArtifactPresent = turnResult.kind === 'turn_failure';
+        const channel = turnResult.kind === 'assistant_response'
+            ? (turnResult.message.outputChannel ?? 'chat')
+            : 'fallback';
+        console.log(`[AgentKernel] FINALIZE id=${meta.executionId} duration=${meta.durationMs}ms channel=${channel}`);
+
+        if (!responseArtifactPresent && !failureArtifactPresent) {
+            const missingSource = turnResult.source;
+            this._emitTurnResponseEvent(meta, 'agent.turn_response_missing', {
+                source: missingSource,
+                responseArtifactPresent: false,
+                failureArtifactPresent: false,
+                channel: 'fallback',
+                errorCode: 'chat_turn_missing_response_artifact',
+            });
+            if (missingSource === 'self_knowledge') {
+                this._emitTurnResponseEvent(meta, 'agent.self_knowledge_response_missing', {
+                    source: missingSource,
+                    responseArtifactPresent: false,
+                    failureArtifactPresent: false,
+                    channel: 'fallback',
+                    errorCode: 'chat_turn_missing_response_artifact',
+                });
+            }
+            turnResult = this._turnFailure(
+                'chat_turn_missing_response_artifact',
+                'Turn reached finalize without response or failure artifact.',
+                missingSource,
+            );
+        }
+
+        const turnOutput: AgentTurnOutput = turnResult.kind === 'assistant_response'
+            ? {
+                message: turnResult.message.content,
+                outputChannel: turnResult.message.outputChannel ?? 'chat',
+            }
+            : {
+                message: turnResult.message,
+                outputChannel: 'fallback',
+            };
+
+        if (turnResult.kind === 'assistant_response' && (turnResult.source === 'self_knowledge' || turnResult.source === 'self_inspection')) {
+            this.agent.publishAuthorityTurnToSession({
+                userMessage: request.userMessage,
+                assistantMessage: turnResult.message.content,
+                images: request.images,
+            });
+        }
 
         // Advance to 'finalizing' before sealing the terminal record.
         this._stateStore.advancePhase(meta.executionId, 'finalizing', 'finalizing');
@@ -1373,15 +1563,12 @@ export class AgentKernel {
             payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, durationMs: meta.durationMs },
         });
 
-        // Seal the terminal state as 'completed'. Fall back to a freshly-constructed
-        // state only in the unlikely case the store entry was evicted externally.
         const executionState = this._stateStore.completeExecution(meta.executionId)
             ?? setExecutionTerminalState(
                 createInitialExecutionState(this._buildExecRequest(meta, request.userMessage), 'AgentKernel'),
-                { status: 'completed' }
+                { status: 'completed' },
             );
 
-        // execution.completed — execution finalized cleanly
         TelemetryBus.getInstance().emit({
             executionId: meta.executionId,
             subsystem: 'kernel',
@@ -1390,7 +1577,7 @@ export class AgentKernel {
             payload: { type: meta.executionType, origin: meta.origin, mode: meta.mode, durationMs: meta.durationMs },
         });
 
-        return { ...turnOutput, meta, executionState };
+        return { ...turnOutput, meta, executionState, turnResult };
     }
 
     // ─── Public entrypoint ──────────────────────────────────────────────────
@@ -1448,6 +1635,7 @@ export class AgentKernel {
         }
     }
 }
+
 
 
 

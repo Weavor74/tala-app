@@ -3,6 +3,7 @@
 - [a2uiTypes.ts](./a2uiTypes.md)
 - [adaptiveTypes.ts](./adaptiveTypes.md)
 - [autonomyTypes.ts](./autonomyTypes.md)
+- [chatTurnResultTypes.ts](./chatTurnResultTypes.md)
 - [cognitiveTurnTypes.ts](./cognitiveTurnTypes.md)
 - [crossSystemTypes.ts](./crossSystemTypes.md)
 - [dbBootstrapConfig.ts](./dbBootstrapConfig.md)

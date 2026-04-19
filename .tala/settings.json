@@ -11,7 +11,7 @@
         "source": "local",
         "engine": "ollama",
         "endpoint": "http://127.0.0.1:11434",
-        "model": "llama3",
+        "model": "gemma4:e4b",
         "priority": 0,
         "params": {
           "knownModels": [
@@ -297,7 +297,7 @@
     }
   },
   "agentModes": {
-    "activeMode": "rp",
+    "activeMode": "hybrid",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,
@@ -346,7 +346,7 @@
   },
   "guardrailPolicy": {
     "version": 1,
-    "activeProfileId": "casual",
+    "activeProfileId": "unrestricted",
     "profiles": [
       {
         "id": "unrestricted",
@@ -444,7 +444,7 @@
       }
     ],
     "validatorBindings": [],
-    "updatedAt": "2026-04-08T00:08:13.574Z"
+    "updatedAt": "2026-04-15T02:28:00.769Z"
   },
   "storageRegistry": {
     "version": 1,
@@ -577,6 +577,31 @@
         "updatedAt": "2026-04-15T01:22:21.698Z"
       },
       {
+        "id": "legacy-invalid:0:default-local",
+        "name": "Local Memory (Blocked Legacy Import)",
+        "kind": "unknown",
+        "locality": "unknown",
+        "registrationMode": "system",
+        "supportedRoles": [],
+        "capabilities": [],
+        "enabled": false,
+        "connection": {},
+        "auth": {
+          "mode": "none",
+          "status": "blocked",
+          "lastCheckedAt": null,
+          "reason": "legacy_unknown_type"
+        },
+        "health": {
+          "status": "degraded",
+          "checkedAt": null,
+          "reason": "legacy_unknown_type"
+        },
+        "assignedRoles": [],
+        "createdAt": "2026-04-19T04:36:52.874Z",
+        "updatedAt": "2026-04-19T04:36:52.874Z"
+      },
+      {
         "id": "postgresql:localhost:5432:tala",
         "name": "PostgreSQL (Local)",
         "kind": "postgresql",
@@ -645,6 +670,133 @@
         "assignedAt": "2026-04-15T01:22:21.698Z"
       }
     ],
-    "updatedAt": "2026-04-15T01:22:21.707Z"
+    "assignmentDecisions": [
+      {
+        "role": "canonical_memory",
+        "providerId": "postgresql:localhost:5432:tala",
+        "source": "policy",
+        "outcome": "blocked",
+        "reasonCode": "blocked_auth_invalid",
+        "timestamp": "2026-04-19T04:36:52.874Z",
+        "details": {
+          "providerId": "postgresql:localhost:5432:tala",
+          "authMode": "basic",
+          "authStatus": "unauthenticated"
+        }
+      },
+      {
+        "role": "canonical_memory",
+        "providerId": "postgresql:localhost:5432:tala",
+        "source": "bootstrap",
+        "outcome": "preserved",
+        "reasonCode": "explicit_assignment_preserved",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "bootstrapAttemptedProviderId": null
+        }
+      },
+      {
+        "role": "vector_index",
+        "providerId": null,
+        "source": "recovery",
+        "outcome": "suggestion",
+        "reasonCode": "recovery_suggestion_only",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "reason": "no_eligible_provider_found_for_missing_role"
+        }
+      },
+      {
+        "role": "blob_store",
+        "providerId": "filesystem:backups",
+        "source": "policy",
+        "outcome": "blocked",
+        "reasonCode": "blocked_policy_conflict",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "role": "blob_store",
+          "assignedProviderId": "filesystem:data/storage",
+          "requestedProviderId": "filesystem:backups"
+        }
+      },
+      {
+        "role": "blob_store",
+        "providerId": "filesystem:data/storage",
+        "source": "bootstrap",
+        "outcome": "preserved",
+        "reasonCode": "explicit_assignment_preserved",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "bootstrapAttemptedProviderId": "filesystem:data/storage"
+        }
+      },
+      {
+        "role": "document_store",
+        "providerId": "filesystem:backups",
+        "source": "policy",
+        "outcome": "blocked",
+        "reasonCode": "blocked_policy_conflict",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "role": "document_store",
+          "assignedProviderId": "filesystem:data/storage",
+          "requestedProviderId": "filesystem:backups"
+        }
+      },
+      {
+        "role": "document_store",
+        "providerId": "filesystem:data/storage",
+        "source": "bootstrap",
+        "outcome": "preserved",
+        "reasonCode": "explicit_assignment_preserved",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "bootstrapAttemptedProviderId": "filesystem:data/storage"
+        }
+      },
+      {
+        "role": "backup_target",
+        "providerId": "filesystem:backups",
+        "source": "bootstrap",
+        "outcome": "preserved",
+        "reasonCode": "explicit_assignment_preserved",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "bootstrapAttemptedProviderId": "filesystem:backups"
+        }
+      },
+      {
+        "role": "artifact_store",
+        "providerId": "filesystem:backups",
+        "source": "policy",
+        "outcome": "blocked",
+        "reasonCode": "blocked_policy_conflict",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "role": "artifact_store",
+          "assignedProviderId": "filesystem:data/reflection/artifacts",
+          "requestedProviderId": "filesystem:backups"
+        }
+      },
+      {
+        "role": "artifact_store",
+        "providerId": "filesystem:data/reflection/artifacts",
+        "source": "bootstrap",
+        "outcome": "preserved",
+        "reasonCode": "explicit_assignment_preserved",
+        "timestamp": "2026-04-19T04:36:52.875Z",
+        "details": {
+          "bootstrapAttemptedProviderId": "filesystem:data/reflection/artifacts"
+        }
+      }
+    ],
+    "legacyBootstrap": {
+      "completed": true,
+      "completedAt": "2026-04-19T04:36:52.875Z",
+      "lastAttemptAt": "2026-04-19T04:36:52.873Z",
+      "runCount": 1,
+      "lastOutcome": "completed_with_blocked_legacy"
+    },
+    "updatedAt": "2026-04-19T04:36:52.875Z"
   }
 }

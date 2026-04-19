@@ -1662,6 +1662,50 @@ export class IpcRouter {
           }
         );
 
+        const turnResult = result.turnResult;
+        if (turnResult.kind === 'assistant_response' && fullResponse.length === 0 && turnResult.message.content.length > 0) {
+          fullResponse = turnResult.message.content;
+          event.sender.send('chat-token', turnResult.message.content);
+        }
+
+        TelemetryBus.getInstance().emit({
+          executionId: result.meta.executionId,
+          subsystem: 'agent',
+          event: 'agent.turn_response_published',
+          phase: 'finalizing',
+          payload: {
+            turnId: result.meta.turnArbitration?.turnId,
+            route: result.meta.routingDecision?.classification ?? 'unknown',
+            authorityPath: result.meta.turnArbitration?.mode ?? 'unknown',
+            finalizationState: 'completed',
+            responseArtifactPresent: turnResult.kind === 'assistant_response',
+            failureArtifactPresent: turnResult.kind === 'turn_failure',
+            source: turnResult.source,
+            channel: turnResult.kind === 'assistant_response' ? (turnResult.message.outputChannel ?? 'chat') : 'fallback',
+            durationMs: result.meta.durationMs,
+          },
+        });
+        if (turnResult.source === 'self_knowledge') {
+          TelemetryBus.getInstance().emit({
+            executionId: result.meta.executionId,
+            subsystem: 'agent',
+            event: turnResult.kind === 'assistant_response'
+              ? 'agent.self_knowledge_response_published'
+              : 'agent.self_knowledge_response_missing',
+            phase: 'finalizing',
+            payload: {
+              turnId: result.meta.turnArbitration?.turnId,
+              route: result.meta.routingDecision?.classification ?? 'unknown',
+              authorityPath: result.meta.turnArbitration?.mode ?? 'unknown',
+              finalizationState: 'completed',
+              responseArtifactPresent: turnResult.kind === 'assistant_response',
+              failureArtifactPresent: turnResult.kind === 'turn_failure',
+              channel: turnResult.kind === 'assistant_response' ? (turnResult.message.outputChannel ?? 'chat') : 'fallback',
+              durationMs: result.meta.durationMs,
+            },
+          });
+        }
+
         // Finalize turn and send done event with sanitized content and metadata
         event.sender.send('chat-done', {
           message: result.message,

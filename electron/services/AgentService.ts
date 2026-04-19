@@ -1373,6 +1373,32 @@ Exported standalone package from Tala.
         return this.chatHistory;
     }
 
+    public publishAuthorityTurnToSession(input: {
+        userMessage: string;
+        assistantMessage: string;
+        images?: string[];
+    }): void {
+        if (!this.activeSessionId) {
+            this.newSession();
+        }
+        const last = this.chatHistory[this.chatHistory.length - 1];
+        const shouldAppendUser = !last
+            || last.role !== 'user'
+            || last.content !== input.userMessage;
+        if (shouldAppendUser) {
+            this.chatHistory.push({
+                role: 'user',
+                content: input.userMessage,
+                images: input.images,
+            });
+        }
+        this.chatHistory.push({
+            role: 'assistant',
+            content: input.assistantMessage,
+        });
+        this.saveSession();
+    }
+
     public clearChatHistory() {
         this.chatHistory = [];
         this.saveSession();
