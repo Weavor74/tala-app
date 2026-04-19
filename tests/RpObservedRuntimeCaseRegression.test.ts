@@ -63,6 +63,13 @@ describe('RP observed runtime case regression', () => {
         expect(third.message.toLowerCase()).not.toContain('programming constraints');
         expect(events.some((event) => event.event === 'agent.rp_persona_truth_enforcement_applied')).toBe(true);
         expect(events.some((event) => event.event === 'agent.rp_meta_ontology_rewritten')).toBe(true);
+        // Publish-boundary guard diagnostic events must also fire
+        expect(events.some((event) => event.event === 'agent.rp_publish_guard_evaluated')).toBe(true);
+        expect(events.some((event) => event.event === 'agent.rp_publish_guard_leak_detected')).toBe(true);
+        const actionEvent = events.find(
+            (e) => e.event === 'agent.rp_publish_guard_rewritten' || e.event === 'agent.rp_publish_guard_blocked',
+        );
+        expect(actionEvent).toBeDefined();
     });
 
     it('injects required RP persona/canon blocks before dispatch even for unknown intent path', () => {

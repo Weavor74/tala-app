@@ -1,11 +1,17 @@
 # Service: IpcRouter.ts
 
-**Source**: [electron\services\IpcRouter.ts](../../electron/services/IpcRouter.ts)
+**Source**: [electron/services/IpcRouter.ts](../../electron/services/IpcRouter.ts)
 
 ## Class: `IpcRouter`
 
 ## Overview
-⚠️ TALA INVARIANT — IPC REGISTRATION - Each ipcMain.handle channel must be registered EXACTLY ONCE - Duplicate handlers WILL crash the app and break persistence - Always use removeHandler(channel) before re-registering - Do NOT register the same channel in multiple locations/
+⚠️ TALA INVARIANT — IPC REGISTRATION
+
+ - Each ipcMain.handle channel must be registered EXACTLY ONCE
+ - Duplicate handlers WILL crash the app and break persistence
+ - Always use removeHandler(channel) before re-registering
+ - Do NOT register the same channel in multiple locations
+/
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
@@ -143,7 +149,16 @@ export interface IpcRouterContext {
   TEMP_SYSTEM_PATH: string;
 }
 
-/** Central API Registry for the Electron shell.  The `IpcRouter` orchestrates all communication between the React renderer and the  backend services. It manages: - Application lifecycle and settings migration. - AI agent orchestration and streaming chat responses. - File system operations and workspace sandboxing. - Integration with peripheral services (Git, MCP, Guardrails, Backup). - System-level interactions (Terminal PTYs, OAuth, Native Dialogs).
+/**
+ Central API Registry for the Electron shell.
+ 
+ The `IpcRouter` orchestrates all communication between the React renderer and the 
+ backend services. It manages:
+ - Application lifecycle and settings migration.
+ - AI agent orchestration and streaming chat responses.
+ - File system operations and workspace sandboxing.
+ - Integration with peripheral services (Git, MCP, Guardrails, Backup).
+ - System-level interactions (Terminal PTYs, OAuth, Native Dialogs).
 
 ### Methods
 

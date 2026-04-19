@@ -1,6 +1,6 @@
 # Contract: crossSystemTypes.ts
 
-**Source**: [shared\crossSystemTypes.ts](../../shared/crossSystemTypes.ts)
+**Source**: [shared/crossSystemTypes.ts](../../shared/crossSystemTypes.ts)
 
 ## Interfaces
 

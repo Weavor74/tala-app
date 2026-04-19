@@ -1,13 +1,14 @@
 # Service: SelfMaintenanceService.ts
 
-**Source**: [electron\services\SelfMaintenanceService.ts](../../electron/services/SelfMaintenanceService.ts)
+**Source**: [electron/services/SelfMaintenanceService.ts](../../electron/services/SelfMaintenanceService.ts)
 
 ## Class: `SelfMaintenanceService`
 
 ### Methods
 
 #### `executeCommand`
-Executes an npm command natively, aggregating output securely./
+Executes an npm command natively, aggregating output securely.
+/
 
 **Arguments**: `cmd: string, args: string[]`
 **Returns**: `Promise<CliResult>`

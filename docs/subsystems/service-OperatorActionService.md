@@ -1,6 +1,6 @@
 # Service: OperatorActionService.ts
 
-**Source**: [electron\services\OperatorActionService.ts](../../electron/services/OperatorActionService.ts)
+**Source**: [electron/services/OperatorActionService.ts](../../electron/services/OperatorActionService.ts)
 
 ## Class: `OperatorActionService`
 
@@ -32,7 +32,9 @@
 
 ---
 #### `getAvailableActions`
-Returns backend-evaluated operator action availability for the dashboard. Invariant: computed from canonical health/mode/policy state only./
+Returns backend-evaluated operator action availability for the dashboard.
+ Invariant: computed from canonical health/mode/policy state only.
+/
 
 **Arguments**: ``
 **Returns**: `OperatorActionAvailability[]`

@@ -1,6 +1,6 @@
 # Contract: memoryAuthorityTypes.ts
 
-**Source**: [shared\memoryAuthorityTypes.ts](../../shared/memoryAuthorityTypes.ts)
+**Source**: [shared/memoryAuthorityTypes.ts](../../shared/memoryAuthorityTypes.ts)
 
 ## Interfaces
 

@@ -1,6 +1,6 @@
 # Service: CodeControlService.ts
 
-**Source**: [electron\services\CodeControlService.ts](../../electron/services/CodeControlService.ts)
+**Source**: [electron/services/CodeControlService.ts](../../electron/services/CodeControlService.ts)
 
 ## Class: `CodeControlService`
 

@@ -1,6 +1,6 @@
 # Contract: dbConfig.ts
 
-**Source**: [shared\dbConfig.ts](../../shared/dbConfig.ts)
+**Source**: [shared/dbConfig.ts](../../shared/dbConfig.ts)
 
 ## Interfaces
 
