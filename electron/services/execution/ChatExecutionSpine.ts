@@ -236,6 +236,28 @@ export type PromptBuildResult = {
     preLoopToolPolicy?: PreLoopResolvedToolPolicy;
 };
 
+export type SerializedPromptRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export type SerializedPromptPayload = {
+    turnId: string;
+    mode: string;
+    intent: string;
+    systemPrompt: string;
+    messageSequence: Array<{ role: SerializedPromptRole; content: string }>;
+    includedBlocks: string[];
+    expectedBlocks: string[];
+    memoryBlocksPresent: number;
+    promptPriorityBlocksPresent: string[];
+};
+
+export type PromptIntegrityCheck = {
+    ok: boolean;
+    missingRequiredBlocks: string[];
+    presentBlocks: string[];
+    degraded: boolean;
+    reasonCodes: string[];
+};
+
 export type LoopExecutionResult = {
     output?: AgentTurnOutput;
     plan?: ExecutionPlan;
@@ -342,8 +364,160 @@ export type ChatExecutionSpineAgent = {
 export class ChatExecutionSpine {
     private deterministicBypassOpportunityCount = 0;
     private deterministicBypassExecutedCount = 0;
+    private static readonly PROMPT_PRIORITY_BLOCK_PATTERN =
+        /\[(AUTOBIOGRAPHICAL MEMORY GROUNDING - MANDATORY|AUTOBIOGRAPHICAL MEMORY - AGE [^\]]+|CANON LORE MEMORIES[^\]]*|MEMORY GROUNDED RECALL[^\]]*|CANON GATE [^\]]*|USER IDENTITY)\]/gi;
 
     public constructor(private readonly agent: ChatExecutionSpineAgent) {}
+
+    private collectPriorityPromptBlocks(text: string): string[] {
+        if (!text?.trim()) return [];
+        const matches = text.match(ChatExecutionSpine.PROMPT_PRIORITY_BLOCK_PATTERN) || [];
+        return Array.from(new Set(matches.map((m) => m.trim())));
+    }
+
+    private buildPriorityBlockSectionMap(text: string): Map<string, string> {
+        const sections = new Map<string, string>();
+        if (!text?.trim()) return sections;
+        const headerMatches = [...text.matchAll(ChatExecutionSpine.PROMPT_PRIORITY_BLOCK_PATTERN)];
+        for (let i = 0; i < headerMatches.length; i++) {
+            const match = headerMatches[i];
+            const header = match[0].trim();
+            const start = match.index ?? 0;
+            const end = i + 1 < headerMatches.length
+                ? (headerMatches[i + 1].index ?? text.length)
+                : text.length;
+            const section = text.slice(start, end).trim();
+            if (!sections.has(header) && section.length > 0) {
+                sections.set(header, section);
+            }
+        }
+        return sections;
+    }
+
+    private buildSerializedPromptPayload(params: {
+        turnId: string;
+        mode: string;
+        intent: string;
+        systemPrompt: string;
+        messageSequence: ChatMessage[];
+        expectedBlocks: string[];
+    }): SerializedPromptPayload {
+        const includedBlocks = this.collectPriorityPromptBlocks(params.systemPrompt);
+        return {
+            turnId: params.turnId,
+            mode: params.mode,
+            intent: params.intent,
+            systemPrompt: params.systemPrompt,
+            messageSequence: params.messageSequence.map((m) => ({
+                role: (m.role as SerializedPromptRole),
+                content: m.content || '',
+            })),
+            includedBlocks,
+            expectedBlocks: Array.from(new Set(params.expectedBlocks)),
+            memoryBlocksPresent: includedBlocks.length,
+            promptPriorityBlocksPresent: includedBlocks,
+        };
+    }
+
+    private checkPromptIntegrity(payload: SerializedPromptPayload): PromptIntegrityCheck {
+        const missingRequiredBlocks = payload.expectedBlocks.filter(
+            (block) => !payload.includedBlocks.includes(block),
+        );
+        const ok = missingRequiredBlocks.length === 0;
+        return {
+            ok,
+            missingRequiredBlocks,
+            presentBlocks: payload.includedBlocks,
+            degraded: !ok,
+            reasonCodes: ok
+                ? ['prompt_integrity.ok']
+                : ['prompt_integrity.missing_required_blocks'],
+        };
+    }
+
+    private enforceRpPromptIntegrityOrDegrade(params: {
+        payload: SerializedPromptPayload;
+        expectedBlockSections: Map<string, string>;
+        routeSource: string;
+    }): { payload: SerializedPromptPayload; check: PromptIntegrityCheck; dispatchBlocked: boolean } {
+        const initialCheck = this.checkPromptIntegrity(params.payload);
+        if (params.payload.mode !== 'rp' || initialCheck.ok) {
+            return { payload: params.payload, check: initialCheck, dispatchBlocked: false };
+        }
+
+        TelemetryBus.getInstance().emit({
+            event: 'agent.prompt_integrity_missing_required_blocks',
+            subsystem: 'agent',
+            executionId: params.payload.turnId,
+            payload: {
+                turnId: params.payload.turnId,
+                mode: params.payload.mode,
+                intent: params.payload.intent,
+                expectedBlocks: params.payload.expectedBlocks,
+                serializedBlocks: params.payload.includedBlocks,
+                outboundBlocks: params.payload.includedBlocks,
+                missingRequiredBlocks: initialCheck.missingRequiredBlocks,
+                degraded: true,
+                routeSource: params.routeSource,
+                reasonCodes: initialCheck.reasonCodes,
+            },
+        });
+
+        const emergencySections = initialCheck.missingRequiredBlocks
+            .map((header) => params.expectedBlockSections.get(header) || `${header}\n[RP PROMPT INTEGRITY RECOVERY]\nPreserve Tala persona truth and canon continuity.`)
+            .join('\n\n');
+        const rewrittenSystemPrompt = emergencySections.trim().length > 0
+            ? `${params.payload.systemPrompt}\n\n${emergencySections}`.trim()
+            : params.payload.systemPrompt;
+        const rewrittenPayload = {
+            ...params.payload,
+            systemPrompt: rewrittenSystemPrompt,
+            includedBlocks: this.collectPriorityPromptBlocks(rewrittenSystemPrompt),
+        };
+        rewrittenPayload.memoryBlocksPresent = rewrittenPayload.includedBlocks.length;
+        rewrittenPayload.promptPriorityBlocksPresent = rewrittenPayload.includedBlocks;
+        const rewrittenCheck = this.checkPromptIntegrity(rewrittenPayload);
+
+        if (rewrittenCheck.ok) {
+            TelemetryBus.getInstance().emit({
+                event: 'agent.prompt_integrity_degraded_fallback_used',
+                subsystem: 'agent',
+                executionId: rewrittenPayload.turnId,
+                payload: {
+                    turnId: rewrittenPayload.turnId,
+                    mode: rewrittenPayload.mode,
+                    intent: rewrittenPayload.intent,
+                    expectedBlocks: rewrittenPayload.expectedBlocks,
+                    serializedBlocks: rewrittenPayload.includedBlocks,
+                    outboundBlocks: rewrittenPayload.includedBlocks,
+                    missingRequiredBlocks: [],
+                    degraded: true,
+                    routeSource: params.routeSource,
+                    reasonCodes: ['prompt_integrity.emergency_injection_applied'],
+                },
+            });
+            return { payload: rewrittenPayload, check: rewrittenCheck, dispatchBlocked: false };
+        }
+
+        TelemetryBus.getInstance().emit({
+            event: 'agent.prompt_integrity_dispatch_blocked',
+            subsystem: 'agent',
+            executionId: rewrittenPayload.turnId,
+            payload: {
+                turnId: rewrittenPayload.turnId,
+                mode: rewrittenPayload.mode,
+                intent: rewrittenPayload.intent,
+                expectedBlocks: rewrittenPayload.expectedBlocks,
+                serializedBlocks: rewrittenPayload.includedBlocks,
+                outboundBlocks: rewrittenPayload.includedBlocks,
+                missingRequiredBlocks: rewrittenCheck.missingRequiredBlocks,
+                degraded: true,
+                routeSource: params.routeSource,
+                reasonCodes: rewrittenCheck.reasonCodes,
+            },
+        });
+        return { payload: rewrittenPayload, check: rewrittenCheck, dispatchBlocked: true };
+    }
 
     private resolveAuthoritativeTurnMode(input: TurnExecutionInput, configuredMode: string, turnId: string): string {
         const requestedMode = typeof input.capabilitiesOverride?.authoritativeTurnMode === 'string'
@@ -690,11 +864,12 @@ export class ChatExecutionSpine {
         if (activeMode === 'rp') {
             return {
                 ...base,
-                identity: 3000,
-                task_policy: 3200,
+                identity: 4200,
+                task_policy: 2200,
+                memory: 5200,
                 tools: 0,
-                reflection: 2400,
-                astro: 1800,
+                reflection: 1400,
+                astro: 1000,
             };
         }
 
@@ -1728,6 +1903,64 @@ export class ChatExecutionSpine {
         if (enforceCanonRequiredAutobioOverride) {
             systemPrompt = agent.applyCanonRequiredAutobioDirective(systemPrompt);
         }
+        const expectedPriorityBlockSource = [
+            boundedPromptPacket.inputs.systemPromptBase,
+            boundedPromptPacket.inputs.userIdentity,
+            boundedPromptPacket.inputs.memoryContext,
+        ].join('\n\n');
+        const expectedPriorityBlocks = this.collectPriorityPromptBlocks(expectedPriorityBlockSource);
+        const expectedPriorityBlockSections = this.buildPriorityBlockSectionMap(expectedPriorityBlockSource);
+        const assembledPriorityBlocks = this.collectPriorityPromptBlocks(systemPrompt);
+        TelemetryBus.getInstance().emit({
+            event: 'agent.prompt_integrity_selected_blocks',
+            subsystem: 'agent',
+            executionId: turnId,
+            payload: {
+                turnId,
+                mode: activeMode,
+                intent: turnObject.intent.class,
+                expectedBlocks: expectedPriorityBlocks,
+                serializedBlocks: assembledPriorityBlocks,
+                outboundBlocks: assembledPriorityBlocks,
+                missingRequiredBlocks: expectedPriorityBlocks.filter((block) => !assembledPriorityBlocks.includes(block)),
+                degraded: false,
+                reasonCodes: ['prompt_integrity.selected_blocks_captured'],
+            },
+        });
+        TelemetryBus.getInstance().emit({
+            event: 'agent.prompt_integrity_serialized_blocks',
+            subsystem: 'agent',
+            executionId: turnId,
+            payload: {
+                turnId,
+                mode: activeMode,
+                intent: turnObject.intent.class,
+                expectedBlocks: expectedPriorityBlocks,
+                serializedBlocks: assembledPriorityBlocks,
+                outboundBlocks: assembledPriorityBlocks,
+                missingRequiredBlocks: expectedPriorityBlocks.filter((block) => !assembledPriorityBlocks.includes(block)),
+                degraded: false,
+                reasonCodes: ['prompt_integrity.serialized_blocks_captured'],
+            },
+        });
+        if (expectedPriorityBlocks.some((block) => !assembledPriorityBlocks.includes(block))) {
+            TelemetryBus.getInstance().emit({
+                event: 'agent.prompt_integrity_discrepancy_detected',
+                subsystem: 'agent',
+                executionId: turnId,
+                payload: {
+                    turnId,
+                    mode: activeMode,
+                    intent: turnObject.intent.class,
+                    expectedBlocks: expectedPriorityBlocks,
+                    serializedBlocks: assembledPriorityBlocks,
+                    outboundBlocks: assembledPriorityBlocks,
+                    missingRequiredBlocks: expectedPriorityBlocks.filter((block) => !assembledPriorityBlocks.includes(block)),
+                    degraded: true,
+                    reasonCodes: ['prompt_integrity.assembled_mismatch_detected'],
+                },
+            });
+        }
         agent.logPriorityMemorySerializationGuard(
             'assembled',
             turnId,
@@ -1918,6 +2151,7 @@ export class ChatExecutionSpine {
             // Tracks the tool set actually sent to the model for this iteration, so the
             // outer catch can perform a no-tool fallback on StreamOpenTimeoutError.
             let toolsSentThisIteration: any[] = [];
+            let dispatchSystemPromptForIteration = systemPrompt;
 
             try {
                 const brainOptions: any = { temperature: 0.3, repeat_penalty: 1.15, auditRecord: agent.currentTurnAuditRecord };
@@ -2063,15 +2297,73 @@ export class ChatExecutionSpine {
                 // Capture the final tool set so the outer catch can act on it for timeout fallback.
                 toolsSentThisIteration = toolsToSend;
 
+                let dispatchPayload = this.buildSerializedPromptPayload({
+                    turnId: executionLog.turnId,
+                    mode: activeMode,
+                    intent: turnObject.intent.class,
+                    systemPrompt,
+                    messageSequence: truncated,
+                    expectedBlocks: expectedPriorityBlocks,
+                });
+                const dispatchGuard = this.enforceRpPromptIntegrityOrDegrade({
+                    payload: dispatchPayload,
+                    expectedBlockSections: expectedPriorityBlockSections,
+                    routeSource: 'router',
+                });
+                dispatchPayload = dispatchGuard.payload;
+                dispatchSystemPromptForIteration = dispatchPayload.systemPrompt;
+
+                if (!dispatchGuard.check.ok && activeMode === 'rp') {
+                    const blockedResponse = 'I need a moment to keep our frame grounded. Ask me again and I will stay in character.';
+                    finalResponse = blockedResponse;
+                    const blockedMsg: ChatMessage = { role: 'assistant', content: blockedResponse };
+                    agent.commitAssistantMessage(
+                        transientMessages,
+                        blockedMsg,
+                        turnObject.intent.class,
+                        executionLog.toolCalls.length,
+                        turnSeenHashes,
+                        activeMode,
+                    );
+                    if (dispatchGuard.dispatchBlocked) {
+                        break;
+                    }
+                }
+
+                TelemetryBus.getInstance().emit({
+                    event: 'agent.prompt_integrity_serialized_blocks',
+                    subsystem: 'agent',
+                    executionId: dispatchPayload.turnId,
+                    payload: {
+                        turnId: dispatchPayload.turnId,
+                        mode: dispatchPayload.mode,
+                        intent: dispatchPayload.intent,
+                        expectedBlocks: dispatchPayload.expectedBlocks,
+                        serializedBlocks: dispatchPayload.includedBlocks,
+                        outboundBlocks: dispatchPayload.includedBlocks,
+                        missingRequiredBlocks: dispatchGuard.check.missingRequiredBlocks,
+                        degraded: dispatchGuard.check.degraded,
+                        reasonCodes: dispatchGuard.check.reasonCodes,
+                    },
+                });
+
                 agent.logPriorityMemorySerializationGuard(
                     'pre_dispatch',
                     executionLog.turnId,
                     turnObject,
                     hasMemories,
                     memoryContext,
-                    systemPrompt,
+                    dispatchPayload.systemPrompt,
                 );
-                const response = await agent.streamWithBrain(agent.brain, truncated, systemPrompt, onToken || (() => { }), signal, toolsToSend, brainOptions);
+                const response = await agent.streamWithBrain(
+                    agent.brain,
+                    dispatchPayload.messageSequence as ChatMessage[],
+                    dispatchPayload.systemPrompt,
+                    onToken || (() => { }),
+                    signal,
+                    toolsToSend,
+                    brainOptions,
+                );
                 const requestLatency = Date.now() - requestStart;
 
                 agent.logViewerService?.logPerformanceMetric({
@@ -2211,7 +2503,23 @@ Failure to provide a tool call will result in system termination.`;
                     const retryTools = isBrowserTask
                         ? filteredTools.filter((t: any) => BROWSER_TASK_TOOL_NAMES.has(t.function.name))
                         : toolsToSend;
-                    const retryResponse = await agent.streamWithBrain(agent.brain, truncated, envelopeSystem + "\n\n" + systemPrompt, onToken || (() => { }), signal, retryTools, retryOptions);
+                    const retryDispatchPayload = this.buildSerializedPromptPayload({
+                        turnId: executionLog.turnId,
+                        mode: activeMode,
+                        intent: turnObject.intent.class,
+                        systemPrompt: `${envelopeSystem}\n\n${dispatchPayload.systemPrompt}`,
+                        messageSequence: truncated,
+                        expectedBlocks: expectedPriorityBlocks,
+                    });
+                    const retryResponse = await agent.streamWithBrain(
+                        agent.brain,
+                        retryDispatchPayload.messageSequence as ChatMessage[],
+                        retryDispatchPayload.systemPrompt,
+                        onToken || (() => { }),
+                        signal,
+                        retryTools,
+                        retryOptions,
+                    );
 
                     calls = retryResponse.toolCalls || [];
                     if (calls.length === 0 && retryResponse.content) {
@@ -2348,18 +2656,18 @@ Failure to provide a tool call will result in system termination.`;
                 });
                 browserTaskHadSuccessfulAction = toolExecutionResult.browserTaskHadSuccessfulAction;
             } catch (e: any) {
-                const timeoutHandled = await this.handleIterationTimeoutFallback({
-                    error: e,
-                    toolsSentThisIteration,
-                    turn,
-                    turnId,
-                    signal,
-                    truncated,
-                    systemPrompt,
-                    onToken,
-                    turnObject,
-                    enforceCanonRequiredAutobioOverride,
-                    executionLog,
+                    const timeoutHandled = await this.handleIterationTimeoutFallback({
+                        error: e,
+                        toolsSentThisIteration,
+                        turn,
+                        turnId,
+                        signal,
+                        truncated,
+                        systemPrompt: dispatchSystemPromptForIteration,
+                        onToken,
+                        turnObject,
+                        enforceCanonRequiredAutobioOverride,
+                        executionLog,
                     transientMessages,
                     turnSeenHashes,
                     activeMode,

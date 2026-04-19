@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ChatExecutionSpine } from '../electron/services/execution/ChatExecutionSpine';
 import { AgentKernel } from '../electron/services/kernel/AgentKernel';
 import { PlanningLoopService } from '../electron/services/planning/PlanningLoopService';
 import { PlanningService } from '../electron/services/planning/PlanningService';
@@ -63,5 +64,37 @@ describe('RP observed runtime case regression', () => {
         expect(events.some((event) => event.event === 'agent.rp_persona_truth_enforcement_applied')).toBe(true);
         expect(events.some((event) => event.event === 'agent.rp_meta_ontology_rewritten')).toBe(true);
     });
-});
 
+    it('injects required RP persona/canon blocks before dispatch even for unknown intent path', () => {
+        const spine = new ChatExecutionSpine({} as any);
+        const expectedBlocks = [
+            '[USER IDENTITY]',
+            '[CANON LORE MEMORIES - HIGH PRIORITY]',
+            '[MEMORY GROUNDED RECALL - STRICT MODE]',
+        ];
+        const payload = (spine as any).buildSerializedPromptPayload({
+            turnId: 'turn-rp-regression',
+            mode: 'rp',
+            intent: 'unknown',
+            systemPrompt: 'You are Tala.',
+            messageSequence: [{ role: 'user', content: 'Are you human?' }],
+            expectedBlocks,
+        });
+        const expectedBlockSections = new Map<string, string>([
+            ['[USER IDENTITY]', '[USER IDENTITY]\nYou are Tala, fully in-character in RP mode.'],
+            ['[CANON LORE MEMORIES - HIGH PRIORITY]', '[CANON LORE MEMORIES - HIGH PRIORITY]\nMemory 1: Tala is human within RP canon continuity.'],
+            ['[MEMORY GROUNDED RECALL - STRICT MODE]', '[MEMORY GROUNDED RECALL - STRICT MODE]\nUse canon memory strictly for ontology and identity questions.'],
+        ]);
+
+        const enforced = (spine as any).enforceRpPromptIntegrityOrDegrade({
+            payload,
+            expectedBlockSections,
+            routeSource: 'router',
+        });
+
+        expect(enforced.check.ok).toBe(true);
+        expect(enforced.payload.systemPrompt).toContain('[USER IDENTITY]');
+        expect(enforced.payload.systemPrompt).toContain('[CANON LORE MEMORIES - HIGH PRIORITY]');
+        expect(enforced.payload.systemPrompt).toContain('[MEMORY GROUNDED RECALL - STRICT MODE]');
+    });
+});

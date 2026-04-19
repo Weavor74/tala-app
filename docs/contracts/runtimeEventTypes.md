@@ -103,6 +103,12 @@ type RuntimeEventType =
     | 'agent.turn_mode_drift_detected'
     | 'agent.turn_mode_override_blocked'
     | 'agent.turn_mode_settings_stale'
+    | 'agent.prompt_integrity_selected_blocks'
+    | 'agent.prompt_integrity_serialized_blocks'
+    | 'agent.prompt_integrity_missing_required_blocks'
+    | 'agent.prompt_integrity_dispatch_blocked'
+    | 'agent.prompt_integrity_degraded_fallback_used'
+    | 'agent.prompt_integrity_discrepancy_detected'
     | `agent.${string}`
     | 'execution.created'
     | 'execution.accepted'
