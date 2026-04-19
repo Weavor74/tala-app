@@ -669,7 +669,7 @@ export interface PlanExecutionDiagnosticsSnapshot {
     approvalBlockedCount?: number;
     policyReasonCodes?: string[];
     taskLoopDoctrineClass?: string;
-    policySource?: 'baseline' | 'tuned_override';
+    policySource?: 'baseline' | 'promoted_override' | 'stale_active_override';
     tunedOverrideActive?: boolean;
     recentStages: PlanStageExecutionDiagnosticsRecord[];
     lastUpdated: string;

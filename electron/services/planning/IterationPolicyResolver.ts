@@ -164,14 +164,15 @@ export class IterationPolicyResolver {
         let maxIterations = defaults.maxIterations;
         let replanAllowance = defaults.replanAllowance;
         let continuationRule = defaults.continuationRule;
-        let policySource: 'baseline' | 'tuned_override' = 'baseline';
+        let policySource: 'baseline' | 'promoted_override' | 'stale_active_override' = 'baseline';
         let tunedOverrideActive = false;
         let loopPermission: LoopPermission = 'allowed';
         let approvalRequirement: 'not_required' | 'required_above_iteration_threshold' | 'required_for_all_additional_iterations' = 'not_required';
         let approvalRequiredAboveIteration: number | undefined;
 
-        const override = this._tuningRepo.getAppliedOverride(taskClass);
-        if (override) {
+        const governedOverride = this._tuningRepo.getActiveOverride(taskClass);
+        const override = governedOverride?.adjustment;
+        if (override && governedOverride) {
             if (taskClass === 'recovery_repair') {
                 reasonCodes.push('iteration_policy.tuned_override_ignored_recovery_precedence');
             } else {
@@ -181,7 +182,9 @@ export class IterationPolicyResolver {
                 if (override.replanAllowance) {
                     replanAllowance = override.replanAllowance;
                 }
-                policySource = 'tuned_override';
+                policySource = governedOverride.lifecycleState === 'active_stale'
+                    ? 'stale_active_override'
+                    : 'promoted_override';
                 tunedOverrideActive = true;
                 reasonCodes.push('iteration_policy.tuned_override_applied');
             }

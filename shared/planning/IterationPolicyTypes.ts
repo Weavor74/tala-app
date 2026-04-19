@@ -74,7 +74,7 @@ export interface IterationPolicyProfile {
     approvalRequiredAboveIteration?: number;
     verificationDepth?: VerificationDepth;
     recoveryBudgetApplied?: number;
-    policySource?: 'baseline' | 'tuned_override';
+    policySource?: 'baseline' | 'promoted_override' | 'stale_active_override';
     tunedOverrideActive?: boolean;
     reasonCodes: IterationDecisionReasonCode[];
 }

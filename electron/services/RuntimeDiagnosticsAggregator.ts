@@ -510,7 +510,9 @@ export class RuntimeDiagnosticsAggregator {
         const recommendationCount =
             state.pendingRecommendations.length +
             state.promotedRecommendations.length +
-            state.rejectedRecommendations.length;
+            state.rejectedRecommendations.length +
+            state.expiredRecommendations.length +
+            state.supersededRecommendations.length;
 
         const topHelpfulTaskFamilies = analytics.taskFamilyStats
             .map((item) => ({
@@ -534,9 +536,9 @@ export class RuntimeDiagnosticsAggregator {
 
         const evidenceSufficiencyByTaskFamily = analytics.taskFamilyStats.map((item) => ({
             taskClass: item.taskClass,
-            status: state.pendingRecommendations.find((rec) => rec.taskClass === item.taskClass)?.evidenceSufficiency
+            status: state.pendingRecommendations.find((rec) => rec.recommendation.taskClass === item.taskClass)?.recommendation.evidenceSufficiency
                 ?? 'sufficient',
-            confidence: state.pendingRecommendations.find((rec) => rec.taskClass === item.taskClass)?.confidence
+            confidence: state.pendingRecommendations.find((rec) => rec.recommendation.taskClass === item.taskClass)?.recommendation.confidence
                 ?? 'medium',
         }));
 
@@ -545,6 +547,40 @@ export class RuntimeDiagnosticsAggregator {
             source: state.appliedOverrides[item.taskClass] ? 'override' as const : 'baseline' as const,
         }));
 
+        const activePolicySourceByTaskFamily = analytics.taskFamilyStats.map((item) => {
+            const active = state.activeOverrides.find((override) => override.taskClass === item.taskClass);
+            if (!active) {
+                return {
+                    taskClass: item.taskClass,
+                    source: 'baseline' as const,
+                    overrideLifecycleState: undefined,
+                };
+            }
+            return {
+                taskClass: item.taskClass,
+                source: active.lifecycleState === 'active_stale'
+                    ? 'stale_active_override' as const
+                    : 'promoted_override' as const,
+                overrideLifecycleState: active.lifecycleState,
+            };
+        });
+
+        const topPendingRecommendations = state.pendingRecommendations
+            .slice()
+            .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))
+            .slice(0, 5)
+            .map((item) => ({
+                recommendationId: item.recommendation.recommendationId,
+                taskClass: item.recommendation.taskClass,
+                confidence: item.recommendation.confidence,
+                evidenceSufficiency: item.recommendation.evidenceSufficiency,
+                expiresAt: item.expiresAt,
+            }));
+
+        const staleActiveOverrideCount = state.activeOverrides.filter((override) => override.lifecycleState === 'active_stale').length;
+        const staleRequiresRevalidationCount = state.activeOverrides.filter((override) => override.lifecycleState === 'stale_requires_revalidation').length;
+        const doctrineIncompatibilityWarningCount = state.activeOverrides.filter((override) => override.lifecycleState === 'blocked_by_doctrine').length;
+
         return {
             tuningOverridesActive: Object.keys(state.appliedOverrides).length > 0,
             appliedOverrideCount: Object.keys(state.appliedOverrides).length,
@@ -552,6 +588,17 @@ export class RuntimeDiagnosticsAggregator {
             pendingRecommendationCount: state.pendingRecommendations.length,
             promotedRecommendationCount: state.promotedRecommendations.length,
             rejectedRecommendationCount: state.rejectedRecommendations.length,
+            expiredRecommendationCount: state.expiredRecommendations.length,
+            supersededRecommendationCount: state.supersededRecommendations.length,
+            staleActiveOverrideCount,
+            retiredOverrideCount: state.retiredOverrides.length,
+            supersededOverrideCount: state.supersededOverrides.length,
+            staleRequiresRevalidationCount,
+            autoPromotionEligibleCount: state.pendingRecommendations.filter((rec) => rec.reasonCodes.includes('governance.eligible_for_promotion')).length,
+            autoPromotionIneligibleCount: state.pendingRecommendations.filter((rec) => rec.reasonCodes.includes('governance.blocked_task_family_restriction')).length,
+            doctrineIncompatibilityWarningCount,
+            topPendingRecommendations,
+            activePolicySourceByTaskFamily,
             topHelpfulTaskFamilies,
             topWastefulTaskFamilies,
             evidenceSufficiencyByTaskFamily,
@@ -570,13 +617,19 @@ export class RuntimeDiagnosticsAggregator {
             event === 'planning.loop_failed' ||
             event === 'planning.loop_aborted'
         ) {
+            const nowIso = new Date().toISOString();
             const snapshot = this._iterationEffectivenessProjector.getSnapshot();
             this._iterationTuningRepository.setLastAnalyticsSnapshot(snapshot);
             const recommendations = this._iterationTuningAdvisor.buildRecommendations(
                 snapshot,
                 this._iterationTuningRepository.getState().appliedOverrides,
             );
-            this._iterationTuningRepository.setRecommendations(recommendations);
+            this._iterationTuningRepository.setRecommendations(recommendations, {
+                nowIso,
+                evidenceSnapshotId: `evidence-${payload?.loopId ?? 'unknown'}-${Date.now()}`,
+            });
+            this._iterationTuningRepository.expireStaleRecommendations(nowIso);
+            this._iterationTuningRepository.revalidateActiveOverrides(nowIso);
         }
     }
 

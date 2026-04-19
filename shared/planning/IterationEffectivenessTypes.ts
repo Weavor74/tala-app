@@ -1,4 +1,12 @@
 import type { ReplanAllowance, IterationWorthinessClass } from './IterationPolicyTypes';
+import type {
+    IterationGovernedOverrideRecord,
+    IterationGovernedRecommendationRecord,
+    IterationPolicyGovernanceReasonCode,
+    IterationPromotionDecision,
+    IterationPolicyOverrideLifecycleState,
+    PolicyDoctrineVersion,
+} from './IterationPolicyGovernanceTypes';
 
 export type TuningConfidenceLevel = 'low' | 'medium' | 'high';
 
@@ -145,10 +153,25 @@ export interface IterationPolicyRejectionRecord {
 }
 
 export interface IterationPolicyTuningState {
+    doctrineVersion: PolicyDoctrineVersion;
     appliedOverrides: Partial<Record<IterationWorthinessClass, IterationPolicyAdjustment>>;
-    pendingRecommendations: IterationTuningRecommendation[];
+    pendingRecommendations: IterationGovernedRecommendationRecord[];
     promotedRecommendations: IterationPolicyPromotionRecord[];
     rejectedRecommendations: IterationPolicyRejectionRecord[];
+    expiredRecommendations: IterationGovernedRecommendationRecord[];
+    supersededRecommendations: IterationGovernedRecommendationRecord[];
+    activeOverrides: IterationGovernedOverrideRecord[];
+    staleOverrides: IterationGovernedOverrideRecord[];
+    retiredOverrides: IterationGovernedOverrideRecord[];
+    supersededOverrides: IterationGovernedOverrideRecord[];
+    promotionDecisions: IterationPromotionDecision[];
+    overrideSupersessionRecords: Array<{
+        priorOverrideId: string;
+        supersededByOverrideId: string;
+        supersededAt: string;
+        taskClass: IterationWorthinessClass;
+        reasonCodes: IterationPolicyGovernanceReasonCode[];
+    }>;
     lastAnalyticsSnapshot?: IterationEffectivenessSnapshot;
     lastRecommendationRunAt?: string;
 }
@@ -160,6 +183,27 @@ export interface IterationPolicyTuningDiagnosticsSnapshot {
     pendingRecommendationCount: number;
     promotedRecommendationCount: number;
     rejectedRecommendationCount: number;
+    expiredRecommendationCount: number;
+    supersededRecommendationCount: number;
+    staleActiveOverrideCount: number;
+    retiredOverrideCount: number;
+    supersededOverrideCount: number;
+    staleRequiresRevalidationCount: number;
+    autoPromotionEligibleCount: number;
+    autoPromotionIneligibleCount: number;
+    doctrineIncompatibilityWarningCount: number;
+    topPendingRecommendations: Array<{
+        recommendationId: string;
+        taskClass: IterationWorthinessClass;
+        confidence: TuningConfidenceLevel;
+        evidenceSufficiency: EvidenceSufficiencyStatus;
+        expiresAt: string;
+    }>;
+    activePolicySourceByTaskFamily: Array<{
+        taskClass: IterationWorthinessClass;
+        source: 'baseline' | 'promoted_override' | 'stale_active_override';
+        overrideLifecycleState?: IterationPolicyOverrideLifecycleState;
+    }>;
     topHelpfulTaskFamilies: Array<{
         taskClass: IterationWorthinessClass;
         secondPassUplift: number;
