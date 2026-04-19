@@ -192,6 +192,8 @@ type RuntimeEventType =
     | 'planning.loop_iteration_replan_denied'
     | 'planning.loop_iteration_improved_outcome'
     | 'planning.loop_iteration_no_material_improvement'
+    | 'planning.iteration_tuning_snapshot_updated'
+    | 'planning.iteration_tuning_recommendations_updated'
     | 'planning.loop_observation'
     | 'planning.loop_replan_decision'
     | 'planning.loop_completed'

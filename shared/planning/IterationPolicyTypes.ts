@@ -47,6 +47,10 @@ export type IterationDecisionReasonCode =
     | 'iteration_policy.replan_allowed'
     | 'iteration_policy.replan_not_allowed'
     | 'iteration_policy.caller_cap_applied'
+    | 'iteration_policy.tuned_override_applied'
+    | 'iteration_policy.tuned_override_skipped_insufficient'
+    | 'iteration_policy.tuned_override_ignored_by_safety_cap'
+    | 'iteration_policy.tuned_override_ignored_recovery_precedence'
     | 'iteration_continue.incomplete_with_budget'
     | 'iteration_continue.recoverable_failure'
     | 'iteration_continue.verification_gap'
@@ -70,6 +74,8 @@ export interface IterationPolicyProfile {
     approvalRequiredAboveIteration?: number;
     verificationDepth?: VerificationDepth;
     recoveryBudgetApplied?: number;
+    policySource?: 'baseline' | 'tuned_override';
+    tunedOverrideActive?: boolean;
     reasonCodes: IterationDecisionReasonCode[];
 }
 
@@ -105,4 +111,3 @@ export interface IterationPolicyResolution {
     profile: IterationPolicyProfile;
     budget: IterationBudget;
 }
-

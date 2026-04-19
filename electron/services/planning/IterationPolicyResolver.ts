@@ -8,6 +8,7 @@ import type {
     LoopPermission,
     ReplanAllowance,
 } from '../../../shared/planning/IterationPolicyTypes';
+import { IterationPolicyTuningRepository } from './IterationPolicyTuningRepository';
 
 export interface IterationPolicyResolverInput {
     goal: string;
@@ -62,7 +63,7 @@ function classifyTaskClass(input: IterationPolicyResolverInput): IterationWorthi
     return 'general_goal_execution';
 }
 
-function resolveDefaults(taskClass: IterationWorthinessClass): {
+export function resolveIterationDoctrineDefaults(taskClass: IterationWorthinessClass): {
     maxIterations: number;
     replanAllowance: ReplanAllowance;
     continuationRule: IterationContinuationRule;
@@ -151,36 +152,69 @@ function resolveDefaults(taskClass: IterationWorthinessClass): {
 }
 
 export class IterationPolicyResolver {
+    constructor(
+        private readonly _tuningRepo: IterationPolicyTuningRepository = IterationPolicyTuningRepository.getInstance(),
+    ) {}
+
     resolve(input: IterationPolicyResolverInput): IterationPolicyResolution {
         const taskClass = classifyTaskClass(input);
-        const defaults = resolveDefaults(taskClass);
+        const defaults = resolveIterationDoctrineDefaults(taskClass);
         const reasonCodes: IterationDecisionReasonCode[] = [defaults.reason];
 
         let maxIterations = defaults.maxIterations;
         let replanAllowance = defaults.replanAllowance;
         let continuationRule = defaults.continuationRule;
+        let policySource: 'baseline' | 'tuned_override' = 'baseline';
+        let tunedOverrideActive = false;
         let loopPermission: LoopPermission = 'allowed';
         let approvalRequirement: 'not_required' | 'required_above_iteration_threshold' | 'required_for_all_additional_iterations' = 'not_required';
         let approvalRequiredAboveIteration: number | undefined;
 
+        const override = this._tuningRepo.getAppliedOverride(taskClass);
+        if (override) {
+            if (taskClass === 'recovery_repair') {
+                reasonCodes.push('iteration_policy.tuned_override_ignored_recovery_precedence');
+            } else {
+                if (typeof override.maxIterations === 'number' && override.maxIterations > 0) {
+                    maxIterations = override.maxIterations;
+                }
+                if (override.replanAllowance) {
+                    replanAllowance = override.replanAllowance;
+                }
+                policySource = 'tuned_override';
+                tunedOverrideActive = true;
+                reasonCodes.push('iteration_policy.tuned_override_applied');
+            }
+        }
+
+        let safetyCapped = false;
         if (input.plan.estimatedRisk === 'high' || input.plan.estimatedRisk === 'critical') {
             maxIterations = 1;
             replanAllowance = 'none';
             continuationRule = 'never';
+            safetyCapped = true;
             reasonCodes.push('iteration_policy.high_risk_capped');
         }
 
         if (taskClass === 'operator_sensitive') {
+            maxIterations = 1;
+            replanAllowance = 'none';
+            continuationRule = 'never';
             approvalRequirement = 'required_above_iteration_threshold';
             approvalRequiredAboveIteration = 1;
             reasonCodes.push('iteration_policy.approval_required_for_additional_iterations');
             if (input.approvalGranted !== true) {
                 loopPermission = 'blocked_by_approval';
             }
+            safetyCapped = true;
+        }
+
+        if (safetyCapped && tunedOverrideActive) {
+            reasonCodes.push('iteration_policy.tuned_override_ignored_by_safety_cap');
         }
 
         if (input.callerMaxIterations && input.callerMaxIterations > 0) {
-            maxIterations = input.callerMaxIterations;
+            maxIterations = safetyCapped ? Math.min(maxIterations, input.callerMaxIterations) : input.callerMaxIterations;
             reasonCodes.push('iteration_policy.caller_cap_applied');
         }
 
@@ -201,6 +235,8 @@ export class IterationPolicyResolver {
                 approvalRequiredAboveIteration,
                 verificationDepth: input.plan.verificationDepth,
                 recoveryBudgetApplied: taskClass === 'recovery_repair' ? maxIterations : undefined,
+                policySource,
+                tunedOverrideActive,
                 reasonCodes,
             },
             budget: {

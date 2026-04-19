@@ -13,6 +13,7 @@ import type {
     RuntimeMemoryAuthorityDiagnosticsView,
     RecoveryDiagnosticsSnapshot,
 } from '../../shared/runtimeDiagnosticsTypes';
+import type { IterationPolicyTuningDiagnosticsSnapshot } from '../../shared/planning/IterationEffectivenessTypes';
 import type { KernelTurnDiagnosticsView } from '../../shared/turnArbitrationTypes';
 import type {
     SystemCapability,
@@ -30,6 +31,9 @@ import { SystemHealthService, type SystemHealthAdapterDeps } from './SystemHealt
 import { TelemetryBus } from './telemetry/TelemetryBus';
 import type { AuthorityLaneDiagnosticsRecord } from '../../shared/planning/executionAuthorityTypes';
 import { RecoveryHistoryRepositoryService } from './runtime/recovery/RecoveryHistoryRepository';
+import { IterationEffectivenessProjectorService } from './planning/IterationEffectivenessProjector';
+import { IterationTuningAdvisorService } from './planning/IterationTuningAdvisor';
+import { IterationPolicyTuningRepository } from './planning/IterationPolicyTuningRepository';
 
 export interface McpDiagnosticsSource {
     getDiagnosticsInventory(): McpInventoryDiagnostics;
@@ -121,6 +125,9 @@ export class RuntimeDiagnosticsAggregator {
         lastUpdated: new Date(0).toISOString(),
     };
     private readonly _recoveryHistoryRepository = RecoveryHistoryRepositoryService.getInstance();
+    private readonly _iterationEffectivenessProjector = new IterationEffectivenessProjectorService();
+    private readonly _iterationTuningAdvisor = new IterationTuningAdvisorService();
+    private readonly _iterationTuningRepository = IterationPolicyTuningRepository.getInstance();
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -148,6 +155,7 @@ export class RuntimeDiagnosticsAggregator {
             this._handleKernelTurnEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleMemoryAuthorityEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
             this._handleRecoveryEvent(evt.event, evt.executionId, evt.payload as Record<string, unknown> | undefined);
+            this._handleIterationTuningEvent(evt.event, evt.payload as Record<string, unknown> | undefined);
         });
     }
 
@@ -217,6 +225,7 @@ export class RuntimeDiagnosticsAggregator {
             kernelTurn: this._buildKernelTurnDiagnostics(now),
             memoryAuthority: this._buildMemoryAuthorityDiagnostics(now),
             recovery: this._buildRecoveryDiagnostics(now),
+            iterationTuning: this._buildIterationTuningDiagnostics(now),
         };
     }
 
@@ -493,6 +502,84 @@ export class RuntimeDiagnosticsAggregator {
         };
     }
 
+    private _buildIterationTuningDiagnostics(now: string): IterationPolicyTuningDiagnosticsSnapshot | undefined {
+        const state = this._iterationTuningRepository.getState();
+        const analytics = state.lastAnalyticsSnapshot;
+        if (!analytics) return undefined;
+
+        const recommendationCount =
+            state.pendingRecommendations.length +
+            state.promotedRecommendations.length +
+            state.rejectedRecommendations.length;
+
+        const topHelpfulTaskFamilies = analytics.taskFamilyStats
+            .map((item) => ({
+                taskClass: item.taskClass,
+                secondPassUplift:
+                    (item.depthProfiles.find((depth) => depth.depth === 2)?.successRate ?? 0) -
+                    (item.depthProfiles.find((depth) => depth.depth === 1)?.successRate ?? 0),
+                replanImprovementRate: item.replan.improvementRate,
+            }))
+            .sort((a, b) => (b.secondPassUplift + b.replanImprovementRate) - (a.secondPassUplift + a.replanImprovementRate))
+            .slice(0, 5);
+
+        const topWastefulTaskFamilies = analytics.taskFamilyStats
+            .map((item) => ({
+                taskClass: item.taskClass,
+                thirdPassWasteRate: item.depthProfiles.find((depth) => depth.depth === 3)?.wastedRateAtDepth ?? 0,
+                wastedIterationRate: item.waste.wastedIterationRate,
+            }))
+            .sort((a, b) => (b.thirdPassWasteRate + b.wastedIterationRate) - (a.thirdPassWasteRate + a.wastedIterationRate))
+            .slice(0, 5);
+
+        const evidenceSufficiencyByTaskFamily = analytics.taskFamilyStats.map((item) => ({
+            taskClass: item.taskClass,
+            status: state.pendingRecommendations.find((rec) => rec.taskClass === item.taskClass)?.evidenceSufficiency
+                ?? 'sufficient',
+            confidence: state.pendingRecommendations.find((rec) => rec.taskClass === item.taskClass)?.confidence
+                ?? 'medium',
+        }));
+
+        const policySourceByTaskFamily = analytics.taskFamilyStats.map((item) => ({
+            taskClass: item.taskClass,
+            source: state.appliedOverrides[item.taskClass] ? 'override' as const : 'baseline' as const,
+        }));
+
+        return {
+            tuningOverridesActive: Object.keys(state.appliedOverrides).length > 0,
+            appliedOverrideCount: Object.keys(state.appliedOverrides).length,
+            recommendationCount,
+            pendingRecommendationCount: state.pendingRecommendations.length,
+            promotedRecommendationCount: state.promotedRecommendations.length,
+            rejectedRecommendationCount: state.rejectedRecommendations.length,
+            topHelpfulTaskFamilies,
+            topWastefulTaskFamilies,
+            evidenceSufficiencyByTaskFamily,
+            policySourceByTaskFamily,
+            lastUpdated: state.lastRecommendationRunAt ?? analytics.generatedAt ?? now,
+        };
+    }
+
+    private _handleIterationTuningEvent(event: string, payload?: Record<string, unknown>): void {
+        this._iterationEffectivenessProjector.ingestEvent(
+            event as import('../../shared/runtimeEventTypes').RuntimeEventType,
+            payload,
+        );
+        if (
+            event === 'planning.loop_completed' ||
+            event === 'planning.loop_failed' ||
+            event === 'planning.loop_aborted'
+        ) {
+            const snapshot = this._iterationEffectivenessProjector.getSnapshot();
+            this._iterationTuningRepository.setLastAnalyticsSnapshot(snapshot);
+            const recommendations = this._iterationTuningAdvisor.buildRecommendations(
+                snapshot,
+                this._iterationTuningRepository.getState().appliedOverrides,
+            );
+            this._iterationTuningRepository.setRecommendations(recommendations);
+        }
+    }
+
     private _handlePlanExecutionEvent(event: string, payload?: Record<string, unknown>): void {
         if (!payload) return;
         const now = new Date().toISOString();
@@ -507,6 +594,10 @@ export class RuntimeDiagnosticsAggregator {
                 : this._planExecutionDiagnostics.policyReasonCodes;
             this._planExecutionDiagnostics.taskLoopDoctrineClass =
                 payload.taskLoopDoctrineClass as string | undefined;
+            this._planExecutionDiagnostics.policySource =
+                payload.policySource as PlanExecutionDiagnosticsSnapshot['policySource'] | undefined;
+            this._planExecutionDiagnostics.tunedOverrideActive =
+                payload.tunedOverrideActive === true;
             this._planExecutionDiagnostics.iterationsUsed = 0;
             this._planExecutionDiagnostics.wastedIterationCount = 0;
             this._planExecutionDiagnostics.replanCount = 0;

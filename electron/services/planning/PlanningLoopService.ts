@@ -377,6 +377,8 @@ export class PlanningLoopService {
                     correlationId: run.correlationId,
                     maxIterations: run.maxIterations,
                     taskLoopDoctrineClass: policyResolution.profile.taskClass,
+                    policySource: policyResolution.profile.policySource,
+                    tunedOverrideActive: policyResolution.profile.tunedOverrideActive,
                     replanAllowance: policyResolution.profile.replanAllowance,
                     continuationRule: policyResolution.profile.continuationRule,
                     loopPermission: policyResolution.profile.loopPermission,

@@ -47,6 +47,7 @@ import type {
     MemoryAuthorityReasonCode,
     MemoryWriteCategory,
 } from './memoryAuthorityTypes';
+import type { IterationPolicyTuningDiagnosticsSnapshot } from './planning/IterationEffectivenessTypes';
 
 // ——— Canonical system health + mode contract (Phase D) ————————————————
 // NOTE: Re-exported from shared/system-health-types.ts to keep one canonical contract source.
@@ -668,6 +669,8 @@ export interface PlanExecutionDiagnosticsSnapshot {
     approvalBlockedCount?: number;
     policyReasonCodes?: string[];
     taskLoopDoctrineClass?: string;
+    policySource?: 'baseline' | 'tuned_override';
+    tunedOverrideActive?: boolean;
     recentStages: PlanStageExecutionDiagnosticsRecord[];
     lastUpdated: string;
 }
@@ -870,6 +873,8 @@ export interface RuntimeDiagnosticsSnapshot {
     memoryAuthority?: RuntimeMemoryAuthorityDiagnosticsView;
     /** Recovery decision and action diagnostics projected from recovery telemetry. */
     recovery?: RecoveryDiagnosticsSnapshot;
+    /** Iteration policy tuning analytics/recommendation/applied-state projection. */
+    iterationTuning?: IterationPolicyTuningDiagnosticsSnapshot;
 }
 
 // ─── Cognitive diagnostics snapshot ──────────────────────────────────────────

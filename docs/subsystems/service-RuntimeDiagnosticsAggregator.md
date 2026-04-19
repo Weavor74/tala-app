@@ -93,6 +93,16 @@ Stops the internal TelemetryBus subscription. Call during teardown if the aggre
 **Returns**: `RecoveryDiagnosticsSnapshot | undefined`
 
 ---
+#### `_buildIterationTuningDiagnostics`
+**Arguments**: `now: string`
+**Returns**: `IterationPolicyTuningDiagnosticsSnapshot | undefined`
+
+---
+#### `_handleIterationTuningEvent`
+**Arguments**: `event: string, payload?: Record<string, unknown>`
+**Returns**: `void`
+
+---
 #### `_handlePlanExecutionEvent`
 **Arguments**: `event: string, payload?: Record<string, unknown>`
 **Returns**: `void`

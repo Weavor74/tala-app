@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import { IterationPolicyResolver } from '../../electron/services/planning/IterationPolicyResolver';
+import { IterationPolicyTuningRepository } from '../../electron/services/planning/IterationPolicyTuningRepository';
 import type { ExecutionPlan } from '../../shared/planning/PlanningTypes';
 
 function makePlan(overrides?: Partial<ExecutionPlan>): ExecutionPlan {
@@ -25,6 +26,10 @@ function makePlan(overrides?: Partial<ExecutionPlan>): ExecutionPlan {
 }
 
 describe('IterationPolicyResolver', () => {
+    beforeEach(() => {
+        IterationPolicyTuningRepository._resetForTesting();
+    });
+
     const resolver = new IterationPolicyResolver();
 
     it('resolves conversational explanation to single-pass', () => {
@@ -109,4 +114,3 @@ describe('IterationPolicyResolver', () => {
         expect(result.profile.reasonCodes).toContain('iteration_policy.caller_cap_applied');
     });
 });
-
