@@ -23,7 +23,7 @@ import { GuardrailService } from './GuardrailService';
 import { GitService } from './GitService';
 import { BackupService } from './BackupService';
 import { InferenceService } from './InferenceService';
-import { loadSettings, saveSettings, deepMerge, getActiveMode, setActiveMode } from './SettingsManager';
+import { loadSettings, saveSettings, deepMerge, getActiveMode, refreshSettingsFromDisk, setActiveMode } from './SettingsManager';
 import { UserProfileService } from './UserProfileService';
 import { CodeControlService } from './CodeControlService';
 import { LogViewerService } from './LogViewerService';
@@ -53,6 +53,7 @@ import { GraphTraversalService } from './graph/GraphTraversalService';
 import { AffectiveGraphService } from './graph/AffectiveGraphService';
 import type { ContextAssemblyRequest } from '../../shared/policy/memoryPolicyTypes';
 import { AgentKernel } from './kernel/AgentKernel';
+import { resolveModeForTurn } from './kernel/TurnModeResolver';
 import type { RuntimeExecutionMode } from '../../shared/runtime/executionTypes';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
 import type { OperatorActionRequest } from '../../shared/runtimeDiagnosticsTypes';
@@ -1630,7 +1631,7 @@ export class IpcRouter {
      */
     ipcMain.on('chat-message', async (event, payload) => {
       try {
-        const modeGate = enforceModeCapability('chat_inference', 'IpcRouter.chat-message');
+        enforceModeCapability('chat_inference', 'IpcRouter.chat-message');
         console.log("[DEBUG] ipcMain 'chat-message' triggered with payload:", payload);
         let fullResponse = '';
         let text = "";
@@ -1647,12 +1648,37 @@ export class IpcRouter {
         if (!this._kernel) {
           throw new Error('[AgentKernel] Kernel not initialized -- ensure registerAll() was called.');
         }
-        // Resolve the active mode at dispatch time so the kernel stamps the correct
-        // RuntimeExecutionMode on this turn's execution metadata.
-        const rawMode = getActiveMode(getSettingsPath(), 'IpcRouter.chat-message');
-        const executionMode: RuntimeExecutionMode = resolveEffectiveExecutionMode(rawMode, modeGate.mode);
+        const turnId = typeof payload?.turnId === 'string' && payload.turnId.trim().length > 0
+          ? payload.turnId
+          : `turn_${Date.now()}_${uuidv4()}`;
+        const sessionId = typeof payload?.sessionId === 'string' && payload.sessionId.trim().length > 0
+          ? payload.sessionId
+          : undefined;
+        const modeResolution = await resolveModeForTurn({
+          turnId,
+          sessionId,
+          requestedMode: typeof payload?.requestedMode === 'string' ? payload.requestedMode : null,
+          settingsManager: {
+            settingsPath: getSettingsPath(),
+            refreshSettingsFromDisk,
+          },
+        });
+        const executionMode: RuntimeExecutionMode = modeResolution.resolvedMode === 'assistant'
+          || modeResolution.resolvedMode === 'hybrid'
+          || modeResolution.resolvedMode === 'rp'
+          ? modeResolution.resolvedMode
+          : 'hybrid';
         const result = await this._kernel.execute(
-          { userMessage: text, images, capabilitiesOverride: payload.capabilitiesOverride, origin: 'ipc', executionMode },
+          {
+            userMessage: text,
+            images,
+            capabilitiesOverride: payload.capabilitiesOverride,
+            turnId,
+            conversationId: sessionId,
+            origin: 'ipc',
+            executionMode,
+            modeResolution,
+          },
           (token: string) => {
             fullResponse = fullResponse + token;
             event.sender.send('chat-token', token);

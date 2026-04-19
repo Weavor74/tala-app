@@ -857,7 +857,9 @@ function App() {
       api.send('chat-message', {
         text: msg,
         images: imgs,
-        capabilitiesOverride: { allowWritesThisTurn: allowWrites }
+        capabilitiesOverride: { allowWritesThisTurn: allowWrites },
+        requestedMode: activeMode,
+        sessionId: activeSessionId,
       });
     }
     // Auto-reset checkbox after sending if it was checked
@@ -888,7 +890,9 @@ function App() {
       api.send('chat-message', {
         text,
         images: imgs,
-        capabilitiesOverride: { allowWritesThisTurn: allowWrites }
+        capabilitiesOverride: { allowWritesThisTurn: allowWrites },
+        requestedMode: activeMode,
+        sessionId: activeSessionId,
       });
       setAllowWrites(false);
     }

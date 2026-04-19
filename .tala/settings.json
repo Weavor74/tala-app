@@ -297,7 +297,7 @@
     }
   },
   "agentModes": {
-    "activeMode": "hybrid",
+    "activeMode": "rp",
     "modes": {
       "rp": {
         "rpIntensity": 0.8,

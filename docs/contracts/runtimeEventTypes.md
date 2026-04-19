@@ -98,6 +98,11 @@ type RuntimeEventType =
     | 'agent.turn_response_created'
     | 'agent.turn_response_published'
     | 'agent.turn_response_missing'
+    | 'agent.turn_mode_resolved'
+    | 'agent.turn_mode_resolution_fallback_used'
+    | 'agent.turn_mode_drift_detected'
+    | 'agent.turn_mode_override_blocked'
+    | 'agent.turn_mode_settings_stale'
     | `agent.${string}`
     | 'execution.created'
     | 'execution.accepted'

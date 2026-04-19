@@ -26,6 +26,7 @@ import type {
 import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
 import type { ChatTurnAssistantResponse, ChatTurnResult, ChatTurnResultSource } from '../../../shared/chatTurnResultTypes';
 import type { RuntimeEventType } from '../../../shared/runtimeEventTypes';
+import type { TurnModeResolution } from './TurnModeResolver';
 import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
@@ -153,6 +154,17 @@ const AGENT_RP_PERSONA_TRUTH_EVENTS = {
     RuntimeEventType
 >;
 
+const AGENT_TURN_MODE_EVENTS = {
+    resolved: 'agent.turn_mode_resolved',
+    fallbackUsed: 'agent.turn_mode_resolution_fallback_used',
+    driftDetected: 'agent.turn_mode_drift_detected',
+    overrideBlocked: 'agent.turn_mode_override_blocked',
+    settingsStale: 'agent.turn_mode_settings_stale',
+} as const satisfies Record<
+    'resolved' | 'fallbackUsed' | 'driftDetected' | 'overrideBlocked' | 'settingsStale',
+    RuntimeEventType
+>;
+
 type PlanBlockedTaskClass =
     | 'source_summary'
     | 'notebook_summary'
@@ -185,6 +197,13 @@ function isOperatorSensitiveExecution(userMessage: string): boolean {
 
 function isAutonomousExecutionOrigin(origin: RuntimeExecutionOrigin): boolean {
     return origin === 'autonomy_engine';
+}
+
+function normalizeRuntimeExecutionMode(mode: unknown): RuntimeExecutionMode {
+    if (mode === 'assistant' || mode === 'hybrid' || mode === 'rp' || mode === 'system') {
+        return mode;
+    }
+    return 'assistant';
 }
 
 function resolvePlanBlockedRecovery(args: {
@@ -269,6 +288,8 @@ export interface KernelExecutionMeta {
     origin: RuntimeExecutionOrigin;
     /** The Tala runtime mode in effect when this execution was created. */
     mode: RuntimeExecutionMode;
+    /** Immutable mode resolution provenance captured at turn intake. */
+    modeResolution?: TurnModeResolution;
     /**
      * Legacy authority routing projection for diagnostics parity.
      * Derived from turn arbitration mode.
@@ -317,6 +338,8 @@ export interface KernelRequest {
      * Callers should pass the resolved mode from settings (e.g. 'rp', 'hybrid').
      */
     executionMode?: RuntimeExecutionMode;
+    /** Optional mode-resolution provenance captured by the caller at turn start. */
+    modeResolution?: TurnModeResolution;
 }
 
 /**
@@ -499,6 +522,8 @@ export class AgentKernel {
         capabilitiesOverride: any,
         turnDecision: TurnArbitrationDecision,
         authorityEnvelope: TurnAuthorityEnvelope,
+        mode: RuntimeExecutionMode,
+        modeResolution?: TurnModeResolution,
     ): any {
         const turnMemoryAuthorityContext: MemoryAuthorityContext = {
             turnId: turnDecision.turnId,
@@ -513,11 +538,15 @@ export class AgentKernel {
                 ...capabilitiesOverride,
                 turnAuthorityEnvelope: authorityEnvelope,
                 turnMemoryAuthorityContext,
+                authoritativeTurnMode: mode,
+                turnModeResolution: modeResolution,
             };
         }
         return {
             turnAuthorityEnvelope: authorityEnvelope,
             turnMemoryAuthorityContext,
+            authoritativeTurnMode: mode,
+            turnModeResolution: modeResolution,
         };
     }
 
@@ -814,6 +843,7 @@ export class AgentKernel {
             requestedSurface: raw.requestedSurface,
             origin: raw.origin,
             executionMode: raw.executionMode,
+            modeResolution: raw.modeResolution,
         };
     }
 
@@ -836,8 +866,87 @@ export class AgentKernel {
             durationMs: 0,
             origin,
             mode,
+            modeResolution: request.modeResolution,
         };
         console.log(`[AgentKernel] ── INTAKE           ── id=${meta.executionId} type=${executionType} origin=${origin} mode=${mode} msgLen=${request.userMessage.length}`);
+
+        TelemetryBus.getInstance().emit({
+            executionId: meta.executionId,
+            subsystem: 'agent',
+            event: AGENT_TURN_MODE_EVENTS.resolved,
+            phase: 'intake',
+            payload: {
+                turnId: request.turnId ?? meta.executionId,
+                sessionId: request.conversationId,
+                resolvedMode: mode,
+                source: request.modeResolution?.source ?? 'default_fallback',
+                settingsVersion: request.modeResolution?.settingsVersion,
+                reasonCodes: request.modeResolution?.reasonCodes ?? ['turn_mode.kernel_default_mode_used'],
+            },
+        });
+        if (!request.modeResolution || request.modeResolution.source === 'default_fallback') {
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_TURN_MODE_EVENTS.fallbackUsed,
+                phase: 'intake',
+                payload: {
+                    turnId: request.turnId ?? meta.executionId,
+                    sessionId: request.conversationId,
+                    resolvedMode: mode,
+                    source: request.modeResolution?.source ?? 'default_fallback',
+                    settingsVersion: request.modeResolution?.settingsVersion,
+                    reasonCodes: request.modeResolution?.reasonCodes ?? ['turn_mode.kernel_default_fallback_assistant'],
+                },
+            });
+        }
+        if (request.modeResolution && request.modeResolution.resolvedMode !== mode) {
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_TURN_MODE_EVENTS.driftDetected,
+                phase: 'intake',
+                payload: {
+                    turnId: request.turnId ?? meta.executionId,
+                    sessionId: request.conversationId,
+                    resolvedMode: request.modeResolution.resolvedMode,
+                    observedMode: mode,
+                    reasonCodes: ['turn_mode.intake_mode_drift_detected'],
+                },
+            });
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_TURN_MODE_EVENTS.overrideBlocked,
+                phase: 'intake',
+                payload: {
+                    turnId: request.turnId ?? meta.executionId,
+                    sessionId: request.conversationId,
+                    resolvedMode: request.modeResolution.resolvedMode,
+                    attemptedOverride: mode,
+                    reasonCodes: ['turn_mode.kernel_mode_override_blocked'],
+                },
+            });
+            meta.mode = normalizeRuntimeExecutionMode(request.modeResolution.resolvedMode);
+        }
+        if (
+            request.modeResolution?.source === 'settings_manager'
+            && typeof request.modeResolution.settingsVersion !== 'number'
+        ) {
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_TURN_MODE_EVENTS.settingsStale,
+                phase: 'intake',
+                payload: {
+                    turnId: request.turnId ?? meta.executionId,
+                    sessionId: request.conversationId,
+                    resolvedMode: mode,
+                    source: request.modeResolution.source,
+                    reasonCodes: ['turn_mode.settings_version_unavailable'],
+                },
+            });
+        }
 
         // execution.created — execution request received; executionId assigned
         TelemetryBus.getInstance().emit({
@@ -1992,7 +2101,7 @@ export class AgentKernel {
             onToken,
             onEvent,
             request.images,
-            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
+            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope, meta.mode, meta.modeResolution),
         );
         const turnResult = this._toChatTurnResult(output, 'router');
         this._emitTurnResponseEvent(
@@ -2027,7 +2136,7 @@ export class AgentKernel {
             onToken,
             onEvent,
             request.images,
-            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope),
+            this._composeCapabilitiesOverride(request.capabilitiesOverride, turnDecision, envelope, meta.mode, meta.modeResolution),
         );
         return this._toChatTurnResult(output, 'router');
     }

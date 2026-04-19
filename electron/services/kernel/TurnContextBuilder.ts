@@ -10,6 +10,7 @@ export interface KernelTurnContext {
         executionId: string;
         origin: string;
         mode: string;
+        modeResolution?: KernelExecutionMeta['modeResolution'];
     };
 }
 
@@ -36,6 +37,7 @@ export class TurnContextService {
                 executionId: meta.executionId,
                 origin: meta.origin,
                 mode: meta.mode,
+                modeResolution: meta.modeResolution,
             },
         };
     }

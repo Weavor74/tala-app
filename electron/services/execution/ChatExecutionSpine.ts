@@ -345,6 +345,34 @@ export class ChatExecutionSpine {
 
     public constructor(private readonly agent: ChatExecutionSpineAgent) {}
 
+    private resolveAuthoritativeTurnMode(input: TurnExecutionInput, configuredMode: string, turnId: string): string {
+        const requestedMode = typeof input.capabilitiesOverride?.authoritativeTurnMode === 'string'
+            ? input.capabilitiesOverride.authoritativeTurnMode
+            : null;
+        if (!requestedMode) {
+            return configuredMode;
+        }
+        if (requestedMode !== configuredMode) {
+            telemetry.operational(
+                'execution',
+                'execution.turn_mode_override_blocked',
+                'warn',
+                `turn:${turnId}`,
+                'Configured settings mode differed from authoritative turn mode; using immutable turn mode.',
+                'partial',
+                {
+                    payload: {
+                        turnId,
+                        configuredMode,
+                        authoritativeTurnMode: requestedMode,
+                        reasonCodes: ['turn_mode.chat_spine_authoritative_mode_enforced'],
+                    },
+                },
+            );
+        }
+        return requestedMode;
+    }
+
     public async executeTurn(
         userMessage: string,
         onToken?: (token: string) => void,
@@ -373,7 +401,8 @@ export class ChatExecutionSpine {
         this.agent.activeTurnId = turnId;
 
         const settings = loadSettings(this.agent.settingsPath);
-        const activeMode = this.agent.getActiveMode(settings);
+        const configuredMode = this.agent.getActiveMode(settings);
+        const activeMode = this.resolveAuthoritativeTurnMode(input, configuredMode, turnId);
         const routedIntent = DeterministicIntentRouter.route(input.userMessage);
         const deterministicOperation = routedIntent.deterministicOperation ??
             (routedIntent.suggestedTool
@@ -988,7 +1017,7 @@ export class ChatExecutionSpine {
             policyToolAllowList,
             filteredTools,
         } = params;
-        const resolvedActiveMode = executionPlan.activeMode || activeMode;
+        const resolvedActiveMode = executionPlan.activeMode;
 
         let toolsToSend = filteredTools;
         let browserPaletteFiltered = false;
