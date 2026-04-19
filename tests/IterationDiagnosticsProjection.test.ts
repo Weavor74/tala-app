@@ -143,6 +143,7 @@ describe('Iteration diagnostics projection', () => {
         expect(snapshot.iterationTuning?.promotedRecommendationCount).toBeGreaterThanOrEqual(0);
         expect(snapshot.iterationTuning?.queueCounts.pendingReview).toBeGreaterThanOrEqual(0);
         expect(snapshot.iterationTuning?.recentGovernanceActions.length).toBeGreaterThanOrEqual(0);
+        expect(snapshot.iterationTuning?.assistanceSummary?.topAttentionCount).toBeGreaterThanOrEqual(0);
     });
 
     it('projects stale/retired governance lifecycle counts', () => {

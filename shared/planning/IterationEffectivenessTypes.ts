@@ -222,6 +222,18 @@ export interface IterationPolicyTuningDiagnosticsSnapshot {
         sweepCount: number;
         unresolvedIncompatibleCount: number;
     };
+    assistanceSummary?: {
+        topAttentionCount: number;
+        driftSignalCount: number;
+        contradictionSignalCount: number;
+        topAttention: Array<{
+            artifactId: string;
+            artifactType: 'recommendation' | 'override';
+            taskClass: IterationWorthinessClass;
+            priorityClass: 'critical' | 'high' | 'medium' | 'low';
+            suggestedAction: string;
+        }>;
+    };
     topPendingRecommendations: Array<{
         recommendationId: string;
         taskClass: IterationWorthinessClass;

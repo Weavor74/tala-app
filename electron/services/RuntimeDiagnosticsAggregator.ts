@@ -35,6 +35,7 @@ import { IterationEffectivenessProjectorService } from './planning/IterationEffe
 import { IterationTuningAdvisorService } from './planning/IterationTuningAdvisor';
 import { IterationPolicyTuningRepository } from './planning/IterationPolicyTuningRepository';
 import { IterationPolicyGovernanceQueryService } from './planning/IterationPolicyGovernanceQueryService';
+import { IterationPolicyGovernanceAssistanceService } from './planning/IterationPolicyGovernanceAssistanceService';
 
 export interface McpDiagnosticsSource {
     getDiagnosticsInventory(): McpInventoryDiagnostics;
@@ -130,6 +131,10 @@ export class RuntimeDiagnosticsAggregator {
     private readonly _iterationTuningAdvisor = new IterationTuningAdvisorService();
     private readonly _iterationTuningRepository = IterationPolicyTuningRepository.getInstance();
     private readonly _iterationGovernanceQuery = new IterationPolicyGovernanceQueryService(this._iterationTuningRepository);
+    private readonly _iterationGovernanceAssistance = new IterationPolicyGovernanceAssistanceService(
+        this._iterationTuningRepository,
+        this._iterationGovernanceQuery,
+    );
 
     constructor(
         private readonly inferenceDiagnostics: InferenceDiagnosticsService,
@@ -509,11 +514,32 @@ export class RuntimeDiagnosticsAggregator {
         const analytics = state.lastAnalyticsSnapshot;
         if (!analytics) return undefined;
         const nowIso = now;
+        TelemetryBus.getInstance().emit({
+            executionId: 'iteration-governance-assistance',
+            subsystem: 'planning',
+            event: 'planning.iteration_governance_assistance_requested',
+            payload: {
+                requestedAt: nowIso,
+                source: 'runtime_diagnostics_aggregator',
+            },
+        });
         const eligibleQueue = this._iterationGovernanceQuery.getEligibleRecommendationQueue(nowIso);
         const blockedQueue = this._iterationGovernanceQuery.getBlockedRecommendationQueue(nowIso);
         const staleQueue = this._iterationGovernanceQuery.getStaleOverrideQueue();
         const incompatibleQueue = this._iterationGovernanceQuery.getIncompatibleOverrideQueue();
         const recentHistory = this._iterationTuningRepository.listGovernanceHistory(10);
+        const attentionSummary = this._iterationGovernanceAssistance.buildAttentionSummary(nowIso);
+        if (attentionSummary.driftSignals.length > 0) {
+            TelemetryBus.getInstance().emit({
+                executionId: 'iteration-governance-assistance',
+                subsystem: 'planning',
+                event: 'planning.iteration_governance_drift_detected',
+                payload: {
+                    signalCount: attentionSummary.driftSignals.length,
+                    contradictionCount: attentionSummary.contradictionSignals.length,
+                },
+            });
+        }
 
         const recommendationCount =
             state.pendingRecommendations.length +
@@ -631,6 +657,18 @@ export class RuntimeDiagnosticsAggregator {
                     unresolvedIncompatibleCount: state.lastMaintenanceReport.unresolvedIncompatibleOverrideIds.length,
                 }
                 : undefined,
+            assistanceSummary: {
+                topAttentionCount: attentionSummary.topReviewRecommendations.length,
+                driftSignalCount: attentionSummary.driftSignals.length,
+                contradictionSignalCount: attentionSummary.contradictionSignals.length,
+                topAttention: attentionSummary.topReviewRecommendations.slice(0, 5).map((item) => ({
+                    artifactId: item.artifactId,
+                    artifactType: item.artifactType,
+                    taskClass: item.taskClass,
+                    priorityClass: item.priority.priorityClass,
+                    suggestedAction: item.suggestedAction,
+                })),
+            },
             topPendingRecommendations,
             activePolicySourceByTaskFamily,
             topHelpfulTaskFamilies,
