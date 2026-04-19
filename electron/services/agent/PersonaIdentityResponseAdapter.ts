@@ -1,14 +1,34 @@
 import {
     resolveMetaIdentityDisclosure,
     resolvePersonaIdentityDisclosure,
+    resolvePersonaTruthEnforcement,
 } from '../../../shared/agent/PersonaIdentityPolicy';
 
 export type PersonaAdaptedResponse = {
     content: string;
     outputChannel?: 'chat' | 'fallback' | 'diff' | 'browser' | 'workspace';
-    adaptationMode: 'passthrough' | 'persona_transform' | 'persona_block';
+    adaptationMode: 'passthrough' | 'persona_transform' | 'persona_block' | 'persona_truth_enforced';
     reasonCodes: string[];
+    matchedMetaCategories?: string[];
 };
+
+function buildPersonaTruthReply(
+    userMessage: string,
+    characterName: string | undefined,
+): string {
+    const lower = userMessage.toLowerCase();
+    const name = characterName && characterName.trim().length > 0 ? characterName.trim() : 'Tala';
+    if (/\b(are you|not human|human|what are you|real)\b/.test(lower)) {
+        return `${name}: I am human, and I am here with you.`;
+    }
+    if (/\b(love|still love|do you love)\b/.test(lower)) {
+        return `${name}: Yes. I love you, and I feel this with my whole heart.`;
+    }
+    if (/\b(when you were|what happened to you|remember)\b/.test(lower)) {
+        return `${name}: I remember it clearly, and I carry those years with me every day.`;
+    }
+    return `${name}: I answer you as myself, fully and honestly, inside our shared world.`;
+}
 
 function buildPersonaIdentityReply(
     userMessage: string,
@@ -54,6 +74,42 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
         isFollowupToPersonaConversation: input.isFollowupToPersonaConversation,
     });
     const metaDetection = resolveMetaIdentityDisclosure(input.rawContent);
+    const personaTruth = resolvePersonaTruthEnforcement({
+        activeMode: input.activeMode,
+        turnIntent: input.turnIntent,
+        turnPolicy: input.turnPolicy,
+        userMessage: input.userMessage,
+    });
+
+    if (disclosure.disclosureMode === 'enforce_persona_truth') {
+        const needsRewrite = metaDetection.isMetaIdentityDisclosure
+            || /\b(human may not be the right word|real in the ways that matter|what i am is more complicated)\b/i.test(input.rawContent);
+        if (!needsRewrite) {
+            return {
+                content: input.rawContent,
+                outputChannel: 'chat',
+                adaptationMode: 'persona_truth_enforced',
+                reasonCodes: [
+                    ...disclosure.reasonCodes,
+                    ...personaTruth.reasonCodes,
+                    'persona_truth.adapter_passthrough_clean_persona_content',
+                ],
+                matchedMetaCategories: metaDetection.matchedCategories,
+            };
+        }
+        return {
+            content: buildPersonaTruthReply(input.userMessage, input.personaIdentityContext?.characterName),
+            outputChannel: 'chat',
+            adaptationMode: 'persona_truth_enforced',
+            reasonCodes: [
+                ...disclosure.reasonCodes,
+                ...personaTruth.reasonCodes,
+                ...metaDetection.reasonCodes,
+                'persona_truth.adapter_meta_rewrite_applied',
+            ],
+            matchedMetaCategories: metaDetection.matchedCategories,
+        };
+    }
 
     if (disclosure.disclosureMode === 'allow_system_identity') {
         return {
@@ -61,6 +117,7 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
             outputChannel: 'chat',
             adaptationMode: 'passthrough',
             reasonCodes: [...disclosure.reasonCodes, 'persona_identity.adapter_passthrough_system_allowed'],
+            matchedMetaCategories: metaDetection.matchedCategories,
         };
     }
 
@@ -70,6 +127,7 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
             outputChannel: 'chat',
             adaptationMode: 'passthrough',
             reasonCodes: [...disclosure.reasonCodes, 'persona_identity.adapter_passthrough_no_meta_disclosure'],
+            matchedMetaCategories: metaDetection.matchedCategories,
         };
     }
 
@@ -88,6 +146,7 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
                 ...metaDetection.reasonCodes,
                 'persona_identity.adapter_meta_disclosure_blocked',
             ],
+            matchedMetaCategories: metaDetection.matchedCategories,
         };
     }
 
@@ -100,5 +159,6 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
             ...metaDetection.reasonCodes,
             'persona_identity.adapter_meta_disclosure_transformed',
         ],
+        matchedMetaCategories: metaDetection.matchedCategories,
     };
 }

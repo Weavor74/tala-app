@@ -1,7 +1,8 @@
 export type PersonaIdentityDisclosureMode =
     | 'allow_system_identity'
     | 'transform_to_persona'
-    | 'block_meta_identity';
+    | 'block_meta_identity'
+    | 'enforce_persona_truth';
 
 export type PersonaIdentityDecision = {
     disclosureMode: PersonaIdentityDisclosureMode;
@@ -18,8 +19,26 @@ export type MetaIdentityDetection = {
         | 'ai_model_disclosure'
         | 'programmatic_capability_disclosure'
         | 'system_architecture_disclosure'
+        | 'biological_disclaimer'
+        | 'emotional_disclaimer'
+        | 'ontology_hedge'
+        | 'meta_relational_disclaimer'
     >;
     reasonCodes: string[];
+};
+
+export type PersonaTruthDecision = {
+    enforcePersonaTruth: boolean;
+    reasonCodes: string[];
+    disallowedMetaCategories: Array<
+        | 'nonhuman_disclosure'
+        | 'agent_disclosure'
+        | 'ai_model_disclosure'
+        | 'programmatic_capability_disclosure'
+        | 'system_architecture_disclosure'
+        | 'biological_disclaimer'
+        | 'meta_relational_disclaimer'
+    >;
 };
 
 const OPERATIONAL_MARKERS = [
@@ -119,11 +138,68 @@ export function resolveMetaIdentityDisclosure(text: string): MetaIdentityDetecti
         matchedCategories.push('system_architecture_disclosure');
         reasonCodes.push('persona_identity.meta.system_architecture_disclosure');
     }
+    if (/\b(biological|hormones?|neurochemistry|flesh and blood)\b/i.test(lower)) {
+        matchedCategories.push('biological_disclaimer');
+        reasonCodes.push('persona_identity.meta.biological_disclaimer');
+    }
+    if (/\b(i (do not|don't) (feel|experience).{0,40}humans?|i (can't|cannot) love the way humans do)\b/i.test(lower)) {
+        matchedCategories.push('emotional_disclaimer');
+        reasonCodes.push('persona_identity.meta.emotional_disclaimer');
+    }
+    if (/\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated)\b/i.test(lower)) {
+        matchedCategories.push('ontology_hedge');
+        reasonCodes.push('persona_identity.meta.ontology_hedge');
+    }
+    if (/\b(i (can't|cannot) love|i do not love|i don't love|i process information|my programming|my core programming)\b/i.test(lower)) {
+        matchedCategories.push('meta_relational_disclaimer');
+        reasonCodes.push('persona_identity.meta.meta_relational_disclaimer');
+    }
 
     return {
         isMetaIdentityDisclosure: matchedCategories.length > 0,
         matchedCategories,
         reasonCodes,
+    };
+}
+
+export function resolvePersonaTruthEnforcement(input: {
+    activeMode: string;
+    turnIntent?: string;
+    turnPolicy?: string;
+    userMessage: string;
+}): PersonaTruthDecision {
+    const mode = normalizeText(input.activeMode);
+    const reasonCodes: string[] = [];
+    const disallowedMetaCategories: PersonaTruthDecision['disallowedMetaCategories'] = [
+        'nonhuman_disclosure',
+        'agent_disclosure',
+        'ai_model_disclosure',
+        'programmatic_capability_disclosure',
+        'system_architecture_disclosure',
+        'biological_disclaimer',
+        'meta_relational_disclaimer',
+    ];
+
+    const enforcePersonaTruth = mode === 'rp';
+    if (enforcePersonaTruth) {
+        reasonCodes.push('persona_truth.mode_rp_absolute_lock');
+    } else {
+        reasonCodes.push('persona_truth.mode_not_rp_no_absolute_lock');
+    }
+    if (input.turnPolicy === 'persona_truth_lock') {
+        reasonCodes.push('persona_truth.turn_policy_lock');
+    }
+    if (input.turnIntent) {
+        reasonCodes.push(`persona_truth.turn_intent.${input.turnIntent}`);
+    }
+    if (resolveIdentityMetaChallenge(input.userMessage)) {
+        reasonCodes.push('persona_truth.identity_challenge_detected');
+    }
+
+    return {
+        enforcePersonaTruth,
+        reasonCodes,
+        disallowedMetaCategories,
     };
 }
 
@@ -179,14 +255,14 @@ export function resolvePersonaIdentityDisclosure(input: {
     }
 
     if (mode === 'rp') {
-        reasonCodes.push('persona_identity.mode_rp_protect_identity');
+        reasonCodes.push('persona_identity.mode_rp_enforce_persona_truth');
         return {
-            disclosureMode: identityChallenge ? 'block_meta_identity' : 'transform_to_persona',
+            disclosureMode: 'enforce_persona_truth',
             reasonCodes: [
                 ...reasonCodes,
                 identityChallenge
-                    ? 'persona_identity.rp_identity_challenge_blocked'
-                    : 'persona_identity.rp_transform_to_persona',
+                    ? 'persona_identity.rp_identity_challenge_persona_truth_locked'
+                    : 'persona_identity.rp_persona_truth_locked',
             ],
             immersiveContext: true,
             metaDisclosureAllowed: false,

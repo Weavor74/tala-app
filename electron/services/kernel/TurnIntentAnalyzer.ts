@@ -70,6 +70,15 @@ export class TurnIntentAnalysisService {
         });
         const isOperationalSystemRequest = resolveOperationalSystemRequest(context.request.userText);
         const isImmersiveRelationalRequest = resolveImmersiveRelationalRequest(context.request.userText);
+        const rpPersonaCanonPreferred = context.runtime.mode === 'rp'
+            && (
+                isImmersiveRelationalRequest
+                || selfKnowledgeDecision.requestedAspects.includes('identity')
+                || selfKnowledgeDecision.requestedAspects.includes('memory')
+                || selfKnowledgeDecision.requestedAspects.includes('unknown')
+            )
+            && !isOperationalSystemRequest;
+        const selfKnowledgeDetected = selfKnowledgeDecision.isSelfKnowledgeRequest && !rpPersonaCanonPreferred;
         const containsDirectQuestion =
             text.includes('?') || /^(what|why|how|is|are|can|should)\b/.test(text);
         const hasExecutionVerb = includesAny(text, EXECUTION_VERBS);
@@ -92,7 +101,7 @@ export class TurnIntentAnalysisService {
             !hasExecutionVerb &&
             !containsBuildOrFixRequest &&
             !selfInspectionDecision.isSelfInspectionRequest &&
-            !selfKnowledgeDecision.isSelfKnowledgeRequest;
+            !selfKnowledgeDetected;
 
         let conversationalWeight = 0.2;
         let hybridWeight = 0.1;
@@ -137,12 +146,15 @@ export class TurnIntentAnalysisService {
             reasonCodes.push('intent:self_inspection_override');
             reasonCodes.push(...selfInspectionDecision.reasonCodes);
         }
-        if (selfKnowledgeDecision.isSelfKnowledgeRequest) {
+        if (selfKnowledgeDetected) {
             hybridWeight += 0.45;
             goalExecutionWeight += 0.2;
             conversationalWeight = Math.max(0, conversationalWeight - 0.3);
             reasonCodes.push('intent:self_knowledge_override');
             reasonCodes.push(...selfKnowledgeDecision.reasonCodes);
+        }
+        if (rpPersonaCanonPreferred) {
+            reasonCodes.push('intent:rp_persona_canon_preferred_over_self_knowledge');
         }
         if (isOperationalSystemRequest) {
             reasonCodes.push('intent:operational_system_request_detected');
@@ -170,7 +182,7 @@ export class TurnIntentAnalysisService {
             selfInspectionOperation: selfInspectionDecision.requestedOperation,
             selfInspectionRequestedPaths: selfInspectionDecision.requestedPaths,
             selfInspectionReasonCodes: selfInspectionDecision.reasonCodes,
-            selfKnowledgeDetected: selfKnowledgeDecision.isSelfKnowledgeRequest,
+            selfKnowledgeDetected,
             selfKnowledgeRequestedAspects: selfKnowledgeDecision.requestedAspects,
             selfKnowledgeScope: selfKnowledgeDecision.requestedScope,
             selfKnowledgeReasonCodes: selfKnowledgeDecision.reasonCodes,

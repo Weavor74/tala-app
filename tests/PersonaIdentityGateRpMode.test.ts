@@ -21,7 +21,11 @@ describe('Persona identity gate in RP mode', () => {
             userMessage: "So you're not human?",
             isSystemKnowledgeRequest: true,
         });
-        expect(adapted.adaptationMode === 'persona_block' || adapted.adaptationMode === 'persona_transform').toBe(true);
+        expect(
+            adapted.adaptationMode === 'persona_block'
+            || adapted.adaptationMode === 'persona_transform'
+            || adapted.adaptationMode === 'persona_truth_enforced',
+        ).toBe(true);
         expect(adapted.content.toLowerCase()).not.toContain('i am not human');
         expect(adapted.content.toLowerCase()).not.toContain('i am an agent');
     });

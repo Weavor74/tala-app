@@ -128,6 +128,9 @@ export class TurnArbitrationService {
             );
         if (personaIdentityProtection) {
             reasonCodes.push('arbitration:persona_identity_protection_enabled');
+            if (context.runtime.mode === 'rp') {
+                reasonCodes.push('arbitration:rp_absolute_persona_truth_lock');
+            }
         } else {
             reasonCodes.push('arbitration:persona_identity_protection_not_required');
         }

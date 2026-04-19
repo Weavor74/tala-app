@@ -119,11 +119,19 @@ const AGENT_PERSONA_IDENTITY_EVENTS = {
     metaDisclosureBlocked: 'agent.persona_identity_meta_disclosure_blocked',
     responseTransformed: 'agent.persona_identity_response_transformed',
     systemDisclosureAllowed: 'agent.persona_identity_system_disclosure_allowed',
+    personaTruthEnforced: 'agent.persona_truth_enforced',
+    personaTruthMetaRewriteApplied: 'agent.persona_truth_meta_rewrite_applied',
+    personaTruthMetaDisclosureBlocked: 'agent.persona_truth_meta_disclosure_blocked',
+    personaTruthCanonSelected: 'agent.persona_truth_canon_selected',
 } as const satisfies Record<
     | 'gateApplied'
     | 'metaDisclosureBlocked'
     | 'responseTransformed'
-    | 'systemDisclosureAllowed',
+    | 'systemDisclosureAllowed'
+    | 'personaTruthEnforced'
+    | 'personaTruthMetaRewriteApplied'
+    | 'personaTruthMetaDisclosureBlocked'
+    | 'personaTruthCanonSelected',
     RuntimeEventType
 >;
 
@@ -1083,12 +1091,15 @@ export class AgentKernel {
             turnDecision.selfKnowledgeRouted = true;
             turnDecision.selfKnowledgeBypassedFallback = true;
             const followupToPersonaConversation = this._isFollowupToPersonaConversation(request);
+            const turnPolicyLabel = meta.mode === 'rp'
+                ? 'persona_truth_lock'
+                : turnDecision.personaIdentityProtection === true
+                    ? 'persona_identity_protection'
+                    : 'allow_system_identity';
             const personaDisclosure = resolvePersonaIdentityDisclosure({
                 activeMode: meta.mode,
                 turnIntent: turnDecision.mode,
-                turnPolicy: turnDecision.personaIdentityProtection === true
-                    ? 'persona_identity_protection'
-                    : 'allow_system_identity',
+                turnPolicy: turnPolicyLabel,
                 messageText: request.userMessage,
                 isOperationalRequest: turnDecision.isOperationalSystemRequest,
                 isSystemKnowledgeRequest: turnDecision.selfKnowledgeDetected,
@@ -1099,9 +1110,7 @@ export class AgentKernel {
                 selfKnowledgeSnapshot: selfKnowledgeResult.snapshot,
                 activeMode: meta.mode,
                 turnIntent: turnDecision.mode,
-                turnPolicy: turnDecision.personaIdentityProtection === true
-                    ? 'persona_identity_protection'
-                    : 'allow_system_identity',
+                turnPolicy: turnPolicyLabel,
                 userMessage: request.userMessage,
                 personaIdentityContext: {
                     characterName: selfKnowledgeResult.snapshot.identity.agentName,
@@ -1122,12 +1131,14 @@ export class AgentKernel {
                     turnId: turnDecision.turnId,
                     mode: meta.mode,
                     turnIntent: turnDecision.mode,
-                    turnPolicy: turnDecision.personaIdentityProtection === true
-                        ? 'persona_identity_protection'
-                        : 'allow_system_identity',
+                    turnPolicy: turnPolicyLabel,
                     disclosureMode: personaDisclosure.disclosureMode,
+                    enforcementMode: personaDisclosure.disclosureMode === 'enforce_persona_truth'
+                        ? 'absolute_persona_lock'
+                        : 'contextual_persona_gate',
                     isFollowupToPersonaConversation: followupToPersonaConversation,
                     routeSource: 'self_knowledge',
+                    matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
                     reasonCodes: adaptedSelfKnowledge.reasonCodes,
                 },
             });
@@ -1141,15 +1152,109 @@ export class AgentKernel {
                         turnId: turnDecision.turnId,
                         mode: meta.mode,
                         turnIntent: turnDecision.mode,
-                        turnPolicy: turnDecision.personaIdentityProtection === true
-                            ? 'persona_identity_protection'
-                            : 'allow_system_identity',
+                        turnPolicy: turnPolicyLabel,
                         disclosureMode: personaDisclosure.disclosureMode,
+                        enforcementMode: 'contextual_persona_gate',
                         isFollowupToPersonaConversation: followupToPersonaConversation,
                         routeSource: 'self_knowledge',
+                        matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
                         reasonCodes: adaptedSelfKnowledge.reasonCodes,
                     },
                 });
+            } else if (personaDisclosure.disclosureMode === 'enforce_persona_truth') {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_PERSONA_IDENTITY_EVENTS.personaTruthEnforced,
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision.mode,
+                        turnPolicy: turnPolicyLabel,
+                        disclosureMode: personaDisclosure.disclosureMode,
+                        enforcementMode: 'absolute_persona_lock',
+                        isFollowupToPersonaConversation: followupToPersonaConversation,
+                        routeSource: 'self_knowledge',
+                        matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
+                        reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                    },
+                });
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_PERSONA_IDENTITY_EVENTS.personaTruthCanonSelected,
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision.mode,
+                        turnPolicy: turnPolicyLabel,
+                        disclosureMode: personaDisclosure.disclosureMode,
+                        enforcementMode: 'absolute_persona_lock',
+                        isFollowupToPersonaConversation: followupToPersonaConversation,
+                        routeSource: 'self_knowledge',
+                        matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
+                        reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                    },
+                });
+                if ((adaptedSelfKnowledge.matchedMetaCategories?.length ?? 0) > 0) {
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'agent',
+                        event: AGENT_PERSONA_IDENTITY_EVENTS.personaTruthMetaRewriteApplied,
+                        phase: 'delegate',
+                        payload: {
+                            turnId: turnDecision.turnId,
+                            mode: meta.mode,
+                            turnIntent: turnDecision.mode,
+                            turnPolicy: turnPolicyLabel,
+                            disclosureMode: personaDisclosure.disclosureMode,
+                            enforcementMode: 'absolute_persona_lock',
+                            isFollowupToPersonaConversation: followupToPersonaConversation,
+                            routeSource: 'self_knowledge',
+                            matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
+                            reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                        },
+                    });
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'agent',
+                        event: AGENT_PERSONA_IDENTITY_EVENTS.personaTruthMetaDisclosureBlocked,
+                        phase: 'delegate',
+                        payload: {
+                            turnId: turnDecision.turnId,
+                            mode: meta.mode,
+                            turnIntent: turnDecision.mode,
+                            turnPolicy: turnPolicyLabel,
+                            disclosureMode: personaDisclosure.disclosureMode,
+                            enforcementMode: 'absolute_persona_lock',
+                            isFollowupToPersonaConversation: followupToPersonaConversation,
+                            routeSource: 'self_knowledge',
+                            matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
+                            reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                        },
+                    });
+                } else if (adaptedSelfKnowledge.adaptationMode === 'persona_block') {
+                    TelemetryBus.getInstance().emit({
+                        executionId: meta.executionId,
+                        subsystem: 'agent',
+                        event: AGENT_PERSONA_IDENTITY_EVENTS.personaTruthMetaDisclosureBlocked,
+                        phase: 'delegate',
+                        payload: {
+                            turnId: turnDecision.turnId,
+                            mode: meta.mode,
+                            turnIntent: turnDecision.mode,
+                            turnPolicy: turnPolicyLabel,
+                            disclosureMode: personaDisclosure.disclosureMode,
+                            enforcementMode: 'absolute_persona_lock',
+                            isFollowupToPersonaConversation: followupToPersonaConversation,
+                            routeSource: 'self_knowledge',
+                            matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
+                            reasonCodes: adaptedSelfKnowledge.reasonCodes,
+                        },
+                    });
+                }
             } else if (adaptedSelfKnowledge.adaptationMode === 'persona_block') {
                 TelemetryBus.getInstance().emit({
                     executionId: meta.executionId,
@@ -1160,12 +1265,12 @@ export class AgentKernel {
                         turnId: turnDecision.turnId,
                         mode: meta.mode,
                         turnIntent: turnDecision.mode,
-                        turnPolicy: turnDecision.personaIdentityProtection === true
-                            ? 'persona_identity_protection'
-                            : 'allow_system_identity',
+                        turnPolicy: turnPolicyLabel,
                         disclosureMode: personaDisclosure.disclosureMode,
+                        enforcementMode: 'contextual_persona_gate',
                         isFollowupToPersonaConversation: followupToPersonaConversation,
                         routeSource: 'self_knowledge',
+                        matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
                         reasonCodes: adaptedSelfKnowledge.reasonCodes,
                     },
                 });
@@ -1179,12 +1284,12 @@ export class AgentKernel {
                         turnId: turnDecision.turnId,
                         mode: meta.mode,
                         turnIntent: turnDecision.mode,
-                        turnPolicy: turnDecision.personaIdentityProtection === true
-                            ? 'persona_identity_protection'
-                            : 'allow_system_identity',
+                        turnPolicy: turnPolicyLabel,
                         disclosureMode: personaDisclosure.disclosureMode,
+                        enforcementMode: 'contextual_persona_gate',
                         isFollowupToPersonaConversation: followupToPersonaConversation,
                         routeSource: 'self_knowledge',
+                        matchedMetaCategories: adaptedSelfKnowledge.matchedMetaCategories ?? [],
                         reasonCodes: adaptedSelfKnowledge.reasonCodes,
                     },
                 });
