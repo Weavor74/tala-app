@@ -1,9 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import type {
+    GovernanceActionReasonCode,
     IterationGovernanceMaintenanceReport,
     IterationGovernanceSweepResult,
     IterationGovernanceSweepType,
 } from '../../../shared/planning/IterationPolicyGovernanceOperationsTypes';
+import type { IterationPolicyGovernanceReasonCode } from '../../../shared/planning/IterationPolicyGovernanceTypes';
 import { TelemetryBus } from '../telemetry/TelemetryBus';
 import { IterationPolicyGovernanceActionService } from './IterationPolicyGovernanceActionService';
 import { IterationPolicyGovernanceQueryService } from './IterationPolicyGovernanceQueryService';
@@ -36,7 +38,7 @@ export class IterationPolicyGovernanceMaintenanceService {
         let staleOverrideCount = 0;
         let retiredOverrideCount = 0;
         let incompatibleOverrideCount = 0;
-        const reasonCodes = new Set<string>();
+        const reasonCodes = new Set<IterationPolicyGovernanceReasonCode | GovernanceActionReasonCode>();
 
         const runRecommendationReview = () => {
             const eligible = this._queries.getEligibleRecommendationQueue(nowIso);

@@ -89,6 +89,10 @@ function isOperatorSensitiveExecution(userMessage: string): boolean {
     return /(delete|drop|remove|terminate|restart|shutdown|kill|purge|publish|deploy|write|persist|store|commit|push|approve|authorize|elevate|production|canonical|memory update)/.test(text);
 }
 
+function isAutonomousExecutionOrigin(origin: RuntimeExecutionOrigin): boolean {
+    return origin === 'autonomy_engine';
+}
+
 function resolvePlanBlockedRecovery(args: {
     blockedReason: string;
     activeMode: string;
@@ -728,7 +732,7 @@ export class AgentKernel {
                     operatorMode: request.operatorMode ?? 'auto',
                     authorityLevel: turnDecision.authorityLevel,
                     recoveryMode: false,
-                    autonomousMode: meta.origin === 'autonomy',
+                    autonomousMode: isAutonomousExecutionOrigin(meta.origin),
                     sideEffectSensitive: isOperatorSensitiveExecution(request.userMessage),
                     approvalGranted: false,
                 },

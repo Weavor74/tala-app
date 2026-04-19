@@ -6,23 +6,13 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 <!-- GENERATED:impact-map:start -->
 | Changed Path | Doc Owners | Generated Sections | Mode |
 | --- | --- | --- | --- |
-| `electron/services/RuntimeDiagnosticsAggregator.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
-| `electron/services/planning/IterationPolicyGovernanceAssistanceService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
-| `shared/planning/IterationEffectivenessTypes.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `shared/planning/IterationPolicyGovernanceAssistanceTypes.ts` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `shared/runtimeEventTypes.ts` | `docs/contracts/telemetry.md`<br>`docs/review/doclock-impact.md`<br>`docs/security/logging_and_audit.md` | `impact-map`, `telemetry-event-catalog` | auto |
-| `tests/IterationDiagnosticsProjection.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/planning/IterationPolicyGovernanceAssistanceService.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/planning/IterationPolicyGovernanceDriftDetection.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/planning/IterationPolicyGovernanceImpactPreview.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/services/kernel/AgentKernel.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/planning/IterationPolicyGovernanceMaintenanceService.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 
-Summary: total_changed=11, impact_candidates=9, mapped=7, unmapped=2, manual_review=2.
+Summary: total_changed=3, impact_candidates=2, mapped=2, unmapped=0, manual_review=0.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
 <!-- REVIEW_REQUIRED:start -->
-- [x] `shared/planning/IterationEffectivenessTypes.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `shared/planning/IterationPolicyGovernanceAssistanceTypes.ts` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-
-Rule: unresolved `[ ]` items block `docs:validate`.
+None.
 <!-- REVIEW_REQUIRED:end -->
