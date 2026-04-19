@@ -845,7 +845,7 @@ export class AgentKernel {
         const enforcedMessage = normalizeAssistantOutput({
             content: guardResult.finalText,
             artifactId: normalizedMessage.artifactId,
-            outputChannel: normalizedMessage.outputChannel,
+            outputChannel: guardResult.outputChannel ?? normalizedMessage.outputChannel,
         });
 
         return {

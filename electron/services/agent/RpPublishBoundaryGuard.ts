@@ -68,6 +68,12 @@ export type RpPublishGuardResult = {
     reasonCodes: string[];
     /** The adaptation mode produced by the persona policy layer. */
     adaptationMode: 'passthrough' | 'persona_transform' | 'persona_block' | 'persona_truth_enforced';
+    /**
+     * The output channel recommended by the persona policy layer.
+     * Undefined when the guard did not fire (mode != rp) — callers should
+     * fall back to the original channel in that case.
+     */
+    outputChannel?: 'chat' | 'fallback' | 'diff' | 'browser' | 'workspace';
 };
 
 // ─── Guard implementation ────────────────────────────────────────────────────
@@ -152,6 +158,7 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
                 'rp_publish_guard.blocked_residual_post_rewrite',
             ],
             adaptationMode: 'persona_truth_enforced',
+            outputChannel: safeBlock.outputChannel,
         };
     }
 
@@ -167,5 +174,6 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
             'rp_publish_guard.rewritten',
         ],
         adaptationMode: adapted.adaptationMode,
+        outputChannel: adapted.outputChannel,
     };
 }
