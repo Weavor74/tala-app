@@ -54,6 +54,7 @@ interface TurnIntentProfile {
     selfKnowledgeReasonCodes?: string[];
     isOperationalSystemRequest?: boolean;
     isImmersiveRelationalRequest?: boolean;
+    rpIdentityOntologyDetected?: boolean;
     reasonCodes: string[];
 }
 ```
@@ -98,6 +99,7 @@ interface TurnArbitrationDecision {
     personaIdentityProtection?: boolean;
     isOperationalSystemRequest?: boolean;
     isImmersiveRelationalRequest?: boolean;
+    rpIdentityOntologyDetected?: boolean;
 }
 ```
 
@@ -135,6 +137,7 @@ interface KernelTurnDiagnosticsView {
     selfKnowledgeSourceTruths?: string[];
     selfKnowledgeBypassedFallback?: boolean;
     personaIdentityProtection?: boolean;
+    rpIdentityOntologyDetected?: boolean;
     updatedAt: string;
 }
 ```

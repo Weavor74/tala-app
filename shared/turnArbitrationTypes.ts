@@ -73,6 +73,7 @@ export interface TurnIntentProfile {
     selfKnowledgeReasonCodes?: string[];
     isOperationalSystemRequest?: boolean;
     isImmersiveRelationalRequest?: boolean;
+    rpIdentityOntologyDetected?: boolean;
     reasonCodes: string[];
 }
 
@@ -114,6 +115,7 @@ export interface TurnArbitrationDecision {
     personaIdentityProtection?: boolean;
     isOperationalSystemRequest?: boolean;
     isImmersiveRelationalRequest?: boolean;
+    rpIdentityOntologyDetected?: boolean;
 }
 
 export interface TurnAuthorityEnvelope {
@@ -145,5 +147,6 @@ export interface KernelTurnDiagnosticsView {
     selfKnowledgeSourceTruths?: string[];
     selfKnowledgeBypassedFallback?: boolean;
     personaIdentityProtection?: boolean;
+    rpIdentityOntologyDetected?: boolean;
     updatedAt: string;
 }

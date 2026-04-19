@@ -159,6 +159,7 @@ export class TurnArbitrationService {
             personaIdentityProtection,
             isOperationalSystemRequest: profile.isOperationalSystemRequest,
             isImmersiveRelationalRequest: profile.isImmersiveRelationalRequest,
+            rpIdentityOntologyDetected: profile.rpIdentityOntologyDetected,
         };
 
         const envelope: TurnAuthorityEnvelope = {

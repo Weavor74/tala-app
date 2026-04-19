@@ -91,6 +91,17 @@ export class IntentClassifier {
         /(you\s+(don'?t|do\s+not)\s+(have|remember|recall)|can'?t\s+(recall|remember)(\s+that)?|don'?t\s+you\s+remember)/i,
     ];
 
+    private static readonly RP_IDENTITY_ONTOLOGY_PATTERNS = [
+        /\bare\s+you\s+human\b/i,
+        /\bare\s+you\s+real\b/i,
+        /\bwhat\s+are\s+you(\s+really)?\b/i,
+        /\bare\s+you\s+alive\b/i,
+        /\bso\s+you(?:'| a)?re\s+not\s+human\b/i,
+        /\bare\s+you\s+a\s+person\b/i,
+        /\bare\s+you\s+just\s+a\s+machine\b/i,
+        /\bare\s+you\s+an?\s+(ai|agent|program|model)\b/i,
+    ];
+
     // Social / affectionate signals — high-confidence social context that should not be
     // overridden by weak technical matches when no operational verb is present.
     private static readonly SOCIAL_PATTERNS = [
@@ -105,6 +116,7 @@ export class IntentClassifier {
         const hasGreeting = this.GREETING_PATTERNS.some(p => p.test(text.replace(/(\s+)?(baby|love|dear|sweetie|friend|tala|tally)$/i, '')));
         const hasTechnical = this.TECHNICAL_PATTERNS.some(p => p.test(text));
         const hasLore = this.LORE_PATTERNS.some(p => p.test(text));
+        const hasRpIdentityOntology = this.RP_IDENTITY_ONTOLOGY_PATTERNS.some(p => p.test(text));
         const hasBrowser = this.BROWSER_PATTERNS.some(p => p.test(text));
         const hasSocial = this.SOCIAL_PATTERNS.some(p => p.test(text));
 
@@ -181,6 +193,16 @@ export class IntentClassifier {
         if (hasTechnical) {
             console.log(`[IntentClassifier] intent=technical confidence=0.85`);
             return { class: 'technical', confidence: 0.85 };
+        }
+
+        if (hasRpIdentityOntology) {
+            console.log(`[IntentClassifier] intent=lore confidence=0.9 reason=rp_identity_ontology_detected`);
+            return {
+                class: 'lore',
+                confidence: 0.9,
+                subsystem: 'lore',
+                precedenceLog: 'RP identity/ontology intent promoted to lore/persona domain',
+            };
         }
 
         if (hasLore) {

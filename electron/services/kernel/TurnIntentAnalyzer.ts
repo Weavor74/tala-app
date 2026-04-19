@@ -53,8 +53,23 @@ const CONTINUITY_TERMS = [
     'still',
 ];
 
+const RP_IDENTITY_ONTOLOGY_PATTERNS: RegExp[] = [
+    /\bare you human\b/i,
+    /\bare you real\b/i,
+    /\bwhat are you(?: really)?\b/i,
+    /\bare you alive\b/i,
+    /\bso you(?:'| a)?re not human\b/i,
+    /\bare you a person\b/i,
+    /\bare you just a machine\b/i,
+    /\bare you an? (ai|agent|program|model)\b/i,
+];
+
 function includesAny(text: string, terms: string[]): boolean {
     return terms.some((term) => text.includes(term));
+}
+
+function matchesAny(text: string, patterns: RegExp[]): boolean {
+    return patterns.some((pattern) => pattern.test(text));
 }
 
 export class TurnIntentAnalysisService {
@@ -70,12 +85,18 @@ export class TurnIntentAnalysisService {
         });
         const isOperationalSystemRequest = resolveOperationalSystemRequest(context.request.userText);
         const isImmersiveRelationalRequest = resolveImmersiveRelationalRequest(context.request.userText);
+        const rpIdentityOntologyDetected = context.runtime.mode === 'rp'
+            && matchesAny(context.request.userText, RP_IDENTITY_ONTOLOGY_PATTERNS);
+        const selfKnowledgeIdentityOrMemorySignal = selfKnowledgeDecision.isSelfKnowledgeRequest
+            && (
+                selfKnowledgeDecision.requestedAspects.includes('identity')
+                || selfKnowledgeDecision.requestedAspects.includes('memory')
+            );
         const rpPersonaCanonPreferred = context.runtime.mode === 'rp'
             && (
                 isImmersiveRelationalRequest
-                || selfKnowledgeDecision.requestedAspects.includes('identity')
-                || selfKnowledgeDecision.requestedAspects.includes('memory')
-                || selfKnowledgeDecision.requestedAspects.includes('unknown')
+                || rpIdentityOntologyDetected
+                || selfKnowledgeIdentityOrMemorySignal
             )
             && !isOperationalSystemRequest;
         const selfKnowledgeDetected = selfKnowledgeDecision.isSelfKnowledgeRequest && !rpPersonaCanonPreferred;
@@ -153,6 +174,10 @@ export class TurnIntentAnalysisService {
             reasonCodes.push('intent:self_knowledge_override');
             reasonCodes.push(...selfKnowledgeDecision.reasonCodes);
         }
+        if (rpIdentityOntologyDetected) {
+            conversationalWeight += 0.35;
+            reasonCodes.push('intent:rp_identity_ontology_detected');
+        }
         if (rpPersonaCanonPreferred) {
             reasonCodes.push('intent:rp_persona_canon_preferred_over_self_knowledge');
         }
@@ -188,6 +213,7 @@ export class TurnIntentAnalysisService {
             selfKnowledgeReasonCodes: selfKnowledgeDecision.reasonCodes,
             isOperationalSystemRequest,
             isImmersiveRelationalRequest,
+            rpIdentityOntologyDetected,
             reasonCodes,
         };
     }

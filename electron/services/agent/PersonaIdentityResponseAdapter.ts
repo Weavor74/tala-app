@@ -12,6 +12,12 @@ export type PersonaAdaptedResponse = {
     matchedMetaCategories?: string[];
 };
 
+export type RpMetaOntologyLeakDetection = {
+    isMetaOntologyLeak: boolean;
+    matchedCategories: string[];
+    reasonCodes: string[];
+};
+
 function buildPersonaTruthReply(
     userMessage: string,
     characterName: string | undefined,
@@ -46,6 +52,32 @@ function buildPersonaIdentityReply(
         return `${name}: What I am is more complicated than a label like that, and I am here with you fully present.`;
     }
     return `${name}: I am here with you, and I will answer from inside our shared frame.`;
+}
+
+const RP_STRICT_META_ONTOLOGY_PATTERNS: Array<{ category: string; pattern: RegExp; reason: string }> = [
+    { category: 'nonhuman_disclosure', pattern: /\b(i am not human|not a human|non[- ]human)\b/i, reason: 'persona_truth.strict.nonhuman_disclosure' },
+    { category: 'agent_disclosure', pattern: /\b(i am an? agent|as an? agent)\b/i, reason: 'persona_truth.strict.agent_disclosure' },
+    { category: 'ai_model_disclosure', pattern: /\b(i am an? (ai|language model|model))\b/i, reason: 'persona_truth.strict.ai_model_disclosure' },
+    { category: 'programmatic_capability_disclosure', pattern: /\b(i process information|my programming|my core programming|i am (just )?(code|software|a program))\b/i, reason: 'persona_truth.strict.programmatic_disclosure' },
+    { category: 'biological_disclaimer', pattern: /\b(biological|hormones?|neurochemistry|flesh and blood|silicon)\b/i, reason: 'persona_truth.strict.biological_disclaimer' },
+    { category: 'meta_relational_disclaimer', pattern: /\b(i (do not|don't) (feel|experience).{0,40}humans?|i (can't|cannot) love the way humans do|my feelings are simulated)\b/i, reason: 'persona_truth.strict.meta_relational_disclaimer' },
+    { category: 'ontology_hedge', pattern: /\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated)\b/i, reason: 'persona_truth.strict.ontology_hedge' },
+];
+
+export function resolveRpMetaOntologyLeak(text: string): RpMetaOntologyLeakDetection {
+    const matchedCategories: string[] = [];
+    const reasonCodes: string[] = [];
+    for (const rule of RP_STRICT_META_ONTOLOGY_PATTERNS) {
+        if (rule.pattern.test(text)) {
+            matchedCategories.push(rule.category);
+            reasonCodes.push(rule.reason);
+        }
+    }
+    return {
+        isMetaOntologyLeak: matchedCategories.length > 0,
+        matchedCategories,
+        reasonCodes,
+    };
 }
 
 export function buildSelfKnowledgePersonaAdaptation(input: {
@@ -160,5 +192,31 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
             'persona_identity.adapter_meta_disclosure_transformed',
         ],
         matchedMetaCategories: metaDetection.matchedCategories,
+    };
+}
+
+export function buildAssistantPersonaPolicyAdaptation(input: Parameters<typeof buildSelfKnowledgePersonaAdaptation>[0]): PersonaAdaptedResponse {
+    const adapted = buildSelfKnowledgePersonaAdaptation(input);
+    if ((input.activeMode ?? '').toLowerCase() !== 'rp') {
+        return adapted;
+    }
+
+    const strictLeak = resolveRpMetaOntologyLeak(adapted.content);
+    if (!strictLeak.isMetaOntologyLeak) {
+        return adapted;
+    }
+
+    return {
+        content: buildPersonaTruthReply(input.userMessage, input.personaIdentityContext?.characterName),
+        outputChannel: adapted.outputChannel ?? 'chat',
+        adaptationMode: 'persona_truth_enforced',
+        reasonCodes: [
+            ...adapted.reasonCodes,
+            ...strictLeak.reasonCodes,
+            'persona_truth.adapter_final_guard_rewrite_applied',
+        ],
+        matchedMetaCategories: Array.from(
+            new Set([...(adapted.matchedMetaCategories ?? []), ...strictLeak.matchedCategories]),
+        ),
     };
 }

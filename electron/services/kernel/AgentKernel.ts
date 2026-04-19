@@ -31,7 +31,10 @@ import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
 import { SelfInspectionExecutionService } from '../agent/SelfInspectionExecutionService';
 import { SelfKnowledgeExecutionService } from '../agent/SelfKnowledgeExecutionService';
-import { buildSelfKnowledgePersonaAdaptation } from '../agent/PersonaIdentityResponseAdapter';
+import {
+    buildAssistantPersonaPolicyAdaptation,
+    resolveRpMetaOntologyLeak,
+} from '../agent/PersonaIdentityResponseAdapter';
 import {
     resolveImmersiveRelationalRequest,
     resolveOperationalSystemRequest,
@@ -132,6 +135,21 @@ const AGENT_PERSONA_IDENTITY_EVENTS = {
     | 'personaTruthMetaRewriteApplied'
     | 'personaTruthMetaDisclosureBlocked'
     | 'personaTruthCanonSelected',
+    RuntimeEventType
+>;
+
+const AGENT_RP_PERSONA_TRUTH_EVENTS = {
+    enforcementApplied: 'agent.rp_persona_truth_enforcement_applied',
+    identityIntentDetected: 'agent.rp_identity_intent_detected',
+    leakDetected: 'agent.rp_meta_ontology_leak_detected',
+    rewritten: 'agent.rp_meta_ontology_rewritten',
+    publishBlocked: 'agent.rp_meta_ontology_publish_blocked',
+} as const satisfies Record<
+    | 'enforcementApplied'
+    | 'identityIntentDetected'
+    | 'leakDetected'
+    | 'rewritten'
+    | 'publishBlocked',
     RuntimeEventType
 >;
 
@@ -567,6 +585,174 @@ export class AgentKernel {
         }
     }
 
+    private _hashForTelemetry(input: string): string {
+        let hash = 2166136261;
+        for (let i = 0; i < input.length; i += 1) {
+            hash ^= input.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    private _enforceRpPersonaTruthBeforePublication(
+        meta: KernelExecutionMeta,
+        request: KernelRequest,
+        turnResult: ChatTurnResult,
+    ): ChatTurnResult {
+        if (meta.mode !== 'rp' || turnResult.kind !== 'assistant_response') {
+            return turnResult;
+        }
+        const turnDecision = meta.turnArbitration;
+        const followupToPersonaConversation = this._isFollowupToPersonaConversation(request);
+        const turnPolicy = 'persona_truth_lock';
+        const routeSource = turnResult.source;
+        const normalizedMessage = normalizeAssistantOutput(turnResult.message);
+        const preLeakDetection = resolveRpMetaOntologyLeak(normalizedMessage.content);
+        const adapted = buildAssistantPersonaPolicyAdaptation({
+            rawContent: normalizedMessage.content,
+            activeMode: meta.mode,
+            turnIntent: turnDecision?.mode,
+            turnPolicy,
+            userMessage: request.userMessage,
+            isOperationalRequest: turnDecision?.isOperationalSystemRequest,
+            isSystemKnowledgeRequest: turnDecision?.selfKnowledgeDetected,
+            isFollowupToPersonaConversation: followupToPersonaConversation,
+        });
+
+        const bus = TelemetryBus.getInstance();
+        bus.emit({
+            executionId: meta.executionId,
+            subsystem: 'agent',
+            event: AGENT_RP_PERSONA_TRUTH_EVENTS.enforcementApplied,
+            phase: 'finalizing',
+            payload: {
+                turnId: turnDecision?.turnId,
+                mode: meta.mode,
+                turnIntent: turnDecision?.mode,
+                turnPolicy,
+                disclosureMode: 'enforce_persona_truth',
+                enforcementMode: 'absolute_persona_lock',
+                routeSource,
+                isFollowupToPersonaConversation: followupToPersonaConversation,
+                adaptationMode: adapted.adaptationMode,
+                reasonCodes: adapted.reasonCodes,
+            },
+        });
+
+        if (preLeakDetection.isMetaOntologyLeak) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_RP_PERSONA_TRUTH_EVENTS.leakDetected,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    turnIntent: turnDecision?.mode,
+                    turnPolicy,
+                    routeSource,
+                    matchedMetaCategories: preLeakDetection.matchedCategories,
+                    originalLeakRedacted: true,
+                    originalLeakExcerptHash: this._hashForTelemetry(normalizedMessage.content),
+                    reasonCodes: preLeakDetection.reasonCodes,
+                },
+            });
+        }
+
+        let enforcedMessage = normalizeAssistantOutput({
+            content: adapted.content,
+            artifactId: normalizedMessage.artifactId,
+            outputChannel: adapted.outputChannel ?? normalizedMessage.outputChannel,
+        });
+        let publishBlockedEmitted = false;
+        if (enforcedMessage.content !== normalizedMessage.content) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_RP_PERSONA_TRUTH_EVENTS.rewritten,
+                phase: 'finalizing',
+                payload: {
+                    turnId: turnDecision?.turnId,
+                    mode: meta.mode,
+                    turnIntent: turnDecision?.mode,
+                    turnPolicy,
+                    routeSource,
+                    matchedMetaCategories: adapted.matchedMetaCategories ?? [],
+                    adaptationMode: adapted.adaptationMode,
+                    reasonCodes: adapted.reasonCodes,
+                },
+            });
+            if (preLeakDetection.isMetaOntologyLeak) {
+                bus.emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_RP_PERSONA_TRUTH_EVENTS.publishBlocked,
+                    phase: 'finalizing',
+                    payload: {
+                        turnId: turnDecision?.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision?.mode,
+                        turnPolicy,
+                        routeSource,
+                        matchedMetaCategories: preLeakDetection.matchedCategories,
+                        adaptationMode: adapted.adaptationMode,
+                        reasonCodes: [
+                            ...preLeakDetection.reasonCodes,
+                            ...adapted.reasonCodes,
+                            'persona_truth.final_publish_guard_blocked_raw_meta_ontology',
+                        ],
+                    },
+                });
+                publishBlockedEmitted = true;
+            }
+        }
+
+        const postLeakDetection = resolveRpMetaOntologyLeak(enforcedMessage.content);
+        if (postLeakDetection.isMetaOntologyLeak) {
+            const blocked = buildAssistantPersonaPolicyAdaptation({
+                rawContent: 'I am not human. I am an agent.',
+                activeMode: meta.mode,
+                turnIntent: turnDecision?.mode,
+                turnPolicy,
+                userMessage: request.userMessage,
+                isOperationalRequest: turnDecision?.isOperationalSystemRequest,
+                isSystemKnowledgeRequest: turnDecision?.selfKnowledgeDetected,
+                isFollowupToPersonaConversation: followupToPersonaConversation,
+            });
+            enforcedMessage = normalizeAssistantOutput({
+                content: blocked.content,
+                artifactId: normalizedMessage.artifactId,
+                outputChannel: blocked.outputChannel ?? normalizedMessage.outputChannel,
+            });
+            if (!publishBlockedEmitted) {
+                bus.emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: AGENT_RP_PERSONA_TRUTH_EVENTS.publishBlocked,
+                    phase: 'finalizing',
+                    payload: {
+                        turnId: turnDecision?.turnId,
+                        mode: meta.mode,
+                        turnIntent: turnDecision?.mode,
+                        turnPolicy,
+                        routeSource,
+                        matchedMetaCategories: postLeakDetection.matchedCategories,
+                        adaptationMode: 'persona_truth_enforced',
+                        reasonCodes: [
+                            ...postLeakDetection.reasonCodes,
+                            'persona_truth.final_publish_guard_blocked_raw_meta_ontology',
+                        ],
+                    },
+                });
+            }
+        }
+
+        return {
+            ...turnResult,
+            message: enforcedMessage,
+        };
+    }
+
     private _assistantResponse(content: string, source: ChatTurnResultSource, outputChannel: AgentTurnOutput['outputChannel'] = 'chat'): ChatTurnAssistantResponse {
         const normalizedMessage = normalizeAssistantOutput({
             content,
@@ -744,9 +930,27 @@ export class AgentKernel {
                 containsBuildOrFixRequest: intent.containsBuildOrFixRequest,
                 likelyNeedsOnlyExplanation: intent.likelyNeedsOnlyExplanation,
                 referencesActiveWork: intent.referencesActiveWork,
+                rpIdentityOntologyDetected: intent.rpIdentityOntologyDetected === true,
                 reasonCodes: intent.reasonCodes,
             },
         });
+        if (meta.mode === 'rp' && intent.rpIdentityOntologyDetected) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: AGENT_RP_PERSONA_TRUTH_EVENTS.identityIntentDetected,
+                phase: 'classify',
+                payload: {
+                    turnId: context.request.turnId,
+                    mode: meta.mode,
+                    turnIntent: 'rp_identity',
+                    turnPolicy: 'persona_truth_lock',
+                    disclosureMode: 'enforce_persona_truth',
+                    routeSource: 'router',
+                    reasonCodes: intent.reasonCodes,
+                },
+            });
+        }
 
         const { decision: turnDecision, envelope } = this._turnArbitrator.arbitrate(context, intent);
         meta.turnArbitration = turnDecision;
@@ -1105,7 +1309,7 @@ export class AgentKernel {
                 isSystemKnowledgeRequest: turnDecision.selfKnowledgeDetected,
                 isFollowupToPersonaConversation: followupToPersonaConversation,
             });
-            const adaptedSelfKnowledge = buildSelfKnowledgePersonaAdaptation({
+            const adaptedSelfKnowledge = buildAssistantPersonaPolicyAdaptation({
                 rawContent: selfKnowledgeResult.summary,
                 selfKnowledgeSnapshot: selfKnowledgeResult.snapshot,
                 activeMode: meta.mode,
@@ -1831,6 +2035,7 @@ export class AgentKernel {
     private finalizeExecution(meta: KernelExecutionMeta, turnResult: ChatTurnResult, request: KernelRequest): KernelResult {
         meta.durationMs = Date.now() - meta.startedAt;
         turnResult = this._normalizeAssistantTurnResult(turnResult);
+        turnResult = this._enforceRpPersonaTruthBeforePublication(meta, request, turnResult);
         const responseArtifactPresent = turnResult.kind === 'assistant_response'
             && (turnResult.message.content.trim().length > 0 || typeof turnResult.message.artifactId === 'string');
         const failureArtifactPresent = turnResult.kind === 'turn_failure';

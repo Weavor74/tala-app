@@ -10,17 +10,19 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 | `electron/services/kernel/AgentKernel.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 | `electron/services/kernel/TurnArbitrator.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 | `electron/services/kernel/TurnIntentAnalyzer.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
-| `shared/agent/PersonaIdentityPolicy.ts` | `docs/contracts/runtimeEventTypes.md`<br>`docs/contracts/turnArbitrationTypes.md`<br>`docs/review/doclock-impact.md` | `impact-map` | auto |
+| `electron/services/router/IntentClassifier.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 | `shared/runtimeEventTypes.ts` | `docs/contracts/telemetry.md`<br>`docs/review/doclock-impact.md`<br>`docs/security/logging_and_audit.md` | `impact-map`, `telemetry-event-catalog` | auto |
-| `tests/AssistantStillSystemTruth.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/HybridStillContextual.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/PersonaIdentityGateRpMode.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/PersonaTruthRpHumanIdentity.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/PersonaTruthRpLoveQuestion.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/PersonaTruthRpOntologyFollowup.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
-| `tests/PersonaTruthRpRegressionConversation.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `shared/turnArbitrationTypes.ts` | `docs/contracts/runtimeEventTypes.md`<br>`docs/contracts/turnArbitrationTypes.md`<br>`docs/review/doclock-impact.md` | `impact-map` | auto |
+| `tests/AssistantStillSystemTruthAfterFix.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/HybridStillContextualAfterFix.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpFinalPublishLeakGuard.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpIdentityQuestionIntentDetection.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpObservedRuntimeCaseRegression.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpPersonaTruthOntologyFollowup.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpPersonaTruthRelationalQuestion.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `tests/RpUniversalPersonaEnforcementOnLlmOutput.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
 
-Summary: total_changed=15, impact_candidates=13, mapped=13, unmapped=0, manual_review=0.
+Summary: total_changed=18, impact_candidates=15, mapped=15, unmapped=0, manual_review=0.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
