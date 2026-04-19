@@ -915,6 +915,7 @@ export class InferenceService {
                     stdio: 'pipe',
                     env: {
                         ...process.env,
+                        TALA_NONINTERACTIVE: '1',
                         TALA_VLLM_PORT: String(port),
                         ...(options.modelId ? { TALA_VLLM_MODEL: options.modelId } : {}),
                     },
@@ -925,6 +926,7 @@ export class InferenceService {
                     stdio: 'pipe',
                     env: {
                         ...process.env,
+                        TALA_NONINTERACTIVE: '1',
                         TALA_VLLM_PORT: String(port),
                         ...(options.modelId ? { TALA_VLLM_MODEL: options.modelId } : {}),
                     },

@@ -31,13 +31,22 @@ if "%TALA_VLLM_GPU_MEM%"=="" set "TALA_VLLM_GPU_MEM=0.9"
 
 :: Locate Python in the vLLM venv (created by bootstrap-vllm.ps1)
 set "PYTHON_EXE=%REPO_ROOT%\local-inference\vllm-venv\Scripts\python.exe"
+set "VLLM_ENTRY=%REPO_ROOT%\scripts\vllm-server-entry.py"
 
 if not exist "%PYTHON_EXE%" (
     echo [VLLM] ERROR: vLLM virtual environment not found at:
     echo         %PYTHON_EXE%
     echo [VLLM] Run scripts\bootstrap-vllm.ps1 first to install vLLM.
     popd
-    pause
+    if /I not "%TALA_NONINTERACTIVE%"=="1" pause
+    exit /b 1
+)
+
+if not exist "%VLLM_ENTRY%" (
+    echo [VLLM] ERROR: Tala vLLM launcher entry script not found at:
+    echo         %VLLM_ENTRY%
+    popd
+    if /I not "%TALA_NONINTERACTIVE%"=="1" pause
     exit /b 1
 )
 
@@ -72,14 +81,14 @@ echo.
 if "%TALA_VLLM_CPU%"=="1" (
     echo [VLLM] CPU-only mode enabled.
     set "CUDA_VISIBLE_DEVICES="
-    "%PYTHON_EXE%" -m vllm.entrypoints.openai.api_server ^
+    "%PYTHON_EXE%" "%VLLM_ENTRY%" ^
         --model "%MODEL%" ^
         --host %TALA_VLLM_HOST% ^
         --port %TALA_VLLM_PORT% ^
         --dtype %TALA_VLLM_DTYPE% ^
         --device cpu
 ) else (
-    "%PYTHON_EXE%" -m vllm.entrypoints.openai.api_server ^
+    "%PYTHON_EXE%" "%VLLM_ENTRY%" ^
         --model "%MODEL%" ^
         --host %TALA_VLLM_HOST% ^
         --port %TALA_VLLM_PORT% ^
@@ -88,4 +97,4 @@ if "%TALA_VLLM_CPU%"=="1" (
 )
 
 popd
-pause
+if /I not "%TALA_NONINTERACTIVE%"=="1" pause

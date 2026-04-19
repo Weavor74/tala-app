@@ -36,11 +36,18 @@ TALA_VLLM_GPU_MEM="${TALA_VLLM_GPU_MEM:-0.9}"
 
 # Locate Python in the vLLM venv
 PYTHON_EXE="$REPO_ROOT/local-inference/vllm-venv/bin/python"
+VLLM_ENTRY="$REPO_ROOT/scripts/vllm-server-entry.py"
 
 if [ ! -f "$PYTHON_EXE" ]; then
     echo -e "${RED}[VLLM] ERROR: vLLM virtual environment not found at:${NC}"
     echo "       $PYTHON_EXE"
     echo -e "${RED}[VLLM] Run bash scripts/bootstrap-vllm.sh first to install vLLM.${NC}"
+    exit 1
+fi
+
+if [ ! -f "$VLLM_ENTRY" ]; then
+    echo -e "${RED}[VLLM] ERROR: Tala vLLM launcher entry script not found at:${NC}"
+    echo "       $VLLM_ENTRY"
     exit 1
 fi
 
@@ -79,14 +86,14 @@ echo ""
 if [ "${TALA_VLLM_CPU:-0}" = "1" ]; then
     echo -e "${CYAN}[VLLM] CPU-only mode enabled.${NC}"
     export CUDA_VISIBLE_DEVICES=""
-    "$PYTHON_EXE" -m vllm.entrypoints.openai.api_server \
+    "$PYTHON_EXE" "$VLLM_ENTRY" \
         --model "$MODEL" \
         --host "$TALA_VLLM_HOST" \
         --port "$TALA_VLLM_PORT" \
         --dtype "$TALA_VLLM_DTYPE" \
         --device cpu
 else
-    "$PYTHON_EXE" -m vllm.entrypoints.openai.api_server \
+    "$PYTHON_EXE" "$VLLM_ENTRY" \
         --model "$MODEL" \
         --host "$TALA_VLLM_HOST" \
         --port "$TALA_VLLM_PORT" \

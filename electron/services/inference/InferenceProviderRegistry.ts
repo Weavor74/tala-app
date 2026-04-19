@@ -20,6 +20,8 @@
 
 import http from 'http';
 import https from 'https';
+import fs from 'fs';
+import path from 'path';
 import type {
     InferenceProviderDescriptor,
     InferenceProviderType,
@@ -179,8 +181,55 @@ export async function checkEmbeddedVllmAvailability(
         status: 'not_running',
         models: modelId ? [modelId] : [],
         responseTimeMs: Date.now() - start,
-        error: 'Embedded vLLM server not running. Start it with scripts/run-vllm.bat (Windows) or scripts/run-vllm.sh (Linux/macOS).',
+        error: buildEmbeddedVllmUnavailableMessage(),
     };
+}
+
+function buildEmbeddedVllmUnavailableMessage(): string {
+    const launcherHint = 'Embedded vLLM server not running. Start it with scripts/run-vllm.bat (Windows) or scripts/run-vllm.sh (Linux/macOS).';
+
+    if (process.platform !== 'win32') {
+        return launcherHint;
+    }
+
+    const repoRoot = process.cwd();
+    const apiServerPath = path.join(
+        repoRoot,
+        'local-inference',
+        'vllm-venv',
+        'Lib',
+        'site-packages',
+        'vllm',
+        'entrypoints',
+        'openai',
+        'api_server.py',
+    );
+    const uvloopPackageDir = path.join(repoRoot, 'local-inference', 'vllm-venv', 'Lib', 'site-packages', 'uvloop');
+
+    if (!fs.existsSync(apiServerPath)) {
+        return `${launcherHint} Windows embedded_vllm path uses standard asyncio; uvloop is not required by Tala.`;
+    }
+
+    let apiServerSource = '';
+    try {
+        apiServerSource = fs.readFileSync(apiServerPath, 'utf-8');
+    } catch {
+        return `${launcherHint} Windows embedded_vllm path uses standard asyncio; uvloop is not required by Tala.`;
+    }
+
+    const entrypointRequiresUvloop = /\bimport\s+uvloop\b/.test(apiServerSource);
+    const uvloopInstalled = fs.existsSync(uvloopPackageDir);
+
+    if (entrypointRequiresUvloop && !uvloopInstalled) {
+        return [
+            'Embedded vLLM unavailable on this Windows runtime: installed vLLM OpenAI server entrypoint requires uvloop.',
+            'Tala Windows launcher uses standard asyncio and does not require uvloop,',
+            'but this vLLM build is not Windows-compatible for the embedded API server path.',
+            'Use ollama or install a Windows-compatible vLLM build.',
+        ].join(' ');
+    }
+
+    return `${launcherHint} Windows embedded_vllm path uses standard asyncio; uvloop is not required by Tala.`;
 }
 
 // ─── Configuration ────────────────────────────────────────────────────────────

@@ -149,6 +149,30 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+if ($IsWindows) {
+    Log-Info "Validating Windows embedded_vllm launcher compatibility (uvloop-free Tala path)..."
+    & $VenvPython -c @"
+import importlib.util
+import pathlib
+import sys
+
+entrypoint_spec = importlib.util.find_spec('vllm.entrypoints.openai.api_server')
+if entrypoint_spec is None or entrypoint_spec.origin is None:
+    print('[VLLM] WARN: OpenAI API entrypoint not found in installed vLLM build.')
+    raise SystemExit(0)
+
+entrypoint_path = pathlib.Path(entrypoint_spec.origin)
+source = entrypoint_path.read_text(encoding='utf-8', errors='ignore')
+requires_uvloop = 'import uvloop' in source
+has_uvloop = importlib.util.find_spec('uvloop') is not None
+
+if requires_uvloop and not has_uvloop:
+    print('[VLLM] WARN: This vLLM build hard-requires uvloop in the API entrypoint.')
+    print('[VLLM] WARN: Tala Windows launcher does not require uvloop; embedded_vllm may remain unavailable on this host.')
+    print('[VLLM] WARN: Use ollama or install a Windows-compatible vLLM build for embedded fallback.')
+"@
+}
+
 Log-Ok "Installation complete."
 Log-Info ""
 Log-Info "To start the vLLM server, run:"
