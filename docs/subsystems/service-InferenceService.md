@@ -49,12 +49,12 @@ type SignalCategory = TelemetrySignal['category'];
 
 /** Represents a local AI inference provider detected during a port scan. @deprecated Use InferenceProviderDescriptor from shared/inferenceProviderTypes.ts.   The registry-based InferenceService.refreshProviders() path supersedes scanLocal()./
 export interface ScannedProvider {
-    engine: 'ollama' | 'llamacpp' | 'vllm';
+    engine: 'ollama' | 'vllm';
     endpoint: string;
     models: string[];
 }
 
-/** InferenceService — Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator) - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
+/** InferenceService — Canonical Inference Coordinator Acts as the single authoritative gate for all inference operations in TALA. Responsibilities: - Provider registry management (via InferenceProviderRegistry) - Deterministic provider selection and fallback (via ProviderSelectionService) - Lifecycle management of the embedded vLLM engine - Legacy provider scan API for backward compatibility - Installer flows for external providers (Ollama) Every inference request that touches a local provider must call `selectProvider()` to obtain a validated InferenceSelectionResult before executing. AgentService should never directly probe or switch providers.
 
 ### Methods
 
@@ -137,7 +137,9 @@ Resolves the best available Python executable for running the embedded llama_cp
 
 ---
 #### `killEmbedded`
-Terminates the embedded llama.cpp child process if it is running. Safe to call multiple times; a no-op if no process was spawned./
+Terminates managed embedded inference child processes if they are running.
+ Safe to call multiple times; a no-op if no process was spawned.
+/
 
 **Arguments**: ``
 **Returns**: `void`

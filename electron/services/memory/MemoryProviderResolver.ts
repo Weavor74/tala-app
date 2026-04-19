@@ -11,7 +11,7 @@
  *   3. Running state (status='ready' beats other statuses)
  *   4. User preference (inventory.selectedProviderId boost, only when valid)
  *   5. Locality (scope='local'|'embedded' beats scope='cloud')
- *   6. Provider type priority (ollama > vllm > llamacpp > koboldcpp > cloud)
+ *   6. Provider type priority (ollama > embedded_vllm > vllm > koboldcpp > cloud)
  *   7. Model name (lexical ascending — stable tie-break)
  *   8. Provider ID (lexical ascending — final stable tie-break)
  *
@@ -65,10 +65,8 @@ export interface RankedMemoryCandidate {
  */
 const PROVIDER_TYPE_PRIORITY: Partial<Record<InferenceProviderType, number>> = {
     ollama:            10,
-    vllm:              20,
-    embedded_vllm:     25,
-    llamacpp:          30,
-    embedded_llamacpp: 35,
+    embedded_vllm:     20,
+    vllm:              25,
     koboldcpp:         40,
     cloud:             50,
 };
@@ -80,8 +78,6 @@ function toMemoryBackendType(providerType: InferenceProviderType): MemoryBackend
         case 'ollama':            return 'ollama';
         case 'vllm':              return 'vllm';
         case 'embedded_vllm':     return 'vllm';
-        case 'llamacpp':          return 'llamacpp';
-        case 'embedded_llamacpp': return 'llamacpp';
         case 'koboldcpp':         return 'openai_compatible';
         case 'cloud':             return 'openai_compatible';
         default:                  return 'other';

@@ -150,9 +150,9 @@ describe('classifyModelCapability', () => {
         expect(profile.classInferred).toBe(true);
     });
 
-    it('uses small fallback for embedded_llamacpp with unknown model', () => {
+    it('uses small fallback for embedded_vllm with unknown model', () => {
         const profile = classifyModelCapability(
-            makeProvider({ providerType: 'embedded_llamacpp' }),
+            makeProvider({ providerType: 'embedded_vllm' }),
             'unknown-model',
         );
         expect(profile.parameterClass).toBe('small');

@@ -16,7 +16,7 @@ export interface InferenceInstance {
     id: string;
     alias: string;
     source: 'local' | 'cloud';
-    engine: 'ollama' | 'llamacpp' | 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'groq' | 'custom';
+    engine: 'ollama' | 'vllm' | 'openai' | 'anthropic' | 'gemini' | 'groq' | 'custom';
     endpoint: string;
     apiKey?: string;
     model: string;

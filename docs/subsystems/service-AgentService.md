@@ -183,11 +183,6 @@ Wires the runtime diagnostics aggregator so cognitive contexts can be recorded 
 **Returns**: `string | undefined`
 
 ---
-#### `_resolveEmbeddedModelPath`
-**Arguments**: `inferenceSettings: any`
-**Returns**: `string | undefined`
-
----
 #### `getActiveInstance`
 **Arguments**: ``
 

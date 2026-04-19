@@ -210,7 +210,7 @@ contextBridge.exposeInMainWorld('tala', {
     scanLocalModels: () => ipcRenderer.invoke('scan-local-models'),
     /** Installs a local inference engine by ID (downloads binaries). */
     installLocalEngine: (engineId: string) => ipcRenderer.invoke('install-local-engine', engineId),
-    /** Starts the built-in local inference engine (llama.cpp). */
+    /** Legacy local-engine control endpoint (returns unsupported after llama.cpp removal). */
     startLocalEngine: (args: { modelPath: string, options?: any }) => ipcRenderer.invoke('local-engine-start', args),
     /** Stops the built-in local inference engine. */
     stopLocalEngine: () => ipcRenderer.invoke('local-engine-stop'),

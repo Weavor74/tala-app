@@ -53,7 +53,7 @@ type SignalCategory = TelemetrySignal['category'];
  *   The registry-based InferenceService.refreshProviders() path supersedes scanLocal().
  */
 export interface ScannedProvider {
-    engine: 'ollama' | 'llamacpp' | 'vllm';
+    engine: 'ollama' | 'vllm';
     endpoint: string;
     models: string[];
 }
@@ -66,7 +66,7 @@ export interface ScannedProvider {
  * Responsibilities:
  * - Provider registry management (via InferenceProviderRegistry)
  * - Deterministic provider selection and fallback (via ProviderSelectionService)
- * - Lifecycle management of the embedded llama.cpp engine (via LocalInferenceOrchestrator)
+ * - Lifecycle management of the embedded vLLM engine
  * - Legacy provider scan API for backward compatibility
  * - Installer flows for external providers (Ollama)
  *
@@ -92,7 +92,7 @@ export class InferenceService {
     /** Deterministic provider selection policy. */
     private selectionService: ProviderSelectionService;
 
-    /** Reference to the embedded llama.cpp child process, kept to prevent GC and allow cleanup. */
+    /** Reference to the embedded legacy child process, kept for backward-compatible lifecycle handlers. */
     private _embeddedChild: import('child_process').ChildProcess | null = null;
     /** Reference to the embedded vLLM child process, kept to prevent GC and allow cleanup. */
     private _embeddedVllmChild: import('child_process').ChildProcess | null = null;
@@ -180,8 +180,8 @@ export class InferenceService {
      *
      * Policy (applied in order):
      * 1. If `req.openTimeoutMs` is explicitly set, honour it unconditionally.
-     * 2. embedded_llamacpp (scope='embedded') — CPU inference is slow to produce the
-     *    first token, especially on a cold model load.  Give it 90 seconds.
+     * 2. Embedded providers (scope='embedded') — CPU inference can be slow to produce
+     *    the first token on cold starts. Give it 90 seconds baseline.
      *    For large prompts (>4 000 chars) this extends to 120 seconds.
      * 3. Other local providers (scope='local', e.g. Ollama) — 90 seconds baseline.
      *    Ollama may load the model from disk on a cold start, which can exceed 30 s.
@@ -200,15 +200,14 @@ export class InferenceService {
 
         const promptChars = InferenceService.countPromptChars(messages);
 
-        // Embedded llama.cpp: generous timeout — cold model loads on CPU can exceed 30 s.
-        // Scale up slightly for very large prompts (> LARGE_PROMPT_CHAR_THRESHOLD chars ≈ >1 000 tokens).
-        if (provider.scope === 'embedded' || provider.providerType === 'embedded_llamacpp') {
+        // Embedded providers get a generous timeout for cold starts.
+        if (provider.scope === 'embedded') {
             return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
                 ? STREAM_OPEN_TIMEOUT_EMBEDDED_LARGE_PROMPT_MS
                 : STREAM_OPEN_TIMEOUT_EMBEDDED_MS;
         }
 
-        // Other local providers (Ollama, external llama.cpp, vLLM, koboldcpp):
+        // Other local providers (Ollama, vLLM, koboldcpp):
         // Baseline covers cold-start model loading from disk (can exceed former 30 s default).
         // Scale up for large prompts that take longer to prefill.
         if (provider.scope === 'local') {
@@ -381,7 +380,7 @@ export class InferenceService {
                                 const firstTokenLatencyMs = Date.now() - attemptStartedAt;
                                 console.log(
                                     `[InferenceService] First token received` +
-                                    ` � provider: ${currentProvider.providerId}` +
+                                    ` � provider: ${currentProvider.providerId}` +
                                     ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
                                     ` turnId: ${req.turnId}`
                                 );
@@ -390,7 +389,7 @@ export class InferenceService {
                                     'stream_opened',
                                     'info',
                                     'InferenceService',
-                                    `Stream opened � provider: ${currentProvider.providerId}`,
+                                    `Stream opened � provider: ${currentProvider.providerId}`,
                                     'success',
                                     {
                                         turnId: req.turnId,
@@ -426,7 +425,7 @@ export class InferenceService {
 
                         console.log(
                             `[InferenceService] Stream attempt ${attempt + 1}/${candidateProviders.length}` +
-                            ` � provider: ${currentProvider.providerId}` +
+                            ` � provider: ${currentProvider.providerId}` +
                             ` scope: ${currentProvider.scope}` +
                             ` type: ${currentProvider.providerType}` +
                             ` openTimeout: ${openTimeoutMs}ms` +
@@ -480,7 +479,7 @@ export class InferenceService {
                             'stream_completed',
                             'info',
                             'InferenceService',
-                            `Stream completed � provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
+                            `Stream completed � provider: ${currentProvider.providerId}, tokens: ${tokensEmitted}`,
                             'success',
                             {
                                 turnId: req.turnId,
@@ -505,7 +504,7 @@ export class InferenceService {
                             'inference_completed',
                             'info',
                             'InferenceService',
-                            `Inference completed (stream) � provider: ${currentProvider.providerId}`,
+                            `Inference completed (stream) � provider: ${currentProvider.providerId}`,
                             'success',
                             {
                                 turnId: req.turnId,
@@ -814,9 +813,8 @@ export class InferenceService {
      * Canonical embedded startup path.
      *
      * Policy:
-     * 1. Attempt embedded_vllm first (authoritative embedded engine).
-     * 2. Optionally attempt embedded_llamacpp as a legacy fallback.
-     * 3. Return true on the first successful startup/adoption.
+     * 1. Attempt embedded_vllm (authoritative embedded engine).
+     * 2. Return true on successful startup/adoption.
      */
     public async ensureEmbeddedProviderStarted(options: {
         embeddedVllm?: {
@@ -824,29 +822,8 @@ export class InferenceService {
             modelId?: string;
             startupTimeoutMs?: number;
         };
-        embeddedLlamaCpp?: {
-            modelPath: string;
-            port?: number;
-            contextSize?: number;
-            pythonPath?: string;
-            startupTimeoutMs?: number;
-        };
-        allowLegacyLlamaCpp?: boolean;
     } = {}): Promise<boolean> {
-        const allowLegacyLlamaCpp = options.allowLegacyLlamaCpp ?? true;
-        const vllmStarted = await this.ensureEmbeddedVllmStarted(options.embeddedVllm ?? {});
-        if (vllmStarted) return true;
-
-        if (!allowLegacyLlamaCpp || !options.embeddedLlamaCpp?.modelPath) {
-            return false;
-        }
-
-        return this.ensureEmbeddedStarted(options.embeddedLlamaCpp.modelPath, {
-            port: options.embeddedLlamaCpp.port,
-            contextSize: options.embeddedLlamaCpp.contextSize,
-            pythonPath: options.embeddedLlamaCpp.pythonPath,
-            startupTimeoutMs: options.embeddedLlamaCpp.startupTimeoutMs,
-        });
+        return this.ensureEmbeddedVllmStarted(options.embeddedVllm ?? {});
     }
 
     /**
@@ -1064,203 +1041,30 @@ export class InferenceService {
     }
 
     /**
-     * Ensures the embedded llama.cpp inference server is running.
-     *
-     * Behaviour:
-     * 1. Checks if the server is already up on the configured port.
-     * 2. If not, resolves the project-local Python interpreter and spawns
-     *    `python -m llama_cpp.server` with the given model.
-     * 3. Polls `/health` until the server is ready (up to startupTimeoutMs).
-     * 4. Returns true when the server is confirmed ready, false on failure.
-     *
-     * This is the guaranteed local-baseline path: it fires whenever no external
-     * local inference provider is viable, regardless of internet/cloud status.
+     * Legacy embedded llama startup path.
+     * Disabled as part of local provider migration to `ollama` + `embedded_vllm`.
      */
     public async ensureEmbeddedStarted(
-        modelPath: string,
+        _modelPath: string,
         options: {
             port?: number;
-            contextSize?: number;
-            pythonPath?: string;
             startupTimeoutMs?: number;
         } = {}
     ): Promise<boolean> {
-        const port = options.port ?? 8080;
-        const contextSize = options.contextSize ?? 4096;
-        // 120 s gives large GGUF models on slow disks enough time to load.
-        const startupTimeoutMs = options.startupTimeoutMs ?? 120_000;
-
-        // 1. Check if a server is already running on this port
-        const healthUrl = `http://127.0.0.1:${port}/health`;
-        const modelsUrl = `http://127.0.0.1:${port}/v1/models`;
-
-        const alreadyUp = await new Promise<boolean>((resolve) => {
-            const req = http.get(healthUrl, { timeout: 2000 }, (res) => {
-                res.resume();
-                resolve((res.statusCode ?? 0) < 400);
-            });
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
-        });
-
-        if (alreadyUp) {
-            telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-                `Embedded server already running on port ${port}`, 'success', { payload: { port } });
-            return true;
-        }
-
-        // 1b. /health did not respond positively — check TCP to see if the port is actually occupied
-        // by another process before attempting to spawn a new server that would fail to bind.
-        const portOccupied = await new Promise<boolean>((resolve) => {
-            const socket = new net.Socket();
-            // 500 ms is sufficient to detect an active local listener without meaningfully
-            // delaying startup when the port is free.
-            socket.setTimeout(500);
-            socket.once('connect', () => { socket.destroy(); resolve(true); });
-            socket.once('error', () => { socket.destroy(); resolve(false); });
-            socket.once('timeout', () => { socket.destroy(); resolve(false); });
-            try {
-                socket.connect(port, '127.0.0.1');
-            } catch {
-                socket.destroy();
-                resolve(false);
-            }
-        });
-
-        if (portOccupied) {
-            // Port is in use but /health returned a non-success status. Try /v1/models to determine
-            // whether the occupant is a valid OpenAI-compatible inference server (e.g. LM Studio,
-            // text-generation-webui) that TALA can adopt without spawning a duplicate.
-            const inferenceReachable = await new Promise<boolean>((resolve) => {
-                const req = http.get(modelsUrl, { timeout: 2000 }, (res) => {
-                    res.resume();
-                    resolve((res.statusCode ?? 0) < 400);
-                });
-                req.on('error', () => resolve(false));
-                req.on('timeout', () => { req.destroy(); resolve(false); });
-            });
-
-            if (inferenceReachable) {
-                telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-                    `Port ${port} occupied by existing inference service (responded to /v1/models) — adopting as embedded provider`,
-                    'success', { payload: { port } });
-                return true;
-            }
-
-            // Port is occupied by a non-inference service — spawning another server would fail
-            // immediately with a bind error. Surface a deterministic failure instead.
-            telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                `Port ${port} is already in use by a non-inference service — cannot start embedded llama.cpp`,
-                'failure', { payload: { port } });
-            console.error(`[EmbeddedLlamaCpp] Port ${port} is occupied by a non-inference service. Resolve the port conflict before starting TALA's embedded inference.`);
-            return false;
-        }
-
-        // 2. Resolve Python executable
-        const pythonPath = options.pythonPath || this.resolveLocalInferencePython();
-        if (!pythonPath) {
-            telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
-                'Cannot start embedded inference: no Python interpreter found', 'failure', { payload: { port } });
-            return false;
-        }
-
-        // 3. Verify model file exists
-        if (!fs.existsSync(modelPath)) {
-            telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
-                `Cannot start embedded inference: model not found at ${modelPath}`, 'failure',
-                { payload: { port, modelPath } });
-            return false;
-        }
-
-        // 4. Spawn llama_cpp.server
-        telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-            `Starting embedded llama.cpp via Python: ${pythonPath}`, 'success',
-            { payload: { port, modelPath, pythonPath } });
-
-        let processExited = false;
-        try {
-            const child = spawn(pythonPath, [
-                '-m', 'llama_cpp.server',
-                '--model', modelPath,
-                '--host', '127.0.0.1',
-                '--port', String(port),
-                '--n_ctx', String(contextSize),
-                '--n_gpu_layers', '0',
-            ], {
-                detached: false,
-                stdio: 'pipe',
-            });
-
-            // Retain the reference so the child process is not prematurely garbage-collected
-            // and so it can be cleaned up on shutdown.
-            this._embeddedChild = child;
-
-            child.on('error', (err) => {
-                processExited = true;
-                telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                    `Embedded llama.cpp process error: ${err.message}`, 'failure',
-                    { payload: { port, error: err.message } });
-            });
-
-            child.on('exit', (code, signal) => {
-                processExited = true;
-                console.warn(`[EmbeddedLlamaCpp] Process exited early — code=${code} signal=${signal}`);
-            });
-
-            if (child.stdout) {
-                child.stdout.on('data', (d: Buffer) => {
-                    const line = d.toString().trim();
-                    if (line) console.log(`[EmbeddedLlamaCpp] ${line}`);
-                });
-            }
-
-            if (child.stderr) {
-                child.stderr.on('data', (d: Buffer) => {
-                    const line = d.toString().trim();
-                    if (line) console.log(`[EmbeddedLlamaCpp] ${line}`);
-                });
-            }
-        } catch (spawnErr) {
-            const msg = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
-            telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                `Failed to spawn embedded llama.cpp: ${msg}`, 'failure', { payload: { port, error: msg } });
-            return false;
-        }
-
-        // 5. Poll until ready or timeout
-        const deadline = Date.now() + startupTimeoutMs;
-        while (Date.now() < deadline) {
-            // Fail fast if the process exited before it became reachable.
-            if (processExited) {
-                telemetry.operational('local_inference', 'inference_failed', 'error', 'InferenceService',
-                    `Embedded llama.cpp process exited before becoming reachable on port ${port}`, 'failure',
-                    { payload: { port, modelPath } });
-                return false;
-            }
-            await new Promise<void>(r => setTimeout(r, 1000));
-            const ready = await new Promise<boolean>((resolve) => {
-                const req = http.get(healthUrl, { timeout: 1500 }, (res) => {
-                    res.resume();
-                    resolve((res.statusCode ?? 0) < 400);
-                });
-                req.on('error', () => resolve(false));
-                req.on('timeout', () => { req.destroy(); resolve(false); });
-            });
-            if (ready) {
-                telemetry.operational('local_inference', 'inference_started', 'info', 'InferenceService',
-                    `Embedded llama.cpp ready on port ${port}`, 'success', { payload: { port, modelPath } });
-                return true;
-            }
-        }
-
-        telemetry.operational('local_inference', 'inference_failed', 'warn', 'InferenceService',
-            `Embedded llama.cpp startup timed out after ${startupTimeoutMs}ms`, 'failure',
-            { payload: { port, modelPath, startupTimeoutMs } });
+        telemetry.operational(
+            'local_inference',
+            'inference_failed',
+            'warn',
+            'InferenceService',
+            'Legacy llama.cpp startup path disabled after provider migration.',
+            'failure',
+            { payload: { port: options.port ?? 8080, startupTimeoutMs: options.startupTimeoutMs ?? 120_000 } },
+        );
         return false;
     }
 
     /**
-     * Terminates the embedded llama.cpp child process if it is running.
+     * Terminates managed embedded inference child processes if they are running.
      * Safe to call multiple times; a no-op if no process was spawned.
      */
     public killEmbedded(): void {
@@ -1288,18 +1092,7 @@ export class InferenceService {
     public async scanLocal(): Promise<ScannedProvider[]> {
         const found: ScannedProvider[] = [];
 
-        // 1. Built-in Engine
-        const localStatus = this.localEngine.getStatus();
-        if (localStatus.isRunning) {
-            const models = await this._fetchOpenAIModels(`http://127.0.0.1:${localStatus.port}`);
-            found.push({
-                engine: 'llamacpp',
-                endpoint: `http://127.0.0.1:${localStatus.port}`,
-                models,
-            });
-        }
-
-        // 2. Ollama (11434)
+        // 1. Ollama (11434)
         if (await this._checkPort(11434)) {
             const models = await this._fetchOllamaModels('http://127.0.0.1:11434');
             found.push({
@@ -1309,17 +1102,7 @@ export class InferenceService {
             });
         }
 
-        // 3. Llama.cpp / LocalAI (8080)
-        if (await this._checkPort(8080) && localStatus.port !== 8080) {
-            const models = await this._fetchOpenAIModels('http://127.0.0.1:8080');
-            found.push({
-                engine: 'llamacpp',
-                endpoint: 'http://127.0.0.1:8080',
-                models,
-            });
-        }
-
-        // 4. LM Studio / vLLM (1234)
+        // 2. LM Studio / vLLM (1234)
         if (await this._checkPort(1234)) {
             const models = await this._fetchOpenAIModels('http://127.0.0.1:1234');
             found.push({

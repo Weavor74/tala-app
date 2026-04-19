@@ -5,8 +5,8 @@
  * execution, and failure handling across the TALA inference path.
  *
  * Provider scopes:
- *   local     — external process on the host (Ollama, vLLM, koboldcpp, external llama.cpp)
- *   embedded  — embedded engines managed by InferenceService (embedded_vllm authoritative; embedded_llamacpp legacy optional)
+ *   local     — external process on the host (Ollama, vLLM, koboldcpp)
+ *   embedded  — embedded engines managed by InferenceService (embedded_vllm)
  *   cloud     — remote API endpoint
  *
  * See docs/architecture/phase3_inference_integration.md for the selection policy
@@ -21,8 +21,6 @@ export type InferenceProviderScope = 'local' | 'embedded' | 'cloud';
 
 export type InferenceProviderType =
     | 'ollama'
-    | 'llamacpp'
-    | 'embedded_llamacpp'
     | 'vllm'
     | 'embedded_vllm'
     | 'koboldcpp'
@@ -283,8 +281,8 @@ export interface StreamInferenceRequest {
     /**
      * Stream-open timeout in milliseconds — guards the window before the first token arrives.
      * When omitted, InferenceService derives a provider-aware default:
-     *   - embedded_llamacpp (scope='embedded'): 90 000 ms; 120 000 ms when prompt exceeds 4 000 chars
-     *   - other local providers (scope='local'): 90 000 ms; 120 000 ms when prompt exceeds 4 000 chars
+     *   - embedded providers (scope='embedded'): 90 000 ms; 120 000 ms when prompt exceeds 4 000 chars
+     *   - local providers (scope='local'): 90 000 ms; 120 000 ms when prompt exceeds 4 000 chars
      *   - cloud providers (scope='cloud'): 15 000 ms
      * Set explicitly only when you need to override the policy.
      */

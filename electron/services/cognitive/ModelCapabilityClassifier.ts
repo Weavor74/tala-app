@@ -174,7 +174,7 @@ export function classifyModelCapability(
         if (CLOUD_PROVIDER_TYPES.has(provType)) {
             parameterClass = 'large';
             rationale = `Cloud provider "${provType}" — defaulting to large profile. Model name "${modelName}" did not contain parameter count.`;
-        } else if (provType === 'embedded_llamacpp' || provType === 'embedded_vllm') {
+        } else if (provType === 'embedded_vllm') {
             // Embedded providers typically run 3B-7B models on modest hardware
             parameterClass = 'small';
             rationale = `Embedded ${provType} provider — conservative small classification. Model name "${modelName}" did not contain parameter count.`;

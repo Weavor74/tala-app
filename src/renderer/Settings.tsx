@@ -500,7 +500,7 @@ export const Settings = () => {
             return providers
                 .filter((p: any) => p.scope !== 'cloud')
                 .map((p: any) => ({
-                    engine: p.providerType === 'embedded_llamacpp' ? 'llamacpp' : (p.providerType === 'embedded_vllm' ? 'vllm' : p.providerType),
+                    engine: p.providerType === 'embedded_vllm' ? 'vllm' : p.providerType,
                     endpoint: p.endpoint || '',
                     models: Array.isArray(p.models) ? p.models : [],
                     detected: !!p.detected,
@@ -526,7 +526,7 @@ export const Settings = () => {
                 liveProviders = normalizeFromScan(scan);
             }
 
-            const localEngines = new Set(['ollama', 'llamacpp', 'vllm']);
+            const localEngines = new Set(['ollama', 'vllm']);
             const keyOf = (engine: string, endpoint: string) => `${engine}|${endpoint || ''}`.toLowerCase();
             const liveByKey = new Map(liveProviders.map((p) => [keyOf(p.engine, p.endpoint), p]));
 
@@ -1196,7 +1196,7 @@ export const Settings = () => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
                                 <div>
                                     <h4 style={{ margin: 0, color: '#dcdcaa', fontSize: 13 }}>BUILT-IN ENGINE (SOLO/USB)</h4>
-                                    <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Native llama.cpp server for absolute offline use.</p>
+                                    <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>Legacy controls are disabled. Use Ollama or embedded vLLM for local inference.</p>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                     <button
@@ -1549,7 +1549,6 @@ export const Settings = () => {
                                                             t.engine = e.target.value as any;
                                                             // Set defaults based on engine
                                                             if (t.engine === 'ollama') { t.source = 'local'; t.endpoint = 'http://127.0.0.1:11434'; }
-                                                            if (t.engine === 'llamacpp') { t.source = 'local'; t.endpoint = 'http://127.0.0.1:8080'; }
                                                             if (t.engine === 'openai') { t.source = 'cloud'; t.endpoint = 'https://api.openai.com/v1'; }
                                                             if (t.engine === 'anthropic') { t.source = 'cloud'; t.endpoint = 'https://api.anthropic.com/v1'; }
                                                         }
@@ -1558,7 +1557,6 @@ export const Settings = () => {
                                                 >
                                                     <optgroup label="Local">
                                                         <option value="ollama">Ollama</option>
-                                                        <option value="llamacpp">Llama.cpp / LocalAI</option>
                                                         <option value="vllm">vLLM</option>
                                                     </optgroup>
                                                     <optgroup label="Cloud">
@@ -1606,7 +1604,7 @@ export const Settings = () => {
                                                             }}
                                                             placeholder={inst.engine === 'ollama' ? 'llama3:latest' : 'gpt-4'}
                                                         />
-                                                        {['llamacpp', 'vllm', 'custom'].includes(inst.engine) && inst.source === 'local' && (
+                                                        {['vllm', 'custom'].includes(inst.engine) && inst.source === 'local' && (
                                                             <button
                                                                 onClick={async () => {
                                                                     const path = await (window as any).tala.invoke('select-path', { properties: ['openFile', 'openDirectory'] });

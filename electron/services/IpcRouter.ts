@@ -318,19 +318,29 @@ export class IpcRouter {
         terminalService.setCustomEnv(data.system.env);
       }
 
+      const warnings: string[] = [];
+
       // Sync MCP Servers
       if (data.mcpServers) {
         if (mcpAuthority) {
           const syncResults = mcpAuthority.syncConfiguredServers(newSettings.mcpServers ?? []);
           const rejection = syncResults.find((r) => !r.ok);
           if (rejection) {
-            throw new Error(`MCP registration rejected (${rejection.serverId}): ${rejection.reasonCode ?? rejection.reason ?? 'unknown'}`);
+            warnings.push(`MCP registration rejected (${rejection.serverId}): ${rejection.reasonCode ?? rejection.reason ?? 'unknown'}`);
+          } else {
+            await mcpAuthority.activateAllConfiguredServers();
           }
-          await mcpAuthority.activateAllConfiguredServers();
         } else {
-          await mcpService.sync(newSettings.mcpServers ?? []);
+          try {
+            await mcpService.sync(newSettings.mcpServers ?? []);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            warnings.push(`MCP sync failed: ${message}`);
+          }
         }
-        await agent.refreshMcpTools();
+        if (warnings.length === 0) {
+          await agent.refreshMcpTools();
+        }
       }
 
       // Auto-sync Astro Engine profile if agent has birth data
@@ -358,7 +368,10 @@ export class IpcRouter {
         }
       }
 
-      return true;
+      return {
+        success: true,
+        warnings,
+      };
     });
 
 
@@ -1251,7 +1264,7 @@ export class IpcRouter {
       return inventory.providers
         .filter((p) => p.scope !== 'cloud' && p.detected)
         .map((p) => ({
-          engine: p.providerType === 'embedded_llamacpp' ? 'llamacpp' : p.providerType,
+          engine: p.providerType,
           endpoint: p.endpoint,
           models: Array.isArray(p.models) ? p.models : [],
         }));
@@ -1290,78 +1303,27 @@ export class IpcRouter {
     // Built-in Local Engine Handlers
 
     ipcMain.handle('local-engine-status', async () => {
-      return inferenceService.getLocalEngine().getStatus();
+      return { supported: false, reason: 'llama_cpp_removed' };
     });
 
     ipcMain.handle('local-engine-start', async (event, { modelPath, options }) => {
-      try {
-        await inferenceService.getLocalEngine().ignite(modelPath, options);
-        return { success: true };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
+      return { success: false, error: 'Local llama.cpp engine is no longer supported. Use ollama or embedded_vllm.' };
     });
 
     ipcMain.handle('local-engine-stop', async () => {
-      inferenceService.getLocalEngine().extinguish();
-      return true;
+      return { success: false, error: 'Local llama.cpp engine is no longer supported.' };
     });
 
     ipcMain.handle('local-engine-download-binary', async () => {
-      try {
-        const binPath = await inferenceService.getLocalEngine().downloadBinary((progress) => {
-          getMainWindow()?.webContents.send('local-engine-download-progress', { type: 'binary', progress });
-        });
-
-        // Update Settings
-        const s = loadSettings(getSettingsPath());
-        if (!s.inference) s.inference = {};
-        if (!s.inference.localEngine) s.inference.localEngine = {};
-        s.inference.localEngine.binaryPath = binPath;
-        saveSettings(getSettingsPath(), s);
-
-        return { success: true, path: binPath };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
+      return { success: false, error: 'Local llama.cpp engine is no longer supported.' };
     });
 
     ipcMain.handle('local-engine-download-model', async () => {
-      try {
-        const modelPath = await inferenceService.getLocalEngine().downloadModel((progress) => {
-          getMainWindow()?.webContents.send('local-engine-download-progress', { type: 'model', progress });
-        });
-
-        // Update Settings -> Enable Engine
-        const s = loadSettings(getSettingsPath());
-        if (!s.inference) s.inference = {};
-        if (!s.inference.localEngine) s.inference.localEngine = {};
-
-        s.inference.localEngine.modelPath = modelPath;
-        s.inference.localEngine.enabled = true; // Auto-enable
-        s.inference.mode = 'local-only'; // Auto-switch mode
-        s.inference.activeLocalId = 'builtin-llamacpp'; // Auto-select
-
-        saveSettings(getSettingsPath(), s);
-
-        // Reload agent to pick up changes
-        await agent.reloadConfig();
-
-        return { success: true, path: modelPath };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
+      return { success: false, error: 'Local llama.cpp engine is no longer supported.' };
     });
 
     ipcMain.handle('local-engine-download-python', async () => {
-      try {
-        const pyPath = await inferenceService.getLocalEngine().downloadPython((progress) => {
-          getMainWindow()?.webContents.send('local-engine-download-progress', { type: 'python', progress });
-        });
-        return { success: true, path: pyPath };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
+      return { success: false, error: 'Local llama.cpp engine is no longer supported.' };
     });
 
     ipcMain.handle('login', async (event, provider) => {

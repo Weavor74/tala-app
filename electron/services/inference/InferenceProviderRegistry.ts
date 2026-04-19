@@ -6,8 +6,6 @@
  *
  * Provider types supported:
  *   - ollama          local HTTP API on port 11434
- *   - llamacpp        external llama.cpp server on configurable port
- *   - embedded_llamacpp  bundled llama.cpp managed by LocalEngineService
  *   - vllm            vLLM OpenAI-compat server on configurable port (user-configured)
  *   - embedded_vllm   managed vLLM instance at http://127.0.0.1:8000 (started via run-vllm script)
  *   - koboldcpp       KoboldCpp on configurable port
@@ -22,8 +20,6 @@
 
 import http from 'http';
 import https from 'https';
-import path from 'path';
-import fs from 'fs';
 import type {
     InferenceProviderDescriptor,
     InferenceProviderType,
@@ -102,21 +98,6 @@ async function probeOllama(endpoint: string): Promise<ProviderProbeResult> {
     return { providerId: 'ollama', reachable: true, health: 'healthy', status: 'ready', models, responseTimeMs };
 }
 
-async function probeLlamaCpp(endpoint: string): Promise<ProviderProbeResult> {
-    const start = Date.now();
-    const { ok } = await probeHttpEndpoint(`${endpoint}/health`, 3000);
-    const responseTimeMs = Date.now() - start;
-    if (!ok) {
-        // Try root path as fallback
-        const { ok: ok2 } = await probeHttpEndpoint(`${endpoint}/`, 3000);
-        if (!ok2) {
-            return { providerId: 'llamacpp', reachable: false, health: 'unavailable', status: 'not_running', models: [], responseTimeMs: Date.now() - start, error: 'llama.cpp endpoint not reachable' };
-        }
-    }
-    const models = await fetchJsonModels(endpoint, '/v1/models', 'data', 3000);
-    return { providerId: 'llamacpp', reachable: true, health: 'healthy', status: 'ready', models: models.length > 0 ? models : ['local-model'], responseTimeMs };
-}
-
 async function probeVllm(endpoint: string): Promise<ProviderProbeResult> {
     const start = Date.now();
     const { ok } = await probeHttpEndpoint(`${endpoint}/v1/models`, 3000);
@@ -167,78 +148,6 @@ async function probeCloud(endpoint: string, apiKey?: string): Promise<ProviderPr
     return { providerId: 'cloud', reachable: true, health: 'healthy', status: 'ready', models, responseTimeMs };
 }
 
-/** Probe embedded llama.cpp using the running port from LocalEngineService status. */
-/** Exported for direct unit testing. Callers within this module use this via `_probeOne()`. */
-export async function checkEmbeddedLlamaCppAvailability(
-    enginePort: number,
-    modelPath: string,
-    binaryExists: boolean,
-    modelExists: boolean,
-): Promise<ProviderProbeResult> {
-    const start = Date.now();
-
-    // Always check if the server is already running FIRST — regardless of binary/model file state.
-    // The server may have been started externally (e.g. via launch-inference.bat using a Python venv)
-    // in which case there is no native binary tracked by binaryPath but the HTTP endpoint is live.
-    const { ok: healthOk } = await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/health`, 2000);
-
-    // Fallback: some OpenAI-compatible servers (e.g. LM Studio, text-generation-webui, koboldcpp) do
-    // not expose /health or return 404 for it. Detect them via /v1/models instead.
-    const serverRunning = healthOk ||
-        (await probeHttpEndpoint(`http://127.0.0.1:${enginePort}/v1/models`, 2000)).ok;
-
-    const responseTimeMs = Date.now() - start;
-
-    if (serverRunning) {
-        // Server is live — discover its models via OpenAI-compat endpoint
-        const liveModels = await fetchJsonModels(`http://127.0.0.1:${enginePort}`, '/v1/models', 'data', 2000);
-        const fallbackModelName = modelPath ? path.basename(modelPath) : 'embedded-model';
-        return {
-            providerId: 'embedded_llamacpp',
-            reachable: true,
-            health: 'healthy',
-            status: 'ready',
-            models: liveModels.length > 0 ? liveModels : [fallbackModelName],
-            responseTimeMs,
-        };
-    }
-
-    // Server is not running — fall back to file-existence checks to determine if it can be started
-    if (!binaryExists && !modelExists) {
-        return {
-            providerId: 'embedded_llamacpp',
-            reachable: false,
-            health: 'unavailable',
-            status: 'not_running',
-            models: modelPath ? [path.basename(modelPath)] : [],
-            responseTimeMs: Date.now() - start,
-            error: 'Embedded server not running and no binary or model configured',
-        };
-    }
-
-    if (!binaryExists || !modelExists) {
-        return {
-            providerId: 'embedded_llamacpp',
-            reachable: false,
-            health: 'degraded',
-            status: 'not_running',
-            models: modelPath ? [path.basename(modelPath)] : [],
-            responseTimeMs: Date.now() - start,
-            error: !binaryExists ? 'Embedded binary not found' : 'Embedded model not found',
-        };
-    }
-
-    // Binary + model present but not yet running — it can be started
-    return {
-        providerId: 'embedded_llamacpp',
-        reachable: false,
-        health: 'degraded',
-        status: 'not_running',
-        models: modelPath ? [path.basename(modelPath)] : [],
-        responseTimeMs: Date.now() - start,
-    };
-}
-
 /** Probe embedded vLLM server running at http://127.0.0.1:<port>/v1/models. */
 export async function checkEmbeddedVllmAvailability(
     enginePort: number,
@@ -278,8 +187,6 @@ export async function checkEmbeddedVllmAvailability(
 
 export interface ProviderRegistryConfig {
     ollama?: { endpoint?: string; enabled?: boolean };
-    llamacpp?: { endpoint?: string; enabled?: boolean };
-    embeddedLlamaCpp?: { port?: number; modelPath?: string; binaryPath?: string; enabled?: boolean };
     embeddedVllm?: { port?: number; modelId?: string; enabled?: boolean };
     vllm?: { endpoint?: string; enabled?: boolean };
     koboldcpp?: { endpoint?: string; enabled?: boolean };
@@ -392,38 +299,6 @@ export class InferenceProviderRegistry {
             }));
         }
 
-        const llamaCfg = this.config.llamacpp;
-        if (llamaCfg?.enabled !== false) {
-            const ep = llamaCfg?.endpoint;
-            if (ep) {
-                this._register(_makeDescriptor({
-                    providerId: 'llamacpp',
-                    displayName: 'llama.cpp (external)',
-                    providerType: 'llamacpp',
-                    scope: 'local',
-                    transport: 'http_openai_compat',
-                    endpoint: ep,
-                    priority: 20,
-                    capabilities: LOCAL_CAPS,
-                }));
-            }
-        }
-
-        const embCfg = this.config.embeddedLlamaCpp;
-        if (embCfg?.enabled !== false) {
-            this._register(_makeDescriptor({
-                providerId: 'embedded_llamacpp',
-                displayName: 'Embedded llama.cpp',
-                providerType: 'embedded_llamacpp',
-                scope: 'embedded',
-                transport: 'http_openai_compat',
-                endpoint: `http://127.0.0.1:${embCfg?.port ?? 8080}`,
-                priority: 30,
-                capabilities: EMBEDDED_CAPS,
-                preferredModel: embCfg?.modelPath ? path.basename(embCfg.modelPath) : undefined,
-            }));
-        }
-
         const embVllmCfg = this.config.embeddedVllm;
         if (embVllmCfg?.enabled !== false) {
             this._register(_makeDescriptor({
@@ -529,21 +404,6 @@ export class InferenceProviderRegistry {
                 result = await probeOllama(desc.endpoint);
                 result.providerId = desc.providerId;
                 break;
-            case 'llamacpp':
-                result = await probeLlamaCpp(desc.endpoint);
-                result.providerId = desc.providerId;
-                break;
-            case 'embedded_llamacpp': {
-                const embCfg = this.config.embeddedLlamaCpp ?? {};
-                const modelPath = embCfg.modelPath ?? '';
-                const binaryPath = embCfg.binaryPath ?? '';
-                const binaryExists = binaryPath ? fs.existsSync(binaryPath) : false;
-                const modelExists = modelPath ? fs.existsSync(modelPath) : false;
-                const port = embCfg.port ?? 8080;
-                result = await checkEmbeddedLlamaCppAvailability(port, modelPath, binaryExists, modelExists);
-                result.providerId = desc.providerId;
-                break;
-            }
             case 'vllm':
                 result = await probeVllm(desc.endpoint);
                 result.providerId = desc.providerId;

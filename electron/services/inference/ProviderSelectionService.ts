@@ -30,11 +30,9 @@ export class ProviderSelectionService {
 
     private static readonly WATERFALL_ORDER: ReadonlyArray<string> = [
         'ollama',
-        'vllm',
-        'llamacpp',
-        'koboldcpp',
         'embedded_vllm',
-        'embedded_llamacpp',
+        'vllm',
+        'koboldcpp',
         'cloud',
     ];
 

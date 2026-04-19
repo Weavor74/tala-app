@@ -118,12 +118,11 @@ describe('ProviderSelectionService - waterfall order', () => {
         expect(result.attemptedProviders).toContain('ollama');
     });
 
-    it('prefers embedded_vllm before embedded_llamacpp when local providers are unavailable', () => {
+    it('prefers embedded_vllm when local providers are unavailable', () => {
         const ollamaDown = makeDescriptor({ providerId: 'ollama', ready: false, status: 'not_running' });
         const vllmDown = makeDescriptor({ providerId: 'vllm', providerType: 'vllm', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8100', ready: false, status: 'not_running' });
         const embeddedVllm = makeDescriptor({ providerId: 'embedded_vllm', providerType: 'embedded_vllm', scope: 'embedded', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8000', ready: true, priority: 999 });
-        const embeddedLlama = makeDescriptor({ providerId: 'embedded_llamacpp', providerType: 'embedded_llamacpp', scope: 'embedded', transport: 'http_openai_compat', endpoint: 'http://127.0.0.1:8080', ready: true, priority: 1 });
-        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, vllmDown, embeddedVllm, embeddedLlama]));
+        const svc = new ProviderSelectionService(makeRegistry([ollamaDown, vllmDown, embeddedVllm]));
 
         const result = svc.select({});
 

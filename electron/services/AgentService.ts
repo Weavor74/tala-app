@@ -728,7 +728,7 @@ Violation of this rule is considered a system failure.`;
 
         this.tools.register({
             name: 'manage_local_engine',
-            description: 'Manages the built-in llama.cpp inference engine. Use this to start/stop the local CPU-based brain or check its status. Framing: "Local Engine Control".',
+            description: 'Legacy local-engine control endpoint. llama.cpp runtime support has been removed; use ollama or embedded_vllm provider controls.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -737,30 +737,7 @@ Violation of this rule is considered a system failure.`;
                 required: ['action']
             },
             execute: async (args) => {
-                const local = this.inference.getLocalEngine();
-                switch (args.action) {
-                    case 'start':
-                        try {
-                            await local.ensureReady();
-                            const settings = loadSettings(this.settingsPath);
-                            const modelPath = path.join(process.cwd(), 'models', settings.inference?.localEngine?.modelPath || 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
-                            await local.ignite(modelPath, settings.inference?.localEngine?.options);
-                            return "Success: Local engine started.";
-                        } catch (e: unknown) {
-                            const errorMessage = e instanceof Error ? e.message : String(e);
-                            return `Error starting local engine: ${errorMessage}`;
-                        }
-                    case 'stop':
-                        local.extinguish();
-                        return "Success: Local engine stopped.";
-                    case 'status':
-                        return JSON.stringify(local.getStatus(), null, 2);
-                    case 'download':
-                        local.ensureReady().catch(e => console.error("Background download failed", e));
-                        return "Success: Background download initiated. Check status for progress.";
-                    default:
-                        return "Error: Unknown action.";
-                }
+                return `Local llama.cpp engine management is no longer supported (action=${String(args.action ?? 'unknown')}). Use ollama or embedded_vllm.`;
             }
         });
 
@@ -1527,9 +1504,7 @@ Exported standalone package from Tala.
                     if (inst.endpoint) {
                         registryConfig.vllm = { endpoint: inst.endpoint, enabled: true };
                     }
-                } else if (inst.engine === 'llamacpp' && inst.source === 'local' && inst.endpoint) {
-                    registryConfig.llamacpp = { endpoint: inst.endpoint, enabled: true };
-                } else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'custom'].includes(inst.engine) && inst.source !== 'local') {
+                } else if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'custom'].includes(inst.engine) && inst.source !== 'local') {
                     registryConfig.cloud = { endpoint: inst.endpoint, apiKey: inst.apiKey, model: inst.model, enabled: true };
                 }
             }
@@ -1538,14 +1513,6 @@ Exported standalone package from Tala.
             registryConfig.embeddedVllm = {
                 port: embeddedVllmPort,
                 modelId: inferenceSettings?.embeddedVllm?.modelId,
-                enabled: true,
-            };
-
-            const embeddedModelPath = this._resolveEmbeddedModelPath(inferenceSettings);
-            registryConfig.embeddedLlamaCpp = {
-                port: inferenceSettings?.localEngine?.options?.port ?? 8080,
-                modelPath: embeddedModelPath,
-                binaryPath: inferenceSettings?.localEngine?.binaryPath,
                 enabled: true,
             };
 
@@ -1574,12 +1541,6 @@ Exported standalone package from Tala.
                         port: embeddedVllmPort,
                         modelId: inferenceSettings?.embeddedVllm?.modelId ?? preferredModelId,
                     },
-                    embeddedLlamaCpp: embeddedModelPath ? {
-                        modelPath: embeddedModelPath,
-                        port: inferenceSettings?.localEngine?.options?.port ?? 8080,
-                        contextSize: inferenceSettings?.localEngine?.options?.contextSize ?? 4096,
-                    } : undefined,
-                    allowLegacyLlamaCpp: !!embeddedModelPath,
                 });
 
                 if (started) {
@@ -1604,7 +1565,7 @@ Exported standalone package from Tala.
 
             if (chosen.scope === 'cloud' || chosen.providerType === 'cloud') {
                 const cloudInst = instances.find((i: any) =>
-                    ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'llamacpp', 'vllm', 'custom'].includes(i.engine) && i.source !== 'local'
+                    ['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'vllm', 'custom'].includes(i.engine) && i.source !== 'local'
                 ) ?? {};
                 this.brain = new CloudBrain({
                     endpoint: chosen.endpoint,
@@ -1617,13 +1578,8 @@ Exported standalone package from Tala.
                 ollama.configure(chosen.endpoint, selection.resolvedModel ?? chosen.preferredModel ?? '');
                 this.brain = ollama;
                 this.brainIsReady = true;
-            } else if (chosen.providerType === 'embedded_llamacpp') {
-                const modelName = selection.resolvedModel ?? chosen.preferredModel ?? path.basename(embeddedModelPath ?? 'embedded-model');
-                this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: modelName });
-                this.brainIsReady = true;
-                console.log(`[AgentService] Bound embedded llama.cpp brain -> endpoint=${chosen.endpoint} model=${modelName}`);
             } else {
-                // vllm, embedded_vllm, koboldcpp, external llamacpp use OpenAI-compatible endpoint via CloudBrain.
+                // vllm, embedded_vllm, koboldcpp use OpenAI-compatible endpoint via CloudBrain.
                 this.brain = new CloudBrain({ endpoint: chosen.endpoint, model: selection.resolvedModel ?? chosen.preferredModel ?? '' });
                 this.brainIsReady = true;
             }
@@ -1666,56 +1622,12 @@ Exported standalone package from Tala.
             return 'vllm';
         }
 
-        if (instance.engine === 'llamacpp') {
-            if (instance.source !== 'local') return 'cloud';
-            const idLower = String(instance.id ?? '').toLowerCase();
-            if (idLower.includes('embedded') || idLower.includes('builtin')) {
-                return 'embedded_llamacpp';
-            }
-            if (instance.endpoint) return 'llamacpp';
-            return 'embedded_llamacpp';
-        }
-
         if (['openai', 'anthropic', 'openrouter', 'groq', 'gemini', 'custom'].includes(instance.engine)) {
             return 'cloud';
         }
 
         return undefined;
     }
-
-    private _resolveEmbeddedModelPath(inferenceSettings: any): string | undefined {
-        const roots = [
-            typeof app !== 'undefined' ? app.getAppPath() : undefined,
-            process.cwd(),
-        ].filter(Boolean) as string[];
-
-        const configuredName: string | undefined = inferenceSettings?.localEngine?.modelPath;
-
-        for (const root of roots) {
-            if (configuredName) {
-                // Try as absolute path first, then relative to models/
-                if (path.isAbsolute(configuredName) && fs.existsSync(configuredName)) {
-                    return configuredName;
-                }
-                const candidate = path.join(root, 'models', configuredName);
-                if (fs.existsSync(candidate)) return candidate;
-                // Also try directly under root (in case name includes subdirectory)
-                const direct = path.join(root, configuredName);
-                if (fs.existsSync(direct)) return direct;
-            }
-
-            // Scan models/ directory for any .gguf file
-            const modelsDir = path.join(root, 'models');
-            try {
-                const entries = fs.readdirSync(modelsDir) as string[];
-                const gguf = entries.find((f: string) => f.endsWith('.gguf'));
-                if (gguf) return path.join(modelsDir, gguf);
-            } catch { /* models dir may not exist */ }
-        }
-
-        return undefined;
-    }
-
 
     private getActiveInstance() {
         try {
