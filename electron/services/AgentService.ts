@@ -1703,7 +1703,16 @@ Exported standalone package from Tala.
                 (async () => {
                     const svcPython = resolveServicePython('tala-core');
                     console.log(`[MCP] tala-core python=${svcPython}`);
-                    await this.rag.ignite(svcPython, ragScript, isolatedEnv);
+                    const ragStartup = await this.rag.ignite(svcPython, ragScript, isolatedEnv);
+                    if (ragStartup.state === 'failed') {
+                        console.error(
+                            `[AgentService] RAG startup failed after ${ragStartup.elapsedMs}ms: ${ragStartup.reason ?? 'unknown'}`,
+                        );
+                    } else if (ragStartup.state === 'slow_start' || ragStartup.state === 'degraded') {
+                        console.warn(
+                            `[AgentService] RAG startup delayed (${ragStartup.state}) after ${ragStartup.elapsedMs}ms: ${ragStartup.reason ?? 'pending'}`,
+                        );
+                    }
                 })(),
                 (async () => {
                     if (this.memory) {
@@ -3372,8 +3381,12 @@ Exported standalone package from Tala.
     }
 
     public getStartupStatus() {
+        const ragStartup = this.rag?.getLastStartupResult?.() ?? null;
         return {
             rag: (this.rag as any).getReadyStatus ? (this.rag as any).getReadyStatus() : true,
+            ragStartupState: this.rag?.getStartupState?.() ?? 'not_started',
+            ragStartupReason: ragStartup?.reason,
+            ragStartupElapsedMs: ragStartup?.elapsedMs,
             memory: (this.memory as any).getReadyStatus ? (this.memory as any).getReadyStatus() : true,
             astro: (this.astro as any).getReadyStatus ? (this.astro as any).getReadyStatus() : true,
             world: (this.world as any).getReadyStatus ? (this.world as any).getReadyStatus() : true,

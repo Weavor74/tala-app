@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import * as fs from 'fs';
 import * as path from 'path';
 import { LogViewerService } from './LogViewerService';
+import type { RagStartupResult, ServiceStartupState } from '../../shared/ragStartupTypes';
 
 /**
  * Long-Term Narrative Memory Engine (RAG).
@@ -28,6 +29,9 @@ export class RagService {
     private client: Client | null = null;
     /** Whether the MCP client is connected and has been verified with `listTools()`. */
     private isReady = false;
+    private startupState: ServiceStartupState = 'not_started';
+    private lastStartupResult: RagStartupResult | null = null;
+    private startupInFlight: Promise<RagStartupResult> | null = null;
     private logViewerService: LogViewerService | null = null;
 
     /**
@@ -50,61 +54,214 @@ export class RagService {
      *   to pass to the Python process (e.g., API keys from `.env`).
      * @returns {Promise<void>}
      */
-    async ignite(pythonPath: string, scriptPath: string, envVars: Record<string, string> = {}): Promise<void> {
+    async ignite(
+        pythonPath: string,
+        scriptPath: string,
+        envVars: Record<string, string> = {},
+        options: { startupTimeoutMs?: number; slowStartGraceMs?: number } = {},
+    ): Promise<RagStartupResult> {
+        if (this.startupInFlight) {
+            return this.startupInFlight;
+        }
+
+        const startupTimeoutMs = options.startupTimeoutMs ?? 15000;
+        const slowStartGraceMs = options.slowStartGraceMs ?? 15000;
+
+        const startupPromise = this.runIgnitionAttempt(
+            pythonPath,
+            scriptPath,
+            envVars,
+            startupTimeoutMs,
+            slowStartGraceMs,
+        );
+        this.startupInFlight = startupPromise;
+
+        try {
+            return await startupPromise;
+        } finally {
+            this.startupInFlight = null;
+        }
+    }
+
+    private async runIgnitionAttempt(
+        pythonPath: string,
+        scriptPath: string,
+        envVars: Record<string, string>,
+        startupTimeoutMs: number,
+        slowStartGraceMs: number,
+    ): Promise<RagStartupResult> {
         console.log(`[RagService] Igniting RAG Core at ${scriptPath}...`);
 
-        const connectPromise = async () => {
-            try {
-                // Capture stdout/stderr for debugging
-                // We do NOT spawn a separate process for logs because StdioClientTransport needs to own the stdio.
-                // But if we want to debug, StdioClientTransport is tricky because it consumes stdout.
-                // We rely on the client connection for success.
-                // If we need logs, we might rely on the python script writing to a file, or use SSE in future.
+        this.isReady = false;
+        this.client = null;
+        this.updateStartupState('starting', 'startup_initiated');
 
-                // For now, we trust StdioClientTransport to handle the process spawning.
+        const startedAt = Date.now();
+        let enteredSlowStart = false;
 
-                const transport = new StdioClientTransport({
-                    command: pythonPath,
-                    args: [scriptPath],
-                    env: { ...process.env, ...envVars, PYTHONUNBUFFERED: '1' }
-                });
+        const connectionAttempt = this.establishConnection(pythonPath, scriptPath, envVars)
+            .then((client) => ({ ok: true as const, client }))
+            .catch((error: unknown) => ({ ok: false as const, error }));
 
-                const client = new Client({
-                    name: 'tala-rag-client',
-                    version: '1.0.0'
-                }, {
-                    capabilities: {}
-                });
+        const phaseOne = await Promise.race([
+            connectionAttempt,
+            this.delay(startupTimeoutMs).then(() => null),
+        ]);
 
-                console.log(`[RagService] Spawning: ${pythonPath} ${scriptPath}`);
+        if (phaseOne !== null) {
+            return this.resolveConnectionOutcome(phaseOne, startedAt, enteredSlowStart);
+        }
 
-                await client.connect(transport);
-                this.client = client;
-                this.isReady = true;
-                console.log('[RagService] RAG Core ignited successfully.');
+        enteredSlowStart = true;
+        this.updateStartupState('slow_start', 'startup_timeout_entered_grace');
+        console.warn(
+            `[RagService] Cold start exceeded normal window (${startupTimeoutMs}ms) but readiness may still be in-flight; entering slow_start grace period (${slowStartGraceMs}ms).`,
+        );
 
-                // Verify connection
-                await this.client.listTools();
-            } catch (error) {
-                console.error('[RagService] Ignition failed:', error);
-                this.isReady = false;
-                // Don't throw, just stay offline
-            }
+        const phaseTwo = await Promise.race([
+            connectionAttempt,
+            this.delay(slowStartGraceMs).then(() => null),
+        ]);
+
+        if (phaseTwo !== null) {
+            return this.resolveConnectionOutcome(phaseTwo, startedAt, enteredSlowStart);
+        }
+
+        const degradedElapsed = Date.now() - startedAt;
+        const degradedResult: RagStartupResult = {
+            state: 'degraded',
+            reason: 'startup_grace_window_exhausted',
+            elapsedMs: degradedElapsed,
+            processAlive: true,
+            readySignalObserved: false,
         };
+        this.lastStartupResult = degradedResult;
+        this.updateStartupState('degraded', degradedResult.reason);
 
-        const timeoutPromise = new Promise<void>((resolve, reject) => {
-            setTimeout(() => {
-                if (!this.isReady) {
-                    console.warn('[RagService] Ignition timed out (15000ms). Rejecting promise.');
-                    reject(new Error("RAG Core ignition timed out. Server failed to start."));
-                } else {
-                    resolve();
-                }
-            }, 15000);
+        console.warn(
+            `[RagService] RAG Core still not ready after ${degradedElapsed}ms (normal=${startupTimeoutMs}ms + grace=${slowStartGraceMs}ms). Marking degraded while connection remains in-flight.`,
+        );
+
+        void connectionAttempt.then((lateOutcome) => {
+            const lateElapsed = Date.now() - startedAt;
+            if (lateOutcome.ok) {
+                this.client = lateOutcome.client;
+                this.isReady = true;
+                const lateReady: RagStartupResult = {
+                    state: 'ready',
+                    reason: 'late_ready_after_degraded',
+                    elapsedMs: lateElapsed,
+                    processAlive: true,
+                    readySignalObserved: true,
+                };
+                this.lastStartupResult = lateReady;
+                this.updateStartupState('ready', lateReady.reason);
+                console.log(
+                    `[RagService] RAG Core ready after ${lateElapsed}ms (degraded-to-ready recovery).`,
+                );
+                return;
+            }
+
+            const message = lateOutcome.error instanceof Error ? lateOutcome.error.message : String(lateOutcome.error);
+            this.isReady = false;
+            const lateFailed: RagStartupResult = {
+                state: 'failed',
+                reason: `late_failure:${message}`,
+                elapsedMs: lateElapsed,
+                processAlive: false,
+                readySignalObserved: false,
+            };
+            this.lastStartupResult = lateFailed;
+            this.updateStartupState('failed', lateFailed.reason);
+            console.error(`[RagService] Ignition failed after degraded startup window: ${message}`);
         });
 
-        // Race the connection against the timeout
-        await Promise.race([connectPromise(), timeoutPromise]);
+        return degradedResult;
+    }
+
+    protected async establishConnection(
+        pythonPath: string,
+        scriptPath: string,
+        envVars: Record<string, string>,
+    ): Promise<Client> {
+        const transport = new StdioClientTransport({
+            command: pythonPath,
+            args: [scriptPath],
+            env: { ...process.env, ...envVars, PYTHONUNBUFFERED: '1' },
+        });
+
+        const client = new Client(
+            {
+                name: 'tala-rag-client',
+                version: '1.0.0',
+            },
+            {
+                capabilities: {},
+            },
+        );
+
+        console.log(`[RagService] Spawning: ${pythonPath} ${scriptPath}`);
+        await client.connect(transport);
+        await client.listTools();
+        return client;
+    }
+
+    private resolveConnectionOutcome(
+        outcome: { ok: true; client: Client } | { ok: false; error: unknown },
+        startedAt: number,
+        enteredSlowStart: boolean,
+    ): RagStartupResult {
+        const elapsedMs = Date.now() - startedAt;
+
+        if (outcome.ok) {
+            this.client = outcome.client;
+            this.isReady = true;
+            const reason = enteredSlowStart ? 'slow_start_recovered' : 'startup_ready';
+            const readyResult: RagStartupResult = {
+                state: 'ready',
+                reason,
+                elapsedMs,
+                processAlive: true,
+                readySignalObserved: true,
+            };
+            this.lastStartupResult = readyResult;
+            this.updateStartupState('ready', reason);
+            if (enteredSlowStart) {
+                console.log(`[RagService] RAG Core ready after ${elapsedMs}ms (slow_start recovery).`);
+            } else {
+                console.log('[RagService] RAG Core ignited successfully.');
+            }
+            return readyResult;
+        }
+
+        const message = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
+        this.client = null;
+        this.isReady = false;
+        const failedResult: RagStartupResult = {
+            state: 'failed',
+            reason: message,
+            elapsedMs,
+            processAlive: false,
+            readySignalObserved: false,
+        };
+        this.lastStartupResult = failedResult;
+        this.updateStartupState('failed', message);
+        console.error('[RagService] Ignition failed:', outcome.error);
+        return failedResult;
+    }
+
+    private delay(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    private updateStartupState(state: ServiceStartupState, reason?: string): void {
+        const previous = this.startupState;
+        this.startupState = state;
+        if (previous !== state) {
+            console.log(
+                `[RagService] startup_state ${previous} -> ${state}${reason ? ` (${reason})` : ''}`,
+            );
+        }
     }
 
     public setLogViewerService(lvs: LogViewerService) {
@@ -277,6 +434,14 @@ export class RagService {
      */
     public getReadyStatus(): boolean {
         return this.isReady;
+    }
+
+    public getStartupState(): ServiceStartupState {
+        return this.startupState;
+    }
+
+    public getLastStartupResult(): RagStartupResult | null {
+        return this.lastStartupResult;
     }
 
     /**
@@ -500,6 +665,7 @@ export class RagService {
             this.client = null;
         }
         this.isReady = false;
+        this.updateStartupState('not_started', 'shutdown_completed');
         // Transport matches lifespan of client usually, but SDK client.close() handles it.
     }
 }

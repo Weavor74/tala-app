@@ -9,11 +9,24 @@ Long-Term Narrative Memory Engine (RAG).  The `RagService` manages the connect
 
 ### Methods
 
-#### `ignite`
-Spawns the Tala Core RAG MCP server and connects to it via stdio transport.  Unlike AstroService, this method does NOT spawn a separate debug process. The `StdioClientTransport` owns the stdio stream. If the server writes logs to stderr, they'll appear in the parent Electron process console.  After connecting, immediately calls `listTools()` to verify the connection is alive and the server is responding to MCP requests.  Failures are caught and logged but NOT re-thrown. The service will remain offline (`isReady = false`) and all subsequent calls will return empty results.  @param {string} pythonPath - Absolute path to the Python executable   (typically from the project's venv). @param {string} scriptPath - Absolute path to `mcp-servers/tala-core/server.py`. @param {Record<string, string>} [envVars={}] - Additional environment variables   to pass to the Python process (e.g., API keys from `.env`). @returns {Promise<void>}/
+#### `runIgnitionAttempt`
+**Arguments**: `pythonPath: string, scriptPath: string, envVars: Record<string, string>, startupTimeoutMs: number, slowStartGraceMs: number,`
+**Returns**: `Promise<RagStartupResult>`
 
-**Arguments**: `pythonPath: string, scriptPath: string, envVars: Record<string, string> = {}`
+---
+#### `establishConnection`
+**Arguments**: `pythonPath: string, scriptPath: string, envVars: Record<string, string>,`
+**Returns**: `Promise<Client>`
+
+---
+#### `delay`
+**Arguments**: `ms: number`
 **Returns**: `Promise<void>`
+
+---
+#### `updateStartupState`
+**Arguments**: `state: ServiceStartupState, reason?: string`
+**Returns**: `void`
 
 ---
 #### `setLogViewerService`
@@ -32,6 +45,16 @@ Returns the current readiness status of the RAG service. @returns {boolean} Tru
 
 **Arguments**: ``
 **Returns**: `boolean`
+
+---
+#### `getStartupState`
+**Arguments**: ``
+**Returns**: `ServiceStartupState`
+
+---
+#### `getLastStartupResult`
+**Arguments**: ``
+**Returns**: `RagStartupResult | null`
 
 ---
 #### `logInteraction`

@@ -77,14 +77,19 @@ export interface ScannedProvider {
 export class InferenceService {
     private readonly guardrailBreakerStore = new GuardrailCircuitBreakerStore();
 
-    /** Legacy embedded engine — kept for IPC handlers that manage it directly. */
-    private localEngine: LocalEngineService = new LocalEngineService();
+    /**
+     * Legacy embedded engine accessor.
+     *
+     * Instantiated lazily so normal startup does not probe legacy llama-era
+     * binaries or emit stale local-engine logs.
+     */
+    private localEngine: LocalEngineService | null = null;
 
     /**
-     * Hardened lifecycle manager for the embedded llama.cpp engine.
-     * Authoritative for embedded provider readiness checks, timeouts, and retries.
+     * Legacy lifecycle manager for embedded local-engine controls.
+     * Instantiated lazily for backward-compatible IPC handlers only.
      */
-    private localInferenceManager: LocalInferenceOrchestrator;
+    private localInferenceManager: LocalInferenceOrchestrator | null = null;
 
     /** Provider registry — source of truth for all known/detected providers. */
     private registry: InferenceProviderRegistry;
@@ -92,13 +97,10 @@ export class InferenceService {
     /** Deterministic provider selection policy. */
     private selectionService: ProviderSelectionService;
 
-    /** Reference to the embedded legacy child process, kept for backward-compatible lifecycle handlers. */
-    private _embeddedChild: import('child_process').ChildProcess | null = null;
     /** Reference to the embedded vLLM child process, kept to prevent GC and allow cleanup. */
     private _embeddedVllmChild: import('child_process').ChildProcess | null = null;
 
     constructor(registryConfig?: ProviderRegistryConfig) {
-        this.localInferenceManager = new LocalInferenceOrchestrator(this.localEngine);
         this.registry = new InferenceProviderRegistry(registryConfig ?? {});
         this.selectionService = new ProviderSelectionService(this.registry);
     }
@@ -763,10 +765,13 @@ export class InferenceService {
     // ─── Public — embedded engine management ─────────────────────────────────
 
     /**
-     * Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine.
+     * Returns the LocalInferenceOrchestrator for legacy local-engine IPC callers.
      * IPC handlers and AgentService use this for embedded engine lifecycle.
      */
     public getLocalInferenceOrchestrator(): LocalInferenceOrchestrator {
+        if (!this.localInferenceManager) {
+            this.localInferenceManager = new LocalInferenceOrchestrator(this.getLocalEngine());
+        }
         return this.localInferenceManager;
     }
 
@@ -775,12 +780,15 @@ export class InferenceService {
      * @deprecated Prefer getLocalInferenceOrchestrator() for state-managed access.
      */
     public getLocalEngine(): LocalEngineService {
+        if (!this.localEngine) {
+            this.localEngine = new LocalEngineService();
+        }
         return this.localEngine;
     }
 
     /**
-     * Resolves the best available Python executable for running the embedded
-     * llama_cpp.server. Prioritises the project-local inference venv, then
+     * Resolves the best available Python executable for embedded local inference.
+     * Prioritises the project-local inference venv, then
      * falls back to bundled binaries or a system Python.
      *
      * @param repoRoot - Repository root directory (defaults to process.cwd()).
@@ -1041,7 +1049,7 @@ export class InferenceService {
     }
 
     /**
-     * Legacy embedded llama startup path.
+     * Legacy embedded local-engine startup path.
      * Disabled as part of local provider migration to `ollama` + `embedded_vllm`.
      */
     public async ensureEmbeddedStarted(
@@ -1056,7 +1064,7 @@ export class InferenceService {
             'inference_failed',
             'warn',
             'InferenceService',
-            'Legacy llama.cpp startup path disabled after provider migration.',
+            'Legacy local-engine startup path disabled after provider migration.',
             'failure',
             { payload: { port: options.port ?? 8080, startupTimeoutMs: options.startupTimeoutMs ?? 120_000 } },
         );
@@ -1068,10 +1076,6 @@ export class InferenceService {
      * Safe to call multiple times; a no-op if no process was spawned.
      */
     public killEmbedded(): void {
-        if (this._embeddedChild && !this._embeddedChild.killed) {
-            this._embeddedChild.kill();
-            this._embeddedChild = null;
-        }
         if (this._embeddedVllmChild && !this._embeddedVllmChild.killed) {
             this._embeddedVllmChild.kill();
             this._embeddedVllmChild = null;

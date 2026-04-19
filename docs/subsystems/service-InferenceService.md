@@ -101,7 +101,9 @@ Executes a streaming inference request through the canonical path. This is the
 
 ---
 #### `getLocalInferenceOrchestrator`
-Returns the LocalInferenceOrchestrator for the embedded llama.cpp engine. IPC handlers and AgentService use this for embedded engine lifecycle./
+Returns the LocalInferenceOrchestrator for legacy local-engine IPC callers.
+ IPC handlers and AgentService use this for embedded engine lifecycle.
+/
 
 **Arguments**: ``
 **Returns**: `LocalInferenceOrchestrator`
@@ -115,7 +117,10 @@ Returns the legacy LocalEngineService. @deprecated Prefer getLocalInferenceOrch
 
 ---
 #### `resolveLocalInferencePython`
-Resolves the best available Python executable for running the embedded llama_cpp.server. Prioritises the project-local inference venv, then falls back to bundled binaries or a system Python. @param repoRoot - Repository root directory (defaults to process.cwd())./
+Resolves the best available Python executable for embedded local inference.
+ Prioritises the project-local inference venv, then
+ falls back to bundled binaries or a system Python.
+ @param repoRoot - Repository root directory (defaults to process.cwd())./
 
 **Arguments**: `repoRoot?: string`
 **Returns**: `string | undefined`

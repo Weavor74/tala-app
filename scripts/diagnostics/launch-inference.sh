@@ -1,63 +1,37 @@
 #!/bin/bash
+set -euo pipefail
+
 # ============================================================
 # TALA INFERENCE LAUNCHER - macOS / Linux
 # ============================================================
-# Usage: ./launch-inference.sh
-# Safe to run from any directory — paths resolve relative to this script.
+# Canonical local launcher for dev/diagnostics.
+# Active local doctrine: ollama + embedded_vllm.
 
-# Resolve this script's directory, then derive repo root (two levels up:
-# scripts/diagnostics/ -> scripts/ -> repo root).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-export N_CTX=16384
+VLLM_PORT="${TALA_VLLM_PORT:-8000}"
 
-# Detect platform and set Python path (relative to REPO_ROOT)
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    PYTHON_EXE="bin/python-mac/bin/python3"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    PYTHON_EXE="bin/python-linux/bin/python3"
-else
-    echo "[ERROR] Unsupported platform: $OSTYPE"
+echo
+echo "[INFO] Tala local inference launcher (provider=embedded_vllm)"
+echo "[INFO] Repo root: $REPO_ROOT"
+echo "[INFO] Target port: $VLLM_PORT"
+echo
+
+if nc -z 127.0.0.1 "$VLLM_PORT" >/dev/null 2>&1; then
+    echo "[INFO] Embedded vLLM already reachable on port $VLLM_PORT."
+    echo "[INFO] Entering standby loop so dev process topology remains stable."
+    while true; do
+        sleep 60
+    done
+fi
+
+VLLM_LAUNCHER="scripts/run-vllm.sh"
+if [[ ! -f "$VLLM_LAUNCHER" ]]; then
+    echo "[ERROR] Embedded vLLM launcher not found: $VLLM_LAUNCHER"
     exit 1
 fi
 
-# Fallback paths
-if [ ! -f "$PYTHON_EXE" ]; then
-    if [ -f "bin/python-portable/bin/python3" ]; then
-        PYTHON_EXE="bin/python-portable/bin/python3"
-    else
-        echo "[ERROR] No Python runtime found."
-        echo "Expected at: $REPO_ROOT/$PYTHON_EXE"
-        echo "Run bootstrap.sh first to set up the Python environment."
-        exit 1
-    fi
-fi
-
-# Find model file (relative to REPO_ROOT)
-MODEL=$(ls models/*.gguf 2>/dev/null | head -1)
-
-if [ -z "$MODEL" ]; then
-    echo "[ERROR] No .gguf model found in $REPO_ROOT/models/ directory."
-    echo "Run bootstrap.sh first to download a model."
-    exit 1
-fi
-
-echo "============================================================"
-echo "  TALA Local Inference Engine"
-echo "  Repo:    $REPO_ROOT"
-echo "  Python:  $PYTHON_EXE"
-echo "  Model:   $MODEL"
-echo "  Context: $N_CTX tokens"
-echo "============================================================"
-echo ""
-
-chmod +x "$PYTHON_EXE"
-"$PYTHON_EXE" -m llama_cpp.server \
-    --model "$MODEL" \
-    --host 127.0.0.1 \
-    --port 8000 \
-    --n_ctx $N_CTX \
-    --n_gpu_layers 0 \
-    --verbose True
+echo "[INFO] Starting embedded vLLM via $VLLM_LAUNCHER ..."
+exec bash "$VLLM_LAUNCHER"

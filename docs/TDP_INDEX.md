@@ -117,6 +117,7 @@
 - [Contract: mcpAuthorityTypes.ts](contracts/mcpAuthorityTypes.md)
 - [Contract: memoryAuthorityTypes.ts](contracts/memoryAuthorityTypes.md)
 - [Contract: modelCapabilityTypes.ts](contracts/modelCapabilityTypes.md)
+- [Contract: ragStartupTypes.ts](contracts/ragStartupTypes.md)
 - [Contract: recoveryPackTypes.ts](contracts/recoveryPackTypes.md)
 - [Contract: reflectionPlanTypes.ts](contracts/reflectionPlanTypes.md)
 - [Contract: reflectionTypes.ts](contracts/reflectionTypes.md)
