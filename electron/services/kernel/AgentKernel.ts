@@ -24,7 +24,8 @@ import type {
     TurnAuthorityEnvelope,
 } from '../../../shared/turnArbitrationTypes';
 import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityTypes';
-import type { ChatTurnResult, ChatTurnResultSource } from '../../../shared/chatTurnResultTypes';
+import type { ChatTurnAssistantResponse, ChatTurnResult, ChatTurnResultSource } from '../../../shared/chatTurnResultTypes';
+import type { RuntimeEventType } from '../../../shared/runtimeEventTypes';
 import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
@@ -61,6 +62,51 @@ export interface PlanBlockedRecoveryDecision {
     userSafeMessage?: string;
     metadata?: Record<string, unknown>;
 }
+
+type AssistantOutputChannel = NonNullable<AgentTurnOutput['outputChannel']>;
+
+export type AssistantOutputLike = string | {
+    content: string;
+    artifactId?: string;
+    outputChannel?: AssistantOutputChannel;
+};
+
+export type NormalizedAssistantOutput = {
+    content: string;
+    artifactId?: string;
+    outputChannel: AssistantOutputChannel;
+};
+
+export function normalizeAssistantOutput(value: AssistantOutputLike): NormalizedAssistantOutput {
+    if (typeof value === 'string') {
+        return {
+            content: value,
+            outputChannel: 'chat',
+        };
+    }
+    return {
+        content: value.content,
+        artifactId: value.artifactId,
+        outputChannel: value.outputChannel ?? 'chat',
+    };
+}
+
+export const AGENT_RESPONSE_RUNTIME_EVENTS = {
+    turnResponseCreated: 'agent.turn_response_created',
+    turnResponsePublished: 'agent.turn_response_published',
+    turnResponseMissing: 'agent.turn_response_missing',
+    selfKnowledgeResponseCreated: 'agent.self_knowledge_response_created',
+    selfKnowledgeResponsePublished: 'agent.self_knowledge_response_published',
+    selfKnowledgeResponseMissing: 'agent.self_knowledge_response_missing',
+} as const satisfies Record<
+    | 'turnResponseCreated'
+    | 'turnResponsePublished'
+    | 'turnResponseMissing'
+    | 'selfKnowledgeResponseCreated'
+    | 'selfKnowledgeResponsePublished'
+    | 'selfKnowledgeResponseMissing',
+    RuntimeEventType
+>;
 
 type PlanBlockedTaskClass =
     | 'source_summary'
@@ -429,7 +475,7 @@ export class AgentKernel {
         };
     }
 
-    private _emitTurnResponseEvent(meta: KernelExecutionMeta, event: string, payload: Record<string, unknown>): void {
+    private _emitTurnResponseEvent(meta: KernelExecutionMeta, event: RuntimeEventType, payload: Record<string, unknown>): void {
         TelemetryBus.getInstance().emit({
             executionId: meta.executionId,
             subsystem: 'agent',
@@ -447,14 +493,25 @@ export class AgentKernel {
         });
     }
 
-    private _assistantResponse(content: string, source: ChatTurnResultSource, outputChannel: AgentTurnOutput['outputChannel'] = 'chat'): ChatTurnResult {
+    private _normalizeAssistantTurnResult(turnResult: ChatTurnResult): ChatTurnResult {
+        if (turnResult.kind !== 'assistant_response') {
+            return turnResult;
+        }
+        return {
+            ...turnResult,
+            message: normalizeAssistantOutput(turnResult.message),
+        };
+    }
+
+    private _assistantResponse(content: string, source: ChatTurnResultSource, outputChannel: AgentTurnOutput['outputChannel'] = 'chat'): ChatTurnAssistantResponse {
+        const normalizedMessage = normalizeAssistantOutput({
+            content,
+            outputChannel,
+        });
         return {
             kind: 'assistant_response',
             source,
-            message: {
-                content,
-                outputChannel,
-            },
+            message: normalizedMessage,
         };
     }
 
@@ -471,14 +528,15 @@ export class AgentKernel {
         const hasMessage = typeof output.message === 'string' && output.message.trim().length > 0;
         const hasArtifact = Boolean(output.artifact);
         if (hasMessage || hasArtifact) {
+            const normalizedMessage = normalizeAssistantOutput({
+                content: output.message ?? '',
+                artifactId: output.artifact?.id,
+                outputChannel: output.outputChannel,
+            });
             return {
                 kind: 'assistant_response',
                 source,
-                message: {
-                    content: output.message ?? '',
-                    artifactId: output.artifact?.id,
-                    outputChannel: output.outputChannel ?? 'chat',
-                },
+                message: normalizedMessage,
             };
         }
         return this._turnFailure(
@@ -973,17 +1031,18 @@ export class AgentKernel {
                 'self_knowledge',
                 selfKnowledgeResult.blockedReason ? 'fallback' : 'chat',
             );
-            this._emitTurnResponseEvent(meta, 'agent.self_knowledge_response_created', {
+            const normalizedSelfKnowledgeMessage = normalizeAssistantOutput(turnResult.message);
+            this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.selfKnowledgeResponseCreated, {
                 source: 'self_knowledge',
                 responseArtifactPresent: true,
                 failureArtifactPresent: false,
-                channel: turnResult.message.outputChannel ?? 'chat',
+                channel: normalizedSelfKnowledgeMessage.outputChannel,
             });
-            this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+            this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated, {
                 source: 'self_knowledge',
                 responseArtifactPresent: true,
                 failureArtifactPresent: false,
-                channel: turnResult.message.outputChannel ?? 'chat',
+                channel: normalizedSelfKnowledgeMessage.outputChannel,
             });
             return turnResult;
         }
@@ -1072,11 +1131,12 @@ export class AgentKernel {
                 'self_inspection',
                 selfInspectionResult.blockedReason ? 'fallback' : 'chat',
             );
-            this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+            const normalizedSelfInspectionMessage = normalizeAssistantOutput(turnResult.message);
+            this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated, {
                 source: 'self_inspection',
                 responseArtifactPresent: true,
                 failureArtifactPresent: false,
-                channel: turnResult.message.outputChannel ?? 'chat',
+                channel: normalizedSelfInspectionMessage.outputChannel,
             });
             return turnResult;
         }
@@ -1308,7 +1368,7 @@ export class AgentKernel {
                             'other',
                             'fallback',
                         );
-                        this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                        this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated, {
                             source: 'other',
                             responseArtifactPresent: true,
                             failureArtifactPresent: false,
@@ -1337,7 +1397,7 @@ export class AgentKernel {
                         'other',
                         'fallback',
                     );
-                    this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                    this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated, {
                         source: 'other',
                         responseArtifactPresent: true,
                         failureArtifactPresent: false,
@@ -1369,7 +1429,7 @@ export class AgentKernel {
                         'other',
                         'fallback',
                     );
-                    this._emitTurnResponseEvent(meta, 'agent.turn_response_created', {
+                    this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated, {
                         source: 'other',
                         responseArtifactPresent: true,
                         failureArtifactPresent: false,
@@ -1422,8 +1482,8 @@ export class AgentKernel {
             this._emitTurnResponseEvent(
                 meta,
                 turnResult.kind === 'assistant_response'
-                    ? 'agent.turn_response_created'
-                    : 'agent.turn_response_missing',
+                    ? AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated
+                    : AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseMissing,
                 {
                     source: turnResult.source,
                     responseArtifactPresent: turnResult.kind === 'assistant_response',
@@ -1464,8 +1524,8 @@ export class AgentKernel {
         this._emitTurnResponseEvent(
             meta,
             turnResult.kind === 'assistant_response'
-                ? 'agent.turn_response_created'
-                : 'agent.turn_response_missing',
+                ? AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseCreated
+                : AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseMissing,
             {
                 source: turnResult.source,
                 responseArtifactPresent: turnResult.kind === 'assistant_response',
@@ -1500,6 +1560,7 @@ export class AgentKernel {
 
     private finalizeExecution(meta: KernelExecutionMeta, turnResult: ChatTurnResult, request: KernelRequest): KernelResult {
         meta.durationMs = Date.now() - meta.startedAt;
+        turnResult = this._normalizeAssistantTurnResult(turnResult);
         const responseArtifactPresent = turnResult.kind === 'assistant_response'
             && (turnResult.message.content.trim().length > 0 || typeof turnResult.message.artifactId === 'string');
         const failureArtifactPresent = turnResult.kind === 'turn_failure';
@@ -1510,7 +1571,7 @@ export class AgentKernel {
 
         if (!responseArtifactPresent && !failureArtifactPresent) {
             const missingSource = turnResult.source;
-            this._emitTurnResponseEvent(meta, 'agent.turn_response_missing', {
+            this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.turnResponseMissing, {
                 source: missingSource,
                 responseArtifactPresent: false,
                 failureArtifactPresent: false,
@@ -1518,7 +1579,7 @@ export class AgentKernel {
                 errorCode: 'chat_turn_missing_response_artifact',
             });
             if (missingSource === 'self_knowledge') {
-                this._emitTurnResponseEvent(meta, 'agent.self_knowledge_response_missing', {
+                this._emitTurnResponseEvent(meta, AGENT_RESPONSE_RUNTIME_EVENTS.selfKnowledgeResponseMissing, {
                     source: missingSource,
                     responseArtifactPresent: false,
                     failureArtifactPresent: false,
