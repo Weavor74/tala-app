@@ -54,6 +54,14 @@ export type RuntimeEventType =
     | 'kernel.goal_promotion_requested'
     | 'kernel.goal_promotion_rejected'
     | `kernel.${string}`
+    | 'agent.self_inspection_detected'
+    | 'agent.self_inspection_routed'
+    | 'agent.self_inspection_tool_attempted'
+    | 'agent.self_inspection_tool_succeeded'
+    | 'agent.self_inspection_tool_failed'
+    | 'agent.self_inspection_write_blocked'
+    | 'agent.self_inspection_bypassed_greeting_policy'
+    | `agent.${string}`
     | 'execution.created'
     | 'execution.accepted'
     | 'execution.blocked'

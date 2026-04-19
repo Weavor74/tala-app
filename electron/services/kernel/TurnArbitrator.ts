@@ -31,6 +31,18 @@ export class TurnArbitrationService {
             if (profile.goalExecutionWeight >= 0.5) {
                 reasonCodes.push('arbitration:operator_goal_promotion_rejected');
             }
+            if (profile.selfInspectionDetected) {
+                mode = 'hybrid';
+                source = 'rule_based';
+                confidence = 0.97;
+                reasonCodes.push('arbitration:self_inspection_forced_substantive');
+                reasonCodes.push('arbitration:self_inspection_bypassed_chat_override');
+            }
+        } else if (profile.selfInspectionDetected) {
+            mode = 'hybrid';
+            source = 'rule_based';
+            confidence = 0.97;
+            reasonCodes.push('arbitration:self_inspection_forced_substantive');
         } else if (
             profile.likelyNeedsOnlyExplanation &&
             !profile.referencesActiveWork &&
@@ -99,6 +111,9 @@ export class TurnArbitrationService {
             requiresExecutionLoop,
             authorityLevel,
             memoryWriteMode,
+            selfInspectionRequest: profile.selfInspectionDetected,
+            selfInspectionOperation: profile.selfInspectionOperation,
+            selfInspectionRequestedPaths: profile.selfInspectionRequestedPaths,
         };
 
         const envelope: TurnAuthorityEnvelope = {

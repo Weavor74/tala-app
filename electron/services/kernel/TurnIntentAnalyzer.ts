@@ -1,5 +1,6 @@
 import type { TurnIntentProfile } from '../../../shared/turnArbitrationTypes';
 import type { KernelTurnContext } from './TurnContextBuilder';
+import { detectSelfInspectionRequest } from '../../../shared/agent/SelfInspectionIntent';
 
 const EXPLANATION_TERMS = [
     'explain',
@@ -54,6 +55,10 @@ function includesAny(text: string, terms: string[]): boolean {
 export class TurnIntentAnalysisService {
     analyze(context: KernelTurnContext): TurnIntentProfile {
         const text = context.normalizedText;
+        const selfInspectionDecision = detectSelfInspectionRequest({
+            text: context.request.userText,
+            mode: context.runtime.mode,
+        });
         const containsDirectQuestion =
             text.includes('?') || /^(what|why|how|is|are|can|should)\b/.test(text);
         const hasExecutionVerb = includesAny(text, EXECUTION_VERBS);
@@ -74,7 +79,8 @@ export class TurnIntentAnalysisService {
         const likelyNeedsOnlyExplanation =
             explanationLanguage &&
             !hasExecutionVerb &&
-            !containsBuildOrFixRequest;
+            !containsBuildOrFixRequest &&
+            !selfInspectionDecision.isSelfInspectionRequest;
 
         let conversationalWeight = 0.2;
         let hybridWeight = 0.1;
@@ -112,6 +118,13 @@ export class TurnIntentAnalysisService {
             hybridWeight += 0.1;
             reasonCodes.push('intent:multi_step_execution');
         }
+        if (selfInspectionDecision.isSelfInspectionRequest) {
+            goalExecutionWeight += 0.5;
+            hybridWeight += 0.2;
+            conversationalWeight = Math.max(0, conversationalWeight - 0.2);
+            reasonCodes.push('intent:self_inspection_override');
+            reasonCodes.push(...selfInspectionDecision.reasonCodes);
+        }
 
         conversationalWeight = Math.min(1, conversationalWeight);
         hybridWeight = Math.min(1, hybridWeight);
@@ -128,6 +141,10 @@ export class TurnIntentAnalysisService {
             likelyNeedsOnlyExplanation,
             containsDirectQuestion,
             containsBuildOrFixRequest,
+            selfInspectionDetected: selfInspectionDecision.isSelfInspectionRequest,
+            selfInspectionOperation: selfInspectionDecision.requestedOperation,
+            selfInspectionRequestedPaths: selfInspectionDecision.requestedPaths,
+            selfInspectionReasonCodes: selfInspectionDecision.reasonCodes,
             reasonCodes,
         };
     }

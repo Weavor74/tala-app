@@ -1000,6 +1000,11 @@ export class RuntimeDiagnosticsAggregator {
                 authorityLevel: payload.authorityLevel as KernelTurnDiagnosticsView['authorityLevel'],
                 activeGoalId: payload.activeGoalId as string | undefined,
                 createdGoalId: payload.createdGoalId as string | undefined,
+                selfInspectionRequest: payload.selfInspectionRequest === true,
+                selfInspectionOperation: payload.selfInspectionOperation as KernelTurnDiagnosticsView['selfInspectionOperation'],
+                selfInspectionRequestedPaths: Array.isArray(payload.selfInspectionRequestedPaths)
+                    ? payload.selfInspectionRequestedPaths.map(String)
+                    : undefined,
                 updatedAt: now,
             };
             return;

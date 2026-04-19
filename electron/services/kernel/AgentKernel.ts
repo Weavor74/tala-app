@@ -27,6 +27,7 @@ import type { MemoryAuthorityContext } from '../../../shared/memoryAuthorityType
 import { TurnContextService } from './TurnContextBuilder';
 import { TurnIntentAnalysisService } from './TurnIntentAnalyzer';
 import { TurnArbitrationService } from './TurnArbitrator';
+import { SelfInspectionExecutionService } from '../agent/SelfInspectionExecutionService';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // KERNEL RUNTIME TYPES
@@ -298,6 +299,7 @@ export class AgentKernel {
     private readonly _turnContextBuilder = new TurnContextService();
     private readonly _turnIntentAnalyzer = new TurnIntentAnalysisService();
     private readonly _turnArbitrator = new TurnArbitrationService();
+    private readonly _selfInspectionExecution = new SelfInspectionExecutionService();
 
     constructor(agent: AgentService) {
         this.agent = agent;
@@ -623,8 +625,41 @@ export class AgentKernel {
                 requiresExecutionLoop: turnDecision.requiresExecutionLoop,
                 authorityLevel: turnDecision.authorityLevel,
                 memoryWriteMode: turnDecision.memoryWriteMode,
+                selfInspectionRequest: turnDecision.selfInspectionRequest === true,
+                selfInspectionOperation: turnDecision.selfInspectionOperation,
+                selfInspectionRequestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
             },
         });
+        if (turnDecision.selfInspectionRequest) {
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_inspection_detected',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    originalIntent: 'kernel_turn_intent',
+                    resolvedIntent: turnDecision.mode,
+                    mode: meta.mode,
+                    requestedOperation: turnDecision.selfInspectionOperation ?? 'unknown',
+                    requestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                    toolsAllowed: true,
+                    writesAllowed: request.capabilitiesOverride?.allowWritesThisTurn === true,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            bus.emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_inspection_bypassed_greeting_policy',
+                phase: 'classify',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    mode: meta.mode,
+                    reasonCodes: ['self_inspection_precedence_over_greeting'],
+                },
+            });
+        }
 
         const modeEvent =
             turnDecision.mode === 'goal_execution'
@@ -709,6 +744,91 @@ export class AgentKernel {
         const envelope = meta.authorityEnvelope;
         if (!turnDecision || !envelope) {
             throw new Error('AgentKernel.runDelegatedFlow: missing immutable turn arbitration decision');
+        }
+        if (turnDecision.selfInspectionRequest) {
+            const systemHealth = SystemModeManager.getSystemHealthSnapshot();
+            const writesAllowedByMode = systemHealth?.mode_contract.writes_allowed ?? true;
+            const writesAllowedByTurn = request.capabilitiesOverride?.allowWritesThisTurn === true;
+            const allowWritesThisTurn = writesAllowedByTurn && writesAllowedByMode;
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: 'agent.self_inspection_routed',
+                phase: 'delegate',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    originalIntent: 'kernel_turn_intent',
+                    resolvedIntent: 'self_inspection',
+                    mode: meta.mode,
+                    requestedOperation: turnDecision.selfInspectionOperation ?? 'unknown',
+                    requestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                    toolsAllowed: true,
+                    writesAllowed: allowWritesThisTurn,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            const selfInspectionResult = await this._selfInspectionExecution.executeSelfInspectionTurn({
+                text: request.userMessage,
+                allowWritesThisTurn,
+                toolExecutionCoordinator: {
+                    executeTool: async (name: string, args: Record<string, unknown>) =>
+                        this.agent.executeTool(name, args),
+                },
+            });
+            for (const call of selfInspectionResult.toolCalls) {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: 'agent.self_inspection_tool_attempted',
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        toolId: call.toolId,
+                        requestedOperation: selfInspectionResult.operation,
+                        requestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                        reasonCodes: turnDecision.reasonCodes,
+                    },
+                });
+            }
+            if (selfInspectionResult.blockedReason === 'write_not_allowed_this_turn') {
+                TelemetryBus.getInstance().emit({
+                    executionId: meta.executionId,
+                    subsystem: 'agent',
+                    event: 'agent.self_inspection_write_blocked',
+                    phase: 'delegate',
+                    payload: {
+                        turnId: turnDecision.turnId,
+                        requestedOperation: selfInspectionResult.operation,
+                        requestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                        toolsAllowed: true,
+                        writesAllowed: false,
+                        reasonCodes: [...turnDecision.reasonCodes, 'write_not_allowed_this_turn'],
+                    },
+                });
+            }
+            const selfInspectionSucceeded = !selfInspectionResult.blockedReason
+                || selfInspectionResult.blockedReason === 'write_not_allowed_this_turn';
+            TelemetryBus.getInstance().emit({
+                executionId: meta.executionId,
+                subsystem: 'agent',
+                event: selfInspectionSucceeded
+                    ? 'agent.self_inspection_tool_succeeded'
+                    : 'agent.self_inspection_tool_failed',
+                phase: selfInspectionSucceeded ? 'delegate' : 'failed',
+                payload: {
+                    turnId: turnDecision.turnId,
+                    requestedOperation: selfInspectionResult.operation,
+                    requestedPaths: turnDecision.selfInspectionRequestedPaths ?? [],
+                    toolsAllowed: true,
+                    writesAllowed: allowWritesThisTurn,
+                    blockedReason: selfInspectionResult.blockedReason,
+                    reasonCodes: turnDecision.reasonCodes,
+                },
+            });
+            return {
+                message: selfInspectionResult.summary,
+                outputChannel: selfInspectionResult.blockedReason ? 'fallback' : 'chat',
+            };
         }
 
         if (turnDecision.mode === 'goal_execution') {

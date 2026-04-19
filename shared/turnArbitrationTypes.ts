@@ -50,6 +50,10 @@ export interface TurnIntentProfile {
     likelyNeedsOnlyExplanation: boolean;
     containsDirectQuestion: boolean;
     containsBuildOrFixRequest: boolean;
+    selfInspectionDetected?: boolean;
+    selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
+    selfInspectionRequestedPaths?: string[];
+    selfInspectionReasonCodes?: string[];
     reasonCodes: string[];
 }
 
@@ -67,6 +71,9 @@ export interface TurnArbitrationDecision {
     requiresExecutionLoop: boolean;
     authorityLevel: TurnAuthorityLevel;
     memoryWriteMode: MemoryWriteMode;
+    selfInspectionRequest?: boolean;
+    selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
+    selfInspectionRequestedPaths?: string[];
 }
 
 export interface TurnAuthorityEnvelope {
@@ -89,5 +96,8 @@ export interface KernelTurnDiagnosticsView {
     authorityLevel: TurnAuthorityLevel;
     activeGoalId?: string;
     createdGoalId?: string;
+    selfInspectionRequest?: boolean;
+    selfInspectionOperation?: 'read' | 'edit' | 'search' | 'list' | 'unknown';
+    selfInspectionRequestedPaths?: string[];
     updatedAt: string;
 }
