@@ -12,6 +12,18 @@ interface Violation {
   fix: string;
 }
 
+interface CodeRoot {
+  id: string;
+  path: string;
+  language: string;
+  purpose: string;
+}
+
+interface CodeRoots {
+  roots?: CodeRoot[];
+  [key: string]: unknown;
+}
+
 interface SubsystemMapping {
   prohibited_at_root?: string[];
   [key: string]: unknown;
@@ -43,6 +55,7 @@ let checksRun = 0;
 // ---------------------------------------------------------------------------
 const codeRootsPath = path.join(ROOT, 'code_roots.json');
 const subsystemMappingPath = path.join(ROOT, 'subsystem_mapping.json');
+const codeRoots = readJsonSafe(codeRootsPath) as CodeRoots | null;
 const subsystemMapping = readJsonSafe(subsystemMappingPath) as SubsystemMapping | null;
 
 // ---------------------------------------------------------------------------
@@ -178,15 +191,33 @@ for (const req of REQUIRED_FILES) {
   }
 }
 
+// Also verify that JSON structure files are well-formed when present
+if (fs.existsSync(codeRootsPath) && codeRoots === null) {
+  violations.push({
+    check: 'Malformed required file',
+    file: 'code_roots.json',
+    fix: 'Fix JSON syntax in code_roots.json — the file exists but cannot be parsed',
+  });
+}
+if (fs.existsSync(subsystemMappingPath) && subsystemMapping === null) {
+  violations.push({
+    check: 'Malformed required file',
+    file: 'subsystem_mapping.json',
+    fix: 'Fix JSON syntax in subsystem_mapping.json — the file exists but cannot be parsed',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Print report
 // ---------------------------------------------------------------------------
 const passed = violations.length === 0;
 const line = '='.repeat(62);
+const rootCount = codeRoots?.roots?.length ?? 0;
 
 console.log(`\n${line}`);
 console.log('  REPO STRUCTURE VALIDATION REPORT');
 console.log(line);
+console.log(`  Code roots : ${rootCount} registered in code_roots.json`);
 console.log(`  Checks run : ${checksRun}`);
 console.log(`  Violations : ${violations.length}`);
 console.log(`  Result     : ${passed ? 'PASS ✅' : 'FAIL ❌'}`);
