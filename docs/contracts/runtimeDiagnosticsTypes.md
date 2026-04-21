@@ -1,6 +1,6 @@
 # Contract: runtimeDiagnosticsTypes.ts
 
-**Source**: [shared/runtimeDiagnosticsTypes.ts](../../shared/runtimeDiagnosticsTypes.ts)
+**Source**: [shared\runtimeDiagnosticsTypes.ts](../../shared/runtimeDiagnosticsTypes.ts)
 
 ## Interfaces
 

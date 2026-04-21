@@ -88,6 +88,19 @@ describe('Lore thread continuity anchoring', () => {
         expect(follow.responseMode).toBe('memory_grounded_strict');
     });
 
+    it('"Do you have a specific memory?" continues active lore thread and preserves lore prompt blocks', async () => {
+        const { router } = createRouter();
+        await router.process('t1', 'Tell me about when you were 17', 'rp');
+        const follow = await router.process('t2', 'Do you have a specific memory?', 'rp');
+
+        expect(follow.intent.class).toBe('lore');
+        expect(follow.loreThread?.continued).toBe(true);
+        const headers = follow.promptBlocks.map(b => b.header);
+        expect(headers.some(h => h.includes('AUTOBIOGRAPHICAL MEMORY - AGE'))).toBe(true);
+        expect(headers.some(h => h.includes('CANON LORE MEMORIES'))).toBe(true);
+        expect(follow.responseMode).toBe('memory_grounded_strict');
+    });
+
     it('unrelated topic change expires active lore thread', async () => {
         const { router } = createRouter();
         await router.process('t1', 'Tell me about when you were 17', 'rp');

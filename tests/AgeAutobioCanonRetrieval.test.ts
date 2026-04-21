@@ -368,6 +368,21 @@ describe('LTMF autobiographical age retrieval', () => {
         expect(ragCount).toBe(0);
     });
 
+    it('treats "when you were younger" as autobiographical and applies canon gate when canon is absent', async () => {
+        const memoryService = {
+            search: vi.fn().mockResolvedValue([]),
+        };
+        const ragService = {
+            searchStructured: vi.fn().mockResolvedValue([]),
+        };
+        const router = new TalaContextRouter(memoryService as any, ragService as any);
+
+        const ctx = await router.process('turn-younger', 'tell me about when you were younger', 'rp');
+        expect(ctx.canonGateDecision?.isAutobiographicalLoreRequest).toBe(true);
+        expect(ctx.canonGateDecision?.canonGateApplied).toBe(true);
+        expect(ctx.responseMode).toBe('canon_required');
+    });
+
     it('non-age autobiographical queries still require two canon memories', async () => {
         const memoryService = {
             search: vi.fn().mockResolvedValue([]),

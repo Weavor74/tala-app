@@ -1,6 +1,6 @@
 # Contract: harmonizationTypes.ts
 
-**Source**: [shared/harmonizationTypes.ts](../../shared/harmonizationTypes.ts)
+**Source**: [shared\harmonizationTypes.ts](../../shared/harmonizationTypes.ts)
 
 ## Interfaces
 

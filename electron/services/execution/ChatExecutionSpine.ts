@@ -1234,6 +1234,49 @@ export class ChatExecutionSpine {
         };
     }
 
+    private summarizeAstroPromptPath(params: {
+        turnBehavior: any;
+        astroState: string;
+        dynamicContext: string;
+        compactPacket?: any;
+        boundedPromptPacket?: BoundedPromptPacket;
+    }): {
+        astroLevel: string;
+        admittedByPolicy: boolean;
+        suppressedByPolicy: boolean;
+        astroStateAvailable: boolean;
+        dynamicContextHasAstroDirective: boolean;
+        compactEmotionBiasPresent: boolean;
+        astroBlockOmittedByPolicy: boolean;
+        materialInfluenceLikely: boolean;
+    } {
+        const astroLevel = params.turnBehavior?.astroLevel ?? 'off';
+        const suppressedByPolicy = astroLevel === 'off';
+        const admittedByPolicy = !suppressedByPolicy;
+        const state = (params.astroState || '').trim();
+        const astroStateAvailable = !!state &&
+            !/\[ASTRO STATE\]:\s*(Offline|Suppressed by turn policy)/i.test(state);
+        const dynamicContextHasAstroDirective = (params.dynamicContext || '').includes('[EMOTIONAL STATE]:');
+        const compactEmotionBiasPresent = !!params.compactPacket?.emotionalBiasBlock?.trim();
+        const astroBlockOmittedByPolicy =
+            !!params.boundedPromptPacket?.blocks?.find((b) => b.kind === 'astro')?.omittedByPolicy;
+        const materialInfluenceLikely =
+            admittedByPolicy &&
+            astroStateAvailable &&
+            (dynamicContextHasAstroDirective || compactEmotionBiasPresent);
+
+        return {
+            astroLevel,
+            admittedByPolicy,
+            suppressedByPolicy,
+            astroStateAvailable,
+            dynamicContextHasAstroDirective,
+            compactEmotionBiasPresent,
+            astroBlockOmittedByPolicy,
+            materialInfluenceLikely,
+        };
+    }
+
     private shapeIterationToolRequest(params: {
         executionPlan: ExecutionPlan;
         preLoopPolicy: PreLoopResolvedToolPolicy;
@@ -1948,6 +1991,13 @@ export class ChatExecutionSpine {
             goalsAndReflections,
             astroState,
         });
+        const astroPromptPath = this.summarizeAstroPromptPath({
+            turnBehavior,
+            astroState,
+            dynamicContext,
+            compactPacket,
+            boundedPromptPacket,
+        });
         console.log(
             `[PromptBounds] turn=${turnId} selected=[${boundedPromptPacket.selectedBlocks.join(',')}] ` +
             `rendered=[${boundedPromptPacket.renderedBlocks.join(',')}] merged=[${boundedPromptPacket.mergedBlocks.join(',')}] ` +
@@ -1991,8 +2041,18 @@ export class ChatExecutionSpine {
                         renderTargets: b.renderTargets,
                         reason: b.reason,
                     })),
+                    astroPromptPath,
                 },
             },
+        );
+        telemetry.operational(
+            'cognitive',
+            'execution.astro_prompt_path',
+            'info',
+            `turn:${turnId}`,
+            `Astro prompt path: admitted=${astroPromptPath.admittedByPolicy} suppressed=${astroPromptPath.suppressedByPolicy} materialInfluenceLikely=${astroPromptPath.materialInfluenceLikely}`,
+            'success',
+            { payload: { turnId, mode: activeMode, intent: turnObject.intent.class, ...astroPromptPath } },
         );
 
         // --- DYNAMIC PROMPT ASSEMBLY via COMPACT BUILDER ---

@@ -1,6 +1,6 @@
 # Contract: ragStartupTypes.ts
 
-**Source**: [shared/ragStartupTypes.ts](../../shared/ragStartupTypes.ts)
+**Source**: [shared\ragStartupTypes.ts](../../shared/ragStartupTypes.ts)
 
 ## Interfaces
 

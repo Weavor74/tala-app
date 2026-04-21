@@ -1,6 +1,6 @@
 # Contract: runtimeEventTypes.ts
 
-**Source**: [shared/runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
+**Source**: [shared\runtimeEventTypes.ts](../../shared/runtimeEventTypes.ts)
 
 ## Interfaces
 

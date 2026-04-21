@@ -307,9 +307,10 @@ export class CompactPromptBuilder {
 
         // When a CompactPromptPacket is available (Phase 3A), use its structured cognitive
         // blocks to replace the raw dynamicContext and memoryContext.
-        const effectiveDynamic = context.compactPacket
-            ? (context.compactPacket.emotionalBiasBlock || context.dynamicContext)
-            : context.dynamicContext;
+        const compactEmotionalBias = context.compactPacket?.emotionalBiasBlock?.trim() || '';
+        const effectiveDynamic = [context.dynamicContext, compactEmotionalBias]
+            .filter((part) => !!part && part.trim().length > 0)
+            .join('\n\n');
         const assembledMemory = this.getAssembledMemoryContext(context);
         const compactMemorySupplement = this.getCompactMemorySupplement(context);
         const effectiveMemory = [assembledMemory, compactMemorySupplement]

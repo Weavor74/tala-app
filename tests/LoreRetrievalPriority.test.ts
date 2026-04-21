@@ -205,6 +205,16 @@ describe('LoreRetrievalPriority — follow-up lore continuity', () => {
         expect(result.class).toBe('lore');
     });
 
+    it('IntentClassifier classifies "Do you have a specific memory?" as lore', () => {
+        const result = IntentClassifier.classify('Do you have a specific memory?');
+        expect(result.class).toBe('lore');
+    });
+
+    it('IntentClassifier classifies "Tell me about when you were younger" as lore', () => {
+        const result = IntentClassifier.classify('Tell me about when you were younger');
+        expect(result.class).toBe('lore');
+    });
+
     it('IntentClassifier classifies "Was there an event called Delayed Ping?" as lore', () => {
         const result = IntentClassifier.classify('Was there an event called Delayed Ping?');
         expect(result.class).toBe('lore');

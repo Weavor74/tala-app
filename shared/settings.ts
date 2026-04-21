@@ -25,6 +25,7 @@ export interface InferenceInstance {
         temperature?: number;
         ctxLen?: number;
         knownModels?: string[];
+        selectedModelValid?: boolean;
     };
 }
 

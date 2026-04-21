@@ -319,6 +319,48 @@ describe('ChatExecutionSpine regression contracts', () => {
             expect(blockByKind.get('astro').omittedByPolicy).toBe(true);
             expect(packet.omittedByPolicyBlocks).toEqual(expect.arrayContaining(['memory', 'tools', 'reflection', 'astro']));
         });
+
+        it('reports astro prompt path as materially influential when admitted and injected', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const summary = (spine as any).summarizeAstroPromptPath({
+                turnBehavior: { astroLevel: 'full' },
+                astroState: '[ASTRO STATE]: Warmth: 0.8',
+                dynamicContext: '[EMOTIONAL STATE]: [ASTRO STATE]: Warmth: 0.8',
+                compactPacket: { emotionalBiasBlock: '[Tone bias] warmth: high.' },
+                boundedPromptPacket: {
+                    blocks: [{ kind: 'astro', omittedByPolicy: false }],
+                },
+            });
+
+            expect(summary.admittedByPolicy).toBe(true);
+            expect(summary.suppressedByPolicy).toBe(false);
+            expect(summary.astroStateAvailable).toBe(true);
+            expect(summary.dynamicContextHasAstroDirective).toBe(true);
+            expect(summary.compactEmotionBiasPresent).toBe(true);
+            expect(summary.astroBlockOmittedByPolicy).toBe(false);
+            expect(summary.materialInfluenceLikely).toBe(true);
+        });
+
+        it('reports astro prompt path as suppressed when policy disables astro', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const summary = (spine as any).summarizeAstroPromptPath({
+                turnBehavior: { astroLevel: 'off' },
+                astroState: '[ASTRO STATE]: Suppressed by turn policy',
+                dynamicContext: '[TURN TONE]: immersive=false',
+                compactPacket: { emotionalBiasBlock: '' },
+                boundedPromptPacket: {
+                    blocks: [{ kind: 'astro', omittedByPolicy: true }],
+                },
+            });
+
+            expect(summary.admittedByPolicy).toBe(false);
+            expect(summary.suppressedByPolicy).toBe(true);
+            expect(summary.astroStateAvailable).toBe(false);
+            expect(summary.dynamicContextHasAstroDirective).toBe(false);
+            expect(summary.compactEmotionBiasPresent).toBe(false);
+            expect(summary.astroBlockOmittedByPolicy).toBe(true);
+            expect(summary.materialInfluenceLikely).toBe(false);
+        });
     });
 
     describe('Post-turn memory write gating', () => {

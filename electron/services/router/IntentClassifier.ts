@@ -88,7 +88,9 @@ export class IntentClassifier {
         // Historical event shorthand queries that should still route to lore retrieval
         /\bworld\s+war\s+\d+\b/i,
         // Extended autobiographical markers: age references, life history, memory follow-ups
-        /(when\s+you\s+were|at\s+(age\s+)?\d+\s*(years?\s*old)?|growing\s+up|what\s+were\s+you|your\s+life|your\s+memory|have\s+a\s+memory|back\s+then)/i,
+        /(when\s+you\s+were|at\s+(age\s+)?\d+\s*(years?\s*old)?|growing\s+up|what\s+were\s+you|your\s+life|your\s+memory|have\s+a\s+memory|back\s+then|when\s+you\s+were\s+younger)/i,
+        // Specific-memory follow-ups that should stay in lore/autobiographical routing.
+        /\b(do\s+you\s+have\s+(a\s+)?(specific|real|actual)\s+memory|specific\s+memory)\b/i,
         // Follow-up lore references: queries that confirm or challenge a prior autobiographical turn
         /(you\s+(don'?t|do\s+not)\s+(have|remember|recall)|can'?t\s+(recall|remember)(\s+that)?|don'?t\s+you\s+remember)/i,
     ];

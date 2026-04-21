@@ -1,6 +1,6 @@
 # Contract: turnArbitrationTypes.ts
 
-**Source**: [shared/turnArbitrationTypes.ts](../../shared/turnArbitrationTypes.ts)
+**Source**: [shared\turnArbitrationTypes.ts](../../shared/turnArbitrationTypes.ts)
 
 ## Interfaces
 

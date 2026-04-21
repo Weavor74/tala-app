@@ -1,6 +1,6 @@
 # Contract: modelCapabilityTypes.ts
 
-**Source**: [shared/modelCapabilityTypes.ts](../../shared/modelCapabilityTypes.ts)
+**Source**: [shared\modelCapabilityTypes.ts](../../shared/modelCapabilityTypes.ts)
 
 ## Interfaces
 

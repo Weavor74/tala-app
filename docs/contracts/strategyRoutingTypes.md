@@ -1,6 +1,6 @@
 # Contract: strategyRoutingTypes.ts
 
-**Source**: [shared/strategyRoutingTypes.ts](../../shared/strategyRoutingTypes.ts)
+**Source**: [shared\strategyRoutingTypes.ts](../../shared/strategyRoutingTypes.ts)
 
 ## Interfaces
 

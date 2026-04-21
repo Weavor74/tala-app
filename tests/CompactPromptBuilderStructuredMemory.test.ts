@@ -67,6 +67,20 @@ describe('CompactPromptBuilder structured autobiographical memory preservation',
         expect(prompt).toContain('[TASK] compact task');
     });
 
+    it('keeps dynamic RP behavior blocks when compact emotional bias is present', () => {
+        const prompt = CompactPromptBuilder.build(makeContext({
+            dynamicContext: '[RP MODE - ACTIVE]\nStay fully in character.\n\n[TURN TONE]: immersive; narrativeAmplification=true',
+            compactPacket: {
+                ...basePacket,
+                emotionalBiasBlock: '[Tone bias] warmth: high.',
+            } as any,
+        }));
+
+        expect(prompt).toContain('[RP MODE - ACTIVE]');
+        expect(prompt).toContain('[TURN TONE]: immersive; narrativeAmplification=true');
+        expect(prompt).toContain('[Tone bias] warmth: high.');
+    });
+
     it('dedupes duplicate memory anchors across [MEMORY CONTEXT] and compact [Context]', () => {
         const repeated = `I'm Tala, and I respond with a warm smile.`;
         const prompt = CompactPromptBuilder.build(makeContext({

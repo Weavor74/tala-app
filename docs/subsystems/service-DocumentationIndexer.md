@@ -1,12 +1,11 @@
 # Service: DocumentationIndexer.ts
 
-**Source**: [electron/services/DocumentationIndexer.ts](../../electron/services/DocumentationIndexer.ts)
+**Source**: [electron\services\DocumentationIndexer.ts](../../electron/services/DocumentationIndexer.ts)
 
 ## Class: `DocumentationIndexer`
 
 ## Overview
-IndexedDoc - Result of processing a single documentation file.
-/
+IndexedDoc - Result of processing a single documentation file./
 export interface IndexedDoc {
     /** The inferred metadata for the document. */
     metadata: DocMetadata;
@@ -20,9 +19,7 @@ export interface IndexedDoc {
     };
 }
 
-/**
- DocIndex - The complete serialized documentation model.
-/
+/** DocIndex - The complete serialized documentation model./
 export interface DocIndex {
     /** Index version for schema migration (e.g., '1.0'). */
     version: string;
@@ -32,31 +29,19 @@ export interface DocIndex {
     documents: IndexedDoc[];
 }
 
-/**
- DocumentationIndexer - Knowledge Aggregation Service
- 
- Responsible for crawling the local filesystem, processing markdown files, 
- and generating a structured index for the Documentation Retrieval layer.
+/** DocumentationIndexer - Knowledge Aggregation Service  Responsible for crawling the local filesystem, processing markdown files,  and generating a structured index for the Documentation Retrieval layer.
 
 ### Methods
 
 #### `rebuild`
-Performs a full crawl and index generation.
- 
- **Process:**
- 1. Initializes the `data/docs_index/` directory.
- 2. Recursively walks the `docs/` folder for .md files.
- 3. For each file: Classifies (metadata) -> Read -> Chunk (decomposition).
- 4. Serializes the combined `DocIndex` to disk.
-/
+Performs a full crawl and index generation.  **Process:** 1. Initializes the `data/docs_index/` directory. 2. Recursively walks the `docs/` folder for .md files. 3. For each file: Classifies (metadata) -> Read -> Chunk (decomposition). 4. Serializes the combined `DocIndex` to disk./
 
 **Arguments**: ``
 **Returns**: `Promise<DocIndex>`
 
 ---
 #### `load`
-Loads the existing index from disk if available.
-/
+Loads the existing index from disk if available./
 
 **Arguments**: ``
 **Returns**: `DocIndex | null`

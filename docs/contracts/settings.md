@@ -1,6 +1,6 @@
 # Contract: settings.ts
 
-**Source**: [shared/settings.ts](../../shared/settings.ts)
+**Source**: [shared\settings.ts](../../shared/settings.ts)
 
 ## Interfaces
 
@@ -26,6 +26,7 @@ interface InferenceInstance {
         temperature?: number;
         ctxLen?: number;
         knownModels?: string[];
+        selectedModelValid?: boolean;
     }
 ```
 

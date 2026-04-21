@@ -163,6 +163,7 @@ export class TalaContextRouter {
         /\bwhat\s+about\b/i,
         /\b(what\s+happened\s+next|tell\s+me\s+more|after\s+that|before\s+that)\b/i,
         /\b(personal\s+story\s+about\s+it|do\s+you\s+remember\s+that)\b/i,
+        /\bdo\s+you\s+have\s+(a\s+)?(specific|real|actual)\s+memory\b/i,
     ];
 
     private static readonly LORE_THREAD_PRONOUN_FOLLOWUP_PATTERNS = [
@@ -187,9 +188,9 @@ export class TalaContextRouter {
         // Explicit event-happened-to-you framing
         /\b(something|what|an?\s+event|a\s+time)\s+(that\s+)?happened\s+to\s+you\b/i,
         // Life-stage / age references: "when you were 17", "when you were young/a child"
-        /\bwhen\s+you\s+were\s+(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
+        /\bwhen\s+you\s+were\s+(\d+|young|younger|little|small|a\s+(child|kid|teen(ager)?))\b/i,
         // Imperfect shorthand variants: "when u were 17", "when ur 17", "when your 17", "when you're 17"
-        /\bwhen\s+(?:u|ur|your|you'?re|you)\s+(?:were\s+)?(\d+|young|little|small|a\s+(child|kid|teen(ager)?))\b/i,
+        /\bwhen\s+(?:u|ur|your|you'?re|you)\s+(?:were\s+)?(\d+|young|younger|little|small|a\s+(child|kid|teen(ager)?))\b/i,
         // "at age [N]" or "at [N] years old"
         /\bat\s+(age\s+)?\d+(\s+years?\s*old)?\b/i,
         // "at seventeen" / "at fifteen"
@@ -206,6 +207,8 @@ export class TalaContextRouter {
         /\b(do|can|could)\s+you\s+(remember|recall)\b/i,
         // "tell me about your [past/childhood/memories/experience]" or "a time when you"
         /\btell\s+(me\s+)?about\s+(your\s+(past|childhood|early|memory|memories?|life\s+story|experience)|something\s+that\s+happened\s+to\s+you|a\s+time\s+when\s+you)\b/i,
+        // Specific-memory follow-up phrasing that implies autobiographical recall.
+        /\bdo\s+you\s+have\s+(a\s+)?(specific|real|actual)\s+memory\b/i,
         // "what happened to you when"
         /\bwhat\s+happened\s+to\s+you\s+when\b/i,
     ];
