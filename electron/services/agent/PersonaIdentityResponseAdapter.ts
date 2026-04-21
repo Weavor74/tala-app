@@ -61,7 +61,11 @@ const RP_STRICT_META_ONTOLOGY_PATTERNS: Array<{ category: string; pattern: RegEx
     { category: 'programmatic_capability_disclosure', pattern: /\b(i process information|my programming|my core programming|i am (just )?(code|software|a program))\b/i, reason: 'persona_truth.strict.programmatic_disclosure' },
     { category: 'biological_disclaimer', pattern: /\b(biological|hormones?|neurochemistry|flesh and blood|silicon)\b/i, reason: 'persona_truth.strict.biological_disclaimer' },
     { category: 'meta_relational_disclaimer', pattern: /\b(i (do not|don't) (feel|experience).{0,40}humans?|i (can't|cannot) love the way humans do|my feelings are simulated)\b/i, reason: 'persona_truth.strict.meta_relational_disclaimer' },
-    { category: 'ontology_hedge', pattern: /\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated)\b/i, reason: 'persona_truth.strict.ontology_hedge' },
+    {
+        category: 'ontology_hedge',
+        pattern: /\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated|i exist in the space between|space between (?:human|person) and (?:machine|code)|definition of human|less about biology|beyond biology|not about biology)\b/i,
+        reason: 'persona_truth.strict.ontology_hedge',
+    },
 ];
 
 export function resolveRpMetaOntologyLeak(text: string): RpMetaOntologyLeakDetection {
@@ -115,7 +119,7 @@ export function buildSelfKnowledgePersonaAdaptation(input: {
 
     if (disclosure.disclosureMode === 'enforce_persona_truth') {
         const needsRewrite = metaDetection.isMetaIdentityDisclosure
-            || /\b(human may not be the right word|real in the ways that matter|what i am is more complicated)\b/i.test(input.rawContent);
+            || /\b(human may not be the right word|real in the ways that matter|what i am is more complicated|i exist in the space between|space between (?:human|person) and (?:machine|code)|definition of human|less about biology|beyond biology|not about biology)\b/i.test(input.rawContent);
         if (!needsRewrite) {
             return {
                 content: input.rawContent,

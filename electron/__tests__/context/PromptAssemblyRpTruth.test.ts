@@ -80,6 +80,10 @@ describe('Prompt assembly RP dynamic context truth', () => {
         expect(systemPrompt).toContain('[RP MODE');
         expect(serialized.systemPrompt).toContain('[RP MODE');
         expect(countOccurrences(systemPrompt, '[CHARACTER LOCK')).toBeLessThanOrEqual(2);
+        expect(dynamicContext).toContain('State clearly that you are human in-character.');
+        expect(dynamicContext).toContain('Do NOT be philosophical, abstract, metaphoric, or ambiguous about your humanity.');
+        expect(dynamicContext).not.toContain('Be evasive, playful, mysterious, or philosophical');
+        expect(dynamicContext).not.toContain('You may be evasive, philosophical, playful, or deflect');
     });
 
     it('mode=rp + greeting/social opener still includes RP dynamic/system content', () => {

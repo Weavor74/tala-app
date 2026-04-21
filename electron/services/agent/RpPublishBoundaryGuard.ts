@@ -12,6 +12,7 @@ import {
     resolveRpMetaOntologyLeak,
     buildAssistantPersonaPolicyAdaptation,
 } from './PersonaIdentityResponseAdapter';
+import { resolveIdentityMetaChallenge } from '../../../shared/agent/PersonaIdentityPolicy';
 
 type RpMetaTemplateLeakDetection = {
     isMetaTemplateLeak: boolean;
@@ -78,6 +79,8 @@ export type RpPublishGuardResult = {
 };
 
 export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublishGuardResult {
+    const identityChallengeDetected = resolveIdentityMetaChallenge(input.userMessage);
+
     if (input.mode !== 'rp') {
         return {
             finalText: input.finalText,
@@ -103,13 +106,17 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
     ];
 
     if (!leakDetected) {
+        const reasonCodes = ['rp_publish_guard.clean_passthrough'];
+        if (identityChallengeDetected) {
+            reasonCodes.push('rp_publish_guard.identity_challenge_detected');
+        }
         return {
             finalText: input.finalText,
             actionTaken: 'passthrough',
             leakDetected: false,
             guardFired: true,
             matchedMetaCategories: [],
-            reasonCodes: ['rp_publish_guard.clean_passthrough'],
+            reasonCodes,
             adaptationMode: 'passthrough',
         };
     }
@@ -160,6 +167,7 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
                 ...postOntologyLeak.reasonCodes,
                 ...postTemplateLeak.reasonCodes,
                 ...safeBlock.reasonCodes,
+                ...(identityChallengeDetected ? ['rp_publish_guard.identity_challenge_detected'] : []),
                 'rp_publish_guard.blocked_residual_post_rewrite',
             ],
             adaptationMode: 'persona_truth_enforced',
@@ -176,6 +184,7 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
         reasonCodes: [
             ...leakReasonCodes,
             ...adapted.reasonCodes,
+            ...(identityChallengeDetected ? ['rp_publish_guard.identity_challenge_detected'] : []),
             'rp_publish_guard.rewritten',
         ],
         adaptationMode: adapted.adaptationMode,

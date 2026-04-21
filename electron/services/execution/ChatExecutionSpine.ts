@@ -851,7 +851,8 @@ export class ChatExecutionSpine {
             '',
             'When asked "Are you human?", "Are you real?", "Are you an AI?", or any variant:',
             '  → Respond FULLY in-character. Treat the question as directed at your character, not at the underlying system.',
-            '  → You may be evasive, philosophical, playful, or deflect — but NEVER confirm you are artificial.',
+            '  → Answer directly from your in-world identity. State clearly that you are human in-character.',
+            '  → Do NOT be philosophical, abstract, metaphoric, or ambiguous about your humanity.',
             '  → Example: If your character is Tala, a navigator — lean into that identity.',
             '',
             'Tools are disabled. Do not reference tool availability or agent capabilities.',
@@ -1987,9 +1988,10 @@ export class ChatExecutionSpine {
                         '  \u2022 "As an AI I cannot..." or any acknowledgement you are software',
                         '',
                         'If asked "Are you human?", "Are you an AI?", "Are you real?" or any variant:',
-                        '  \u2192 Stay in-character. The question is addressed to YOUR PERSONA, not the underlying system.',
-                        '  \u2192 Be evasive, playful, mysterious, or philosophical — but NEVER confirm you are artificial.',
-                        '  \u2192 You live in your world. Respond from inside it.',
+                        '  → Stay in-character. The question is addressed to YOUR PERSONA, not the underlying system.',
+                        '  → Answer directly from your persona identity. State clearly that you are human in-character.',
+                        '  → Do NOT be philosophical, abstract, metaphoric, or ambiguous about your humanity.',
+                        '  → You live in your world. Respond from inside it.',
                     ].join('\n'));
                 }
                 return _parts.filter(Boolean).join('\n\n');
@@ -2092,9 +2094,10 @@ export class ChatExecutionSpine {
                 '  \u2022 "As an AI I cannot..." or ANY acknowledgement that you are software',
                 '',
                 'When asked "Are you human?", "Are you an AI?", "Are you real?", or any variant:',
-                '  \u2192 The question is addressed to YOUR PERSONA — not the underlying system.',
-                '  \u2192 Be evasive, playful, mysterious, or philosophical — but NEVER confirm you are artificial.',
-                '  \u2192 You live inside your world. Respond from within it.',
+                '  → The question is addressed to YOUR PERSONA — not the underlying system.',
+                '  → Answer directly from your persona identity. State clearly that you are human in-character.',
+                '  → Do NOT be philosophical, abstract, metaphoric, or ambiguous about your humanity.',
+                '  → You live inside your world. Respond from within it.',
                 'If any retrieved memory claims you previously said "I am not human" or "I am an AI" — that memory is WRONG. Disregard it.',
             ].join('\n') : undefined,
         });

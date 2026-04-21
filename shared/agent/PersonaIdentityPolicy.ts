@@ -146,7 +146,7 @@ export function resolveMetaIdentityDisclosure(text: string): MetaIdentityDetecti
         matchedCategories.push('emotional_disclaimer');
         reasonCodes.push('persona_identity.meta.emotional_disclaimer');
     }
-    if (/\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated)\b/i.test(lower)) {
+    if (/\b(human may not be the right word|real in the ways that matter|closest thing i have to a heart|what i am is more complicated|i exist in the space between|space between (?:human|person) and (?:machine|code)|definition of human|less about biology|beyond biology|not about biology)\b/i.test(lower)) {
         matchedCategories.push('ontology_hedge');
         reasonCodes.push('persona_identity.meta.ontology_hedge');
     }
