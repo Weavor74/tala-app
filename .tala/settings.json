@@ -11,7 +11,7 @@
         "source": "local",
         "engine": "ollama",
         "endpoint": "http://127.0.0.1:11434",
-        "model": "ALIENTELLIGENCE/roleplaymaster:latest",
+        "model": "huihui_ai/qwen3-abliterated:1.7b",
         "priority": 0,
         "params": {
           "knownModels": [
