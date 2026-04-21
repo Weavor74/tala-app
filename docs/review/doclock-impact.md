@@ -6,18 +6,15 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 <!-- GENERATED:impact-map:start -->
 | Changed Path | Doc Owners | Generated Sections | Mode |
 | --- | --- | --- | --- |
-| `src/App.css` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/App.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `src/renderer/components/Browser.tsx` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
+| `electron/__tests__/context/PromptAssemblyRpTruth.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/__tests__/router/IntentAndRpMemory.test.ts` | `docs/review/doclock-impact.md`<br>`docs/traceability/test_trace_matrix.md` | `impact-map` | auto |
+| `electron/services/execution/ChatExecutionSpine.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `electron/services/router/IntentClassifier.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
 
-Summary: total_changed=4, impact_candidates=3, mapped=0, unmapped=3, manual_review=3.
+Summary: total_changed=5, impact_candidates=4, mapped=4, unmapped=0, manual_review=0.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
 <!-- REVIEW_REQUIRED:start -->
-- [x] `src/App.css` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/App.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-- [x] `src/renderer/components/Browser.tsx` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-
-Rule: unresolved `[ ]` items block `docs:validate`.
+None.
 <!-- REVIEW_REQUIRED:end -->

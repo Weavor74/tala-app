@@ -878,8 +878,10 @@ export class ChatExecutionSpine {
         isGreeting: boolean,
         intentClass: string,
         dynamicContextBlocks: string[],
+        userMessage?: string,
     ): void {
         if (activeMode !== 'rp') return;
+        if (this.isRpProgressionFollowup(userMessage)) return;
         const isOpenerTurn = isGreeting || intentClass === 'social';
         if (!isOpenerTurn) return;
         if (dynamicContextBlocks.some((block) => block.includes('[RP OPENER STYLE]'))) return;
@@ -892,6 +894,16 @@ export class ChatExecutionSpine {
             'Do not ask generic assistant helper questions (for example, "How can I help you today?").',
             'Do not break into tool, policy, or meta-assistant framing.',
         ].join('\n'));
+    }
+
+    private isRpProgressionFollowup(userMessage?: string): boolean {
+        const text = (userMessage || '').trim().toLowerCase();
+        if (!text) return false;
+        return (
+            /^(then|and then|now)\b/.test(text) ||
+            /\b(?:you|you'?re|you are|your)\s+not\s+\w+ing\b/.test(text) ||
+            /\bwhy\s+(?:are|aren't)\s+you\s+\w+ing\b/.test(text)
+        );
     }
 
     private selectPromptBlockBudgets(params: {
@@ -1805,7 +1817,7 @@ export class ChatExecutionSpine {
         // Inject RP dynamic policy before serializing dynamicContext so the final
         // prompt payload and audits reflect the true assembled instruction set.
         this.appendRpDynamicContextBlocks(activeMode, modeConfig, dynamicContextBlocks);
-        this.appendRpOpenerContextBlock(activeMode, isGreeting, turnObject.intent.class, dynamicContextBlocks);
+        this.appendRpOpenerContextBlock(activeMode, isGreeting, turnObject.intent.class, dynamicContextBlocks, userMessage);
         const dynamicContext = dynamicContextBlocks.join('\n\n');
 
         const goalsAndReflections = turnBehavior.reflectionLevel === 'off'

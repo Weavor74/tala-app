@@ -194,6 +194,25 @@ describe('Prompt assembly RP dynamic context truth', () => {
         expect(systemPrompt).not.toContain('[RP OPENER STYLE]');
     });
 
+    it('RP progression follow-up does not inject opener style block', () => {
+        const dynamicContextBlocks = [
+            '[STYLE]: Preserve Tala identity fully while remaining grounded to available context.',
+            '[TURN TONE]: immersive; immersive=true; narrativeAmplification=true',
+        ];
+        (spine as any).appendRpDynamicContextBlocks('rp', { rpIntensity: 0.6 }, dynamicContextBlocks);
+        (spine as any).appendRpOpenerContextBlock('rp', true, 'social', dynamicContextBlocks, 'Your not undressing');
+        const dynamicContext = dynamicContextBlocks.join('\n\n');
+
+        const systemPrompt = buildSystemPromptForTest(spine as any, {
+            activeMode: 'rp',
+            isGreeting: true,
+            dynamicContext,
+        });
+
+        expect(dynamicContext).not.toContain('[RP OPENER STYLE]');
+        expect(systemPrompt).not.toContain('[RP OPENER STYLE]');
+    });
+
     it('technical/non-RP behavior family remains unchanged (no RP opener block)', () => {
         const dynamicContextBlocks = [
             '[STYLE]: Keep personality present but reduced; prioritize clarity and task execution.',

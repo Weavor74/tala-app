@@ -35,9 +35,9 @@ export class IntentClassifier {
     private static readonly AFFECTIONATE_SUFFIX_TRIM = /(\s+)?(baby|babe|love|dear|sweetie|friend|tala|tally)$/i;
 
     private static readonly GREETING_PATTERNS = [
-        /^(hi|hello|hey|greetings|yo|morning|afternoon|evening|hola|bonjour)/i,
-        /^(good\s+)?(morning|afternoon|evening|night|day)/i,
-        /^(howdy|sup|hiya)/i
+        /^(hi|hello|hey|greetings|yo|hola|bonjour)\b/i,
+        /^(good\s+)?(morning|afternoon|evening|night|day)\b/i,
+        /^(howdy|sup|hiya)\b/i
     ];
 
     private static readonly BROWSER_PATTERNS = [
@@ -121,6 +121,15 @@ export class IntentClassifier {
         /\bwell\s+hello\b/i,
     ];
 
+    // RP progression follow-ups should not collapse into greeting/opening handling.
+    // These cues typically appear after an opener and request scene advancement
+    // or call out missing progression in the previous assistant turn.
+    private static readonly RP_PROGRESSION_CUE_PATTERNS = [
+        /^\s*(then|and then|now)\b/i,
+        /\b(?:you|you'?re|you\s+are|your)\s+not\s+\w+ing\b/i,
+        /\bwhy\s+(?:are|aren'?t)\s+you\s+\w+ing\b/i,
+    ];
+
     private static isExpressiveGreeting(text: string, hasGreeting: boolean): boolean {
         const hasExpressiveLexicalCue = /\b(sexy|handsome|beautiful|gorgeous|hot|cutie|cutiepie|babe|baby|trouble)\b/i.test(text);
         const hasMissMeCue = /\bmiss\s+me\??\b/i.test(text);
@@ -145,6 +154,7 @@ export class IntentClassifier {
         const hasBrowser = this.BROWSER_PATTERNS.some(p => p.test(text));
         const hasSocial = this.SOCIAL_PATTERNS.some(p => p.test(text));
         const hasExpressiveGreeting = this.isExpressiveGreeting(text, hasGreeting);
+        const hasRpProgressionCue = this.RP_PROGRESSION_CUE_PATTERNS.some(p => p.test(text));
 
         // 2. Browser intent takes high precedence — it is explicit and unambiguous
         if (hasBrowser) {
@@ -180,6 +190,16 @@ export class IntentClassifier {
                 confidence: 0.92,
                 subsystem: 'social',
                 precedenceLog: 'Expressive greeting > Plain greeting',
+            };
+        }
+
+        if (hasRpProgressionCue && !hasTechnical && !hasLore && !hasBrowser) {
+            console.log(`[IntentClassifier] intent=social confidence=0.9 reason=rp_progression_followup`);
+            return {
+                class: 'social',
+                confidence: 0.9,
+                subsystem: 'social',
+                precedenceLog: 'RP progression follow-up > Greeting opener handling',
             };
         }
 

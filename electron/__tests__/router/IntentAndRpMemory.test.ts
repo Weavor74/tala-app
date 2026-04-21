@@ -132,6 +132,18 @@ describe('IntentClassifier — expressive greeting opener refinement', () => {
         expect(result.class).not.toBe('greeting');
         expect(result.class).not.toBe('social');
     });
+
+    it('"Your not undressing" → social progression follow-up, NOT greeting', () => {
+        const result = IntentClassifier.classify('Your not undressing');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"Then undress" → social progression follow-up, NOT unknown', () => {
+        const result = IntentClassifier.classify('Then undress');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('unknown');
+    });
 });
 
 describe('IntentClassifier — autobiographical / personal-memory prompts', () => {
