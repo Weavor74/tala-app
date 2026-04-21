@@ -14,5 +14,13 @@
     "birth_place": "San Francisco",
     "created_at": "2026-02-13T09:17:31.171148",
     "updated_at": "2026-03-01T13:37:34.369114"
+  },
+  "assist": {
+    "agent_id": "assist",
+    "name": "Assist",
+    "birth_date": "2024-01-01T12:00:00",
+    "birth_place": "San Francisco",
+    "created_at": "2026-04-19T19:40:15.547962",
+    "updated_at": "2026-04-19T19:40:15.547970"
   }
 }

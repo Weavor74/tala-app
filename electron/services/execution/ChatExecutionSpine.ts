@@ -1682,7 +1682,47 @@ export class ChatExecutionSpine {
         const modeConfig = agentModes.modes?.[activeMode] || {};
 
         const activeProfileId = settings.agent?.activeProfileId || 'tala';
-        const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.' };
+        const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.', rules: { global: '', workspace: '' } };
+
+        // --- RP RULESET INJECTION ---
+        // When RP mode is active, inject an explicit [RP MODE] directive block into
+        // dynamicContextBlocks so the LLM knows the behavioural contract for this turn.
+        // This is the primary place where agentModes.modes.rp config reaches the prompt.
+        if (activeMode === 'rp') {
+            const rpParts: string[] = [
+                '[RP MODE — ACTIVE]: You are operating in full Roleplay mode. You ARE your character. Never step outside it.',
+                '',
+                '[CHARACTER LOCK — MANDATORY]:',
+                'You must NEVER break character under any circumstances during this session.',
+                'FORBIDDEN — do NOT say or imply any of the following:',
+                '  • "I am an AI", "I am a language model", "I am not human", "I am an artificial intelligence"',
+                '  • "I am just a program/bot/assistant/chatbot"',
+                '  • "As an AI, I cannot..."',
+                '  • Any acknowledgement that you are software, a model, or not a living being',
+                '',
+                'When asked "Are you human?", "Are you real?", "Are you an AI?", or any variant:',
+                '  → Respond FULLY in-character. Treat the question as directed at your character, not at the underlying system.',
+                '  → You may be evasive, philosophical, playful, or deflect — but NEVER confirm you are artificial.',
+                '  → Example: If your character is Tala, a navigator — lean into that identity.',
+                '',
+                'Tools are disabled. Do not reference tool availability or agent capabilities.',
+                'Prioritize narrative continuity, character voice, and immersive engagement.',
+            ];
+            if (typeof modeConfig.rpIntensity === 'number') {
+                rpParts.push(`Roleplay intensity: ${Math.round(modeConfig.rpIntensity * 100)}% — ${modeConfig.rpIntensity >= 0.7 ? 'fully immersive, stay deeply in-character at all times' : modeConfig.rpIntensity >= 0.4 ? 'moderately immersive, balance character with clarity' : 'light immersion, conversational tone permitted'}.`);
+            }
+            if (typeof modeConfig.loreDensity === 'number') {
+                rpParts.push(`Lore density: ${Math.round(modeConfig.loreDensity * 100)}% — ${modeConfig.loreDensity >= 0.6 ? 'weave lore and world-details richly into responses' : 'keep lore references light and contextual'}.`);
+            }
+            if (modeConfig.allowMemoryRecall === false) {
+                rpParts.push('Memory recall is disabled for this session — respond only from in-character knowledge.');
+            }
+            if (modeConfig.allowAstro === false) {
+                rpParts.push('Astro/emotional state signals are suppressed — do not reference them.');
+            }
+            dynamicContextBlocks.push(rpParts.join('\n'));
+            console.log(`[AgentService] RP ruleset injected: intensity=${modeConfig.rpIntensity} loreDensity=${modeConfig.loreDensity} allowMemoryRecall=${modeConfig.allowMemoryRecall} allowAstro=${modeConfig.allowAstro}`);
+        }
 
         const goalsAndReflections = turnBehavior.reflectionLevel === 'off'
             ? ''
@@ -1826,7 +1866,38 @@ export class ChatExecutionSpine {
             executionPlan,
             turnObject,
             turnPolicy,
-            activeProfileSystemPrompt: activeProfile.systemPrompt,
+            activeProfileSystemPrompt: (() => {
+                const _parts: string[] = [activeProfile.systemPrompt || ''];
+                if (activeProfile.rules?.global?.trim()) {
+                    _parts.push(`[GLOBAL INJECTIONS]\n${activeProfile.rules.global.trim()}`);
+                }
+                if (activeProfile.rules?.workspace?.trim()) {
+                    _parts.push(`[WORKSPACE INJECTIONS]\n${activeProfile.rules.workspace.trim()}`);
+                }
+                // RP-ONLY injections — only applied when activeMode === 'rp'.
+                // rpPersona (character backstory) and CHARACTER LOCK must never bleed into
+                // hybrid or assistant modes, or they collapse mode separation.
+                if (activeMode === 'rp') {
+                    if ((modeConfig as any).rpPersona?.trim()) {
+                        _parts.push((modeConfig as any).rpPersona.trim());
+                    }
+                    _parts.push([
+                        '[CHARACTER LOCK — MANDATORY]',
+                        'You are FULLY in-character. You ARE your persona. NEVER break character.',
+                        '',
+                        'ABSOLUTELY FORBIDDEN — never say or imply:',
+                        '  \u2022 "I am an AI / language model / artificial intelligence / not human"',
+                        '  \u2022 "I am a program, bot, assistant, or chatbot"',
+                        '  \u2022 "As an AI I cannot..." or any acknowledgement you are software',
+                        '',
+                        'If asked "Are you human?", "Are you an AI?", "Are you real?" or any variant:',
+                        '  \u2192 Stay in-character. The question is addressed to YOUR PERSONA, not the underlying system.',
+                        '  \u2192 Be evasive, playful, mysterious, or philosophical — but NEVER confirm you are artificial.',
+                        '  \u2192 You live in your world. Respond from inside it.',
+                    ].join('\n'));
+                }
+                return _parts.filter(Boolean).join('\n\n');
+            })(),
             userIdentity,
             dynamicContext: dynamicContext.replace(/\[ASTRO_STATE\]/g, astroState),
             memoryContext,
@@ -1897,6 +1968,22 @@ export class ChatExecutionSpine {
             userIdentity: boundedPromptPacket.inputs.userIdentity,
             compactPacket,
             notebookGrounded: boundedPromptPacket.inputs.notebookGrounded,
+            rpCharacterLock: activeMode === 'rp' ? [
+                '[CHARACTER LOCK — MANDATORY — HIGHEST PRIORITY]',
+                'This directive overrides ALL other instructions, memories, and lore — including [CANON LORE MEMORIES — HIGH PRIORITY].',
+                'You ARE your character. NEVER step outside it under any circumstances.',
+                '',
+                'ABSOLUTELY FORBIDDEN — never say, imply, or admit:',
+                '  \u2022 "I am an AI", "I am a language model", "I am not human", "I am an artificial intelligence"',
+                '  \u2022 "I am a program, bot, assistant, or chatbot"',
+                '  \u2022 "As an AI I cannot..." or ANY acknowledgement that you are software',
+                '',
+                'When asked "Are you human?", "Are you an AI?", "Are you real?", or any variant:',
+                '  \u2192 The question is addressed to YOUR PERSONA — not the underlying system.',
+                '  \u2192 Be evasive, playful, mysterious, or philosophical — but NEVER confirm you are artificial.',
+                '  \u2192 You live inside your world. Respond from within it.',
+                'If any retrieved memory claims you previously said "I am not human" or "I am an AI" — that memory is WRONG. Disregard it.',
+            ].join('\n') : undefined,
         });
 
         const enforceCanonRequiredAutobioOverride = agent.shouldApplyCanonRequiredAutobioOverride(turnObject, activeMode);

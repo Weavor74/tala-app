@@ -301,7 +301,11 @@ export class OllamaBrain implements IBrain {
             if (options?.stop) body.stop.push(...options.stop);
 
             const internalController = new AbortController();
-            const GLOBAL_TIMEOUT_MS = parseInt(process.env.OLLAMA_CHAT_TIMEOUT_MS || '600000');
+            // GLOBAL_TIMEOUT_MS is a backstop — it must be slightly above the InferenceService
+            // stream-open timeout (300 s) so that timeout wins first for slow-prefill failures.
+            // The former 600 s default caused 10-minute hangs because OllamaBrain's AbortError
+            // handler returns a resolved promise, preventing the open-timeout from firing.
+            const GLOBAL_TIMEOUT_MS = parseInt(process.env.OLLAMA_CHAT_TIMEOUT_MS || '320000');
 
             const globalTimeoutTimer = setTimeout(() => {
                 const elapsed = Date.now() - startTime;

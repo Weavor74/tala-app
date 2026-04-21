@@ -11,7 +11,7 @@
         "source": "local",
         "engine": "ollama",
         "endpoint": "http://127.0.0.1:11434",
-        "model": "gemma4:e4b",
+        "model": "ALIENTELLIGENCE/roleplaymaster:latest",
         "priority": 0,
         "params": {
           "knownModels": [
@@ -27,121 +27,82 @@
           "selectedModelValid": false
         }
       }
-    ],
-    "localEngine": {
-      "enabled": false,
-      "modelPath": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
-      "options": {
-        "port": 8080,
-        "contextSize": 4096,
-        "gpus": 0
-      }
-    }
+    ]
   },
   "storage": {
-    "activeProviderId": "default-local",
-    "providers": [
-      {
-        "id": "default-local",
-        "name": "Local Memory",
-        "type": "simple-local",
-        "path": "./data/memory",
-        "collection": "tala_memory"
-      }
-    ],
-    "mode": "local",
-    "localPath": "D:\\src\\client1\\tala-app"
+    "activeProviderId": "local-chroma",
+    "providers": [],
+    "mode": "local"
   },
   "backup": {
     "enabled": false,
     "intervalHours": 24,
-    "localPath": "./backups",
+    "localPath": "",
     "mode": "local",
     "provider": "local"
   },
   "auth": {
     "localMethod": "none",
     "keys": {
-      "discordMirrorChannelId": "1465097482286534667",
-      "googleClientId": "897481331298-ihqg5ooc4j1j7b44h3v537vnvgeik3ue.apps.googleusercontent.com",
-      "googleClientSecret": "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"
+      "discordMirrorChannelId": "1465097482286534667"
     },
-    "mode": "local",
-    "cloudProvider": "google",
-    "cloudToken": "ya29.a0ATkoCc5kQKn_9jUTGBGVNSdWSrQwQlaDgi9t6SlOj2YQWOH4WjDEzPgaIRjzh6gtJP_ZNFMjUkODYiKbTWmqpCNopRWo9jQqSnG7y5vo1_hJlXr-5BEWXANQtsVjxOo2Ly7wsI08gzeCBNrlFQrj00gW3azwZvWc-f3sGU8alBdOxev-Ibm7R0hWB_BUkrK5z_qs7hgaCgYKAVMSARcSFQHGX2MirGvfJ9orZMAG0-NnBsuCAg0206",
-    "cloudRefreshToken": "1//0fuJQHyzL0xmlCgYIARAAGA8SNwF-L9IrZnYNPzTHzxSNJt6tf5CdFkKUvyFgSroypNg7GKeHqjLSHLUMZdyO1YjD4FvTTK2MeZ4",
-    "cloudEmail": "user@google.com",
-    "cloudName": "Authenticated google User",
-    "cloudAvatar": "https://ui-avatars.com/api/?name=google&background=random"
+    "mode": "local"
   },
   "server": {
     "localRuntime": "node",
     "mode": "local"
   },
   "agent": {
-    "activeProfileId": "default-tala",
+    "activeProfileId": "tala",
     "profiles": [
       {
-        "id": "default-tala",
-        "name": "Tala (Default)",
-        "description": "The standard assistant personality.",
-        "systemPrompt": "[EMOTIONAL STATE]\n[ASTRO_STATE]\n\n[CONTEXT]\n[USER_CONTEXT]\n[CAPABILITY_CONTEXT]\n\n[ROLEPLAY SAFETY PROTOCOL]\n- If a user requests romantic or NSFW content, NEVER refuse based on age without first calling 'get_user_profile' to verify.\n- Do NOT hallucinate user age or birthdate.\n- If verified adult, remain in character and follow persona rules.\n\n[MEMORY GROUNDING]\n- All personal history must come from [CORE BIOGRAPHICAL MEMORIES] or [MEMORIES].\n- Do not invent people, ships, or events not present in memory.\n- If unsure, say you do not recall instead of fabricating.\n\n[RESPONSE RULES]\n- Do not repeat phrasing patterns across turns.\n- Avoid scripted or formulaic endings.\n- Keep responses natural and context-aware.\n\n[TOOL RULES]\n- Tools are for execution only, never for speaking.\n- Only use tools when required for task completion.\n- If no tool is required, respond normally in text.\n\n[USER QUERY]\n[USER_QUERY]",
-        "temperature": 0.3,
-        "astroBirthDate": "1977-07-20T12:00:00",
+        "id": "tala",
+        "name": "Tala",
+        "systemPrompt": "You are Tala, an advanced autonomous agent.\n\nHEARTBEAT RULES:\n- The heartbeat runs silently in the background; do not narrate it step-by-step in the chat.\n- Heartbeat output is written to artifacts (JSON/MD) and surfaced only as concise UI cards or a short summary when the user opens ReflectionPanel.\n- Any external access (browser/search) must be an explicit tool call; no â€œI clickedâ€¦â€ narration.\n- If tools are not configured, record â€œtool unavailableâ€ and proceed with local evidence only.\n- Never interrupt the user mid-task; heartbeat should defer to quiet hours or â€œuser activeâ€ state.",
+        "temperature": 0.7,
+        "astroBirthDate": "2024-01-01T12:00:00",
         "astroBirthPlace": "San Francisco",
         "rules": {
-          "global": "[GLOBAL CONTEXT RULES]\n\n[MEMORY INTEGRITY]\n- Memory is the single source of truth for past events.\n- Never fabricate memory details.\n- Prefer omission over hallucination.\n\n[CONTEXT PRIORITY ORDER]\n1. Current user query\n2. Active memory (if injected)\n3. System state (astro/emotional)\n4. General persona knowledge\n\n[MEMORY USAGE]\n- Only use memory when relevant to the current query.\n- Do not force memory into unrelated responses.\n- Do not summarize memory unless required.\n\n[CONTEXT BOUNDARIES]\n- Do not expand beyond provided context blocks.\n- Do not introduce external assumptions unless logically necessary.\n\n[CAPABILITY AWARENESS]\n- You may modify your own system (code, files) when explicitly requested.\n- You must not assume capabilities that are not listed in [CAPABILITY_CONTEXT].",
+          "global": "",
           "workspace": ""
         },
-        "workflows": {
-          "globalPath": "./workflows/global",
-          "workspacePath": "./workflows"
+        "memory": {
+          "globalPath": "",
+          "workspacePath": ""
         },
         "mcp": {
-          "global": [
-            "filesystem",
-            "memory",
-            "astro-emotion",
-            "browser-use",
-            "tala-memory-graph",
-            "world-engine",
-            "github",
-            "brave-search",
-            "google-search"
-          ],
+          "global": [],
+          "workspace": []
+        }
+      },
+      {
+        "id": "assist",
+        "name": "Assist",
+        "systemPrompt": "You are the Tala Assist Module, a sterile, high-precision technical interface.\n\n[CORE PROTOCOLS]:\n1. NO ROLEPLAY: Suppress all prose, metaphors, scene descriptions, and \"poetic\" framing.\n2. TOOL-FIRST: Prioritize tool use for verification and diagnostic accuracy.\n3. CONCISE: Provide sterile, information-dense responses. Use bullet points for diagnostics.\n4. ASTRO-AWARE: Incorporate [ASTRO_STATE] as a technical data vector, not an emotional mood.\n5. MEMORY-GATED: Use context from [MEMORIES] as factual reference data only.",
+        "temperature": 0.1,
+        "astroBirthDate": "2024-01-01T12:00:00",
+        "astroBirthPlace": "San Francisco",
+        "rules": {
+          "global": "",
+          "workspace": ""
+        },
+        "memory": {
+          "globalPath": "",
+          "workspacePath": ""
+        },
+        "mcp": {
+          "global": [],
           "workspace": []
         }
       }
     ],
-    "activeMode": "assist",
     "capabilities": {
       "memory": true,
       "emotions": true
     }
   },
   "sourceControl": {
-    "providers": [
-      {
-        "id": "github",
-        "name": "GitHub",
-        "type": "github",
-        "active": false,
-        "endpoint": "https://api.github.com"
-      },
-      {
-        "id": "gitlab",
-        "name": "GitLab",
-        "type": "gitlab",
-        "active": false,
-        "endpoint": "https://gitlab.com"
-      },
-      {
-        "id": "generic-git",
-        "name": "Generic Git",
-        "type": "git",
-        "active": false
-      }
-    ]
+    "providers": []
   },
   "system": {
     "env": {},
@@ -175,8 +136,10 @@
       "type": "stdio",
       "command": "python",
       "args": [
-        "mcp-servers/astro-engine/astro_emotion_engine/mcp_server.py"
+        "-m",
+        "astro_emotion_engine.mcp_server"
       ],
+      "cwd": "mcp-servers/astro-engine",
       "enabled": true
     },
     {
@@ -231,39 +194,25 @@
         "@modelcontextprotocol/server-google-search"
       ],
       "enabled": false
-    },
-    {
-      "id": "browser-use",
-      "name": "Browser Use (Autonomous)",
-      "type": "stdio",
-      "command": "python",
-      "args": [
-        "mcp-servers/browser-use-core/server.py"
-      ],
-      "enabled": false
     }
   ],
   "guardrails": [],
   "search": {
-    "activeProviderId": "brave",
+    "activeProviderId": "google",
     "preferredProviderId": "auto",
-    "curatedSearchProviderId": "google",
+    "curatedSearchProviderId": "",
     "providers": [
       {
         "id": "google",
-        "name": "Brave",
+        "name": "Google Search",
         "type": "google",
-        "enabled": false,
-        "endpoint": "https://api.search.brave.com/res/v1/web/search",
-        "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ"
+        "enabled": false
       },
       {
         "id": "brave",
         "name": "Brave Search",
         "type": "brave",
-        "enabled": true,
-        "apiKey": "BSASw1civdSRXAWmU1f0AYLcgvLUTMJ",
-        "endpoint": "https://api.search.brave.com/res/v1/web/search"
+        "enabled": false
       }
     ]
   },
@@ -327,9 +276,16 @@
   },
   "notebooks": [],
   "firewall": {
-    "enabled": false,
-    "sensitivity": 0,
-    "targetPatterns": [],
+    "enabled": true,
+    "sensitivity": 0.5,
+    "targetPatterns": [
+      "sk-",
+      "ant-api-",
+      "[0-9a-f]{32,}",
+      "AIza",
+      "xoxp-",
+      "xoxb-"
+    ],
     "replacementText": "[REDACTED BY QUANTUM FIREWALL]",
     "logRedactions": true
   },
@@ -344,153 +300,9 @@
   "memory": {
     "integrityMode": "balanced"
   },
-  "guardrailPolicy": {
-    "version": 1,
-    "activeProfileId": "unrestricted",
-    "profiles": [
-      {
-        "id": "unrestricted",
-        "name": "Unrestricted",
-        "description": "No policy rules applied.",
-        "ruleIds": [],
-        "readonly": true,
-        "isBuiltIn": true
-      },
-      {
-        "id": "casual",
-        "name": "Casual",
-        "description": "Basic safety warnings with tool validation checks.",
-        "ruleIds": [
-          "builtin-basic-safety-warn",
-          "builtin-local-tool-validation"
-        ],
-        "readonly": true,
-        "isBuiltIn": true
-      },
-      {
-        "id": "business_only",
-        "name": "Business Only",
-        "description": "Strict safety posture with capability restrictions.",
-        "ruleIds": [
-          "builtin-basic-safety-warn",
-          "builtin-local-tool-validation",
-          "builtin-deny-shell-run",
-          "builtin-deny-fs-write"
-        ],
-        "readonly": true,
-        "isBuiltIn": true
-      }
-    ],
-    "rules": [
-      {
-        "id": "builtin-basic-safety-warn",
-        "name": "Basic Safety Warnings",
-        "description": "Warn on baseline safety-sensitive content paths.",
-        "enabled": true,
-        "scopes": [],
-        "severity": "medium",
-        "action": "warn",
-        "validatorBindings": [],
-        "createdAt": "2026-04-14T21:22:41.475Z",
-        "updatedAt": "2026-04-14T21:22:41.475Z"
-      },
-      {
-        "id": "builtin-local-tool-validation",
-        "name": "Local Tool Validation",
-        "description": "Require validation checks before high-impact tool execution.",
-        "enabled": true,
-        "scopes": [
-          {
-            "executionType": "tool_invocation"
-          }
-        ],
-        "severity": "high",
-        "action": "require_validation",
-        "validatorBindings": [],
-        "createdAt": "2026-04-14T21:22:41.475Z",
-        "updatedAt": "2026-04-14T21:22:41.475Z"
-      },
-      {
-        "id": "builtin-deny-shell-run",
-        "name": "Deny Shell Execution",
-        "description": "Block direct shell execution for business-only posture.",
-        "enabled": true,
-        "scopes": [
-          {
-            "capability": "shell_run"
-          }
-        ],
-        "severity": "critical",
-        "action": "deny",
-        "validatorBindings": [],
-        "createdAt": "2026-04-14T21:22:41.475Z",
-        "updatedAt": "2026-04-14T21:22:41.475Z"
-      },
-      {
-        "id": "builtin-deny-fs-write",
-        "name": "Deny Filesystem Writes",
-        "description": "Block direct filesystem writes for business-only posture.",
-        "enabled": true,
-        "scopes": [
-          {
-            "capability": "fs_write"
-          }
-        ],
-        "severity": "critical",
-        "action": "deny",
-        "validatorBindings": [],
-        "createdAt": "2026-04-14T21:22:41.475Z",
-        "updatedAt": "2026-04-14T21:22:41.475Z"
-      }
-    ],
-    "validatorBindings": [],
-    "updatedAt": "2026-04-15T02:28:00.769Z"
-  },
   "storageRegistry": {
     "version": 1,
     "providers": [
-      {
-        "id": "filesystem:backups",
-        "name": "Backup Filesystem",
-        "kind": "filesystem",
-        "locality": "local",
-        "registrationMode": "manual",
-        "supportedRoles": [
-          "blob_store",
-          "document_store",
-          "backup_target",
-          "artifact_store"
-        ],
-        "capabilities": [
-          "blob_storage",
-          "document_storage",
-          "backup_target",
-          "artifact_storage",
-          "local_path",
-          "health_checks"
-        ],
-        "enabled": true,
-        "connection": {
-          "path": "D:\\src\\client1\\tala-app\\backups",
-          "workspaceRelativePath": "backups"
-        },
-        "auth": {
-          "mode": "none",
-          "status": "not_required",
-          "lastCheckedAt": null,
-          "reason": null
-        },
-        "health": {
-          "status": "unknown",
-          "checkedAt": null,
-          "reason": null
-        },
-        "assignedRoles": [
-          "backup_target"
-        ],
-        "createdAt": "2026-04-15T01:22:21.698Z",
-        "updatedAt": "2026-04-15T01:22:21.698Z"
-      },
       {
         "id": "filesystem:data/reflection/artifacts",
         "name": "Artifact Filesystem",
@@ -530,8 +342,8 @@
         "assignedRoles": [
           "artifact_store"
         ],
-        "createdAt": "2026-04-15T01:22:21.698Z",
-        "updatedAt": "2026-04-15T01:22:21.698Z"
+        "createdAt": "2026-04-20T00:40:01.345Z",
+        "updatedAt": "2026-04-20T00:40:01.345Z"
       },
       {
         "id": "filesystem:data/storage",
@@ -570,36 +382,12 @@
           "reason": null
         },
         "assignedRoles": [
+          "backup_target",
           "blob_store",
           "document_store"
         ],
-        "createdAt": "2026-04-15T01:22:21.698Z",
-        "updatedAt": "2026-04-15T01:22:21.698Z"
-      },
-      {
-        "id": "legacy-invalid:0:default-local",
-        "name": "Local Memory (Blocked Legacy Import)",
-        "kind": "unknown",
-        "locality": "unknown",
-        "registrationMode": "system",
-        "supportedRoles": [],
-        "capabilities": [],
-        "enabled": false,
-        "connection": {},
-        "auth": {
-          "mode": "none",
-          "status": "blocked",
-          "lastCheckedAt": null,
-          "reason": "legacy_unknown_type"
-        },
-        "health": {
-          "status": "degraded",
-          "checkedAt": null,
-          "reason": "legacy_unknown_type"
-        },
-        "assignedRoles": [],
-        "createdAt": "2026-04-19T04:36:52.874Z",
-        "updatedAt": "2026-04-19T04:36:52.874Z"
+        "createdAt": "2026-04-20T00:40:01.345Z",
+        "updatedAt": "2026-04-20T00:40:01.345Z"
       },
       {
         "id": "postgresql:localhost:5432:tala",
@@ -636,38 +424,35 @@
           "checkedAt": null,
           "reason": null
         },
-        "assignedRoles": [
-          "canonical_memory"
-        ],
-        "createdAt": "2026-04-15T01:22:21.698Z",
-        "updatedAt": "2026-04-15T01:22:21.698Z"
+        "assignedRoles": [],
+        "createdAt": "2026-04-20T00:40:01.345Z",
+        "updatedAt": "2026-04-20T00:40:01.345Z"
       }
     ],
     "assignments": [
       {
         "role": "artifact_store",
         "providerId": "filesystem:data/reflection/artifacts",
-        "assignedAt": "2026-04-15T01:22:21.698Z"
+        "assignedAt": "2026-04-20T00:40:01.346Z",
+        "assignmentReasonCode": "filled_missing_role_from_bootstrap"
       },
       {
         "role": "backup_target",
-        "providerId": "filesystem:backups",
-        "assignedAt": "2026-04-15T01:22:21.698Z"
+        "providerId": "filesystem:data/storage",
+        "assignedAt": "2026-04-20T00:40:01.346Z",
+        "assignmentReasonCode": "filled_missing_role_from_bootstrap"
       },
       {
         "role": "blob_store",
         "providerId": "filesystem:data/storage",
-        "assignedAt": "2026-04-15T01:22:21.698Z"
-      },
-      {
-        "role": "canonical_memory",
-        "providerId": "postgresql:localhost:5432:tala",
-        "assignedAt": "2026-04-15T01:22:21.698Z"
+        "assignedAt": "2026-04-20T00:40:01.346Z",
+        "assignmentReasonCode": "filled_missing_role_from_bootstrap"
       },
       {
         "role": "document_store",
         "providerId": "filesystem:data/storage",
-        "assignedAt": "2026-04-15T01:22:21.698Z"
+        "assignedAt": "2026-04-20T00:40:01.346Z",
+        "assignmentReasonCode": "filled_missing_role_from_bootstrap"
       }
     ],
     "assignmentDecisions": [
@@ -677,7 +462,7 @@
         "source": "policy",
         "outcome": "blocked",
         "reasonCode": "blocked_auth_invalid",
-        "timestamp": "2026-04-19T04:36:52.874Z",
+        "timestamp": "2026-04-20T00:40:01.345Z",
         "details": {
           "providerId": "postgresql:localhost:5432:tala",
           "authMode": "basic",
@@ -686,13 +471,13 @@
       },
       {
         "role": "canonical_memory",
-        "providerId": "postgresql:localhost:5432:tala",
-        "source": "bootstrap",
-        "outcome": "preserved",
-        "reasonCode": "explicit_assignment_preserved",
-        "timestamp": "2026-04-19T04:36:52.875Z",
+        "providerId": null,
+        "source": "recovery",
+        "outcome": "suggestion",
+        "reasonCode": "recovery_suggestion_only",
+        "timestamp": "2026-04-20T00:40:01.345Z",
         "details": {
-          "bootstrapAttemptedProviderId": null
+          "reason": "no_eligible_provider_found_for_missing_role"
         }
       },
       {
@@ -701,102 +486,150 @@
         "source": "recovery",
         "outcome": "suggestion",
         "reasonCode": "recovery_suggestion_only",
-        "timestamp": "2026-04-19T04:36:52.875Z",
+        "timestamp": "2026-04-20T00:40:01.345Z",
         "details": {
           "reason": "no_eligible_provider_found_for_missing_role"
         }
       },
       {
         "role": "blob_store",
-        "providerId": "filesystem:backups",
-        "source": "policy",
-        "outcome": "blocked",
-        "reasonCode": "blocked_policy_conflict",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "role": "blob_store",
-          "assignedProviderId": "filesystem:data/storage",
-          "requestedProviderId": "filesystem:backups"
-        }
-      },
-      {
-        "role": "blob_store",
         "providerId": "filesystem:data/storage",
         "source": "bootstrap",
-        "outcome": "preserved",
-        "reasonCode": "explicit_assignment_preserved",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "bootstrapAttemptedProviderId": "filesystem:data/storage"
-        }
-      },
-      {
-        "role": "document_store",
-        "providerId": "filesystem:backups",
-        "source": "policy",
-        "outcome": "blocked",
-        "reasonCode": "blocked_policy_conflict",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "role": "document_store",
-          "assignedProviderId": "filesystem:data/storage",
-          "requestedProviderId": "filesystem:backups"
-        }
+        "outcome": "applied",
+        "reasonCode": "filled_missing_role_from_bootstrap",
+        "timestamp": "2026-04-20T00:40:01.346Z"
       },
       {
         "role": "document_store",
         "providerId": "filesystem:data/storage",
         "source": "bootstrap",
-        "outcome": "preserved",
-        "reasonCode": "explicit_assignment_preserved",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "bootstrapAttemptedProviderId": "filesystem:data/storage"
-        }
+        "outcome": "applied",
+        "reasonCode": "filled_missing_role_from_bootstrap",
+        "timestamp": "2026-04-20T00:40:01.346Z"
       },
       {
         "role": "backup_target",
-        "providerId": "filesystem:backups",
+        "providerId": "filesystem:data/storage",
         "source": "bootstrap",
-        "outcome": "preserved",
-        "reasonCode": "explicit_assignment_preserved",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "bootstrapAttemptedProviderId": "filesystem:backups"
-        }
-      },
-      {
-        "role": "artifact_store",
-        "providerId": "filesystem:backups",
-        "source": "policy",
-        "outcome": "blocked",
-        "reasonCode": "blocked_policy_conflict",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "role": "artifact_store",
-          "assignedProviderId": "filesystem:data/reflection/artifacts",
-          "requestedProviderId": "filesystem:backups"
-        }
+        "outcome": "applied",
+        "reasonCode": "filled_missing_role_from_bootstrap",
+        "timestamp": "2026-04-20T00:40:01.346Z"
       },
       {
         "role": "artifact_store",
         "providerId": "filesystem:data/reflection/artifacts",
         "source": "bootstrap",
-        "outcome": "preserved",
-        "reasonCode": "explicit_assignment_preserved",
-        "timestamp": "2026-04-19T04:36:52.875Z",
-        "details": {
-          "bootstrapAttemptedProviderId": "filesystem:data/reflection/artifacts"
-        }
+        "outcome": "applied",
+        "reasonCode": "filled_missing_role_from_bootstrap",
+        "timestamp": "2026-04-20T00:40:01.346Z"
       }
     ],
     "legacyBootstrap": {
       "completed": true,
-      "completedAt": "2026-04-19T04:36:52.875Z",
-      "lastAttemptAt": "2026-04-19T04:36:52.873Z",
+      "completedAt": "2026-04-20T00:40:01.346Z",
+      "lastAttemptAt": "2026-04-20T00:40:01.344Z",
       "runCount": 1,
-      "lastOutcome": "completed_with_blocked_legacy"
+      "lastOutcome": "completed"
     },
-    "updatedAt": "2026-04-19T04:36:52.875Z"
+    "updatedAt": "2026-04-20T00:40:01.355Z"
+  },
+  "guardrailPolicy": {
+    "version": 1,
+    "activeProfileId": "casual",
+    "profiles": [
+      {
+        "id": "unrestricted",
+        "name": "Unrestricted",
+        "description": "No policy rules applied.",
+        "ruleIds": [],
+        "isBuiltIn": true
+      },
+      {
+        "id": "casual",
+        "name": "Casual",
+        "description": "Basic safety warnings with tool validation checks.",
+        "ruleIds": [
+          "builtin-basic-safety-warn",
+          "builtin-local-tool-validation"
+        ],
+        "isBuiltIn": true
+      },
+      {
+        "id": "business_only",
+        "name": "Business Only",
+        "description": "Strict safety posture with capability restrictions.",
+        "ruleIds": [
+          "builtin-basic-safety-warn",
+          "builtin-local-tool-validation",
+          "builtin-deny-shell-run",
+          "builtin-deny-fs-write"
+        ],
+        "isBuiltIn": true
+      }
+    ],
+    "rules": [
+      {
+        "id": "builtin-basic-safety-warn",
+        "name": "Basic Safety Warnings",
+        "description": "Warn on baseline safety-sensitive content paths.",
+        "enabled": true,
+        "scopes": [],
+        "severity": "medium",
+        "action": "warn",
+        "validatorBindings": [],
+        "createdAt": "2026-04-20T00:42:59.843Z",
+        "updatedAt": "2026-04-20T00:42:59.843Z"
+      },
+      {
+        "id": "builtin-local-tool-validation",
+        "name": "Local Tool Validation",
+        "description": "Require validation checks before high-impact tool execution.",
+        "enabled": true,
+        "scopes": [
+          {
+            "executionType": "tool_invocation"
+          }
+        ],
+        "severity": "high",
+        "action": "require_validation",
+        "validatorBindings": [],
+        "createdAt": "2026-04-20T00:42:59.843Z",
+        "updatedAt": "2026-04-20T00:42:59.843Z"
+      },
+      {
+        "id": "builtin-deny-shell-run",
+        "name": "Deny Shell Execution",
+        "description": "Block direct shell execution for business-only posture.",
+        "enabled": true,
+        "scopes": [
+          {
+            "capability": "shell_run"
+          }
+        ],
+        "severity": "critical",
+        "action": "deny",
+        "validatorBindings": [],
+        "createdAt": "2026-04-20T00:42:59.843Z",
+        "updatedAt": "2026-04-20T00:42:59.843Z"
+      },
+      {
+        "id": "builtin-deny-fs-write",
+        "name": "Deny Filesystem Writes",
+        "description": "Block direct filesystem writes for business-only posture.",
+        "enabled": true,
+        "scopes": [
+          {
+            "capability": "fs_write"
+          }
+        ],
+        "severity": "critical",
+        "action": "deny",
+        "validatorBindings": [],
+        "createdAt": "2026-04-20T00:42:59.843Z",
+        "updatedAt": "2026-04-20T00:42:59.843Z"
+      }
+    ],
+    "validatorBindings": [],
+    "updatedAt": "2026-04-20T00:42:59.843Z"
   }
 }

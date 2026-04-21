@@ -196,11 +196,14 @@ export class InferenceService {
     private static resolveOpenTimeout(
         req: StreamInferenceRequest,
         provider: import('../../shared/inferenceProviderTypes').InferenceProviderDescriptor,
-        messages: any[]
+        messages: any[],
+        systemPromptChars: number = 0
     ): number {
         if (req.openTimeoutMs !== undefined) return req.openTimeoutMs;
 
-        const promptChars = InferenceService.countPromptChars(messages);
+        // Include system prompt length — it's passed separately and can far exceed
+        // the messages[] char count, especially in RP mode with large persona blocks.
+        const promptChars = InferenceService.countPromptChars(messages) + systemPromptChars;
 
         // Embedded providers get a generous timeout for cold starts.
         if (provider.scope === 'embedded') {
@@ -210,7 +213,7 @@ export class InferenceService {
         }
 
         // Other local providers (Ollama, vLLM, koboldcpp):
-        // Baseline covers cold-start model loading from disk (can exceed former 30 s default).
+        // Baseline covers cold-start model loading from disk.
         // Scale up for large prompts that take longer to prefill.
         if (provider.scope === 'local') {
             return promptChars > LARGE_PROMPT_CHAR_THRESHOLD
@@ -411,8 +414,8 @@ export class InferenceService {
                             onToken(chunk);
                         };
 
-                        const openTimeoutMs = InferenceService.resolveOpenTimeout(req, currentProvider, messages);
-                        const promptChars = InferenceService.countPromptChars(messages);
+                        const openTimeoutMs = InferenceService.resolveOpenTimeout(req, currentProvider, messages, systemPrompt.length);
+                        const promptChars = InferenceService.countPromptChars(messages) + systemPrompt.length;
                         attemptStartedAt = Date.now();
                         let openTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
                         const openTimeoutPromise = new Promise<never>((_, reject) => {

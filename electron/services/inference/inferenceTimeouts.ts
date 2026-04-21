@@ -26,15 +26,19 @@ export const LARGE_PROMPT_CHAR_THRESHOLD = 4_000;
 
 /**
  * Stream-open timeout for local providers (Ollama, external llama.cpp, vLLM,
- * koboldcpp). 90 s baseline covers cold-start model loading from disk.
+ * koboldcpp). 180 s baseline — covers cold-start model loading and slow RP models.
+ * NOTE: countPromptChars() only counts messages[], not the system prompt string.
+ * Keep this value generous enough for large system prompts even before the
+ * large-prompt tier activates.
  */
-export const STREAM_OPEN_TIMEOUT_LOCAL_MS = 90_000;
+export const STREAM_OPEN_TIMEOUT_LOCAL_MS = 180_000;
 
 /**
  * Stream-open timeout for local providers when the prompt is large
- * (> LARGE_PROMPT_CHAR_THRESHOLD). Extra time for prefill on CPU.
+ * (> LARGE_PROMPT_CHAR_THRESHOLD). 300 s covers RP models with large
+ * character/lore context that is slow to prefill on CPU.
  */
-export const STREAM_OPEN_TIMEOUT_LOCAL_LARGE_PROMPT_MS = 120_000;
+export const STREAM_OPEN_TIMEOUT_LOCAL_LARGE_PROMPT_MS = 300_000;
 
 /**
  * Stream-open timeout for embedded llama.cpp providers.

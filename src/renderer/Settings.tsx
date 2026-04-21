@@ -550,12 +550,20 @@ export const Settings = () => {
                     invalidSelectionCount++;
                 }
 
+                // Auto-correct: if the saved model isn't in the live list,
+                // fall back to the first available live model so the selector
+                // never defaults to a stale/unavailable entry.
+                const correctedModel = selectedModelValid
+                    ? inst.model
+                    : (liveModels.length > 0 ? liveModels[0] : inst.model);
+
                 return {
                     ...inst,
+                    model: correctedModel,
                     params: {
                         ...(inst.params || {}),
                         knownModels: liveModels,
-                        selectedModelValid,
+                        selectedModelValid: liveModels.includes(correctedModel),
                     },
                 };
             });
@@ -1574,8 +1582,19 @@ export const Settings = () => {
                                                 <label style={labelStyle}>MODEL ID</label>
                                                 {inst.params?.knownModels && inst.params.knownModels.length > 0 ? (
                                                     <select
-                                                        style={{ ...selectStyle, marginBottom: 5 }}
-                                                        value={inst.model}
+                                                        style={{
+                                                            ...selectStyle,
+                                                            marginBottom: 5,
+                                                            // Dim the control itself if the saved model isn't live
+                                                            opacity: inst.params?.selectedModelValid === false ? 0.55 : 1,
+                                                            borderColor: inst.params?.selectedModelValid === false ? '#f14c4c' : undefined,
+                                                        }}
+                                                        value={
+                                                            // If the saved model is unavailable, select the first live model
+                                                            inst.model && inst.params.knownModels.includes(inst.model)
+                                                                ? inst.model
+                                                                : (inst.params.knownModels[0] ?? '')
+                                                        }
                                                         onChange={e => {
                                                             const list = [...settings.inference.instances];
                                                             const t = list.find(i => i.id === inst.id);
@@ -1584,7 +1603,9 @@ export const Settings = () => {
                                                         }}
                                                     >
                                                         {inst.model && !inst.params.knownModels.includes(inst.model) && (
-                                                            <option value={inst.model} disabled>{`${inst.model} (Unavailable)`}</option>
+                                                            <option value={inst.model} disabled style={{ opacity: 0.4, color: '#f14c4c' }}>
+                                                                {`⚠ ${inst.model} (unavailable)`}
+                                                            </option>
                                                         )}
                                                         {inst.params.knownModels.map((m: string) => (
                                                             <option key={m} value={m}>{m}</option>

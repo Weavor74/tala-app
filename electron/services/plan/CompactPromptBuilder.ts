@@ -27,6 +27,13 @@ export interface PromptContext {
      * Set by AgentService when activeNotebookContext.id is non-null.
      */
     notebookGrounded?: boolean;
+    /**
+     * When set (RP mode), this block is prepended as the very first content in the
+     * assembled system prompt AND appended at the end, sandwiching all memory/lore
+     * blocks so the character lock is the first and last directive the model reads.
+     * This prevents [CANON LORE MEMORIES — HIGH PRIORITY] from overriding the lock.
+     */
+    rpCharacterLock?: string;
 }
 
 /**
@@ -229,6 +236,16 @@ export class CompactPromptBuilder {
 4. Tool results are informational only. Do not call tools again unless the user explicitly requests it.
 `;
 
-        return (context.userIdentity ? context.userIdentity + "\n\n" : "") + systemPromptTemplate;
+        const baseReturn = (context.userIdentity ? context.userIdentity + "\n\n" : "") + systemPromptTemplate;
+
+        // RP CHARACTER LOCK SANDWICH: inject at the very start AND reinforce at the very end.
+        // The "start" anchor ensures the model's first instruction is the character lock,
+        // overriding any [CANON LORE MEMORIES — HIGH PRIORITY] or [STRICT] memory labels
+        // that follow. The "end" anchor reinforces it via recency bias.
+        if (context.rpCharacterLock) {
+            return context.rpCharacterLock + "\n\n" + baseReturn + "\n\n" + context.rpCharacterLock;
+        }
+
+        return baseReturn;
     }
 }

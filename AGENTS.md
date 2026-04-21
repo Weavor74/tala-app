@@ -5,6 +5,8 @@
 - Core goals: durable identity, canonical memory, retrieval intelligence, tooling orchestration, reflection, and safe self-improvement.
 - Preserve existing architecture unless change is clearly required; extend before redesign.
 
+---
+
 ## Memory Authority Invariant (Non-Negotiable)
 - PostgreSQL is the only canonical durable memory authority.
 - mem0 is a candidate learning, extraction, and evaluation layer only.
@@ -13,6 +15,8 @@
 - All authoritative memory surfaced to Tala must resolve to canonical PostgreSQL-backed IDs.
 - Derived memory systems must be rebuildable from canonical PostgreSQL state.
 - No direct durable memory writes may bypass the memory authority path.
+
+---
 
 ## Engineering Invariants
 - Preserve existing IPC and service boundaries unless a change is necessary.
@@ -23,6 +27,8 @@
 - Prefer deterministic logic over prompt-dependent behavior for critical functions.
 - Do not weaken telemetry, diagnostics, policy gates, or guardrails.
 
+---
+
 ## Codex Change Behavior
 - Inspect existing code paths and contracts before editing.
 - Make surgical changes; avoid broad churn.
@@ -31,6 +37,77 @@
 - Update tests when behavior or contracts change.
 - Document any new invariant or boundary rule introduced.
 - End each task with changed files, behavior impact, and remaining gaps/risk.
+
+---
+
+## Repair Scope and Blast Radius Control (Critical)
+- All changes must be bounded and localized.
+- Default maximum:
+  - ≤ 5 files changed
+  - ≤ 1 subsystem affected
+- If a fix requires changes beyond this scope:
+  - STOP
+  - Explain why broader changes are required
+  - Do NOT proceed automatically
+- Do not propagate fixes across the system without explicit justification.
+- Do not "fix forward" downstream breakages caused by speculative edits.
+
+---
+
+## Mandatory Repair Planning Phase
+Before making any edits, the agent MUST:
+
+1. Identify root cause
+2. List exact files to modify
+3. Identify affected contracts and invariants
+4. Estimate blast radius
+5. State why the fix is safe
+
+If root cause is uncertain:
+- STOP and request clarification
+- Do NOT attempt speculative fixes
+
+---
+
+## Hard Stop Conditions (Non-Bypassable)
+The agent MUST STOP and not proceed if:
+
+- Fix requires architectural redesign
+- Fix violates any invariant in this document
+- Fix requires modifying canonical memory authority paths
+- Fix affects more than one major subsystem
+- Root cause cannot be clearly identified
+
+In these cases:
+- Provide analysis only
+- Do not modify code
+
+---
+
+## Required Verification Before Completion
+A fix is not valid unless ALL of the following pass:
+
+- TypeScript compilation succeeds
+- Relevant unit tests pass
+- Relevant integration tests pass (if applicable)
+- No contract drift (types, events, diagnostics, telemetry)
+- No invariant violations
+
+If any verification fails:
+- Revert approach
+- Re-analyze root cause
+- Do not cascade speculative fixes
+
+---
+
+## Change Discipline Rules
+- Do not introduce new abstractions unless required.
+- Do not rename or restructure without necessity.
+- Do not modify unrelated code to satisfy compilation.
+- Prefer fixing the source of truth over patching symptoms.
+- Avoid cascading edits across layers (planning → runtime → UI, etc.).
+
+---
 
 ## Documentation Completion Law (Binding)
 - Documentation is a hard completion gate for qualifying code changes.
@@ -42,10 +119,14 @@
 - Use manual narrative edits only where generated blocks are not appropriate.
 - If a required doc cannot be safely auto-regenerated, use a bounded `REVIEW_REQUIRED` section rather than speculative prose.
 
+---
+
 ## Retrieval and Derived State Rules
 - RAG is retrieval support, not durable truth storage.
 - mem0, graph, embeddings, and summaries are supportive derived layers, not authorities.
 - Retrieval may use derived layers for candidate discovery, but memory truth grounding must resolve to canonical PostgreSQL sources.
+
+---
 
 ## Reflection and Self-Modification Safety
 - Self-improvement must run inside explicit guardrails.
