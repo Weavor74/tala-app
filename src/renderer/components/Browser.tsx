@@ -39,6 +39,11 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
     // Stable partition ID to prevent resets
     const [partitionId] = useState("persist:tala-browser-v1");
     const [preloadPath, setPreloadPath] = useState<string>('');
+    const focusDebugEnabled = window.localStorage?.getItem('tala.debug.focus') === '1';
+    const logFocus = (message: string, meta?: Record<string, unknown>) => {
+        if (!focusDebugEnabled) return;
+        console.debug('[FocusDebug][Browser]', message, meta || {});
+    };
 
     useEffect(() => {
         if (initialUrl && initialUrl !== url) {
@@ -121,7 +126,14 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
                         setCursor({ x, y, show: true });
 
                         // 1. Focus & Move
-                        webview.focus();
+                        // Keep background automation possible, but avoid stealing UI focus
+                        // from chat/editor surfaces when this browser tab is inactive.
+                        if (isActive !== false) {
+                            webview.focus();
+                            logFocus('Focused active webview for click_coords');
+                        } else {
+                            logFocus('Skipped webview focus for inactive tab click_coords');
+                        }
                         webview.sendInputEvent({ type: 'mouseMove', x, y });
 
                         // 2. Click Sequence (simulate human duration)
@@ -318,6 +330,19 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
         return () => api.off('agent-event', handleAgentEvent);
     }, [isActive]);
 
+    useEffect(() => {
+        const webview = webviewRef.current;
+        if (!webview || isActive !== false) return;
+        try {
+            if (typeof webview.blur === 'function') {
+                webview.blur();
+                logFocus('Blurred inactive webview');
+            }
+        } catch {
+            // no-op: blur is best-effort for inactive webview focus release
+        }
+    }, [isActive]);
+
     if (!preloadPath) {
         return (
             <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#333', color: '#ff6b6b', flexDirection: 'column' }}>
@@ -402,7 +427,9 @@ const Browser: React.FC<any> = ({ initialUrl, onClose, onUrlChange, isActive }) 
                             height: '100%',
                             position: 'absolute',
                             top: 0,
-                            left: 0
+                            left: 0,
+                            visibility: isActive === false ? 'hidden' : 'visible',
+                            pointerEvents: isActive === false ? 'none' : 'auto'
                         }}
                     />
                 ) : (

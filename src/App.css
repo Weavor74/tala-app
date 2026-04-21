@@ -221,6 +221,12 @@ body {
   pointer-events: none;
 }
 
+/* Electron webview can still contend for input when only CSS-hidden by parent.
+   Force hard hide for inactive tab containers. */
+.view-container.hidden webview {
+  display: none !important;
+}
+
 /* Bottom Panel (Overlay style or flex?) -> Let's do Flex */
 .bottom-panel {
   /* height set by inline style */

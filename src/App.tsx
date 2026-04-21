@@ -381,8 +381,39 @@ function App() {
 
   // Global Keyboard Shortcuts
   useEffect(() => {
+    const focusDebugEnabled = window.localStorage?.getItem('tala.debug.focus') === '1';
+    const logFocus = (message: string, meta?: Record<string, unknown>) => {
+      if (!focusDebugEnabled) return;
+      console.debug('[FocusDebug][App]', message, meta || {});
+    };
+
+    const isEditableElement = (target: EventTarget | null): boolean => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+
+    const focusChatInput = () => {
+      if (!isRightPanelOpen) {
+        logFocus('Opening chat panel before focus');
+        setIsRightPanelOpen(true);
+      }
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus();
+        logFocus('Focused chat input via shortcut', { hasRef: !!chatInputRef.current });
+      });
+    };
+
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      const isEditableTarget = isEditableElement(e.target);
+      const isChatTarget = e.target === chatInputRef.current;
+
+      if (isEditableTarget && !isChatTarget && !(mod && e.shiftKey && e.key.toLowerCase() === 'p')) {
+        logFocus('Skipped global shortcut due to editable non-chat target');
+        return;
+      }
 
       // Escape — cancel streaming
       if (e.key === 'Escape' && isStreaming && api?.cancelChat) {
@@ -394,7 +425,7 @@ function App() {
       // Ctrl+Shift+P — focus chat input
       if (mod && e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        chatInputRef.current?.focus();
+        focusChatInput();
         return;
       }
 
@@ -424,7 +455,7 @@ function App() {
         e.preventDefault();
         setMessages([]);
         if (api?.clearChatHistory) api.clearChatHistory();
-        chatInputRef.current?.focus();
+        focusChatInput();
         return;
       }
 
@@ -442,7 +473,7 @@ function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [isStreaming, api]);
+  }, [isStreaming, api, isRightPanelOpen]);
 
   const toggleSidebar = (view: string) => {
     if (activeView === view) {
@@ -1034,6 +1065,28 @@ function App() {
     }
   };
 
+  const handleChatInputAreaMouseDown = (e: React.MouseEvent) => {
+    const focusDebugEnabled = window.localStorage?.getItem('tala.debug.focus') === '1';
+    const logFocus = (message: string, meta?: Record<string, unknown>) => {
+      if (!focusDebugEnabled) return;
+      console.debug('[FocusDebug][ChatArea]', message, meta || {});
+    };
+
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    const tag = target.tagName;
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'BUTTON' || tag === 'LABEL' || tag === 'SELECT') {
+      logFocus('Skipped focus reclaim for interactive child', { tag });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+      logFocus('Focused chat input via chat area click', { hasRef: !!chatInputRef.current });
+    });
+  };
+
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -1288,8 +1341,19 @@ function App() {
           </div>
 
           {/* TAB CONTENT */}
-          {tabs.map(tab => (
-            <div key={tab.id} className={`view-container ${activeTabId === tab.id && activeView !== 'profile' && activeView !== 'settings' && activeView !== 'search' ? '' : 'hidden'}`}>
+          {tabs.map(tab => {
+            const isTabVisible =
+              activeTabId === tab.id &&
+              activeView !== 'profile' &&
+              activeView !== 'settings' &&
+              activeView !== 'search';
+
+            return (
+            <div
+              key={tab.id}
+              className={`view-container ${isTabVisible ? '' : 'hidden'}`}
+              style={tab.type === 'browser' && !isTabVisible ? { display: 'none' } : undefined}
+            >
               {tab.type === 'browser' && (
                 <Browser key={tab.id} initialUrl={tab.data.url} isActive={activeTabId === tab.id} />
               )}
@@ -1327,7 +1391,8 @@ function App() {
                 />
               )}
             </div>
-          ))}
+            );
+          })}
 
           <div className={`view-container ${tabs.length === 0 && activeView !== 'profile' && activeView !== 'settings' && activeView !== 'search' ? '' : 'hidden'}`}>
             <div style={{ textAlign: 'center', marginTop: 100, opacity: 0.5 }}>
@@ -1598,7 +1663,7 @@ function App() {
             ))}
             <div ref={chatEndRef} />
           </div>
-          <div className="chat-input-area">
+          <div className="chat-input-area" onMouseDown={handleChatInputAreaMouseDown}>
             {pendingImages.length > 0 && (
               <div style={{ display: 'flex', gap: 5, padding: '5px 10px', background: '#252526' }}>
                 {pendingImages.map((img, idx) => (
