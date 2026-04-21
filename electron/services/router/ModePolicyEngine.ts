@@ -210,8 +210,8 @@ export class ModePolicyEngine {
         intentClass: string,
         isGreeting: boolean,
     ): TurnPolicyId {
-        if (isGreeting || intentClass === 'greeting') return 'greeting';
         if (mode === 'rp') return 'immersive_roleplay';
+        if (isGreeting || intentClass === 'greeting') return 'greeting';
         if (intentClass === 'lore' || intentClass === 'narrative') return 'immersive_roleplay';
         if (['coding', 'technical', 'action', 'browser'].includes(intentClass)) return 'technical_execution';
         if (intentClass === 'social') return 'normal_hybrid_conversation';

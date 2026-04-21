@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { IntentClassifier } from '../../services/router/IntentClassifier';
 import { TalaContextRouter } from '../../services/router/TalaContextRouter';
+import { ModePolicyEngine } from '../../services/router/ModePolicyEngine';
 import { MemoryFilter } from '../../services/router/MemoryFilter';
 import { MemoryItem } from '../../services/MemoryService';
 import { MockMemoryService } from './MockServices';
@@ -71,6 +72,65 @@ describe('IntentClassifier — social / affectionate prompts', () => {
         const result = IntentClassifier.classify("I'm happy you're here");
         expect(['social', 'greeting']).toContain(result.class);
         expect(result.class).not.toBe('technical');
+    });
+});
+
+describe('IntentClassifier — expressive greeting opener refinement', () => {
+    it('"hey sexy" → social, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('hey sexy');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"hey trouble" → social, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('hey trouble');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"hey babe" → social, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('hey babe');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"hello handsome" → social, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('hello handsome');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"miss me?" → social opener, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('miss me?');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"well hello there, trouble" → social, NOT plain greeting', () => {
+        const result = IntentClassifier.classify('well hello there, trouble');
+        expect(result.class).toBe('social');
+        expect(result.class).not.toBe('greeting');
+    });
+
+    it('"hi" → greeting', () => {
+        const result = IntentClassifier.classify('hi');
+        expect(result.class).toBe('greeting');
+    });
+
+    it('"hello" → greeting', () => {
+        const result = IntentClassifier.classify('hello');
+        expect(result.class).toBe('greeting');
+    });
+
+    it('"good morning" → greeting', () => {
+        const result = IntentClassifier.classify('good morning');
+        expect(result.class).toBe('greeting');
+    });
+
+    it('"I feel weird today" → not accidentally reclassified as greeting/social', () => {
+        const result = IntentClassifier.classify('I feel weird today');
+        expect(result.class).not.toBe('greeting');
+        expect(result.class).not.toBe('social');
     });
 });
 
@@ -426,9 +486,10 @@ describe('TalaContextRouter — greeting suppression policy', () => {
         router = new TalaContextRouter(memory as any);
     });
 
-    it('pure greeting suppresses retrieval', async () => {
-        const ctx = await router.process('greet-sup-1', 'Good morning', 'rp');
+    it('pure greeting suppresses retrieval in non-RP mode', async () => {
+        const ctx = await router.process('greet-sup-1', 'Good morning', 'assistant');
         expect(ctx.retrieval.suppressed).toBe(true);
+        expect(ctx.turnPolicy.policyId).toBe('greeting');
     });
 
     it('autobiographical prompt does NOT suppress retrieval in RP mode', async () => {
@@ -451,6 +512,52 @@ describe('TalaContextRouter — greeting suppression policy', () => {
         const ctx = await router.process('lore-approved-1', 'Tell me about when you were 17', 'rp');
         expect(ctx.retrieval.suppressed).toBe(false);
         expect(ctx.retrieval.approvedCount).toBeGreaterThan(0);
+    });
+});
+
+describe('TalaContextRouter — RP turn-policy precedence over greeting policy', () => {
+    let router: TalaContextRouter;
+    let memory: MockMemoryService;
+
+    beforeEach(() => {
+        memory = new MockMemoryService();
+        router = new TalaContextRouter(memory as any);
+    });
+
+    it('mode=rp + plain greeting resolves to immersive_roleplay, not greeting', async () => {
+        const ctx = await router.process('rp-greet-policy-1', 'hello', 'rp');
+        expect(ctx.resolvedMode).toBe('rp');
+        expect(ctx.turnPolicy.policyId).toBe('immersive_roleplay');
+        expect(ctx.turnPolicy.personalityLevel).toBe('full');
+        expect(ctx.turnBehavior.immersiveStyle).toBe(true);
+        expect(ctx.turnBehavior.personalityLevel).toBe('full');
+    });
+
+    it('mode=rp + social opener retains RP behavior authority', async () => {
+        const ctx = await router.process('rp-greet-policy-2', 'hey sexy', 'rp');
+        expect(ctx.resolvedMode).toBe('rp');
+        expect(ctx.turnPolicy.policyId).toBe('immersive_roleplay');
+        expect(ctx.turnBehavior.immersiveStyle).toBe(true);
+        expect(ctx.turnBehavior.toneProfile).toBe('immersive');
+    });
+
+    it('mode=assistant + plain greeting stays on generic greeting policy', async () => {
+        const ctx = await router.process('assist-greet-policy-1', 'hello', 'assistant');
+        expect(ctx.turnPolicy.policyId).toBe('greeting');
+        expect(ctx.turnPolicy.personalityLevel).toBe('minimal');
+        expect(ctx.turnBehavior.immersiveStyle).toBe(false);
+    });
+
+    it('mode=hybrid + plain greeting remains unchanged on generic greeting policy', async () => {
+        const ctx = await router.process('hybrid-greet-policy-1', 'good morning', 'hybrid');
+        expect(ctx.turnPolicy.policyId).toBe('greeting');
+        expect(ctx.turnPolicy.personalityLevel).toBe('minimal');
+        expect(ctx.turnBehavior.immersiveStyle).toBe(false);
+    });
+
+    it('ModePolicyEngine keeps non-greeting technical policy family unchanged', () => {
+        const policyId = ModePolicyEngine.resolveTurnPolicyId('assistant', 'technical', false);
+        expect(policyId).toBe('technical_execution');
     });
 });
 

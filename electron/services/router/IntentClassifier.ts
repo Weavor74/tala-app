@@ -32,6 +32,8 @@ export interface Intent {
 }
 
 export class IntentClassifier {
+    private static readonly AFFECTIONATE_SUFFIX_TRIM = /(\s+)?(baby|babe|love|dear|sweetie|friend|tala|tally)$/i;
+
     private static readonly GREETING_PATTERNS = [
         /^(hi|hello|hey|greetings|yo|morning|afternoon|evening|hola|bonjour)/i,
         /^(good\s+)?(morning|afternoon|evening|night|day)/i,
@@ -109,16 +111,38 @@ export class IntentClassifier {
         /\b(i\s+(love|miss|need|want)\s+you|you\s+mean|feeling|emotions?|affection)\b/i,
     ];
 
+    // Tone-bearing greeting openers that are socially expressive (often flirtatious)
+    // and should not collapse into plain low-substance greeting handling.
+    private static readonly EXPRESSIVE_GREETING_PATTERNS = [
+        /\b(sexy|handsome|beautiful|gorgeous|hot|cutie|cutiepie|babe|baby|trouble)\b/i,
+        /\b(miss\s+me\??)\b/i,
+        /\bwell\s+hello\b/i,
+    ];
+
+    private static isExpressiveGreeting(text: string, hasGreeting: boolean): boolean {
+        const hasExpressiveLexicalCue = /\b(sexy|handsome|beautiful|gorgeous|hot|cutie|cutiepie|babe|baby|trouble)\b/i.test(text);
+        const hasMissMeCue = /\bmiss\s+me\??\b/i.test(text);
+        const hasWellHelloCue = /\bwell\s+hello\b/i.test(text);
+
+        if (!hasGreeting) {
+            // Allow expressive openers that don't match the strict greeting-start regex.
+            return hasMissMeCue || (hasWellHelloCue && hasExpressiveLexicalCue);
+        }
+        return this.EXPRESSIVE_GREETING_PATTERNS.some(p => p.test(text));
+    }
+
     public static classify(input: string): Intent {
         const text = input.trim().toLowerCase();
+        const greetingNormalized = text.replace(this.AFFECTIONATE_SUFFIX_TRIM, '');
 
         // 1. Detect individual intent signals
-        const hasGreeting = this.GREETING_PATTERNS.some(p => p.test(text.replace(/(\s+)?(baby|love|dear|sweetie|friend|tala|tally)$/i, '')));
+        const hasGreeting = this.GREETING_PATTERNS.some(p => p.test(greetingNormalized));
         const hasTechnical = this.TECHNICAL_PATTERNS.some(p => p.test(text));
         const hasLore = this.LORE_PATTERNS.some(p => p.test(text));
         const hasRpIdentityOntology = this.RP_IDENTITY_ONTOLOGY_PATTERNS.some(p => p.test(text));
         const hasBrowser = this.BROWSER_PATTERNS.some(p => p.test(text));
         const hasSocial = this.SOCIAL_PATTERNS.some(p => p.test(text));
+        const hasExpressiveGreeting = this.isExpressiveGreeting(text, hasGreeting);
 
         // 2. Browser intent takes high precedence — it is explicit and unambiguous
         if (hasBrowser) {
@@ -137,13 +161,23 @@ export class IntentClassifier {
         // Exception: when the prompt also contains a strong lore/autobiographical signal, the
         // substantive request overrides the social opener — retrieval must not be suppressed.
         if (hasSocial && !hasTechnical && !hasLore) {
-            const baseClass = hasGreeting ? 'greeting' : 'social';
+            const baseClass = (hasGreeting && !hasExpressiveGreeting) ? 'greeting' : 'social';
             console.log(`[IntentClassifier] intent=${baseClass} confidence=0.92 reason=social_override`);
             return {
                 class: baseClass,
                 confidence: 0.92,
                 subsystem: 'social',
                 precedenceLog: 'Social(affectionate/relational) > Technical (no operational verb)'
+            };
+        }
+
+        if (hasExpressiveGreeting && !hasTechnical && !hasLore) {
+            console.log(`[IntentClassifier] intent=social confidence=0.92 reason=expressive_greeting`);
+            return {
+                class: 'social',
+                confidence: 0.92,
+                subsystem: 'social',
+                precedenceLog: 'Expressive greeting > Plain greeting',
             };
         }
 

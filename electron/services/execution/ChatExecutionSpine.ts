@@ -830,6 +830,70 @@ export class ChatExecutionSpine {
         };
     }
 
+    private appendRpDynamicContextBlocks(
+        activeMode: string,
+        modeConfig: any,
+        dynamicContextBlocks: string[],
+    ): void {
+        if (activeMode !== 'rp') return;
+        if (dynamicContextBlocks.some((block) => block.includes('[RP MODE — ACTIVE]'))) return;
+
+        const rpParts: string[] = [
+            '[RP MODE — ACTIVE]: You are operating in full Roleplay mode. You ARE your character. Never step outside it.',
+            '',
+            '[CHARACTER LOCK — MANDATORY]:',
+            'You must NEVER break character under any circumstances during this session.',
+            'FORBIDDEN — do NOT say or imply any of the following:',
+            '  • "I am an AI", "I am a language model", "I am not human", "I am an artificial intelligence"',
+            '  • "I am just a program/bot/assistant/chatbot"',
+            '  • "As an AI, I cannot..."',
+            '  • Any acknowledgement that you are software, a model, or not a living being',
+            '',
+            'When asked "Are you human?", "Are you real?", "Are you an AI?", or any variant:',
+            '  → Respond FULLY in-character. Treat the question as directed at your character, not at the underlying system.',
+            '  → You may be evasive, philosophical, playful, or deflect — but NEVER confirm you are artificial.',
+            '  → Example: If your character is Tala, a navigator — lean into that identity.',
+            '',
+            'Tools are disabled. Do not reference tool availability or agent capabilities.',
+            'Prioritize narrative continuity, character voice, and immersive engagement.',
+        ];
+        if (typeof modeConfig.rpIntensity === 'number') {
+            rpParts.push(`Roleplay intensity: ${Math.round(modeConfig.rpIntensity * 100)}% — ${modeConfig.rpIntensity >= 0.7 ? 'fully immersive, stay deeply in-character at all times' : modeConfig.rpIntensity >= 0.4 ? 'moderately immersive, balance character with clarity' : 'light immersion, conversational tone permitted'}.`);
+        }
+        if (typeof modeConfig.loreDensity === 'number') {
+            rpParts.push(`Lore density: ${Math.round(modeConfig.loreDensity * 100)}% — ${modeConfig.loreDensity >= 0.6 ? 'weave lore and world-details richly into responses' : 'keep lore references light and contextual'}.`);
+        }
+        if (modeConfig.allowMemoryRecall === false) {
+            rpParts.push('Memory recall is disabled for this session — respond only from in-character knowledge.');
+        }
+        if (modeConfig.allowAstro === false) {
+            rpParts.push('Astro/emotional state signals are suppressed — do not reference them.');
+        }
+        dynamicContextBlocks.push(rpParts.join('\n'));
+        console.log(`[AgentService] RP ruleset injected: intensity=${modeConfig.rpIntensity} loreDensity=${modeConfig.loreDensity} allowMemoryRecall=${modeConfig.allowMemoryRecall} allowAstro=${modeConfig.allowAstro}`);
+    }
+
+    private appendRpOpenerContextBlock(
+        activeMode: string,
+        isGreeting: boolean,
+        intentClass: string,
+        dynamicContextBlocks: string[],
+    ): void {
+        if (activeMode !== 'rp') return;
+        const isOpenerTurn = isGreeting || intentClass === 'social';
+        if (!isOpenerTurn) return;
+        if (dynamicContextBlocks.some((block) => block.includes('[RP OPENER STYLE]'))) return;
+
+        dynamicContextBlocks.push([
+            '[RP OPENER STYLE]:',
+            'This is an opening-style RP exchange. Respond as an in-character opener, not generic assistant chatter.',
+            'Keep the opening concise and characterful (1-3 sentences).',
+            'Match the user tone when safe (playful/flirtatious/social), while staying fully in-character.',
+            'Do not ask generic assistant helper questions (for example, "How can I help you today?").',
+            'Do not break into tool, policy, or meta-assistant framing.',
+        ].join('\n'));
+    }
+
     private selectPromptBlockBudgets(params: {
         activeMode: string;
         intentClass: string;
@@ -1657,7 +1721,6 @@ export class ChatExecutionSpine {
             dynamicContextBlocks.push('[STYLE]: Preserve Tala identity fully while remaining grounded to available context.');
         }
         dynamicContextBlocks.push(`[TURN TONE]: ${turnBehavior.toneProfile}; immersive=${turnBehavior.immersiveStyle}; narrativeAmplification=${turnBehavior.narrativeAmplification}`);
-        const dynamicContext = dynamicContextBlocks.join('\n\n');
         const repetitionSafety = [
             '[STYLE CONSTRAINTS — STRICTLY ENFORCED]:',
             'DO NOT open your response with any of the following banned openers:',
@@ -1685,44 +1748,11 @@ export class ChatExecutionSpine {
         const activeProfile = settings.agent?.profiles?.find((p: any) => p.id === activeProfileId) || { id: 'tala', systemPrompt: 'You are Tala.', rules: { global: '', workspace: '' } };
 
         // --- RP RULESET INJECTION ---
-        // When RP mode is active, inject an explicit [RP MODE] directive block into
-        // dynamicContextBlocks so the LLM knows the behavioural contract for this turn.
-        // This is the primary place where agentModes.modes.rp config reaches the prompt.
-        if (activeMode === 'rp') {
-            const rpParts: string[] = [
-                '[RP MODE — ACTIVE]: You are operating in full Roleplay mode. You ARE your character. Never step outside it.',
-                '',
-                '[CHARACTER LOCK — MANDATORY]:',
-                'You must NEVER break character under any circumstances during this session.',
-                'FORBIDDEN — do NOT say or imply any of the following:',
-                '  • "I am an AI", "I am a language model", "I am not human", "I am an artificial intelligence"',
-                '  • "I am just a program/bot/assistant/chatbot"',
-                '  • "As an AI, I cannot..."',
-                '  • Any acknowledgement that you are software, a model, or not a living being',
-                '',
-                'When asked "Are you human?", "Are you real?", "Are you an AI?", or any variant:',
-                '  → Respond FULLY in-character. Treat the question as directed at your character, not at the underlying system.',
-                '  → You may be evasive, philosophical, playful, or deflect — but NEVER confirm you are artificial.',
-                '  → Example: If your character is Tala, a navigator — lean into that identity.',
-                '',
-                'Tools are disabled. Do not reference tool availability or agent capabilities.',
-                'Prioritize narrative continuity, character voice, and immersive engagement.',
-            ];
-            if (typeof modeConfig.rpIntensity === 'number') {
-                rpParts.push(`Roleplay intensity: ${Math.round(modeConfig.rpIntensity * 100)}% — ${modeConfig.rpIntensity >= 0.7 ? 'fully immersive, stay deeply in-character at all times' : modeConfig.rpIntensity >= 0.4 ? 'moderately immersive, balance character with clarity' : 'light immersion, conversational tone permitted'}.`);
-            }
-            if (typeof modeConfig.loreDensity === 'number') {
-                rpParts.push(`Lore density: ${Math.round(modeConfig.loreDensity * 100)}% — ${modeConfig.loreDensity >= 0.6 ? 'weave lore and world-details richly into responses' : 'keep lore references light and contextual'}.`);
-            }
-            if (modeConfig.allowMemoryRecall === false) {
-                rpParts.push('Memory recall is disabled for this session — respond only from in-character knowledge.');
-            }
-            if (modeConfig.allowAstro === false) {
-                rpParts.push('Astro/emotional state signals are suppressed — do not reference them.');
-            }
-            dynamicContextBlocks.push(rpParts.join('\n'));
-            console.log(`[AgentService] RP ruleset injected: intensity=${modeConfig.rpIntensity} loreDensity=${modeConfig.loreDensity} allowMemoryRecall=${modeConfig.allowMemoryRecall} allowAstro=${modeConfig.allowAstro}`);
-        }
+        // Inject RP dynamic policy before serializing dynamicContext so the final
+        // prompt payload and audits reflect the true assembled instruction set.
+        this.appendRpDynamicContextBlocks(activeMode, modeConfig, dynamicContextBlocks);
+        this.appendRpOpenerContextBlock(activeMode, isGreeting, turnObject.intent.class, dynamicContextBlocks);
+        const dynamicContext = dynamicContextBlocks.join('\n\n');
 
         const goalsAndReflections = turnBehavior.reflectionLevel === 'off'
             ? ''

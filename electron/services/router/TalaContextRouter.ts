@@ -824,7 +824,7 @@ export class TalaContextRouter {
         const policyId = this.resolveTurnPolicyId(mode, intent.class, isGreetingOnly, query);
         const turnPolicy = this.resolveTurnPolicy(mode, policyId, intent.class, isGreetingOnly);
         const turnBehaviorBaseline = this.createTurnBehaviorBaseline();
-        const turnBehavior = this.applyTurnPolicyToBehavior(turnBehaviorBaseline, turnPolicy);
+        const turnBehavior = this.applyTurnPolicyToBehavior(mode, turnBehaviorBaseline, turnPolicy);
         const retrievalSuppressed = turnPolicy.memoryReadPolicy === 'blocked';
 
         console.log(`[TalaRouter] Intent: ${intent.class} | Suppressed: ${retrievalSuppressed} | Reason: ${intent.precedenceLog || 'standard'} `);
@@ -1394,8 +1394,9 @@ export class TalaContextRouter {
     }
 
     private resolveTurnPolicyId(mode: Mode, intentClass: string, isGreeting: boolean, query: string): TurnPolicyId {
+        if (mode === 'rp') return 'immersive_roleplay';
         if (isGreeting || intentClass === 'greeting') return 'greeting';
-        if (mode === 'rp' || intentClass === 'lore' || intentClass === 'narrative') return 'immersive_roleplay';
+        if (intentClass === 'lore' || intentClass === 'narrative') return 'immersive_roleplay';
         if (['coding', 'technical', 'action', 'browser'].includes(intentClass)) return 'technical_execution';
         if (TalaContextRouter.FACTUAL_QUERY_PATTERNS.some((p) => p.test(query))) return 'factual_query';
         return ModePolicyEngine.resolveTurnPolicyId(mode, intentClass, isGreeting);
@@ -1438,18 +1439,37 @@ export class TalaContextRouter {
         };
     }
 
+    private resolveBehaviorProfile(mode: Mode, policy: TurnPolicyState): TurnPolicyState {
+        if (mode !== 'rp' || policy.policyId === 'immersive_roleplay') {
+            return policy;
+        }
+
+        // Behavior-level hardening: RP turns should never collapse into minimal greeting
+        // shaping due to shared defaults/fallbacks. Reuse the existing immersive profile.
+        const immersive = ModePolicyEngine.getTurnPolicy('immersive_roleplay');
+        return {
+            ...policy,
+            personalityLevel: immersive.personalityLevel,
+            astroLevel: immersive.astroLevel,
+            reflectionLevel: immersive.reflectionLevel,
+            responseStyle: immersive.responseStyle,
+        };
+    }
+
     private applyTurnPolicyToBehavior(
+        mode: Mode,
         baseline: TurnBehaviorState,
         policy: TurnPolicyState,
     ): TurnBehaviorState {
+        const behaviorProfile = this.resolveBehaviorProfile(mode, policy);
         const applied: TurnBehaviorState = {
             ...baseline,
-            personalityLevel: policy.personalityLevel,
-            astroLevel: policy.astroLevel,
-            reflectionLevel: policy.reflectionLevel,
-            toneProfile: this.mapToneProfile(policy.responseStyle),
-            immersiveStyle: policy.policyId === 'immersive_roleplay',
-            narrativeAmplification: policy.policyId === 'immersive_roleplay',
+            personalityLevel: behaviorProfile.personalityLevel,
+            astroLevel: behaviorProfile.astroLevel,
+            reflectionLevel: behaviorProfile.reflectionLevel,
+            toneProfile: this.mapToneProfile(behaviorProfile.responseStyle),
+            immersiveStyle: mode === 'rp' || behaviorProfile.policyId === 'immersive_roleplay',
+            narrativeAmplification: mode === 'rp' || behaviorProfile.policyId === 'immersive_roleplay',
             source: 'fresh',
         };
         return applied;
