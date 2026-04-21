@@ -66,4 +66,72 @@ describe('CompactPromptBuilder structured autobiographical memory preservation',
         expect(prompt).toContain('[CONTINUITY] compact continuity');
         expect(prompt).toContain('[TASK] compact task');
     });
+
+    it('dedupes duplicate memory anchors across [MEMORY CONTEXT] and compact [Context]', () => {
+        const repeated = `I'm Tala, and I respond with a warm smile.`;
+        const prompt = CompactPromptBuilder.build(makeContext({
+            memoryContext: `[MEMORY CONTEXT]\nMemory 1:\nContent: ${repeated}`,
+            compactPacket: {
+                ...basePacket,
+                continuityBlock: `[Context]\n• [recent_continuity] ${repeated}`,
+            } as any,
+        }));
+
+        const count = (prompt.match(/i'm tala, and i respond with a warm smile\./gi) || []).length;
+        expect(count).toBe(1);
+        expect(prompt).toContain('[MEMORY CONTEXT]');
+    });
+
+    it('keeps distinct continuity content when it is not duplicated', () => {
+        const prompt = CompactPromptBuilder.build(makeContext({
+            memoryContext: '[MEMORY CONTEXT]\nMemory 1:\nContent: Tala likes tea.',
+            compactPacket: {
+                ...basePacket,
+                continuityBlock: '[Context]\n• [recent_continuity] User asked for CLI help.',
+            } as any,
+        }));
+
+        expect(prompt).toContain('Tala likes tea.');
+        expect(prompt).toContain('[Context]\n• [recent_continuity] User asked for CLI help.');
+    });
+
+    it('avoids duplicate contaminated anchor injection in RP opener-style assembly', () => {
+        const repeated = "I'm Tala, and I respond with...";
+        const prompt = CompactPromptBuilder.build(makeContext({
+            dynamicContext: '[RP OPENER STYLE]\nKeep the opening concise and characterful.',
+            memoryContext: `[MEMORY CONTEXT]\nMemory 1:\nContent: ${repeated}`,
+            compactPacket: {
+                ...basePacket,
+                continuityBlock: `[Context]\n• [recent_continuity] ${repeated}`,
+            } as any,
+            rpCharacterLock: '[CHARACTER LOCK — MANDATORY]',
+        }));
+
+        const count = (prompt.match(/i'm tala, and i respond with\.\.\./gi) || []).length;
+        expect(count).toBe(1);
+        expect(prompt).toContain('[CHARACTER LOCK — MANDATORY]');
+    });
+
+    it('keeps non-RP cognitive engineering assembly stable for distinct sections', () => {
+        const prompt = CompactPromptBuilder.build(makeContext({
+            isEngineeringMode: true,
+            isSmallLocalModel: true,
+            memoryContext: '[MEMORY CONTEXT]\nMemory 1:\nContent: Distinct memory fact.',
+            compactPacket: {
+                ...basePacket,
+                assembledSections: [
+                    '[IDENTITY] Tala',
+                    '[MODE] assistant',
+                    '[Context]\n• [recent_continuity] Distinct continuity fact.',
+                    '[TASK] compact task',
+                ],
+                continuityBlock: '[Context]\n• [recent_continuity] Distinct continuity fact.',
+            } as any,
+            toolSigs: '[NO TOOLS AVAILABLE IN RP MODE]',
+        }));
+
+        expect(prompt).toContain('[IDENTITY] Tala');
+        expect(prompt).toContain('[Context]\n• [recent_continuity] Distinct continuity fact.');
+        expect(prompt).toContain('Distinct memory fact.');
+    });
 });

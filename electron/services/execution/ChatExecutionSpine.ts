@@ -1606,6 +1606,17 @@ export class ChatExecutionSpine {
         return { browserTaskHadSuccessfulAction };
     }
 
+    private shouldPersistPostTurnMemory(params: {
+        finalResponse: string | null;
+        memoryCapabilityEnabled: boolean;
+        memoryWriteDecisionCategory?: string | null;
+    }): boolean {
+        if (!params.finalResponse || !params.memoryCapabilityEnabled) {
+            return false;
+        }
+        return params.memoryWriteDecisionCategory !== 'do_not_write';
+    }
+
     private async runExecutionLoop(prompt: PromptBuildResult): Promise<LoopExecutionResult> {
         const { assembly } = prompt;
         const { input } = assembly;
@@ -2845,7 +2856,13 @@ Failure to provide a tool call will result in system termination.`;
         }
 
         // --- Post-response memory storage (fire-and-forget, non-blocking) ---
-        if (finalResponse && settings.agent?.capabilities?.memory !== false) {
+        const memoryCapabilityEnabled = settings.agent?.capabilities?.memory !== false;
+        const memoryWriteDecisionCategory = turnObject?.memoryWriteDecision?.category;
+        if (this.shouldPersistPostTurnMemory({
+            finalResponse,
+            memoryCapabilityEnabled,
+            memoryWriteDecisionCategory,
+        })) {
             const storeMemories = async () => {
                 // ── Memory Integrity Policy gate ──────────────────────────────
                 // Evaluate health before any write. If hard-disabled (critical/
@@ -3116,6 +3133,11 @@ Failure to provide a tool call will result in system termination.`;
                 }
             };
             storeMemories(); // fire-and-forget
+        } else if (finalResponse && memoryCapabilityEnabled && memoryWriteDecisionCategory === 'do_not_write') {
+            console.log(
+                `[AgentService] Skipping post-turn memory persistence for turn=${turnId} ` +
+                `because memoryWriteDecision=do_not_write`,
+            );
         }
 
         // --- PHASE 3A: POST-TURN REFLECTION SIGNAL ---

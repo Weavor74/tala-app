@@ -321,6 +321,48 @@ describe('ChatExecutionSpine regression contracts', () => {
         });
     });
 
+    describe('Post-turn memory write gating', () => {
+        it('does not persist when memoryWriteDecision is do_not_write', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const shouldPersist = (spine as any).shouldPersistPostTurnMemory({
+                finalResponse: 'reply',
+                memoryCapabilityEnabled: true,
+                memoryWriteDecisionCategory: 'do_not_write',
+            });
+            expect(shouldPersist).toBe(false);
+        });
+
+        it('persists normal allowed-write turns', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const shouldPersist = (spine as any).shouldPersistPostTurnMemory({
+                finalResponse: 'reply',
+                memoryCapabilityEnabled: true,
+                memoryWriteDecisionCategory: 'short_term',
+            });
+            expect(shouldPersist).toBe(true);
+        });
+
+        it('keeps RP greeting/opening turns non-persistent when marked do_not_write', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const shouldPersist = (spine as any).shouldPersistPostTurnMemory({
+                finalResponse: 'hey there',
+                memoryCapabilityEnabled: true,
+                memoryWriteDecisionCategory: 'do_not_write',
+            });
+            expect(shouldPersist).toBe(false);
+        });
+
+        it('keeps unrelated memory-capable turns unchanged when writes are allowed', () => {
+            const spine = new ChatExecutionSpine(createAgentMock());
+            const shouldPersist = (spine as any).shouldPersistPostTurnMemory({
+                finalResponse: 'done',
+                memoryCapabilityEnabled: true,
+                memoryWriteDecisionCategory: 'long_term',
+            });
+            expect(shouldPersist).toBe(true);
+        });
+    });
+
     describe('Loop helper behavior', () => {
         it('continues browser no-tool iteration when continuation steps remain', () => {
             const spine = new ChatExecutionSpine(createAgentMock());

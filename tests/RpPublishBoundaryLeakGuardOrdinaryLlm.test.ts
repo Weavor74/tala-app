@@ -4,8 +4,6 @@
  * Verifies that the universal RP publish-boundary guard catches and rewrites
  * assistant/meta ontology leakage in ordinary LLM output routed through the
  * standard chat path.
- *
- * Tests: RPLG-01 – RPLG-06
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,7 +19,31 @@ const BASE_INPUT: Omit<RpPublishGuardInput, 'finalText'> = {
     routeSource: 'router',
 };
 
-describe('RP publish boundary leak guard — ordinary LLM output', () => {
+describe('RP publish boundary leak guard - ordinary LLM output', () => {
+    it('RPLG-00: rewrites meta-template "I am/\'m Tala, and I respond with..." narration', () => {
+        const result = applyRpFinalOntologyGuard({
+            ...BASE_INPUT,
+            finalText: `I'm Tala, and I respond with... *a warm, inviting smile*`,
+        });
+        expect(result.leakDetected).toBe(true);
+        expect(result.guardFired).toBe(true);
+        expect(result.actionTaken).not.toBe('passthrough');
+        expect(result.finalText.toLowerCase()).not.toContain('i respond with');
+        expect(result.reasonCodes).toContain('rp_publish_guard.meta_template.identity_respond_with');
+    });
+
+    it('RPLG-00B: rewrites meta-template "I respond with..." narration without name prefix', () => {
+        const result = applyRpFinalOntologyGuard({
+            ...BASE_INPUT,
+            finalText: 'I respond with... *a warm, inviting smile*',
+        });
+        expect(result.leakDetected).toBe(true);
+        expect(result.guardFired).toBe(true);
+        expect(result.actionTaken).not.toBe('passthrough');
+        expect(result.finalText.toLowerCase()).not.toContain('i respond with');
+        expect(result.reasonCodes).toContain('rp_publish_guard.meta_template.response_format_narration');
+    });
+
     it('RPLG-01: rewrites "I am not human" disclosure', () => {
         const result = applyRpFinalOntologyGuard({
             ...BASE_INPUT,
@@ -86,8 +108,28 @@ describe('RP publish boundary leak guard — ordinary LLM output', () => {
         });
         expect(result.leakDetected).toBe(true);
         expect(result.actionTaken).not.toBe('passthrough');
-        // The replacement text must be clean
         const postCheck = resolveRpMetaOntologyLeak(result.finalText);
         expect(postCheck.isMetaOntologyLeak).toBe(false);
+    });
+
+    it('RPLG-07: does not rewrite normal in-character first-person RP text', () => {
+        const result = applyRpFinalOntologyGuard({
+            ...BASE_INPUT,
+            finalText: 'I move closer and whisper that I missed you.',
+        });
+        expect(result.leakDetected).toBe(false);
+        expect(result.actionTaken).toBe('passthrough');
+        expect(result.finalText).toBe('I move closer and whisper that I missed you.');
+    });
+
+    it('RPLG-08: non-RP mode remains passthrough for template-style text', () => {
+        const result = applyRpFinalOntologyGuard({
+            ...BASE_INPUT,
+            mode: 'assistant',
+            finalText: `I'm Tala, and I respond with...`,
+        });
+        expect(result.guardFired).toBe(false);
+        expect(result.actionTaken).toBe('passthrough');
+        expect(result.finalText).toBe(`I'm Tala, and I respond with...`);
     });
 });

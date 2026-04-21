@@ -79,6 +79,7 @@ describe('Prompt assembly RP dynamic context truth', () => {
 
         expect(systemPrompt).toContain('[RP MODE');
         expect(serialized.systemPrompt).toContain('[RP MODE');
+        expect(countOccurrences(systemPrompt, '[CHARACTER LOCK')).toBeLessThanOrEqual(2);
     });
 
     it('mode=rp + greeting/social opener still includes RP dynamic/system content', () => {
@@ -96,6 +97,8 @@ describe('Prompt assembly RP dynamic context truth', () => {
         });
 
         expect(systemPrompt).toContain('[RP MODE');
+        expect(systemPrompt).toContain('[CHARACTER LOCK - MANDATORY - HIGHEST PRIORITY]');
+        expect(countOccurrences(systemPrompt, '[CHARACTER LOCK')).toBeLessThanOrEqual(2);
     });
 
     it('non-RP prompt assembly remains unchanged (no RP dynamic block)', () => {
@@ -131,6 +134,7 @@ describe('Prompt assembly RP dynamic context truth', () => {
 
         expect(countOccurrences(dynamicContext, '[RP MODE')).toBe(1);
         expect(countOccurrences(systemPrompt, '[RP MODE')).toBe(1);
+        expect(countOccurrences(systemPrompt, '[CHARACTER LOCK')).toBeLessThanOrEqual(2);
     });
 
     it('mode=rp + social opener adds RP-safe opener shaping block', () => {

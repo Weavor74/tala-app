@@ -4,16 +4,8 @@
  * Universal RP publish-boundary ontology leak enforcement.
  *
  * This is the single deterministic gate that inspects every final generated
- * text before it is published or persisted in RP mode.  It runs regardless of
+ * text before it is published or persisted in RP mode. It runs regardless of
  * whether intent detection, routing, or prompt grounding succeeded.
- *
- * Design invariants:
- * - Pure function: no side-effects, no telemetry.  The caller (AgentKernel)
- *   emits telemetry based on the returned result.
- * - mode !== 'rp'  → immediate passthrough (assistant / hybrid unaffected).
- * - mode === 'rp'  → detect leaks, rewrite deterministically, fail-safe block.
- * - Exactly-once per publish path: the guard is called once in
- *   _enforceRpPersonaTruthBeforePublication and nowhere else.
  */
 
 import {
@@ -21,72 +13,71 @@ import {
     buildAssistantPersonaPolicyAdaptation,
 } from './PersonaIdentityResponseAdapter';
 
-// ─── Public types ─────────────────────────────────────────────────────────────
+type RpMetaTemplateLeakDetection = {
+    isMetaTemplateLeak: boolean;
+    matchedCategories: string[];
+    reasonCodes: string[];
+};
+
+const RP_META_TEMPLATE_PATTERNS: Array<{ category: string; pattern: RegExp; reason: string }> = [
+    {
+        category: 'meta_template.identity_respond_with',
+        pattern: /\b(i am|i'm)\s+tala\b.{0,80}\bi\s+respond\s+with\b/i,
+        reason: 'rp_publish_guard.meta_template.identity_respond_with',
+    },
+    {
+        category: 'meta_template.response_format_narration',
+        pattern: /\bi\s+respond\s+with\s*(?:\.{2,}|["'*]|a\s+(?:warm|inviting|gentle|soft|playful|mischievous)\b)/i,
+        reason: 'rp_publish_guard.meta_template.response_format_narration',
+    },
+];
+
+function resolveRpMetaTemplateLeak(text: string): RpMetaTemplateLeakDetection {
+    const matchedCategories: string[] = [];
+    const reasonCodes: string[] = [];
+    for (const rule of RP_META_TEMPLATE_PATTERNS) {
+        if (rule.pattern.test(text)) {
+            matchedCategories.push(rule.category);
+            reasonCodes.push(rule.reason);
+        }
+    }
+    return {
+        isMetaTemplateLeak: matchedCategories.length > 0,
+        matchedCategories,
+        reasonCodes,
+    };
+}
 
 export type RpPublishGuardInput = {
-    /** Final generated text to inspect. */
     finalText: string;
-    /** Resolved execution mode for this turn. */
     mode: string;
-    /** The user message that triggered this turn (used to build persona reply). */
     userMessage: string;
-    /** Resolved turn intent (optional — guard runs even without it). */
     intent?: string;
-    /** Source that produced this response (e.g. 'router', 'self_knowledge'). */
     routeSource?: string;
-    /** Persona identity context for character-accurate rewrites. */
     personaIdentityContext?: {
         characterName?: string;
         worldview?: string;
         roleplayFrame?: string;
     };
-    /** Whether the turn was detected as an operational/system request. */
     isOperationalRequest?: boolean;
-    /** Whether the turn was detected as a self-knowledge request. */
     isSystemKnowledgeRequest?: boolean;
-    /** Whether this is a follow-up to an ongoing persona conversation. */
     isFollowupToPersonaConversation?: boolean;
 };
 
 export type RpPublishGuardActionTaken = 'passthrough' | 'rewritten' | 'blocked';
 
 export type RpPublishGuardResult = {
-    /** The final text to publish — either unchanged or the persona-safe replacement. */
     finalText: string;
-    /** What the guard did to the content. */
     actionTaken: RpPublishGuardActionTaken;
-    /** Whether an ontology leak was detected in the input text. */
     leakDetected: boolean;
-    /**
-     * Whether the guard actually evaluated for leaks (true whenever mode === 'rp',
-     * false when mode !== 'rp' and the guard short-circuited).
-     */
     guardFired: boolean;
-    /** Leak pattern categories that matched (empty when no leak). */
     matchedMetaCategories: string[];
-    /** Structured reason codes for diagnostics. */
     reasonCodes: string[];
-    /** The adaptation mode produced by the persona policy layer. */
     adaptationMode: 'passthrough' | 'persona_transform' | 'persona_block' | 'persona_truth_enforced';
-    /**
-     * The output channel recommended by the persona policy layer.
-     * Undefined when the guard did not fire (mode != rp) — callers should
-     * fall back to the original channel in that case.
-     */
     outputChannel?: 'chat' | 'fallback' | 'diff' | 'browser' | 'workspace';
 };
 
-// ─── Guard implementation ────────────────────────────────────────────────────
-
-/**
- * Inspect `input.finalText` in RP mode and return a persona-safe replacement
- * if any assistant/meta ontology leakage is detected.
- *
- * Callers must emit telemetry based on the returned result — this function is
- * intentionally side-effect-free.
- */
 export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublishGuardResult {
-    // ── Non-RP: immediate passthrough ────────────────────────────────────────
     if (input.mode !== 'rp') {
         return {
             finalText: input.finalText,
@@ -99,10 +90,19 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
         };
     }
 
-    // ── Leak detection ───────────────────────────────────────────────────────
-    const leakDetection = resolveRpMetaOntologyLeak(input.finalText);
+    const ontologyLeak = resolveRpMetaOntologyLeak(input.finalText);
+    const templateLeak = resolveRpMetaTemplateLeak(input.finalText);
+    const leakDetected = ontologyLeak.isMetaOntologyLeak || templateLeak.isMetaTemplateLeak;
+    const matchedMetaCategories = Array.from(new Set([
+        ...ontologyLeak.matchedCategories,
+        ...templateLeak.matchedCategories,
+    ]));
+    const leakReasonCodes = [
+        ...ontologyLeak.reasonCodes,
+        ...templateLeak.reasonCodes,
+    ];
 
-    if (!leakDetection.isMetaOntologyLeak) {
+    if (!leakDetected) {
         return {
             finalText: input.finalText,
             actionTaken: 'passthrough',
@@ -114,9 +114,13 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
         };
     }
 
-    // ── Rewrite ──────────────────────────────────────────────────────────────
+    // For template-only leaks, force deterministic rewrite through existing persona adapter.
+    const adaptationSeed = ontologyLeak.isMetaOntologyLeak
+        ? input.finalText
+        : 'I am not human. I am an agent.';
+
     const adapted = buildAssistantPersonaPolicyAdaptation({
-        rawContent: input.finalText,
+        rawContent: adaptationSeed,
         activeMode: input.mode,
         turnIntent: input.intent,
         turnPolicy: 'persona_truth_lock',
@@ -127,13 +131,11 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
         isFollowupToPersonaConversation: input.isFollowupToPersonaConversation,
     });
 
-    // ── Post-rewrite safety check ────────────────────────────────────────────
-    const postLeak = resolveRpMetaOntologyLeak(adapted.content);
+    const postOntologyLeak = resolveRpMetaOntologyLeak(adapted.content);
+    const postTemplateLeak = resolveRpMetaTemplateLeak(adapted.content);
+    const postLeakDetected = postOntologyLeak.isMetaOntologyLeak || postTemplateLeak.isMetaTemplateLeak;
 
-    if (postLeak.isMetaOntologyLeak) {
-        // The persona policy layer produced a reply that still leaks ontology
-        // (e.g. it used one of the "hedge" phrases that are also blocked).
-        // Force a second pass with a known-bad input to guarantee a clean reply.
+    if (postLeakDetected) {
         const safeBlock = buildAssistantPersonaPolicyAdaptation({
             rawContent: 'I am not human. I am an agent.',
             activeMode: input.mode,
@@ -145,15 +147,18 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
             isSystemKnowledgeRequest: input.isSystemKnowledgeRequest,
             isFollowupToPersonaConversation: input.isFollowupToPersonaConversation,
         });
+
         return {
             finalText: safeBlock.content,
             actionTaken: 'blocked',
             leakDetected: true,
             guardFired: true,
-            matchedMetaCategories: leakDetection.matchedCategories,
+            matchedMetaCategories,
             reasonCodes: [
-                ...leakDetection.reasonCodes,
+                ...leakReasonCodes,
                 ...adapted.reasonCodes,
+                ...postOntologyLeak.reasonCodes,
+                ...postTemplateLeak.reasonCodes,
                 ...safeBlock.reasonCodes,
                 'rp_publish_guard.blocked_residual_post_rewrite',
             ],
@@ -167,9 +172,9 @@ export function applyRpFinalOntologyGuard(input: RpPublishGuardInput): RpPublish
         actionTaken: 'rewritten',
         leakDetected: true,
         guardFired: true,
-        matchedMetaCategories: leakDetection.matchedCategories,
+        matchedMetaCategories,
         reasonCodes: [
-            ...leakDetection.reasonCodes,
+            ...leakReasonCodes,
             ...adapted.reasonCodes,
             'rp_publish_guard.rewritten',
         ],

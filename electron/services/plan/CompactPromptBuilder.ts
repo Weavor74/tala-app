@@ -55,6 +55,99 @@ export class CompactPromptBuilder {
         return context.memoryContext.trim();
     }
 
+    private static stripCharacterLockSections(prompt: string): string {
+        const lines = prompt.split('\n');
+        const output: string[] = [];
+        let skippingCharacterLock = false;
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            const isHeader = /^\[[^\]]+\]/.test(trimmed);
+            const isCharacterLockHeader = /^\[CHARACTER LOCK/i.test(trimmed);
+
+            if (isCharacterLockHeader) {
+                skippingCharacterLock = true;
+                continue;
+            }
+
+            if (isHeader && !isCharacterLockHeader) {
+                skippingCharacterLock = false;
+            }
+
+            if (!skippingCharacterLock) {
+                output.push(line);
+            }
+        }
+
+        return output.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    private static normalizeMemoryAnchorCandidate(rawLine: string): string {
+        const line = rawLine
+            .trim()
+            .replace(/^[•\-\*]\s*/, '')
+            .replace(/^\[[^\]]+\]\s*/, '')
+            .replace(/^Memory\s+\d+:\s*/i, '')
+            .replace(/^Snippet\s+\d+:\s*/i, '')
+            .replace(/^Content:\s*/i, '')
+            .replace(/^Source:\s*/i, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        if (line.length < 24) return '';
+        return line;
+    }
+
+    private static collectMemoryAnchors(text: string): string[] {
+        const anchors = new Set<string>();
+        for (const line of text.split('\n')) {
+            const normalized = this.normalizeMemoryAnchorCandidate(line);
+            if (normalized) anchors.add(normalized);
+        }
+        return Array.from(anchors);
+    }
+
+    private static isDuplicateMemoryAnchor(candidate: string, existingAnchors: string[]): boolean {
+        for (const anchor of existingAnchors) {
+            if (anchor === candidate) return true;
+            if (candidate.length >= 32 && anchor.includes(candidate)) return true;
+            if (anchor.length >= 32 && candidate.includes(anchor)) return true;
+        }
+        return false;
+    }
+
+    private static dedupeContinuityBlockAgainstMemory(continuityBlock: string, assembledMemory: string): string {
+        if (!continuityBlock?.trim() || !assembledMemory?.trim()) return continuityBlock?.trim() || '';
+        const trimmed = continuityBlock.trim();
+        if (!trimmed.startsWith('[Context]')) return trimmed;
+
+        const withoutHeader = trimmed.slice('[Context]'.length).replace(/^\n/, '');
+        const docsMarker = '\n\n[Docs]';
+        const docsIdx = withoutHeader.indexOf(docsMarker);
+        const contextLinesRaw = docsIdx >= 0 ? withoutHeader.slice(0, docsIdx) : withoutHeader;
+        const docsPart = docsIdx >= 0 ? withoutHeader.slice(docsIdx + 2).trim() : '';
+
+        const existingAnchors = this.collectMemoryAnchors(assembledMemory);
+        const filteredContextLines = contextLinesRaw
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .filter((line) => {
+                const normalized = this.normalizeMemoryAnchorCandidate(line);
+                if (!normalized) return true;
+                return !this.isDuplicateMemoryAnchor(normalized, existingAnchors);
+            });
+
+        const parts: string[] = [];
+        if (filteredContextLines.length > 0) {
+            parts.push(`[Context]\n${filteredContextLines.join('\n')}`);
+        }
+        if (docsPart) {
+            parts.push(docsPart);
+        }
+        return parts.join('\n\n').trim();
+    }
+
     private static shouldIncludeCompactMemorySupplement(context: PromptContext): boolean {
         if (!context.compactPacket) return false;
         const raw = this.getAssembledMemoryContext(context);
@@ -64,7 +157,12 @@ export class CompactPromptBuilder {
 
     private static getCompactMemorySupplement(context: PromptContext): string {
         if (!context.compactPacket || !this.shouldIncludeCompactMemorySupplement(context)) return '';
-        const supplement = [context.compactPacket.continuityBlock, context.compactPacket.currentTaskBlock]
+        const assembledMemory = this.getAssembledMemoryContext(context);
+        const dedupedContinuity = this.dedupeContinuityBlockAgainstMemory(
+            context.compactPacket.continuityBlock,
+            assembledMemory,
+        );
+        const supplement = [dedupedContinuity, context.compactPacket.currentTaskBlock]
             .filter(Boolean)
             .join('\n\n')
             .trim();
@@ -120,18 +218,24 @@ export class CompactPromptBuilder {
      */
     private static buildCognitiveEngineeringPrompt(context: PromptContext, packet: CompactPromptPacket): string {
         let prompt = '';
+        const assembledMemory = this.getAssembledMemoryContext(context);
+        const dedupedContinuity = this.dedupeContinuityBlockAgainstMemory(
+            packet.continuityBlock,
+            assembledMemory,
+        );
 
         if (context.userIdentity) {
             prompt += `${context.userIdentity}\n\n`;
         }
 
         // Use packet sections in stable order: identity → mode → tools → continuity → task → rules
-        const cognitiveSections = packet.assembledSections.filter(s => s.trim().length > 0);
+        const cognitiveSections = packet.assembledSections
+            .map((section) => section.trim() === packet.continuityBlock.trim() ? dedupedContinuity : section)
+            .filter(s => s.trim().length > 0);
         if (cognitiveSections.length > 0) {
             prompt += cognitiveSections.join('\n\n') + '\n\n';
         }
 
-        const assembledMemory = this.getAssembledMemoryContext(context);
         if (assembledMemory) {
             prompt += `${assembledMemory}\n\n`;
         }
@@ -238,12 +342,13 @@ export class CompactPromptBuilder {
 
         const baseReturn = (context.userIdentity ? context.userIdentity + "\n\n" : "") + systemPromptTemplate;
 
-        // RP CHARACTER LOCK SANDWICH: inject at the very start AND reinforce at the very end.
-        // The "start" anchor ensures the model's first instruction is the character lock,
-        // overriding any [CANON LORE MEMORIES — HIGH PRIORITY] or [STRICT] memory labels
-        // that follow. The "end" anchor reinforces it via recency bias.
+        // RP CHARACTER LOCK HARDENING:
+        // - Keep one explicit lock at the start.
+        // - Keep at most one reinforcement at the end.
+        // - Strip redundant in-body [CHARACTER LOCK ...] sections to reduce copy pressure.
         if (context.rpCharacterLock) {
-            return context.rpCharacterLock + "\n\n" + baseReturn + "\n\n" + context.rpCharacterLock;
+            const hardenedBase = this.stripCharacterLockSections(baseReturn);
+            return context.rpCharacterLock + "\n\n" + hardenedBase + "\n\n" + context.rpCharacterLock;
         }
 
         return baseReturn;
