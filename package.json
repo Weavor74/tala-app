@@ -7,7 +7,7 @@
     "dev": "concurrently --kill-others \"npm run dev:vite\" \"npm run dev:electron\" \"npm run dev:inference\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p electron && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "dev:inference": ".\\scripts\\diagnostics\\launch-inference.bat",
+    "dev:inference": "node -e \"const path=require('path');const fs=require('fs');const {spawn}=require('child_process');const platform=process.env.TALA_LAUNCHER_PLATFORM||process.platform;const isWin=platform==='win32';if(!isWin&&platform!=='linux'&&platform!=='darwin'){console.error('[ERROR] Unsupported platform for inference launcher: '+platform);process.exit(1);}const launcher=isWin?path.resolve('scripts/diagnostics/launch-inference.bat'):path.resolve('scripts/diagnostics/launch-inference.sh');if(!fs.existsSync(launcher)){console.error('[ERROR] Platform launcher not found: '+launcher);process.exit(1);}if(process.env.TALA_LAUNCHER_DRY_RUN==='1'){console.log(launcher);process.exit(0);}const child=isWin?spawn(launcher,[],{stdio:'inherit',shell:true,cwd:process.cwd()}):spawn('bash',[launcher],{stdio:'inherit',cwd:process.cwd()});child.on('exit',(code,signal)=>{if(signal){process.kill(process.pid,signal);return;}process.exit(code??1);});child.on('error',(error)=>{console.error('[ERROR] Failed to launch inference script: '+error.message);process.exit(1);});\"",
     "build": "tsc -b && tsc -p electron && vite build",
     "dist": "npm run build && electron-builder",
     "dist:universal": "scripts\\diagnostics\\make_universal.bat",

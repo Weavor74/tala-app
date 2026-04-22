@@ -6,15 +6,13 @@ This document is deterministic and maintained by `tools/doclock/heal-docs.ts`.
 <!-- GENERATED:impact-map:start -->
 | Changed Path | Doc Owners | Generated Sections | Mode |
 | --- | --- | --- | --- |
-| `bootstrap.sh` | `docs/review/documentation_gaps.md`<br>`docs/review/doclock-impact.md` | `impact-map` | manual |
-| `scripts/verify-setup.sh` | `docs/build/maintenance_guidelines.md`<br>`docs/development/self_maintenance.md`<br>`docs/review/doclock-impact.md` | `impact-map`, `workflow-registry` | auto |
+| `electron/services/CodeAccessPolicy.ts` | `docs/architecture/service_interactions.md`<br>`docs/review/doclock-impact.md`<br>`docs/subsystems/SERVICES.md` | `impact-map`, `service-ownership-map` | auto |
+| `package.json` | `docs/contracts/settings.md`<br>`docs/interfaces/configuration_contracts.md`<br>`docs/review/doclock-impact.md` | `config-env-matrix`, `impact-map` | auto |
 
-Summary: total_changed=3, impact_candidates=2, mapped=1, unmapped=1, manual_review=1.
+Summary: total_changed=4, impact_candidates=2, mapped=2, unmapped=0, manual_review=0.
 <!-- GENERATED:impact-map:end -->
 
 ## REVIEW_REQUIRED
 <!-- REVIEW_REQUIRED:start -->
-- [ ] `bootstrap.sh` -> review/update: docs/review/documentation_gaps.md, docs/review/doclock-impact.md (reason: UNMAPPED_PATH)
-
-Rule: unresolved `[ ]` items block `docs:validate`.
+None.
 <!-- REVIEW_REQUIRED:end -->

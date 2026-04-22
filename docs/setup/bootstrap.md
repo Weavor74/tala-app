@@ -354,9 +354,9 @@ Run `npm install --ignore-scripts` as a workaround, then apply patches manually 
 
 ## Known Limitations
 
-- The `npm run dev:inference` script in `package.json` calls
-  `scripts\diagnostics\launch-inference.bat` (Windows path).  On Unix, run
-  `bash scripts/diagnostics/launch-inference.sh` manually or via `npm run dev`.
+- The `npm run dev:inference` script dispatches by platform:
+  `scripts\diagnostics\launch-inference.bat` on Windows and
+  `scripts/diagnostics/launch-inference.sh` on Linux/macOS.
 - `make_portable.sh` requires Python 3.13 to be pre-installed before running — it
   does not download Python automatically on Unix/macOS.
 - Cross-platform Electron builds (Linux from Windows) may fail due to native modules.

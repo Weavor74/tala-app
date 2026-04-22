@@ -53,7 +53,7 @@ export class CodeAccessPolicy {
     private allowedPrefixes = [
         'npm', 'node', 'npx', 'python', 'pip', 'git', 'tsc', 'eslint', 'vitest', 'pytest',
         'ls', 'dir', 'cd', 'mkdir', 'echo', 'type', 'cat', 'grep', 'find',
-        'python.exe', '.\\scripts\\',
+        'python.exe', '.\\scripts\\', './scripts/', 'scripts/',
     ];
 
     constructor(options: CodeAccessPolicyOptions) {
