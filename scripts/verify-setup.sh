@@ -96,9 +96,50 @@ else
 fi
 
 # -------------------------------------------------------
+# 5. Linux native/runtime prerequisites
+# -------------------------------------------------------
+if [ "$(uname -s)" = "Linux" ]; then
+    echo -e "${YELLOW}[5] Linux native/runtime prerequisites${NC}"
+
+    for TOOL in gcc g++ make pkg-config cmake; do
+        if command -v "$TOOL" >/dev/null 2>&1; then
+            pass "$TOOL present"
+        else
+            fail "$TOOL missing - install build-essential/cmake/pkg-config"
+        fi
+    done
+
+    if command -v pg_config >/dev/null 2>&1; then
+        pass "pg_config present (libpq-dev)"
+    else
+        fail "pg_config missing - install libpq-dev"
+    fi
+
+    if command -v ldconfig >/dev/null 2>&1; then
+        LINUX_SONAMES=(
+            libgtk-3.so.0
+            libnss3.so
+            libgbm.so.1
+            libasound.so.2
+            libcups.so.2
+            libx11-xcb.so.1
+            libxshmfence.so.1
+        )
+        for SONAME in "${LINUX_SONAMES[@]}"; do
+            if ldconfig -p 2>/dev/null | grep -q "$SONAME"; then
+                pass "$SONAME available"
+            else
+                fail "$SONAME missing - install Linux Electron runtime libraries"
+            fi
+        done
+    else
+        warn "ldconfig unavailable - skipped shared library checks"
+    fi
+fi
+# -------------------------------------------------------
 # 5. Python venvs
 # -------------------------------------------------------
-echo -e "${YELLOW}[5] Python virtual environments${NC}"
+echo -e "${YELLOW}[6] Python virtual environments${NC}"
 PYTHON_MODULES=(
     "local-inference"
     "mcp-servers/tala-core"
@@ -125,7 +166,7 @@ done
 # -------------------------------------------------------
 # 6. llama.cpp / local inference
 # -------------------------------------------------------
-echo -e "${YELLOW}[6] Local inference (llama.cpp / llama-cpp-python)${NC}"
+echo -e "${YELLOW}[7] Local inference (llama.cpp / llama-cpp-python)${NC}"
 
 # Check for bundled Python runtimes used by launch-inference.sh
 BUNDLED_PYTHON_FOUND=false
@@ -166,7 +207,7 @@ fi
 # -------------------------------------------------------
 # 7. Key config / source files
 # -------------------------------------------------------
-echo -e "${YELLOW}[7] Key project files${NC}"
+echo -e "${YELLOW}[8] Key project files${NC}"
 KEY_FILES=(
     "package.json"
     "tsconfig.json"
@@ -196,3 +237,4 @@ else
     echo -e "${GREEN}[OK] Environment looks ready.${NC}"
     exit 0
 fi
+

@@ -19,11 +19,11 @@ Runtime authority notes:
 
 | Entry point | Platform | Purpose |
 |---|---|---|
-| `bootstrap.sh` | Unix / macOS | Full bootstrap: checks prerequisites, creates runtime dirs, downloads model, installs npm + Python deps |
+| `bootstrap.sh` | Unix / macOS / Linux | Full bootstrap: checks prerequisites, installs Debian/Ubuntu Linux system deps, creates runtime dirs, downloads model, installs npm + Python deps |
 | `bootstrap.ps1` | Windows (PowerShell) | Same as above for Windows |
 | `start.sh` | Unix / macOS | Launch TALA dev environment (`npm run dev`) |
 | `start.bat` | Windows | Same for Windows |
-| `scripts/verify-setup.sh` | Unix / macOS | Health check: validate environment readiness after bootstrap |
+| `scripts/verify-setup.sh` | Unix / macOS / Linux | Health check: validate environment readiness after bootstrap |
 | `scripts/verify-setup.ps1` | Windows (PowerShell) | Same for Windows |
 
 **Quick start:**
@@ -57,7 +57,7 @@ Before running `bootstrap.sh` / `bootstrap.ps1`, install:
 
 ## What Bootstrap Does
 
-Bootstrap is a five-step idempotent script safe to re-run at any time:
+Bootstrap is a six-step idempotent script safe to re-run at any time (plus post-bootstrap readiness checks):
 
 ### Step 1 — Environment checks
 Verifies Node.js, npm, and Python 3 are in `PATH`.  
@@ -84,6 +84,7 @@ Python component that exists in the repo:
 | `mcp-servers/tala-core` | `mcp-servers/tala-core/venv/` |
 | `mcp-servers/mem0-core` | `mcp-servers/mem0-core/venv/` |
 | `mcp-servers/astro-engine` | `mcp-servers/astro-engine/venv/` |
+| `mcp-servers/tala-memory-graph` | `mcp-servers/tala-memory-graph/venv/` |
 | `mcp-servers/world-engine` | `mcp-servers/world-engine/venv/` |
 
 If a module directory does not exist it is skipped silently.
@@ -203,6 +204,7 @@ The verify script checks each subsystem and prints a `PASS / FAIL / WARN` per it
 - Node.js + npm present
 - `node_modules` installed
 - Python 3 present
+- Linux native toolchain, `pg_config`, and key Electron shared libraries (Linux only)
 - Per-module Python venvs installed
 - Local inference Python binary and GGUF model present
 - Key project files present

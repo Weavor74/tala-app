@@ -1,178 +1,287 @@
 #!/usr/bin/env bash
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -euo pipefail
 
-# ---------------------------------------------------------
-# Resolve repo root relative to this script's location
-# so bootstrap works regardless of the caller's CWD.
-# ---------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 cd "$REPO_ROOT"
 
-# Define color codes for output
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
+
+log_ok() { echo -e "      ${GREEN}[OK]${NC} $*"; }
+log_warn() { echo -e "      ${YELLOW}[WARN]${NC} $*"; }
+log_err() { echo -e "      ${RED}[ERROR]${NC} $*"; }
+
+OS_NAME="$(uname -s)"
+OS_ARCH="$(uname -m)"
 
 echo -e "${CYAN}=============================================${NC}"
 echo -e "${CYAN}      TALA UNIVERSAL BOOTSTRAP SCRIPT        ${NC}"
 echo -e "${CYAN}=============================================${NC}"
 echo -e "      Repo root: ${REPO_ROOT}"
+echo -e "      Platform: ${OS_NAME} (${OS_ARCH})"
 echo ""
 
-# ---------------------------------------------------------
-# 1. Environment Checks
-# ---------------------------------------------------------
-echo -e "${YELLOW}[1/5] Checking Prerequisites...${NC}"
+run_apt_install_if_linux() {
+    if [ "$OS_NAME" != "Linux" ]; then
+        return 0
+    fi
 
-# Check Node
+    echo -e "${YELLOW}[1/6] Installing Linux Prerequisites (Debian/Ubuntu)...${NC}"
+
+    if [ ! -r /etc/os-release ]; then
+        log_err "Cannot read /etc/os-release; Linux distro detection failed."
+        exit 1
+    fi
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    DISTRO_ID="${ID:-unknown}"
+    DISTRO_LIKE="${ID_LIKE:-}"
+
+    if [[ "$DISTRO_ID" != "ubuntu" && "$DISTRO_ID" != "debian" && "$DISTRO_LIKE" != *"debian"* ]]; then
+        log_warn "Detected distro '${DISTRO_ID}'. Automatic package install is only implemented for Debian/Ubuntu."
+        log_warn "Install Linux prerequisites manually, then re-run bootstrap."
+        return 0
+    fi
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        log_err "apt-get is required for Debian/Ubuntu bootstrap but was not found."
+        exit 1
+    fi
+
+    APT_PREFIX=()
+    if [ "$(id -u)" -ne 0 ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            APT_PREFIX=(sudo)
+        else
+            log_err "Root privileges are required for apt-get install. Re-run as root or install sudo."
+            exit 1
+        fi
+    fi
+
+    CORE_PACKAGES=(
+        build-essential
+        cmake
+        pkg-config
+        python3
+        python3-dev
+        python3-pip
+        python3-venv
+        git
+        curl
+        wget
+        ca-certificates
+        libpq-dev
+        ripgrep
+    )
+
+    ELECTRON_PACKAGES=(
+        libasound2
+        libatk-bridge2.0-0
+        libatk1.0-0
+        libcairo2
+        libcups2
+        libdrm2
+        libgbm1
+        libglib2.0-0
+        libgtk-3-0
+        libnotify4
+        libnss3
+        libpango-1.0-0
+        libx11-xcb1
+        libxcomposite1
+        libxdamage1
+        libxext6
+        libxfixes3
+        libxkbcommon0
+        libxrandr2
+        libxrender1
+        libxshmfence1
+        libxss1
+        libxtst6
+        xdg-utils
+    )
+
+    echo "      Running apt-get update..."
+    "${APT_PREFIX[@]}" apt-get update
+
+    AVAILABLE_CORE=()
+    MISSING_CORE=()
+    for pkg in "${CORE_PACKAGES[@]}"; do
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
+            AVAILABLE_CORE+=("$pkg")
+        else
+            MISSING_CORE+=("$pkg")
+        fi
+    done
+
+    AVAILABLE_ELECTRON=()
+    MISSING_ELECTRON=()
+    for pkg in "${ELECTRON_PACKAGES[@]}"; do
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
+            AVAILABLE_ELECTRON+=("$pkg")
+        else
+            MISSING_ELECTRON+=("$pkg")
+        fi
+    done
+
+    if [ "${#MISSING_CORE[@]}" -gt 0 ]; then
+        log_err "Missing required package definitions: ${MISSING_CORE[*]}"
+        log_err "Your apt sources may be incomplete. Fix apt repositories and re-run."
+        exit 1
+    fi
+
+    if [ "${#MISSING_ELECTRON[@]}" -gt 0 ]; then
+        log_warn "Some Electron runtime packages were not found in apt metadata: ${MISSING_ELECTRON[*]}"
+        log_warn "Continuing because package names vary by distro release."
+    fi
+
+    echo "      Installing core Linux packages..."
+    "${APT_PREFIX[@]}" apt-get install -y "${AVAILABLE_CORE[@]}"
+
+    if [ "${#AVAILABLE_ELECTRON[@]}" -gt 0 ]; then
+        echo "      Installing Electron runtime packages..."
+        "${APT_PREFIX[@]}" apt-get install -y "${AVAILABLE_ELECTRON[@]}"
+    fi
+
+    if [[ "$OS_ARCH" == "aarch64" || "$OS_ARCH" == "arm64" ]]; then
+        log_warn "ARM64 detected (Jetson class likely)."
+        log_warn "llama-cpp-python may compile from source and can take longer on Jetson hardware."
+        log_warn "If local inference is too heavy, keep core Tala services and run without local model first."
+    fi
+}
+
+echo -e "${YELLOW}[2/6] Checking Core Tool Prerequisites...${NC}"
+
+run_apt_install_if_linux
+
 if command -v node >/dev/null 2>&1; then
-    NODE_VER=$(node --version)
-    echo -e "      ${GREEN}[OK] Node.js found: $NODE_VER${NC}"
+    NODE_VER="$(node --version)"
+    log_ok "Node.js found: $NODE_VER"
 else
-    echo -e "      ${RED}[ERROR] Node.js is not installed or not in PATH.${NC}"
-    echo "      Please install Node.js (v18+) from https://nodejs.org/"
+    log_err "Node.js is not installed or not in PATH."
+    echo "      Install Node.js v18+ from https://nodejs.org/ and re-run bootstrap."
     exit 1
 fi
 
-# Check npm
 if command -v npm >/dev/null 2>&1; then
-    NPM_VER=$(npm --version)
-    echo -e "      ${GREEN}[OK] npm found: $NPM_VER${NC}"
+    NPM_VER="$(npm --version)"
+    log_ok "npm found: $NPM_VER"
 else
-    echo -e "      ${RED}[ERROR] npm is not installed or not in PATH.${NC}"
+    log_err "npm is not installed or not in PATH."
     exit 1
 fi
 
-# Check Python (Try python3 first, then python)
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_CMD="python3"
 elif command -v python >/dev/null 2>&1; then
     PYTHON_CMD="python"
 else
-    echo -e "      ${RED}[ERROR] Python 3 is not installed or not in PATH.${NC}"
-    echo "      Please install Python 3.10+ from https://python.org/"
+    log_err "Python 3 is not installed or not in PATH."
     exit 1
 fi
 
-PY_VER=$($PYTHON_CMD --version 2>&1)
-# Verify Python 3
+PY_VER="$("$PYTHON_CMD" --version 2>&1)"
 if [[ "$PY_VER" != *"Python 3"* ]]; then
-    echo -e "      ${RED}[ERROR] Python 3 required but found: $PY_VER${NC}"
+    log_err "Python 3 required but found: $PY_VER"
     exit 1
 fi
-echo -e "      ${GREEN}[OK] Python found: $PY_VER${NC}"
 
-# Check for curl or wget for downloading
+if ! "$PYTHON_CMD" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"; then
+    log_err "Python 3.10+ is required (found: $PY_VER)."
+    exit 1
+fi
+log_ok "Python found: $PY_VER"
+
 if command -v curl >/dev/null 2>&1; then
-    DOWNLOAD_CMD="curl -L -o"
+    DOWNLOAD_CMD=(curl -L -o)
 elif command -v wget >/dev/null 2>&1; then
-    DOWNLOAD_CMD="wget -O"
+    DOWNLOAD_CMD=(wget -O)
 else
-    echo -e "      ${RED}[ERROR] Neither 'curl' nor 'wget' was found.${NC}"
-    echo "      Please install one of them to download the model."
+    log_err "Neither 'curl' nor 'wget' was found."
     exit 1
 fi
 
-# ---------------------------------------------------------
-# 2. Create Missing Folders
-# ---------------------------------------------------------
-echo -e "\n${YELLOW}[2/5] Creating Runtime Directories...${NC}"
+echo -e "\n${YELLOW}[3/6] Creating Runtime Directories...${NC}"
 
-# All directories are relative to REPO_ROOT (set above via cd)
 DIRS=("models" "data" "bin/python-mac" "bin/python-linux" "memory")
-for DIR in "${DIRS[@]}"; do
-    if [ ! -d "$DIR" ]; then
-        mkdir -p "$DIR"
-        echo "      Created: $DIR"
+for dir in "${DIRS[@]}"; do
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+        echo "      Created: $dir"
     else
-        echo "      Exists: $DIR"
+        echo "      Exists: $dir"
     fi
 done
 
-# ---------------------------------------------------------
-# 3. Download LLM (.gguf)
-# ---------------------------------------------------------
-echo -e "\n${YELLOW}[3/5] Downloading Default Local LLM...${NC}"
+echo -e "\n${YELLOW}[4/6] Downloading Default Local LLM...${NC}"
 
 MODEL_URL="https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 MODEL_DEST="$REPO_ROOT/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf"
 
 if [ ! -f "$MODEL_DEST" ]; then
     echo "      Downloading Llama 3.2 3B Instruct (Q4_K_M)..."
-    echo "      This is a ~2GB file and may take a few minutes depending on your connection."
-    $DOWNLOAD_CMD "$MODEL_DEST" "$MODEL_URL"
-    echo -e "      ${GREEN}[OK] Model downloaded successfully.${NC}"
+    echo "      This is a ~2GB file and may take a few minutes."
+    "${DOWNLOAD_CMD[@]}" "$MODEL_DEST" "$MODEL_URL"
+    log_ok "Model downloaded successfully."
 else
-    echo -e "      ${GREEN}[OK] Model already exists. Skipping download.${NC}"
+    log_ok "Model already exists. Skipping download."
 fi
 
-# ---------------------------------------------------------
-# 4. Install Node Libraries
-# ---------------------------------------------------------
-echo -e "\n${YELLOW}[4/5] Installing Node.js Dependencies...${NC}"
+echo -e "\n${YELLOW}[5/6] Installing Node.js Dependencies...${NC}"
 
 if [ -f "$REPO_ROOT/package.json" ]; then
     echo "      Running npm install in: $REPO_ROOT"
     npm install
-    echo -e "      ${GREEN}[OK] Node packages installed.${NC}"
+    log_ok "Node packages installed."
 else
-    echo -e "      ${RED}[ERROR] package.json not found at $REPO_ROOT${NC}"
+    log_err "package.json not found at $REPO_ROOT"
     exit 1
 fi
 
-# ---------------------------------------------------------
-# 5. Setup Python Virtual Envs & MCP Servers
-# ---------------------------------------------------------
-echo -e "\n${YELLOW}[5/5] Building Python Virtual Environments...${NC}"
+echo -e "\n${YELLOW}[6/6] Building Python Virtual Environments...${NC}"
 
 build_venv() {
-    # $1 = module path relative to REPO_ROOT
-    local MODULE_PATH="$REPO_ROOT/$1"
-    local REQ_FILE="$MODULE_PATH/requirements.txt"
-    local VENV_DIR="$MODULE_PATH/venv"
-    local VENV_PYTHON="$VENV_DIR/bin/python"
+    local module_path="$REPO_ROOT/$1"
+    local req_file="$module_path/requirements.txt"
+    local venv_dir="$module_path/venv"
+    local venv_python="$venv_dir/bin/python"
 
-    if [ ! -f "$REQ_FILE" ]; then
-        echo "      [SKIP] $1 — no requirements.txt"
-        return
+    if [ ! -f "$req_file" ]; then
+        echo "      [SKIP] $1 - no requirements.txt"
+        return 0
     fi
 
     echo "      -> Setting up $1..."
 
-    # Create venv if absent
-    if [ ! -d "$VENV_DIR" ]; then
-        if ! $PYTHON_CMD -m venv "$VENV_DIR"; then
-            echo -e "         ${RED}[ERROR] Failed to create venv at $VENV_DIR${NC}"
+    if [ ! -d "$venv_dir" ]; then
+        if ! "$PYTHON_CMD" -m venv "$venv_dir"; then
+            log_err "Failed to create venv at $venv_dir"
             return 1
         fi
     fi
 
-    # Upgrade pip
-    "$VENV_PYTHON" -m pip install --upgrade pip --quiet
+    "$venv_python" -m pip install --upgrade pip --quiet
 
-    # Install dependencies
     if [[ "$1" == *"local-inference"* ]]; then
-        echo "         Installing dependencies (this may compile llama-cpp-python)..."
-        # On Mac/Linux, we generally rely on pip finding a compatible wheel or
-        # compiling it using local build tools (Xcode/build-essential).
-        # We also pass the extra index URL in case a compatible wheel exists there.
-        if ! "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet; then
-            echo -e "         ${RED}[ERROR] pip install failed for $1${NC}"
+        echo "         Installing dependencies (llama-cpp-python may compile)..."
+        if ! "$venv_python" -m pip install -r "$req_file" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --quiet; then
+            log_err "pip install failed for $1"
             return 1
         fi
     else
-        if ! "$VENV_PYTHON" -m pip install -r "$REQ_FILE" --quiet; then
-            echo -e "         ${RED}[ERROR] pip install failed for $1${NC}"
+        if ! "$venv_python" -m pip install -r "$req_file" --quiet; then
+            log_err "pip install failed for $1"
             return 1
         fi
     fi
 
-    echo -e "         ${GREEN}[OK] Installed.${NC}"
+    log_ok "$1 venv ready"
 }
 
 PYTHON_MODULES=(
@@ -180,14 +289,55 @@ PYTHON_MODULES=(
     "mcp-servers/tala-core"
     "mcp-servers/mem0-core"
     "mcp-servers/astro-engine"
+    "mcp-servers/tala-memory-graph"
     "mcp-servers/world-engine"
 )
 
-for MOD in "${PYTHON_MODULES[@]}"; do
-    if [ -d "$REPO_ROOT/$MOD" ]; then
-        build_venv "$MOD"
+for mod in "${PYTHON_MODULES[@]}"; do
+    if [ -d "$REPO_ROOT/$mod" ]; then
+        build_venv "$mod"
+    else
+        echo "      [SKIP] $mod - directory not found"
     fi
 done
+
+echo -e "\n${YELLOW}[post] Validating environment readiness...${NC}"
+
+if command -v node >/dev/null 2>&1; then
+    log_ok "Node check: $(node --version)"
+else
+    log_err "Node check failed."
+    exit 1
+fi
+
+if command -v npm >/dev/null 2>&1; then
+    log_ok "npm check: $(npm --version)"
+else
+    log_err "npm check failed."
+    exit 1
+fi
+
+if "$PYTHON_CMD" -m venv --help >/dev/null 2>&1; then
+    log_ok "Python venv module available."
+else
+    log_err "Python venv module unavailable."
+    exit 1
+fi
+
+for tool in gcc g++ make; do
+    if command -v "$tool" >/dev/null 2>&1; then
+        log_ok "Native toolchain check: $tool present"
+    else
+        log_err "Native toolchain check failed: $tool missing"
+        exit 1
+    fi
+done
+
+if command -v pg_config >/dev/null 2>&1; then
+    log_ok "PostgreSQL client headers check: pg_config present"
+else
+    log_warn "pg_config missing. Install libpq-dev if PostgreSQL-backed services fail to build."
+fi
 
 echo -e "\n${CYAN}=============================================${NC}"
 echo -e "${GREEN}   BOOTSTRAP COMPLETE!                       ${NC}"
