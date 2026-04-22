@@ -17,6 +17,7 @@ Usage:
 
 Environment variables respected:
   TALA_PYTHON_EXE  - override the Python executable (default: auto-detect)
+  TALA_ALLOW_SYSTEM_PYTHON=1 - permit fallback to system python when no local runtime exists
 #>
 
 $ErrorActionPreference = "Stop"
@@ -39,36 +40,56 @@ function Log-Err  { param($msg) Write-Host "[VLLM] ERROR: $msg" -ForegroundColor
 $PythonExe = $env:TALA_PYTHON_EXE
 
 if (-not $PythonExe) {
-    $LocalPython = Join-Path $RepoRoot "local-inference\venv\Scripts\python.exe"
-    if (Test-Path $LocalPython) {
-        $PythonExe = $LocalPython
-        Log-Info "Using project-local Python at: $PythonExe"
+    $localCandidates = @(
+        (Join-Path $RepoRoot "local-inference\venv\Scripts\python.exe"),
+        (Join-Path $RepoRoot "bin\python-win\python.exe"),
+        (Join-Path $RepoRoot "bin\python-portable\python.exe")
+    )
+
+    foreach ($candidate in $localCandidates) {
+        if (Test-Path $candidate) {
+            $PythonExe = $candidate
+            Log-Info "Using project-local Python at: $PythonExe"
+            break
+        }
     }
 }
 
 if (-not $PythonExe) {
-    try {
-        $ver = python --version 2>&1
-        if ($ver -match "Python 3") {
-            $PythonExe = "python"
-            Log-Info "Using system Python: $ver"
+    if ($env:TALA_ALLOW_SYSTEM_PYTHON -eq "1") {
+        try {
+            $ver = python --version 2>&1
+            if ($ver -match "Python 3") {
+                $PythonExe = "python"
+                Log-Warn "Using system Python because TALA_ALLOW_SYSTEM_PYTHON=1: $ver"
+            }
+        } catch { }
+
+        if (-not $PythonExe) {
+            try {
+                $ver = python3 --version 2>&1
+                if ($ver -match "Python 3") {
+                    $PythonExe = "python3"
+                    Log-Warn "Using system python3 because TALA_ALLOW_SYSTEM_PYTHON=1: $ver"
+                }
+            } catch { }
         }
-    } catch { }
+    }
 }
 
 if (-not $PythonExe) {
-    try {
-        $ver = python3 --version 2>&1
-        if ($ver -match "Python 3") {
-            $PythonExe = "python3"
-            Log-Info "Using system python3: $ver"
-        }
-    } catch { }
+    Log-Err "No project-local Python interpreter found for vLLM bootstrap."
+    Log-Err "Expected one of:"
+    Log-Err "  - local-inference\venv\Scripts\python.exe"
+    Log-Err "  - bin\python-win\python.exe"
+    Log-Err "  - bin\python-portable\python.exe"
+    Log-Err "Set TALA_PYTHON_EXE to a local interpreter, or set TALA_ALLOW_SYSTEM_PYTHON=1 to opt into system Python."
+    exit 1
 }
 
-if (-not $PythonExe) {
-    Log-Err "No Python 3 interpreter found."
-    Log-Err "Install Python 3.10+ from https://python.org/ or set TALA_PYTHON_EXE."
+& $PythonExe -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Log-Err "Python 3.10+ is required for vLLM bootstrap. Selected interpreter: $PythonExe"
     exit 1
 }
 

@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import type { IBrain, ChatMessage, BrainResponse, BrainOptions } from './IBrain';
 import { promptAuditService } from '../services/PromptAuditService';
+import { resolveStoragePath } from '../services/PathResolver';
 
 /**
  * OllamaBrain
@@ -417,7 +418,7 @@ export class OllamaBrain implements IBrain {
 
                 // Save failed request for diagnosis
                 try {
-                    const debugPath = path.join(process.cwd(), 'ollama_error_debug.json');
+                    const debugPath = resolveStoragePath(path.join('logs', 'ollama_error_debug.json'));
                     fs.writeFileSync(debugPath, bodyString);
                     console.log(`[OllamaBrain] Debug: Saved failed request body to ${debugPath}`);
                 } catch (e) {

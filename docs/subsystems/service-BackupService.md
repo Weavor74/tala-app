@@ -22,6 +22,16 @@ Reads the backup configuration from `app_settings.json`./
 **Returns**: `BackupConfig | null`
 
 ---
+#### `getWorkspaceSourceDir`
+**Arguments**: ``
+**Returns**: `string`
+
+---
+#### `resolveBackupOutputDir`
+**Arguments**: `config: BackupConfig`
+**Returns**: `string`
+
+---
 #### `schedule`
 Initializes or resets the background backup scheduler.  Reads `intervalHours` from settings and establishes a `setInterval`  timer. Minimum frequency is forced to 1 hour to prevent system resource  exhaustion during rapid settings changes./
 

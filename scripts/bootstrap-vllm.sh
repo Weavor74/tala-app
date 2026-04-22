@@ -16,6 +16,7 @@
 #
 # Environment variables respected:
 #   TALA_PYTHON_EXE  - override the Python executable (default: auto-detect)
+#   TALA_ALLOW_SYSTEM_PYTHON=1 - permit fallback to system python when no local runtime exists
 # ==============================================================
 
 set -e
@@ -42,29 +43,59 @@ log_err()  { echo -e "${RED}[VLLM] ERROR: $1${NC}"; }
 PYTHON_EXE="${TALA_PYTHON_EXE:-}"
 
 if [ -z "$PYTHON_EXE" ]; then
-    LOCAL_PYTHON="$REPO_ROOT/local-inference/venv/bin/python"
-    if [ -f "$LOCAL_PYTHON" ]; then
-        PYTHON_EXE="$LOCAL_PYTHON"
-        log_info "Using project-local Python at: $PYTHON_EXE"
+    PLATFORM="$(uname -s)"
+    LOCAL_CANDIDATES=(
+        "$REPO_ROOT/local-inference/venv/bin/python"
+        "$REPO_ROOT/bin/python-linux/bin/python3"
+        "$REPO_ROOT/bin/python-mac/bin/python3"
+        "$REPO_ROOT/bin/python-portable/python"
+    )
+    if [ "$PLATFORM" = "Darwin" ]; then
+        LOCAL_CANDIDATES=(
+            "$REPO_ROOT/local-inference/venv/bin/python"
+            "$REPO_ROOT/bin/python-mac/bin/python3"
+            "$REPO_ROOT/bin/python-portable/python"
+            "$REPO_ROOT/bin/python-linux/bin/python3"
+        )
     fi
-fi
 
-if [ -z "$PYTHON_EXE" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_EXE="python3"
-        log_info "Using system python3: $(python3 --version 2>&1)"
-    elif command -v python >/dev/null 2>&1; then
-        PY_VER=$(python --version 2>&1)
-        if [[ "$PY_VER" == *"Python 3"* ]]; then
-            PYTHON_EXE="python"
-            log_info "Using system python: $PY_VER"
+    for candidate in "${LOCAL_CANDIDATES[@]}"; do
+        if [ -f "$candidate" ]; then
+            PYTHON_EXE="$candidate"
+            log_info "Using project-local Python at: $PYTHON_EXE"
+            break
         fi
     fi
 fi
 
 if [ -z "$PYTHON_EXE" ]; then
-    log_err "No Python 3 interpreter found."
-    log_err "Install Python 3.10+ from https://python.org/ or set TALA_PYTHON_EXE."
+    if [ "${TALA_ALLOW_SYSTEM_PYTHON:-0}" = "1" ]; then
+        if command -v python3 >/dev/null 2>&1; then
+            PYTHON_EXE="python3"
+            log_warn "Using system python3 because TALA_ALLOW_SYSTEM_PYTHON=1: $(python3 --version 2>&1)"
+        elif command -v python >/dev/null 2>&1; then
+            PY_VER=$(python --version 2>&1)
+            if [[ "$PY_VER" == *"Python 3"* ]]; then
+                PYTHON_EXE="python"
+                log_warn "Using system python because TALA_ALLOW_SYSTEM_PYTHON=1: $PY_VER"
+            fi
+        fi
+    fi
+fi
+
+if [ -z "$PYTHON_EXE" ]; then
+    log_err "No project-local Python interpreter found for vLLM bootstrap."
+    log_err "Expected one of:"
+    log_err "  - local-inference/venv/bin/python"
+    log_err "  - bin/python-linux/bin/python3 (Linux)"
+    log_err "  - bin/python-mac/bin/python3 (macOS)"
+    log_err "  - bin/python-portable/python"
+    log_err "Set TALA_PYTHON_EXE to a local interpreter, or set TALA_ALLOW_SYSTEM_PYTHON=1 to opt into system Python."
+    exit 1
+fi
+
+if ! "$PYTHON_EXE" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+    log_err "Python 3.10+ is required for vLLM bootstrap. Selected interpreter: $PYTHON_EXE"
     exit 1
 fi
 

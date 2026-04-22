@@ -44,6 +44,7 @@ import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 import { GuardrailCircuitBreakerStore } from './runtime/guardrails/GuardrailCircuitBreaker';
 import { executeWithRuntimeGuardrails } from './runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from './runtime/guardrails/RuntimeGuardrailTypes';
+import { resolveAppPath, resolveScratchPath } from './PathResolver';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -120,7 +121,8 @@ Returns the legacy LocalEngineService. @deprecated Prefer getLocalInferenceOrch
 Resolves the best available Python executable for embedded local inference.
  Prioritises the project-local inference venv, then
  falls back to bundled binaries or a system Python.
- @param repoRoot - Repository root directory (defaults to process.cwd())./
+ @param repoRoot - Repository root directory (defaults to app-root resolver).
+/
 
 **Arguments**: `repoRoot?: string`
 **Returns**: `string | undefined`

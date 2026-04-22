@@ -62,6 +62,39 @@ export class BackupService {
         return null;
     }
 
+    private getWorkspaceSourceDir(): string {
+        const settingsPath = resolveStoragePath('app_settings.json');
+        try {
+            if (fs.existsSync(settingsPath)) {
+                const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { storage?: { localPath?: string } };
+                const configuredWorkspace = settings?.storage?.localPath;
+                if (configuredWorkspace && typeof configuredWorkspace === 'string') {
+                    return resolveAppPath('', configuredWorkspace, {
+                        externalByConfiguration: true,
+                        label: 'workspace-root',
+                    });
+                }
+            }
+        } catch (error) {
+            console.warn('[BackupService] Failed to resolve workspace from settings, using default workspace.', error);
+        }
+
+        return (process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
+            ? resolveAppPath('')
+            : resolveStoragePath('workspace');
+    }
+
+    private resolveBackupOutputDir(config: BackupConfig): string {
+        if (!config.localPath) {
+            return resolveAppPath(path.join('exports', 'backups'));
+        }
+
+        return resolveAppPath('', config.localPath, {
+            externalByConfiguration: true,
+            label: 'backup-local-path',
+        });
+    }
+
     /**
      * Initializes or resets the background backup scheduler.
      * 
@@ -180,15 +213,9 @@ export class BackupService {
 
         console.log('[BackupService] Starting backup...');
 
-        // Verify Source
-        // Note: app.getPath('documents')/TalaWorkspace might be specific to this user's setup. 
-        // We should double check where the workspace actually is.
-        // Assuming current logic is correct for now.
-        const sourceDir = path.join(app.getPath('documents'), 'TalaWorkspace');
+        const sourceDir = this.getWorkspaceSourceDir();
         if (!fs.existsSync(sourceDir)) {
-            // Fallback to checking if we are in dev mode? 
-            // Ideally we backup the DATA folder of the app?
-            // But the original code backed up 'TalaWorkspace'. Sticking to that.
+            return { success: false, error: `Workspace source does not exist: ${sourceDir}` };
         }
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -196,14 +223,7 @@ export class BackupService {
 
         // Determine Local Output Path
         // We always create a local zip first, then optionally upload it.
-        let backupDir = config.localPath;
-        if (!backupDir) backupDir = resolveAppPath(path.join('exports', 'backups')); // Default fallback
-
-        if (!path.isAbsolute(backupDir)) {
-            // If relative, make it relative to UserData or Documents?
-            // Original code made it relative to Documents.
-            backupDir = path.join(app.getPath('documents'), backupDir);
-        }
+        const backupDir = this.resolveBackupOutputDir(config);
 
         if (!fs.existsSync(backupDir)) {
             fs.mkdirSync(backupDir, { recursive: true });

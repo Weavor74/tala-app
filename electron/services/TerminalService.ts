@@ -1,8 +1,9 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { app, ipcMain, BrowserWindow } from 'electron';
 import os from 'os';
 import fs from 'fs';
 import * as pty from 'node-pty';
 import { CodeAccessPolicy } from './CodeAccessPolicy';
+import { APP_ROOT, resolveStoragePath } from './PathResolver';
 
 /**
  * Interactive Shell & PTY Service.
@@ -25,8 +26,10 @@ export class TerminalService {
     private shells: Map<string, any> = new Map();
     /** Reference to the Electron BrowserWindow for sending IPC messages to the renderer. */
     private window: BrowserWindow | null = null;
-    /** The working directory where the shell process starts. Defaults to the user's home directory. */
-    private workspaceRoot: string = os.homedir();
+    /** The working directory where the shell process starts. Defaults to an app-root-relative workspace. */
+    private workspaceRoot: string = (process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
+        ? APP_ROOT
+        : resolveStoragePath('workspace');
     /** Rolling buffer of the last 1000 characters of terminal output, used by AgentService for context. */
     private outputBuffer: string = "";
     /** Custom environment variables merged into the shell's environment. */

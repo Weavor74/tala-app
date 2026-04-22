@@ -44,6 +44,7 @@ import { enforceSideEffectWithGuardrails } from './policy/PolicyEnforcement';
 import { GuardrailCircuitBreakerStore } from './runtime/guardrails/GuardrailCircuitBreaker';
 import { executeWithRuntimeGuardrails } from './runtime/guardrails/GuardrailExecutor';
 import type { GuardrailFailureKind } from './runtime/guardrails/RuntimeGuardrailTypes';
+import { resolveAppPath, resolveScratchPath } from './PathResolver';
 
 type SignalCategory = TelemetrySignal['category'];
 
@@ -794,10 +795,10 @@ export class InferenceService {
      * Prioritises the project-local inference venv, then
      * falls back to bundled binaries or a system Python.
      *
-     * @param repoRoot - Repository root directory (defaults to process.cwd()).
+     * @param repoRoot - Repository root directory (defaults to app-root resolver).
      */
     public resolveLocalInferencePython(repoRoot?: string): string | undefined {
-        const root = repoRoot || (typeof app !== 'undefined' ? app.getAppPath() : process.cwd());
+        const root = repoRoot || resolveAppPath('');
         const isWin = process.platform === 'win32';
 
         const candidates = [
@@ -1023,7 +1024,7 @@ export class InferenceService {
     }
 
     private _resolveRepoRoot(): string {
-        return typeof app !== 'undefined' ? app.getAppPath() : process.cwd();
+        return resolveAppPath('');
     }
 
     private async _isModelsEndpointReachable(modelsUrl: string, timeoutMs: number): Promise<boolean> {
@@ -1141,7 +1142,8 @@ export class InferenceService {
         }
 
         const url = 'https://ollama.com/download/OllamaSetup.exe';
-        const tempDir = app.getPath('temp');
+        const tempDir = resolveScratchPath('installers');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
         const dest = path.join(tempDir, 'OllamaSetup.exe');
 
         try {

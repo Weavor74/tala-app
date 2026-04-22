@@ -9,6 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Pool } from 'pg';
+import { resolveAppPath } from '../PathResolver';
 
 export interface MigrationRecord {
   version: string;
@@ -38,8 +39,8 @@ export class MigrationRunner {
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
-    // Fallback: relative to process.cwd()
-    return path.resolve(process.cwd(), 'electron/migrations');
+    // Fallback: resolve from app root so runtime is launch-location agnostic.
+    return resolveAppPath(path.join('electron', 'migrations'));
   }
 
   /**

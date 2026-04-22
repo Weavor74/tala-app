@@ -4,6 +4,7 @@ import fs from 'fs';
 import chokidar from 'chokidar';
 import { CodeAccessPolicy } from './CodeAccessPolicy';
 import { RuntimeErrorLogger } from './logging/RuntimeErrorLogger';
+import { APP_ROOT, resolveStoragePath } from './PathResolver';
 
 /**
  * Represents a single file or directory entry within the workspace file tree.
@@ -42,18 +43,17 @@ export class FileService {
      * Creates a new FileService instance.
      * 
      * Determines the workspace root from the `initialRoot` parameter, falling
-     * back to `process.cwd()` in development or `~/Documents/TalaWorkspace` in
-     * production. If the directory doesn't exist, it's created recursively.
-     * If creation fails, falls back to `process.cwd()` as a last resort.
+     * back to app-root-relative defaults. If the directory doesn't exist, it's
+     * created recursively. If creation fails, falls back to `APP_ROOT`.
      * 
      * @param {string} [initialRoot] - Optional explicit workspace root path.
      *   If omitted, the path is determined by the environment.
      */
     constructor(initialRoot?: string) {
-        // Default to current directory if in dev, otherwise documents
+        // Default to app root in dev, otherwise to app-local storage workspace.
         const defaultPath = initialRoot || ((process.env.VITE_DEV_SERVER_URL || !app.isPackaged)
-            ? process.cwd()
-            : path.join(app.getPath('documents'), 'TalaWorkspace'));
+            ? APP_ROOT
+            : resolveStoragePath('workspace'));
 
         this.workspaceDir = path.resolve(defaultPath);
         if (!fs.existsSync(this.workspaceDir)) {
@@ -61,8 +61,8 @@ export class FileService {
                 fs.mkdirSync(this.workspaceDir, { recursive: true });
             } catch (e) {
                 console.error(`[FileService] Failed to create workspace at ${this.workspaceDir}`, e);
-                // Fallback to current directory as last resort
-                this.workspaceDir = process.cwd();
+                // Last-resort fallback remains app-root-relative.
+                this.workspaceDir = APP_ROOT;
             }
         }
     }

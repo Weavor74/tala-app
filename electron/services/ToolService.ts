@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { AnnotationParser } from './AnnotationParser';
@@ -6,6 +5,7 @@ import { auditLogger } from './AuditLogger';
 import { redact } from './log_redact';
 import type { McpAuthorityService } from './mcp/McpAuthorityService';
 import type { MemoryAuthorityContext } from '../../shared/memoryAuthorityTypes';
+import { resolveStoragePath } from './PathResolver';
 
 /**
  * Standardized execution result for all tools.
@@ -95,12 +95,12 @@ export class ToolService {
     /**
      * Creates a new ToolService and registers all core tools.
      * 
-     * Sets the workspace to `~/Documents/TalaWorkspace` by default.
+     * Sets the workspace to an app-root-relative default.
      * Core tools (file I/O, browser, terminal) are registered immediately.
      * Service-dependent tools (Memory) are added later via setter methods.
      */
     constructor() {
-        this.workspaceDir = path.join(app.getPath('documents'), 'TalaWorkspace');
+        this.workspaceDir = resolveStoragePath('workspace');
         
         // Lazy load the universal search service to avoid circular dependencies during initialization
         const { UniversalSearchService } = require('./search/UniversalSearchService');

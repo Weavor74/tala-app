@@ -37,7 +37,7 @@ Exit code:
 #>
 
 param(
-    # Override the Python executable (default: auto-detected python/python3)
+    # Override the Python executable
     [string]$PythonCmd = ""
 )
 
@@ -60,19 +60,47 @@ Write-Host ""
 # Locate Python 3
 # ---------------------------------------------------------------------------
 if (-not $PythonCmd) {
-    $candidates = @("python", "python3", "py")
-    foreach ($cand in $candidates) {
-        if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { continue }
-        $ver = & $cand --version 2>&1
-        if ($LASTEXITCODE -eq 0 -and ($ver -match "Python 3")) {
-            $PythonCmd = $cand
+    $localCandidates = @(
+        (Join-Path $RepoRoot "bin\python-win\python.exe"),
+        (Join-Path $RepoRoot "bin\python-portable\python.exe")
+    )
+
+    foreach ($candidate in $localCandidates) {
+        if (Test-Path $candidate) {
+            $PythonCmd = $candidate
+            Log-Info "Using project-local Python: $PythonCmd"
             break
         }
     }
 }
 
 if (-not $PythonCmd) {
-    Log-Error "Python 3 not found in PATH. Install Python 3 and re-run."
+    if ($env:TALA_ALLOW_SYSTEM_PYTHON -eq "1") {
+        $systemCandidates = @("python", "python3", "py")
+        foreach ($cand in $systemCandidates) {
+            if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { continue }
+            $ver = & $cand --version 2>&1
+            if ($LASTEXITCODE -eq 0 -and ($ver -match "Python 3")) {
+                $PythonCmd = $cand
+                Log-Warn "Using system Python because TALA_ALLOW_SYSTEM_PYTHON=1 (cmd: $cand)"
+                break
+            }
+        }
+    }
+}
+
+if (-not $PythonCmd) {
+    Log-Error "No project-local Python interpreter found."
+    Log-Error "Expected one of:"
+    Log-Error "  - bin\python-win\python.exe"
+    Log-Error "  - bin\python-portable\python.exe"
+    Log-Error "Set -PythonCmd to a local interpreter, or set TALA_ALLOW_SYSTEM_PYTHON=1 to opt into system Python."
+    exit 1
+}
+
+& $PythonCmd -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Log-Error "Python 3.10+ required. Selected interpreter: $PythonCmd"
     exit 1
 }
 

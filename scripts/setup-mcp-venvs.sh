@@ -35,7 +35,8 @@
 #   1 — one or more venvs failed to install
 #
 # Environment variables:
-#   PYTHON_CMD — override the Python executable (default: auto-detected python3/python)
+#   PYTHON_CMD — override the Python executable
+#   TALA_ALLOW_SYSTEM_PYTHON=1 — permit fallback to system python when no local runtime exists
 # ===========================================================================
 
 set -euo pipefail
@@ -66,12 +67,52 @@ echo ""
 # ---------------------------------------------------------------------------
 if [ -n "${PYTHON_CMD:-}" ]; then
     log_info "Using PYTHON_CMD override: $PYTHON_CMD"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_CMD="python3"
-elif command -v python >/dev/null 2>&1 && python --version 2>&1 | grep -q "Python 3"; then
-    PYTHON_CMD="python"
 else
-    log_error "Python 3 not found in PATH. Install Python 3 and re-run."
+    PLATFORM="$(uname -s)"
+    LOCAL_CANDIDATES=(
+        "$REPO_ROOT/bin/python-linux/bin/python3"
+        "$REPO_ROOT/bin/python-mac/bin/python3"
+        "$REPO_ROOT/bin/python-portable/python"
+    )
+    if [ "$PLATFORM" = "Darwin" ]; then
+        LOCAL_CANDIDATES=(
+            "$REPO_ROOT/bin/python-mac/bin/python3"
+            "$REPO_ROOT/bin/python-portable/python"
+            "$REPO_ROOT/bin/python-linux/bin/python3"
+        )
+    fi
+
+    for candidate in "${LOCAL_CANDIDATES[@]}"; do
+        if [ -f "$candidate" ]; then
+            PYTHON_CMD="$candidate"
+            log_info "Using project-local Python: $PYTHON_CMD"
+            break
+        fi
+    done
+
+    if [ -z "${PYTHON_CMD:-}" ] && [ "${TALA_ALLOW_SYSTEM_PYTHON:-0}" = "1" ]; then
+        if command -v python3 >/dev/null 2>&1; then
+            PYTHON_CMD="python3"
+            log_warn "Using system python3 because TALA_ALLOW_SYSTEM_PYTHON=1"
+        elif command -v python >/dev/null 2>&1 && python --version 2>&1 | grep -q "Python 3"; then
+            PYTHON_CMD="python"
+            log_warn "Using system python because TALA_ALLOW_SYSTEM_PYTHON=1"
+        fi
+    fi
+fi
+
+if [ -z "${PYTHON_CMD:-}" ]; then
+    log_error "No project-local Python interpreter found."
+    log_error "Expected one of:"
+    log_error "  - bin/python-linux/bin/python3"
+    log_error "  - bin/python-mac/bin/python3"
+    log_error "  - bin/python-portable/python"
+    log_error "Set PYTHON_CMD to a local interpreter, or set TALA_ALLOW_SYSTEM_PYTHON=1 to opt into system Python."
+    exit 1
+fi
+
+if ! "$PYTHON_CMD" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1; then
+    log_error "Python 3.10+ required. Selected interpreter: $PYTHON_CMD"
     exit 1
 fi
 

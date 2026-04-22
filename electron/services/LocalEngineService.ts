@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
+import { resolveAppPath, resolveScratchPath } from './PathResolver';
 
 /**
  * Local LLM Engine Service
@@ -40,7 +41,7 @@ export class LocalEngineService {
         // 2. Local workspace bin folder (development)
         const roots = [
             path.join(app.getAppPath(), 'bin'),
-            path.join(process.cwd(), 'bin')
+            resolveAppPath('bin')
         ];
 
         for (const root of roots) {
@@ -166,10 +167,11 @@ export class LocalEngineService {
             url = 'https://github.com/ggerganov/llama.cpp/releases/download/b3524/llama-b3524-bin-ubuntu-x64.zip';
         }
 
-        const binDir = path.join(process.cwd(), 'bin');
+        const binDir = resolveAppPath('bin');
         if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
 
-        const zipPath = path.join(app.getPath('temp'), 'llama-bin.zip');
+        const zipPath = resolveScratchPath(path.join('downloads', 'llama-bin.zip'));
+        fs.mkdirSync(path.dirname(zipPath), { recursive: true });
         console.log(`[LocalEngine] Downloading binary from ${url}...`);
 
         await this.downloadFile(url, zipPath, onProgress);
@@ -200,7 +202,7 @@ export class LocalEngineService {
     public async downloadModel(onProgress: (progress: number) => void): Promise<string> {
         // Llama-3.1-8B-Instruct-Q4_K_M.gguf (approx 4.9GB)
         const url = 'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf';
-        const modelDir = path.join(process.cwd(), 'models');
+        const modelDir = resolveAppPath('models');
         if (!fs.existsSync(modelDir)) fs.mkdirSync(modelDir, { recursive: true });
 
         const dest = path.join(modelDir, 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
@@ -228,11 +230,12 @@ export class LocalEngineService {
             url = 'https://github.com/indygreg/python-build-standalone/releases/download/20240107/cpython-3.11.7+20240107-x86_64-unknown-linux-gnu-install_only.tar.gz';
         }
 
-        const pythonDir = path.join(process.cwd(), 'bin', 'python');
+        const pythonDir = resolveAppPath(path.join('bin', 'python'));
         if (!fs.existsSync(pythonDir)) fs.mkdirSync(pythonDir, { recursive: true });
 
         const ext = isWin ? '.zip' : '.tar.gz';
-        const dest = path.join(app.getPath('temp'), `portable-python${ext}`);
+        const dest = resolveScratchPath(path.join('downloads', `portable-python${ext}`));
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
 
         console.log(`[LocalEngine] Downloading portable Python from ${url}...`);
         await this.downloadFile(url, dest, onProgress);
@@ -295,7 +298,7 @@ export class LocalEngineService {
     public async ensureReady(): Promise<boolean> {
         if (this.isRunning) return true;
 
-        const modelDir = path.join(process.cwd(), 'models');
+        const modelDir = resolveAppPath('models');
         const defaultModel = path.join(modelDir, 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf');
 
         if (!fs.existsSync(this.binaryPath) || !fs.existsSync(defaultModel)) {

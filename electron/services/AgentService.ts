@@ -424,7 +424,7 @@ Violation of this rule is considered a system failure.`;
         this.workflows = new WorkflowRegistry(this.tools);
 
         // Core system connections
-        this.docIntel = new DocumentationIntelligenceService(process.cwd()); // Initial default, updated via setWorkspaceRoot
+        this.docIntel = new DocumentationIntelligenceService(resolveStoragePath('workspace')); // Initial default, updated via setWorkspaceRoot
 
         // Phase 3A: Initialise the pre-inference context orchestrator
         this.preInferenceOrchestrator = new PreInferenceContextOrchestrator(

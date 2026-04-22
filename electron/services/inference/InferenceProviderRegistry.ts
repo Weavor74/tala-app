@@ -34,6 +34,7 @@ import type {
     InferenceProviderInventory,
 } from '../../../shared/inferenceProviderTypes';
 import { telemetry } from '../TelemetryService';
+import { resolveAppPath } from '../PathResolver';
 
 // ─── Default capabilities ─────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ function buildEmbeddedVllmUnavailableMessage(): string {
         return launcherHint;
     }
 
-    const repoRoot = process.cwd();
+    const repoRoot = resolveAppPath('');
     const apiServerPath = path.join(
         repoRoot,
         'local-inference',

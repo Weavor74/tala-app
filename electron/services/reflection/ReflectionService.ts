@@ -46,6 +46,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AutoFixEngine } from './AutoFixEngine';
 import { AutoFixProposal } from './AutoFixTypes';
+import { resolveAppPath } from '../PathResolver';
 
 export class ReflectionService {
     private isEnabled: boolean;
@@ -82,7 +83,7 @@ export class ReflectionService {
     private activePatches: Map<string, CandidatePatch> = new Map();
     private readonly activeTraceRuns: Set<string> = new Set();
 
-    constructor(userDataDir: string, settingsPath: string, rootDir: string = process.cwd()) {
+    constructor(userDataDir: string, settingsPath: string, rootDir: string = resolveAppPath('')) {
         this.settingsPath = settingsPath;
         this.rootDir = rootDir;
 

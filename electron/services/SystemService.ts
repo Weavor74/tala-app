@@ -225,9 +225,13 @@ export class SystemService {
             return info.pythonEnvPath;
         }
 
-        // info.pythonPath is already resolved to bundled if available in detectEnv
-        // Default MUST be <repoRoot>\bin\python-win\python.exe (resolved in info.pythonPath)
-        return info.pythonPath || 'python';
+        // info.pythonPath is already resolved to bundled python when available in detectEnv.
+        // Do not silently fall back to PATH "python" here; callers should decide whether
+        // system-python fallback is acceptable for their execution context.
+        if (info.pythonPath && info.pythonPath !== 'Not Found') {
+            return info.pythonPath;
+        }
+        return '';
     }
 
     /**
