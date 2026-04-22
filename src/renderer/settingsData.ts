@@ -38,6 +38,11 @@ export type {
     AgentProfile
 };
 
+export type RendererSettingsNormalizationIssue = {
+    path: string;
+    reason: string;
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
     deploymentMode: 'local',
     inference: {
@@ -352,4 +357,152 @@ export const migrateSettings = (loaded: any): AppSettings => {
 
     return base;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneDefaultAgentProfile(): AgentProfile {
+    const fallback = DEFAULT_SETTINGS.agent.profiles[0];
+    return {
+        ...fallback,
+        rules: { ...fallback.rules },
+        workflows: { ...fallback.workflows },
+        mcp: {
+            global: [...(fallback.mcp?.global || [])],
+            workspace: [...(fallback.mcp?.workspace || [])],
+        },
+        guardrailIds: [...(fallback.guardrailIds || [])],
+    };
+}
+
+function toStringArray(input: unknown, fallback: string[]): string[] {
+    return Array.isArray(input)
+        ? input.filter((item): item is string => typeof item === 'string')
+        : fallback;
+}
+
+function normalizeAgentProfileShape(input: unknown, index: number): AgentProfile {
+    const fallback = cloneDefaultAgentProfile();
+    if (!isRecord(input)) {
+        return {
+            ...fallback,
+            id: `agent-fallback-${index + 1}`,
+            name: `Recovered Agent ${index + 1}`,
+        };
+    }
+    return {
+        ...fallback,
+        ...input,
+        id: typeof input.id === 'string' && input.id.trim().length > 0 ? input.id : fallback.id,
+        name: typeof input.name === 'string' && input.name.trim().length > 0 ? input.name : fallback.name,
+        systemPrompt: typeof input.systemPrompt === 'string' ? input.systemPrompt : fallback.systemPrompt,
+        temperature: typeof input.temperature === 'number' ? input.temperature : fallback.temperature,
+        rules: {
+            ...fallback.rules,
+            ...(isRecord(input.rules) ? input.rules : {}),
+        },
+        workflows: {
+            ...fallback.workflows,
+            ...(isRecord(input.workflows) ? input.workflows : {}),
+        },
+        mcp: {
+            global: toStringArray(input.mcp && isRecord(input.mcp) ? input.mcp.global : undefined, fallback.mcp.global),
+            workspace: toStringArray(input.mcp && isRecord(input.mcp) ? input.mcp.workspace : undefined, fallback.mcp.workspace),
+        },
+        guardrailIds: Array.isArray(input.guardrailIds)
+            ? input.guardrailIds.filter((value): value is string => typeof value === 'string')
+            : fallback.guardrailIds,
+    };
+}
+
+function normalizeAgentConfigShapeWithDiagnostics(
+    input: unknown,
+    onIssue?: (issue: RendererSettingsNormalizationIssue) => void,
+): AppSettings['agent'] {
+    const fallbackProfile = cloneDefaultAgentProfile();
+    const fallbackCapabilities = {
+        memory: DEFAULT_SETTINGS.agent.capabilities?.memory ?? true,
+        emotions: DEFAULT_SETTINGS.agent.capabilities?.emotions ?? true,
+    };
+    const fallbackAgent: AppSettings['agent'] = {
+        activeProfileId: fallbackProfile.id,
+        capabilities: fallbackCapabilities,
+        profiles: [fallbackProfile],
+    };
+
+    if (!isRecord(input)) {
+        onIssue?.({ path: 'agent', reason: 'missing_or_invalid_agent_object' });
+        return fallbackAgent;
+    }
+
+    const source = input as Record<string, unknown>;
+    const rawProfiles = Array.isArray(source.profiles) ? source.profiles : [];
+    if (!Array.isArray(source.profiles)) {
+        onIssue?.({ path: 'agent.profiles', reason: 'profiles_not_array' });
+    }
+    const profiles = rawProfiles.map((entry, index) => normalizeAgentProfileShape(entry, index));
+    const safeProfiles = profiles.length > 0 ? profiles : fallbackAgent.profiles;
+    if (profiles.length === 0) {
+        onIssue?.({ path: 'agent.profiles', reason: 'profiles_empty_fallback_applied' });
+    }
+    const requestedActiveProfileId = typeof source.activeProfileId === 'string' ? source.activeProfileId : '';
+    const activeProfileId = safeProfiles.some((p) => p?.id === requestedActiveProfileId)
+        ? requestedActiveProfileId
+        : safeProfiles[0].id;
+    if (!requestedActiveProfileId || requestedActiveProfileId !== activeProfileId) {
+        onIssue?.({ path: 'agent.activeProfileId', reason: 'active_profile_repaired' });
+    }
+
+    const sourceCapabilities = isRecord(source.capabilities) ? source.capabilities : {};
+    if (!isRecord(source.capabilities)) {
+        onIssue?.({ path: 'agent.capabilities', reason: 'capabilities_missing_or_invalid' });
+    }
+    const capabilities = {
+        memory: typeof sourceCapabilities.memory === 'boolean'
+            ? sourceCapabilities.memory
+            : fallbackCapabilities.memory,
+        emotions: typeof sourceCapabilities.emotions === 'boolean'
+            ? sourceCapabilities.emotions
+            : fallbackCapabilities.emotions,
+    };
+
+    if (typeof sourceCapabilities.memory !== 'boolean' || typeof sourceCapabilities.emotions !== 'boolean') {
+        onIssue?.({ path: 'agent.capabilities', reason: 'capabilities_repaired' });
+    }
+
+    return {
+        ...fallbackAgent,
+        ...(source as Partial<AppSettings['agent']>),
+        capabilities,
+        profiles: safeProfiles,
+        activeProfileId,
+    };
+}
+
+export function normalizeAppSettingsForRenderer(
+    loaded: unknown,
+    onIssue?: (issue: RendererSettingsNormalizationIssue) => void,
+): AppSettings {
+    const migrated = migrateSettings(loaded);
+    return {
+        ...migrated,
+        agent: normalizeAgentConfigShapeWithDiagnostics(migrated.agent, onIssue),
+    };
+}
+
+export function normalizeWorkspaceSettingsForRenderer(
+    loaded: unknown,
+    onIssue?: (issue: RendererSettingsNormalizationIssue) => void,
+): Partial<AppSettings> {
+    if (!isRecord(loaded)) {
+        onIssue?.({ path: 'workspace', reason: 'workspace_settings_not_object' });
+        return {};
+    }
+    const out: Partial<AppSettings> = { ...(loaded as Partial<AppSettings>) };
+    if ('agent' in out) {
+        out.agent = normalizeAgentConfigShapeWithDiagnostics((loaded as Record<string, unknown>).agent, onIssue);
+    }
+    return out;
+}
 

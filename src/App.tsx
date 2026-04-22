@@ -39,6 +39,7 @@ import { FileExplorer } from './renderer/components/FileExplorer';
 import { Terminal } from './renderer/components/Terminal';
 import Browser from './renderer/components/Browser';
 import { SourceControl } from './renderer/components/SourceControl';
+import { ErrorBoundary } from './renderer/components/ErrorBoundary';
 import { ToastProvider, useToast } from './renderer/components/ToastNotification';
 import { ChatSessions } from './renderer/components/ChatSessions';
 import { EmotionDisplay } from './renderer/components/EmotionDisplay';
@@ -1330,7 +1331,11 @@ function App() {
 
         <div className="editor-content">
           <div className={`view-container ${activeView !== 'profile' ? 'hidden' : ''}`}><UserProfile /></div>
-          <div className={`view-container ${activeView !== 'settings' ? 'hidden' : ''}`}><Settings /></div>
+          <div className={`view-container ${activeView !== 'settings' ? 'hidden' : ''}`}>
+            <ErrorBoundary name="Settings Panel">
+              <Settings />
+            </ErrorBoundary>
+          </div>
 
           {/* SEARCH VIEW (Results) */}
           <div className={`view-container ${activeView !== 'search' ? 'hidden' : ''}`}>

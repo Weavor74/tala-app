@@ -18,7 +18,12 @@
  * - Persists all changes to disk on-demand via the `Save` flow.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { DEFAULT_SETTINGS, migrateSettings } from './settingsData';
+import {
+    DEFAULT_SETTINGS,
+    type RendererSettingsNormalizationIssue,
+    normalizeAppSettingsForRenderer,
+    normalizeWorkspaceSettingsForRenderer,
+} from './settingsData';
 import type { AppSettings, InferenceInstance, SourceControlProvider, AgentProfile, McpServerConfig } from './settingsData';
 import 'xterm/css/xterm.css';
 import { WorkflowEditor } from './components/WorkflowEditor';
@@ -173,6 +178,15 @@ export const Settings = () => {
     const [authStorageSnapshot, setAuthStorageSnapshot] = useState<any | null>(null);
     const [authStorageBusy, setAuthStorageBusy] = useState(false);
 
+    const reportNormalizationIssues = (stage: 'load' | 'import', issues: RendererSettingsNormalizationIssue[]) => {
+        if (issues.length === 0) return;
+        console.warn('[Settings][Normalization]', {
+            stage,
+            issueCount: issues.length,
+            issues,
+        });
+    };
+
     // Deep merge helper
     const deepMerge = (target: any, source: any): any => {
         const output = { ...target };
@@ -305,9 +319,12 @@ export const Settings = () => {
                         w = loaded.workspace || {};
                     }
 
-                    const migrated = migrateSettings(g);
+                    const issues: RendererSettingsNormalizationIssue[] = [];
+                    const migrated = normalizeAppSettingsForRenderer(g, (issue) => issues.push(issue));
+                    const normalizedWorkspace = normalizeWorkspaceSettingsForRenderer(w, (issue) => issues.push(issue));
                     setGlobalSettings(migrated);
-                    setWorkspaceSettings(w);
+                    setWorkspaceSettings(normalizedWorkspace);
+                    reportNormalizationIssues('load', issues);
                     // Initial set will trigger the effect above
                 }
             }
@@ -666,8 +683,19 @@ export const Settings = () => {
                                 if (!confirm("Importing settings will overwrite your current Global configuration. Continue?")) return;
                                 const res = await api.importSettings();
                                 if (res.success && res.settings) {
-                                    setGlobalSettings(res.settings);
-                                    setSettings(scope === 'global' ? res.settings : deepMerge(res.settings, workspaceSettings));
+                                    const issues: RendererSettingsNormalizationIssue[] = [];
+                                    const importedGlobal = normalizeAppSettingsForRenderer(res.settings, (issue) => issues.push(issue));
+                                    const normalizedWorkspace = normalizeWorkspaceSettingsForRenderer(
+                                        workspaceSettings,
+                                        (issue) => issues.push(issue),
+                                    );
+                                    setGlobalSettings(importedGlobal);
+                                    setSettings(
+                                        scope === 'global'
+                                            ? importedGlobal
+                                            : deepMerge(importedGlobal, normalizedWorkspace),
+                                    );
+                                    reportNormalizationIssues('import', issues);
                                     setStatus('Settings Imported Successfully.');
                                 } else {
                                     if (res.error) setStatus(`Import Failed: ${res.error}`);
@@ -722,7 +750,7 @@ export const Settings = () => {
             <div style={{ flex: 1, overflowY: 'auto' }}>
 
                 {/* AGENT TAB - Profile Switching */}
-                {activeTab === 'agent' && settings.agent && (
+                {activeTab === 'agent' && settings.agent && Array.isArray(settings.agent.profiles) && (
                     <div style={sectionStyle}>
                         {/* CAPABILITIES TOGGLES */}
                         <div style={{ marginBottom: 30, background: '#1e1e1e', padding: 15, borderRadius: 4, border: '1px solid #3e3e42' }}>
@@ -3044,7 +3072,7 @@ export const Settings = () => {
 
                 {/* AGENT TAB */}
                 {
-                    activeTab === 'agent' && (
+                    activeTab === 'agent' && settings.agent && Array.isArray(settings.agent.profiles) && settings.agent.profiles.length > 0 && (
                         <div style={sectionStyle}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div>
