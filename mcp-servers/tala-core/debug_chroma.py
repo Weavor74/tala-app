@@ -1,5 +1,14 @@
-import chromadb
 import os
+import sys
+
+try:
+    import chromadb
+except ImportError as exc:
+    print("ERROR: 'chromadb' is not installed in this interpreter.")
+    print("Install it with the same interpreter used for this script, for example:")
+    print(f"  {sys.executable} -m pip install chromadb")
+    print(f"Details: {exc}")
+    sys.exit(1)
 
 # Path to the data directory
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")

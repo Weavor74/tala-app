@@ -169,12 +169,12 @@ for MOD in "${MCP_MODULES[@]}"; do
         log_info "  Venv already exists — refreshing dependencies"
     fi
 
-    VENV_PIP="$VENV_PATH/bin/pip"
+    VENV_PYTHON="$VENV_PATH/bin/python"
 
     # Upgrade pip quietly (non-fatal — old pip still works)
-    "$VENV_PIP" install --quiet --upgrade pip 2>/dev/null || true
+    "$VENV_PYTHON" -m pip install --quiet --upgrade pip 2>/dev/null || true
 
-    if "$VENV_PIP" install --quiet -r "$REQ_FILE"; then
+    if "$VENV_PYTHON" -m pip install --quiet -r "$REQ_FILE"; then
         log_ok "$MOD venv ready"
         PASS_COUNT=$((PASS_COUNT + 1))
     else

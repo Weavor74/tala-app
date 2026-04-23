@@ -236,8 +236,13 @@ fi
 echo -e "\n${YELLOW}[5/6] Installing Node.js Dependencies...${NC}"
 
 if [ -f "$REPO_ROOT/package.json" ]; then
-    echo "      Running npm install in: $REPO_ROOT"
-    npm install
+    if [ -f "$REPO_ROOT/package-lock.json" ]; then
+        echo "      package-lock.json found - running npm ci for deterministic install."
+        npm ci --ignore-scripts
+    else
+        echo "      No package-lock.json found - running npm install."
+        npm install --ignore-scripts
+    fi
     log_ok "Node packages installed."
 else
     log_err "package.json not found at $REPO_ROOT"

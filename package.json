@@ -59,8 +59,8 @@
     "dev:with-memory": "npm run memory:up && npm run dev",
     "self:maintain": "npx tsx scripts/diagnostics/run_self_maintenance.ts",
     "self:watch": "npx tsx scripts/diagnostics/watch_self_maintenance.ts",
-    "setup:verify": "bash scripts/verify-setup.sh",
-    "setup:venvs": "bash scripts/setup-mcp-venvs.sh"
+    "setup:verify": "node -e \"const {spawnSync}=require('child_process');const isWin=process.platform==='win32';const cmd=isWin?'powershell':'bash';const args=isWin?['-NoProfile','-ExecutionPolicy','Bypass','-File','scripts/verify-setup.ps1']:['scripts/verify-setup.sh'];const r=spawnSync(cmd,args,{stdio:'inherit'});process.exit(r.status??1);\"",
+    "setup:venvs": "node -e \"const {spawnSync}=require('child_process');const isWin=process.platform==='win32';const cmd=isWin?'powershell':'bash';const args=isWin?['-NoProfile','-ExecutionPolicy','Bypass','-File','scripts/setup-mcp-venvs.ps1']:['scripts/setup-mcp-venvs.sh'];const r=spawnSync(cmd,args,{stdio:'inherit'});process.exit(r.status??1);\""
   },
   "build": {
     "appId": "com.antigravity.tala",
@@ -150,12 +150,13 @@
     "@aws-sdk/lib-storage": "^3.988.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@modelcontextprotocol/server-filesystem": "^2026.1.14",
-    "@types/archiver": "^7.0.0",
     "archiver": "^7.0.1",
     "chokidar": "^3.6.0",
     "discord.js": "^14.25.1",
+    "dotenv": "^17.2.3",
     "electron-squirrel-startup": "^1.0.1",
     "imapflow": "^1.2.9",
+    "minimatch": "^10.1.1",
     "node-pty": "^1.1.0",
     "nodemailer": "^8.0.1",
     "pdfjs-dist": "^4.10.38",
@@ -171,10 +172,12 @@
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0",
     "xterm-addon-web-links": "^0.9.0",
+    "yaml": "^2.8.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/archiver": "^7.0.0",
     "@types/node": "^24.12.0",
     "@types/pg": "^8.18.0",
     "@types/react": "^19.2.5",
@@ -191,6 +194,8 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "patch-package": "^8.0.1",
+    "sqlite3": "^5.1.7",
+    "tsx": "^4.20.6",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",

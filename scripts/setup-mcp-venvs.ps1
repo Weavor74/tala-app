@@ -160,12 +160,12 @@ foreach ($Mod in $McpModules) {
         Log-Info "  Venv already exists - refreshing dependencies"
     }
 
-    $VenvPip = Join-Path $VenvPath "Scripts\pip.exe"
+    $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
 
     # Upgrade pip quietly (non-fatal - old pip still works)
-    & $VenvPip install --quiet --upgrade pip 2>&1 | Out-Null
+    & $VenvPython -m pip install --quiet --upgrade pip 2>&1 | Out-Null
 
-    & $VenvPip install --quiet -r $ReqFile 2>&1
+    & $VenvPython -m pip install --quiet -r $ReqFile 2>&1
     if ($LASTEXITCODE -eq 0) {
         Log-Ok "$Mod venv ready"
         $PassCount++
