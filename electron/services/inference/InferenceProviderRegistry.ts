@@ -175,6 +175,20 @@ export async function checkEmbeddedVllmAvailability(
         };
     }
 
+    const preflight = detectEmbeddedVllmWindowsPreflight();
+    if (preflight.incompatible) {
+        return {
+            providerId: 'embedded_vllm',
+            reachable: false,
+            health: 'unavailable',
+            status: 'unavailable',
+            models: modelId ? [modelId] : [],
+            responseTimeMs: Date.now() - start,
+            error: `${preflight.message} Windows embedded_vllm path uses standard asyncio; uvloop is not required by Tala.`,
+            reasonCode: preflight.reasonCode,
+        };
+    }
+
     return {
         providerId: 'embedded_vllm',
         reachable: false,
@@ -184,6 +198,49 @@ export async function checkEmbeddedVllmAvailability(
         responseTimeMs: Date.now() - start,
         error: buildEmbeddedVllmUnavailableMessage(),
     };
+}
+
+function detectEmbeddedVllmWindowsPreflight(): { incompatible: boolean; reasonCode?: string; message?: string } {
+    if (process.platform !== 'win32') {
+        return { incompatible: false };
+    }
+
+    const repoRoot = resolveAppPath('');
+    const apiServerPath = path.join(
+        repoRoot,
+        'local-inference',
+        'vllm-venv',
+        'Lib',
+        'site-packages',
+        'vllm',
+        'entrypoints',
+        'openai',
+        'api_server.py',
+    );
+    const uvloopPackageDir = path.join(repoRoot, 'local-inference', 'vllm-venv', 'Lib', 'site-packages', 'uvloop');
+
+    if (!fs.existsSync(apiServerPath)) {
+        return { incompatible: false };
+    }
+
+    let apiServerSource = '';
+    try {
+        apiServerSource = fs.readFileSync(apiServerPath, 'utf-8');
+    } catch {
+        return { incompatible: false };
+    }
+
+    const entrypointRequiresUvloop = /\bimport\s+uvloop\b/.test(apiServerSource);
+    const uvloopInstalled = fs.existsSync(uvloopPackageDir);
+    if (entrypointRequiresUvloop && !uvloopInstalled) {
+        return {
+            incompatible: true,
+            reasonCode: 'embedded_vllm_unavailable_windows_uvloop',
+            message: 'Embedded vLLM unavailable on Windows: installed vLLM OpenAI API entrypoint requires uvloop.',
+        };
+    }
+
+    return { incompatible: false };
 }
 
 function buildEmbeddedVllmUnavailableMessage(): string {
@@ -247,6 +304,7 @@ export interface ProviderRegistryConfig {
 
 export class InferenceProviderRegistry {
     private descriptors: Map<string, InferenceProviderDescriptor> = new Map();
+    private lastProbeSignatureByProvider: Map<string, string> = new Map();
     private selectedProviderId: string | undefined;
     private lastRefreshed: string = new Date(0).toISOString();
     private refreshing = false;
@@ -498,11 +556,17 @@ export class InferenceProviderRegistry {
         // Always replace the previous list so removed/unreachable models do not linger.
         desc.models = Array.isArray(result.models) ? [...result.models] : [];
 
-        console.log(
-            `[ModelDiscovery] provider=${desc.providerId} reachable=${result.reachable}` +
-            ` models=${desc.models.length}` +
-            `${result.error ? ` error=${result.error}` : ''}`
-        );
+        const signature = `${result.reachable}|${result.status}|${result.reasonCode ?? ''}|${result.error ?? ''}|${desc.models.join(',')}`;
+        const previousSignature = this.lastProbeSignatureByProvider.get(desc.providerId);
+        if (signature !== previousSignature) {
+            this.lastProbeSignatureByProvider.set(desc.providerId, signature);
+            console.log(
+                `[ModelDiscovery] provider=${desc.providerId} reachable=${result.reachable}` +
+                ` models=${desc.models.length}` +
+                `${result.reasonCode ? ` reasonCode=${result.reasonCode}` : ''}` +
+                `${result.error ? ` error=${result.error}` : ''}`
+            );
+        }
 
         if (result.reachable && result.status === 'ready') {
             telemetry.operational(
@@ -522,7 +586,11 @@ export class InferenceProviderRegistry {
                 'InferenceProviderRegistry',
                 `Provider ${desc.displayName} is no longer available`,
                 'failure',
-                { turnId, mode: agentMode, payload: { providerId: desc.providerId, error: result.error } }
+                {
+                    turnId,
+                    mode: agentMode,
+                    payload: { providerId: desc.providerId, error: result.error, reasonCode: result.reasonCode },
+                }
             );
         } else if (!result.reachable) {
             telemetry.operational(
@@ -532,7 +600,11 @@ export class InferenceProviderRegistry {
                 'InferenceProviderRegistry',
                 `Provider ${desc.displayName} probe failed: ${result.error ?? 'unreachable'}`,
                 'failure',
-                { turnId, mode: agentMode, payload: { providerId: desc.providerId, error: result.error } }
+                {
+                    turnId,
+                    mode: agentMode,
+                    payload: { providerId: desc.providerId, error: result.error, reasonCode: result.reasonCode },
+                }
             );
         }
     }

@@ -807,6 +807,7 @@ export class TalaContextRouter {
             isAutobiographicalLoreRequest ? TalaContextRouter.extractAutobiographicalAgeHint(query) : undefined;
         let memorySystemState = 'unknown';
         let memorySystemDegraded = false;
+        let canonDegradedReason: 'canonical_memory_unavailable' | 'rag_not_searchable' | 'memory_system_degraded' | undefined;
         if (isAutobiographicalLoreRequest && typeof (this.memoryService as any).getHealthStatus === 'function') {
             try {
                 const health = (this.memoryService as any).getHealthStatus?.();
@@ -816,6 +817,9 @@ export class TalaContextRouter {
                     memorySystemState === 'critical' ||
                     memorySystemState === 'disabled';
                 if (memorySystemDegraded) {
+                    canonDegradedReason = memorySystemState === 'disabled'
+                        ? 'canonical_memory_unavailable'
+                        : 'memory_system_degraded';
                     console.log(`[CanonGate] memory subsystem degraded for autobiographical turn state=${memorySystemState}`);
                 }
             } catch {
@@ -903,7 +907,15 @@ export class TalaContextRouter {
                         `[TalaRouter] Autobiographical age query detected - applying structured canon filter age=${autobiographicalAgeHint}`,
                     );
                 }
-                let ragResults = await this.ragService.searchStructured(query, ragOptions);
+                const ragDetailed = await this.ragService.searchStructuredDetailed(query, ragOptions);
+                let ragResults = ragDetailed.results;
+                if (ragDetailed.status !== 'ok') {
+                    memorySystemDegraded = true;
+                    canonDegradedReason = 'rag_not_searchable';
+                    console.warn(
+                        `[TalaRouter] RAG structured retrieval unavailable status=${ragDetailed.status} reason=${ragDetailed.reasonCode ?? 'unknown'}`,
+                    );
+                }
                 if (isAutobiographicalLoreRequest && ragResults.length > 0) {
                     const before = ragResults.length;
                     ragResults = ragResults.filter((r) => {
@@ -1314,6 +1326,7 @@ export class TalaContextRouter {
                     memorySystemState,
                     memorySystemDegraded,
                     degradedStructuredBypassApplied,
+                    degradedCanonReason: canonDegradedReason,
                 },
             } : {}),
         };
@@ -1345,6 +1358,7 @@ export class TalaContextRouter {
             memorySystemState,
             memorySystemDegraded,
             degradedStructuredBypassApplied,
+            degradedCanonReason: canonDegradedReason,
             loreThreadContinuation: {
                 active: !!this.activeLoreMemoryContext,
                 continued: shouldReuseLoreThread,

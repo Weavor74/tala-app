@@ -128,6 +128,11 @@ Resolves the best available Python executable for embedded local inference.
 **Returns**: `string | undefined`
 
 ---
+#### `_checkWindowsEmbeddedVllmCompatibility`
+**Arguments**: `repoRoot: string`
+**Returns**: ``
+
+---
 #### `_resolveRepoRoot`
 **Arguments**: ``
 **Returns**: `string`

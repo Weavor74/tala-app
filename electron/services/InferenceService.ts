@@ -106,6 +106,13 @@ export class InferenceService {
         this.selectionService = new ProviderSelectionService(this.registry);
     }
 
+    private static resolveSlowFirstTokenWarnMs(): number {
+        const raw = process.env.TALA_SLOW_FIRST_TOKEN_WARN_MS;
+        const parsed = raw ? Number(raw) : Number.NaN;
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        return 15_000;
+    }
+
     // ─── Public — registry / selection API ───────────────────────────────────
 
     /**
@@ -384,12 +391,38 @@ export class InferenceService {
                                 streamOpenedForCurrentProvider = true;
                                 inferenceDiagnostics.recordStreamActive();
                                 const firstTokenLatencyMs = Date.now() - attemptStartedAt;
+                                const slowWarnMs = InferenceService.resolveSlowFirstTokenWarnMs();
                                 console.log(
                                     `[InferenceService] First token received` +
                                     ` � provider: ${currentProvider.providerId}` +
                                     ` firstTokenLatency: ${firstTokenLatencyMs}ms` +
                                     ` turnId: ${req.turnId}`
                                 );
+                                if (firstTokenLatencyMs > slowWarnMs) {
+                                    telemetry.operational(
+                                        'inference',
+                                        'slow_first_token_warning' as any,
+                                        'warn',
+                                        'InferenceService',
+                                        `Slow first token latency detected for provider ${currentProvider.providerId}`,
+                                        'partial',
+                                        {
+                                            turnId: req.turnId,
+                                            correlationId: req.correlationId,
+                                            sessionId: req.sessionId,
+                                            mode: req.agentMode ?? 'unknown',
+                                            payload: {
+                                                provider: currentProvider.providerId,
+                                                model: currentProvider.preferredModel ?? options?.model ?? 'unknown',
+                                                promptChars: InferenceService.countPromptChars(messages) + systemPrompt.length,
+                                                firstTokenLatencyMs,
+                                                timeoutMs: InferenceService.resolveOpenTimeout(req, currentProvider, messages, systemPrompt.length),
+                                                thresholdMs: slowWarnMs,
+                                                turnId: req.turnId,
+                                            },
+                                        },
+                                    );
+                                }
                                 telemetry.operational(
                                     'inference',
                                     'stream_opened',
@@ -885,6 +918,21 @@ export class InferenceService {
 
         const repoRoot = this._resolveRepoRoot();
         const isWin = process.platform === 'win32';
+        if (isWin) {
+            const compatibility = this._checkWindowsEmbeddedVllmCompatibility(repoRoot);
+            if (!compatibility.compatible) {
+                telemetry.operational(
+                    'local_inference',
+                    'provider_probe_failed',
+                    'warn',
+                    'InferenceService',
+                    compatibility.message,
+                    'failure',
+                    { payload: { providerId: 'embedded_vllm', reasonCode: 'embedded_vllm_unavailable_windows_uvloop' } },
+                );
+                return false;
+            }
+        }
         const launcher = path.join(repoRoot, 'scripts', isWin ? 'run-vllm.bat' : 'run-vllm.sh');
 
         if (!fs.existsSync(launcher)) {
@@ -1021,6 +1069,43 @@ export class InferenceService {
             { payload: { providerId: 'embedded_vllm', port, startupTimeoutMs } },
         );
         return false;
+    }
+
+    private _checkWindowsEmbeddedVllmCompatibility(repoRoot: string): { compatible: boolean; message: string } {
+        const apiServerPath = path.join(
+            repoRoot,
+            'local-inference',
+            'vllm-venv',
+            'Lib',
+            'site-packages',
+            'vllm',
+            'entrypoints',
+            'openai',
+            'api_server.py',
+        );
+        const uvloopPackageDir = path.join(repoRoot, 'local-inference', 'vllm-venv', 'Lib', 'site-packages', 'uvloop');
+
+        if (!fs.existsSync(apiServerPath)) {
+            return { compatible: true, message: '' };
+        }
+
+        let apiServerSource = '';
+        try {
+            apiServerSource = fs.readFileSync(apiServerPath, 'utf-8');
+        } catch {
+            return { compatible: true, message: '' };
+        }
+
+        const entrypointRequiresUvloop = /\bimport\s+uvloop\b/.test(apiServerSource);
+        const uvloopInstalled = fs.existsSync(uvloopPackageDir);
+        if (entrypointRequiresUvloop && !uvloopInstalled) {
+            return {
+                compatible: false,
+                message: 'Embedded vLLM unavailable on Windows: installed vLLM OpenAI API entrypoint requires uvloop.',
+            };
+        }
+
+        return { compatible: true, message: '' };
     }
 
     private _resolveRepoRoot(): string {

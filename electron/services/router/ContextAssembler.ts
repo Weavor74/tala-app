@@ -255,6 +255,8 @@ export interface TurnContext {
         memorySystemDegraded?: boolean;
         /** Whether degraded-state strictness was bypassed due to structured age-matched canon memory. */
         degradedStructuredBypassApplied?: boolean;
+        /** Distinguishes unavailable memory systems from true no-memory conditions. */
+        degradedCanonReason?: 'canonical_memory_unavailable' | 'rag_not_searchable' | 'memory_system_degraded';
     };
 }
 

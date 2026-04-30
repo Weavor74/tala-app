@@ -287,6 +287,8 @@ Violation of this rule is considered a system failure.`;
     private executionLogHistory: TurnExecutionLog[] = []; // capped at ~25
     private currentTurnAuditRecord?: PromptAuditRecord;
     private activeTurnId: string | null = null;
+    private lastRagReconnectAttemptAt = 0;
+    private static readonly RAG_RECONNECT_COOLDOWN_MS = 15_000;
     // Phase 3A: Live Cognitive Path Integration
     /** Pre-inference context orchestrator — gathers all live context before CognitiveTurnAssembler. */
     private preInferenceOrchestrator!: PreInferenceContextOrchestrator;
@@ -2146,6 +2148,23 @@ Exported standalone package from Tala.
         // ── reconnect_rag ────────────────────────────────────────────────────
         executor.registerRepairHandler('reconnect_rag', async (): Promise<boolean> => {
             if (!this._ignitionParams) return false;
+            if (this.activeTurnId) {
+                telemetry.operational(
+                    'memory',
+                    'rag_restart_deferred_active_turn' as any,
+                    'warn',
+                    'AgentService',
+                    `Deferring RAG reconnect because turn is active (${this.activeTurnId})`,
+                    'partial',
+                    { payload: { turnId: this.activeTurnId } },
+                );
+                return false;
+            }
+            const now = Date.now();
+            if (now - this.lastRagReconnectAttemptAt < AgentService.RAG_RECONNECT_COOLDOWN_MS) {
+                return false;
+            }
+            this.lastRagReconnectAttemptAt = now;
             try {
                 await this.rag.shutdown();
                 await this.rag.ignite(

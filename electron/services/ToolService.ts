@@ -75,6 +75,8 @@ export class ToolService {
     private toolRegistryVersion: number = 0;
     private definitionCache: Map<string, { timestamp: number, definitions: any[] }> = new Map();
     private static readonly CACHE_TTL_MS = 60000;
+    private lastMcpToolSignature: string = '';
+    private mcpRefreshInFlight: Promise<void> | null = null;
 
     /**
      * Legacy tool names that are registered internally but MUST NOT be callable
@@ -1288,10 +1290,20 @@ export class ToolService {
      */
     public async refreshMcpTools() {
         if (!this.mcpService) return;
+        if (this.mcpRefreshInFlight) {
+            return this.mcpRefreshInFlight;
+        }
+        this.mcpRefreshInFlight = this._refreshMcpToolsInternal();
+        try {
+            await this.mcpRefreshInFlight;
+        } finally {
+            this.mcpRefreshInFlight = null;
+        }
+    }
 
+    private async _refreshMcpToolsInternal() {
         console.log('[ToolService] Refreshing MCP Tools...');
-        this.mcpTools.clear();
-        this.invalidateCache();
+        const nextMcpTools: Map<string, { serverId: string, def: any }> = new Map();
 
         const serverIds = this.mcpAuthority
             ? this.mcpAuthority.getApprovedServerIds()
@@ -1310,7 +1322,7 @@ export class ToolService {
                         }
 
                         // Register in mcpTools map
-                        this.mcpTools.set(tool.name, { serverId, def: tool });
+                        nextMcpTools.set(tool.name, { serverId, def: tool });
                         console.log(`[ToolService] Registered MCP tool: ${tool.name} form ${serverId}`);
                     }
                 }
@@ -1318,6 +1330,17 @@ export class ToolService {
                 console.error(`[ToolService] Failed to refresh MCP tools for ${serverId}:`, e);
             }
         }
+        const signature = [...nextMcpTools.entries()]
+            .map(([name, entry]) => `${entry.serverId}:${name}`)
+            .sort()
+            .join('|');
+        if (signature === this.lastMcpToolSignature) {
+            console.log('[ToolService] MCP tool signature unchanged. Registry remains valid.');
+            return;
+        }
+
+        this.mcpTools = nextMcpTools;
+        this.lastMcpToolSignature = signature;
         this.invalidateCache();
     }
 

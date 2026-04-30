@@ -115,6 +115,10 @@ Refreshes the list of available MCP tools from all connected servers. This shou
 **Arguments**: ``
 
 ---
+#### `_refreshMcpToolsInternal`
+**Arguments**: ``
+
+---
 #### `getRegistryVersion`
 **Arguments**: ``
 **Returns**: `number`

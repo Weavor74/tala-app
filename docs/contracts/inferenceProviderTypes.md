@@ -66,6 +66,7 @@ interface ProviderProbeResult {
     models: string[];
     responseTimeMs: number;
     error?: string;
+    reasonCode?: string;
 }
 ```
 

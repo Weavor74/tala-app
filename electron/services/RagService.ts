@@ -5,6 +5,28 @@ import * as path from 'path';
 import { LogViewerService } from './LogViewerService';
 import type { RagStartupResult, ServiceStartupState } from '../../shared/ragStartupTypes';
 
+export type RagReadinessReasonCode =
+    | 'process_not_ready'
+    | 'client_not_connected'
+    | 'tools_not_listed'
+    | 'search_unavailable'
+    | 'call_tool_failed';
+
+export interface RagReadinessSnapshot {
+    processReady: boolean;
+    clientConnected: boolean;
+    toolsListed: boolean;
+    searchable: boolean;
+    startupState: ServiceStartupState;
+}
+
+export interface RagStructuredSearchResult {
+    status: 'ok' | 'degraded' | 'error';
+    reasonCode?: RagReadinessReasonCode;
+    reason?: string;
+    results: Array<{ text: string; score: number; docId?: string; metadata?: Record<string, unknown> }>;
+}
+
 /**
  * Long-Term Narrative Memory Engine (RAG).
  * 
@@ -29,6 +51,9 @@ export class RagService {
     private client: Client | null = null;
     /** Whether the MCP client is connected and has been verified with `listTools()`. */
     private isReady = false;
+    private processReady = false;
+    private clientConnected = false;
+    private toolsListed = false;
     private startupState: ServiceStartupState = 'not_started';
     private lastStartupResult: RagStartupResult | null = null;
     private startupInFlight: Promise<RagStartupResult> | null = null;
@@ -93,6 +118,9 @@ export class RagService {
         console.log(`[RagService] Igniting RAG Core at ${scriptPath}...`);
 
         this.isReady = false;
+        this.processReady = false;
+        this.clientConnected = false;
+        this.toolsListed = false;
         this.client = null;
         this.updateStartupState('starting', 'startup_initiated');
 
@@ -146,6 +174,9 @@ export class RagService {
             const lateElapsed = Date.now() - startedAt;
             if (lateOutcome.ok) {
                 this.client = lateOutcome.client;
+                this.clientConnected = true;
+                this.toolsListed = true;
+                this.processReady = true;
                 this.isReady = true;
                 const lateReady: RagStartupResult = {
                     state: 'ready',
@@ -164,6 +195,9 @@ export class RagService {
 
             const message = lateOutcome.error instanceof Error ? lateOutcome.error.message : String(lateOutcome.error);
             this.isReady = false;
+            this.clientConnected = false;
+            this.toolsListed = false;
+            this.processReady = false;
             const lateFailed: RagStartupResult = {
                 state: 'failed',
                 reason: `late_failure:${message}`,
@@ -202,7 +236,12 @@ export class RagService {
 
         console.log(`[RagService] Spawning: ${pythonPath} ${scriptPath}`);
         await client.connect(transport);
+        this.processReady = true;
+        this.clientConnected = true;
+        this.toolsListed = false;
+        this.updateStartupState('process_ready_tools_unlisted', 'client_connected_pending_tools');
         await client.listTools();
+        this.toolsListed = true;
         return client;
     }
 
@@ -215,6 +254,9 @@ export class RagService {
 
         if (outcome.ok) {
             this.client = outcome.client;
+            this.processReady = true;
+            this.clientConnected = true;
+            this.toolsListed = true;
             this.isReady = true;
             const reason = enteredSlowStart ? 'slow_start_recovered' : 'startup_ready';
             const readyResult: RagStartupResult = {
@@ -237,6 +279,9 @@ export class RagService {
         const message = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
         this.client = null;
         this.isReady = false;
+        this.processReady = false;
+        this.clientConnected = false;
+        this.toolsListed = false;
         const failedResult: RagStartupResult = {
             state: 'failed',
             reason: message,
@@ -268,6 +313,51 @@ export class RagService {
         this.logViewerService = lvs;
     }
 
+    private getReadinessSnapshot(): RagReadinessSnapshot {
+        return {
+            processReady: this.processReady,
+            clientConnected: this.clientConnected,
+            toolsListed: this.toolsListed,
+            searchable: this.processReady && this.clientConnected && this.toolsListed && !!this.client,
+            startupState: this.startupState,
+        };
+    }
+
+    public getReadiness(): RagReadinessSnapshot {
+        return this.getReadinessSnapshot();
+    }
+
+    public async searchStructuredDetailed(
+        query: string,
+        options?: { limit?: number; filter?: Record<string, unknown> }
+    ): Promise<RagStructuredSearchResult> {
+        const readiness = this.getReadinessSnapshot();
+        if (!readiness.processReady) {
+            console.warn('[RagService] SearchStructured unavailable: process_not_ready');
+            return { status: 'degraded', reasonCode: 'process_not_ready', reason: 'RAG process is not ready', results: [] };
+        }
+        if (!readiness.clientConnected || !this.client) {
+            this.updateStartupState('process_ready_client_disconnected', 'client_not_connected');
+            console.warn('[RagService] SearchStructured unavailable: client_not_connected');
+            return { status: 'degraded', reasonCode: 'client_not_connected', reason: 'RAG client transport is not connected', results: [] };
+        }
+        if (!readiness.toolsListed) {
+            this.updateStartupState('process_ready_tools_unlisted', 'tools_not_listed');
+            console.warn('[RagService] SearchStructured unavailable: tools_not_listed');
+            return { status: 'degraded', reasonCode: 'tools_not_listed', reason: 'RAG tools have not been listed', results: [] };
+        }
+        const results = await this.searchStructured(query, options);
+        if (!this.clientConnected) {
+            return {
+                status: 'degraded',
+                reasonCode: 'search_unavailable',
+                reason: 'RAG client transport disconnected during search',
+                results: [],
+            };
+        }
+        return { status: 'ok', results };
+    }
+
     /**
      * Structured RAG search result — a single retrieved document chunk with its score.
      */
@@ -288,8 +378,19 @@ export class RagService {
         query: string,
         options?: { limit?: number; filter?: Record<string, unknown> }
     ): Promise<Array<{ text: string; score: number; docId?: string; metadata?: Record<string, unknown> }>> {
-        if (!this.isReady || !this.client) {
-            console.warn('[RagService] SearchStructured skipped: Service not ready');
+        const readiness = this.getReadinessSnapshot();
+        if (!readiness.processReady) {
+            console.warn('[RagService] SearchStructured skipped: process not ready');
+            return [];
+        }
+        if (!readiness.clientConnected || !this.client) {
+            this.updateStartupState('process_ready_client_disconnected', 'client_not_connected');
+            console.warn('[RagService] SearchStructured skipped: client not connected');
+            return [];
+        }
+        if (!readiness.toolsListed) {
+            this.updateStartupState('process_ready_tools_unlisted', 'tools_not_listed');
+            console.warn('[RagService] SearchStructured skipped: tools not listed');
             return [];
         }
 
@@ -354,6 +455,14 @@ export class RagService {
             console.warn('[RagService] SearchStructured: no parseable content in result');
             return [];
         } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message.includes('Not connected')) {
+                this.clientConnected = false;
+                this.isReady = false;
+                this.updateStartupState('process_ready_client_disconnected', 'client_not_connected');
+                console.warn('[RagService] SearchStructured degraded: search unavailable (client disconnected)');
+                return [];
+            }
             console.warn('[RagService] SearchStructured failed:', error);
             return [];
         }
@@ -665,6 +774,9 @@ export class RagService {
             this.client = null;
         }
         this.isReady = false;
+        this.processReady = false;
+        this.clientConnected = false;
+        this.toolsListed = false;
         this.updateStartupState('not_started', 'shutdown_completed');
         // Transport matches lifespan of client usually, but SDK client.close() handles it.
     }

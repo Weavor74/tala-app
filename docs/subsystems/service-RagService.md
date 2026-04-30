@@ -33,6 +33,16 @@ Long-Term Narrative Memory Engine (RAG).  The `RagService` manages the connect
 **Arguments**: `lvs: LogViewerService`
 
 ---
+#### `getReadinessSnapshot`
+**Arguments**: ``
+**Returns**: `RagReadinessSnapshot`
+
+---
+#### `getReadiness`
+**Arguments**: ``
+**Returns**: `RagReadinessSnapshot`
+
+---
 #### `search`
 Searches the long-term narrative memory for content relevant to the query.  Calls the `search_memory` MCP tool on the RAG server.  @param {string} query - The search query. @param {Record<string, string>} [filter] - Optional metadata filter (e.g. { category: 'roleplay' }). @returns {Promise<string>} The retrieved text content./
 
